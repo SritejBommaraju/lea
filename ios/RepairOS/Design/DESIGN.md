@@ -1,6 +1,6 @@
 # LEA design: the inspector's codex
 
-Draft 2, 2026-10-24, after moodboard review 1 (§11). The direction for the iOS app, drawn from the moodboard and written so the Figma prototypes
+Draft 2, 2026-10-24, after moodboard review 1 (§13). The direction for the iOS app, drawn from the moodboard and written so the Figma prototypes
 and the next `Theme.swift` change can be built from it without guessing. Reference numbers (No. 01-30) point at the
 [moodboard](https://claude.ai/artifact/NeND4dq9nJpS9FyS1QkpzL) (private until shared). Tokens in code:
 [Theme.swift](Theme.swift); capture wiring: [INTEGRATION.md](INTEGRATION.md).
@@ -55,7 +55,7 @@ stays apart for deuteranopia and protanopia (CIELAB ΔE on Machado-simulated col
 | `faint` | `#8A7A68` | `#7D6E5B` | Placeholders and disabled only (< 4.5 : 1, never for text people must read) |
 | `brass` | (not used) | `#C9A86A` | Dark-mode hairlines, rule ornaments, wordmark |
 
-Buttons: paper label on ink (13.6 : 1) in light, ink label on pearl (12.4 : 1) in dark.
+Buttons: paper label on ink (13.6 : 1) in light; in dark the fill is pearl (`ink`) and the label is walnut (`canvas`, `#16110D`), 12.4 : 1. Use a separate `onInk` token for the label so the code never puts `ink` on `ink`.
 
 ### Status tones
 
@@ -271,9 +271,89 @@ After the prototypes are agreed. One PR: `ios/RepairOS/**`, plus the font entrie
 | Add SIL OFL 1.1 (fonts only) to PLAN.md L2? | Owner |
 | Who draws the three or four line illustrations? | Design |
 | Who gets edit access to the Figma file | Design |
-| Website: same codex direction, or its own? Designed after the app design is final | Design |
+| ~~Website: same codex direction, or its own?~~ The same direction: §11 | Decided 2026-10-24 |
 
-## 11. Review log
+## 11. Website
+
+The site uses this direction, not one of its own (§10). It lives in `website/` (stream `website`,
+`areas/website.md`).
+
+- **Colour.** The §3 tokens, light (paper) and dark (walnut) by `prefers-color-scheme`. The same rules apply:
+  red only for safety, brass only in dark mode, no colour outside the token block at the top of `styles.css`.
+- **Type.** EB Garamond 500/600 and italic 500 from Google Fonts for display and margin notes (the §10 licence
+  question covers this too). Body text is the system font: `-apple-system` (SF Pro on Apple devices), then Segoe
+  UI or Helvetica. Labels are `ui-monospace` (SF Mono), then JetBrains Mono. Inter is not used.
+  - Headline: `clamp(2.6rem, 5vw, 4.6rem)`, line height 1.03, at most 15 characters per line.
+  - Section titles: `clamp(2rem, 3.4vw, 3.1rem)`.
+  - Reading text: 17 px with line height 1.55, and lines no longer than 34 rem.
+- **Layout.** Content is at most 1248 px wide, with 96, 48 and 20 px gutters and breakpoints at 1080 and 760 px.
+  - Sections are separated by a 0.5 px rule, not by coloured bands. Section headings have no eyebrow above them;
+    the nav already names the sections.
+  - Numbers appear only for a real sequence: the three method steps and the specimen labels.
+- **Figures.** Real screens only, set flat with a 0.5 px edge and a 34 px corner. There is no device frame, shadow
+  or tilt. Each figure has a `Fig. n` caption in the label voice.
+  - Until the Theme.swift PR lands, the screens are the Figma exports and the captions say "design prototype".
+  - Light and dark versions swap with `<picture>`. Evidence slots stay empty, as in §7.
+- **Components.**
+  - **Primary action:** the ink capsule, at least 52 px tall, one per view. Everything else is an underlined text link.
+  - **Report examples:** the specimen label (§7.5) and the outlined tag (§5).
+  - **Unknown:** a dashed box. Dashes mean unknown and nothing else.
+  - **Features:** a ledger of ruled rows, not cards. The limits are set as notes at the foot of a page, under an
+    italic title.
+- **Motion.** Smooth scroll and a hover fade on the button, nothing else. Reduced Motion turns smooth scroll off.
+  No JavaScript.
+- **Copy.** Only what the product does today, in the report's plain words. Screens are labelled as prototypes.
+  Grain is never named. There are no numbers, customers or quotes we cannot show.
+
+## 12. Rules for generated design
+
+For people and coding agents, web and iOS. Load this section into an agent's context before it designs
+anything.
+
+**Banned.** None of these ship:
+
+- Purple-to-blue or any decorative gradient, glow blobs, blur used as decoration, floating 3D shapes,
+  corporate-Memphis figures, stock illustration.
+- A grid of boxed cards where ruled rows would do; an icon in a circle on every card; emoji or Unicode glyphs
+  standing in for icons.
+- An eyebrow over every heading.
+- Drop shadows, or any elevation (§5: there is no elevation scale, everything is flat on hairlines).
+- Stat counters, logo walls or testimonials we cannot back up.
+
+**Tokens are fixed.** Use only the hex values in §3, the faces and sizes in §4 and §11, the radii and line weights
+in §5 and the `Spacing` scale. A brief, prompt or PR that needs a new value adds it here first.
+
+**Visual anchors.** Design from the Figma screens and real captures, not from a text description. A new screen
+starts from the nearest existing frame.
+
+**The deletion loop.** On every first draft, remove the three most obvious generated-looking choices, then check
+the layout still holds on type, rules and whitespace alone. If it doesn't, the structure is wrong; adding
+decoration won't fix it. Record what was removed in §13.
+
+**Two loops, then tighten.** At most two design iterations, then the work moves to code: contrast, spacing and copy.
+
+**Checks.**
+
+- Every text and background pair passes 4.5 : 1, in both modes (§3, §8). The proprietary guard passes.
+- **iOS:** Xcode Accessibility Inspector on every screen, and SwiftLint.
+- **Web:** a contrast check, and a look at 390, 768 and 1440 px in both modes.
+
+**iOS: Apple's Human Interface Guidelines, within the codex.**
+
+- **Containers.** Build with native SwiftUI containers (`NavigationStack`, `List`, `ScrollView`, `Grid`, `Form`)
+  and system controls. Don't wrap a web-style card template around them.
+- **Type and icons.** Body text uses SF Pro at Dynamic Type text styles (`.body`, `.headline`, …). The serif voices
+  scale with `relativeTo:`. Icons are SF Symbols, using the outline variants (§5).
+- **Touch and gestures.** Tap targets are at least 44 × 44 pt, content stays inside the safe area, and there are
+  no gestures the system doesn't already use.
+- **Colour.** Theme.swift's semantic tokens replace `Color(.systemBackground)` and `Color(.label)`. The paper and
+  walnut palette is the brand, but each token adapts to light, dark and Increase Contrast the way a system colour
+  does. Screens never use a raw colour.
+- **Materials.** System materials appear only where the system draws them: navigation bars, sheets and menus. No
+  custom glass or blur, and nothing over the camera (§2.6).
+- **Radii.** 12 pt for cards (`RoundedRectangle(cornerRadius: 12)`), as in §5.
+
+## 13. Review log
 
 Review 1, 2026-10-24, of the moodboard against this document and the code:
 
@@ -286,3 +366,11 @@ Review 1, 2026-10-24, of the moodboard against this document and the code:
 7. Dashes were decorative and meaningful at once: unknown only.
 8. No. 10 cropped (torn paper, tape); No. 20 captioned (red number).
 9. Sourcing on the board overstated: footer corrected, No. 13 credited, No. 28 marked as stock.
+
+Review 2, 2026-10-24, the website (§11) and the rules for generated design (§12):
+
+1. The first website draft was generic: an iris gradient band, a purple glow behind the phone, a grid of six
+   icon-in-a-circle cards and an eyebrow over every heading. It was thrown away and rebuilt on this document.
+2. Deletion loop on the second draft: the eyebrows over every section, and the numbers on the report rules (they
+   are not a sequence), were removed. The layout held on rules and whitespace alone.
+3. The step figures were mismatched (a problem-detail screen under "Close-ups"), so each figure now shows its own step.
