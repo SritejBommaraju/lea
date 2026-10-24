@@ -67,6 +67,9 @@ final class VoiceCoordinator: ObservableObject {
     private var speaking: Task<Void, Never>?
     private var turnMode = "ptt"
     private var recognizerErrors = 0                 // in a row; hands-free retries a couple of times before stopping
+    private var listenVersion = 0                    // bumped by each listen and each stop: a stale listen gives up
+    private var playbackEnded = Date.distantPast     // when Lea last stopped making sound
+    private var heardOverPlayback = false            // this turn's words started while Lea was audible
 
     /// Starts watching for audio interruptions and route changes (once).
     func attach() {
@@ -94,6 +97,7 @@ final class VoiceCoordinator: ObservableObject {
     private func audioInterrupted(began: Bool) {
         if began {
             turn += 1
+            listenVersion += 1
             _ = output.stop()
             speaking?.cancel()
             input?.cancel()
@@ -108,6 +112,7 @@ final class VoiceCoordinator: ObservableObject {
     /// Rebuilds the mic tap for the current route (or the whole engine after a media-services reset), then resumes
     /// hands-free or "Hey Leah" if either was on. A turn in progress is dropped rather than resumed half-heard.
     private func restartAudio(rebuild: Bool) {
+        listenVersion += 1
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         input?.cancel()
@@ -190,9 +195,12 @@ final class VoiceCoordinator: ObservableObject {
 
     /// A typed turn, for detail that is easier to type than say; it joins the same conversation.
     func send(typed: String) {
-        if state == .speaking || state == .thinking { interrupt() }
+        if state == .speaking || state == .thinking {
+            interrupt()
+            if !handsFree { state = .idle }   // typing opens no microphone
+        }
         turnMode = "text"
-        Task { await take(typed) }
+        Task { await take(typed, fromMic: false) }
     }
 
     /// Hands-free: the mic stays open for the conversation and speech itself takes the turn.
@@ -202,6 +210,7 @@ final class VoiceCoordinator: ObservableObject {
             turnMode = "wake"
             Task { await listen(open: true) }
         } else {
+            listenVersion += 1   // a listen still waiting for its token or permission must not reopen the mic
             input?.cancel()
             input = nil
             pipe.input = nil
@@ -218,18 +227,31 @@ final class VoiceCoordinator: ObservableObject {
     // MARK: Listening
 
     private func listen(open: Bool) async {
+        listenVersion += 1
+        let version = listenVersion
         do {
             try startEngine()
             input?.cancel()
+            input = nil
+            pipe.input = nil
             let next = try await makeInput()
-            next.onEvent = { [weak self] event in self?.handle(event) }
+            // Stopped (hands-free off, an interruption) or replaced by a newer listen while the token or permission
+            // was pending: give up rather than show Listening on a microphone that isn't running.
+            guard version == listenVersion else { return }
+            // Only the current recognizer's events count: a replaced one's late words are not a turn.
+            next.onEvent = { [weak self, weak next] event in
+                guard let self, let next, self.input === next else { return }
+                self.handle(event)
+            }
             try next.begin(open: open)
+            heardOverPlayback = false
             input = next
             pipe.input = next
             partial = ""
             if state != .speaking { state = .listening }
             if !open, !holding { finishSoon(next) }
         } catch {
+            guard version == listenVersion else { return }
             message = error.localizedDescription
             if state != .speaking { state = .idle }
         }
@@ -265,9 +287,10 @@ final class VoiceCoordinator: ObservableObject {
     private func handle(_ event: SpeechEvent) {
         switch event {
         case .speechStart:
-            break
+            if leaAudible { heardOverPlayback = true }
         case .partial(let text):
             partial = text
+            if leaAudible { heardOverPlayback = true }
             // Barge-in, as VEL does hands-free, but only on words that aren't Lea's own voice or a backchannel:
             // the system voice is not echo-cancelled, and a cough must not cut Lea off.
             if handsFree, state == .speaking, text.split(separator: " ").count >= 2 || TurnTaking.isStop(text),
@@ -310,10 +333,18 @@ final class VoiceCoordinator: ObservableObject {
 
     // MARK: A turn
 
-    private func take(_ heard: String) async {
+    /// Lea is making sound now, or stopped a moment ago (the room still carries it).
+    private var leaAudible: Bool { state == .speaking || Date().timeIntervalSince(playbackEnded) < 1.5 }
+
+    private func take(_ heard: String, fromMic: Bool = true) async {
         let text = heard.trimmingCharacters(in: .whitespacesAndNewlines)
-        afterTurn()
-        guard !text.isEmpty, !TurnTaking.isEcho(heard: text, spoken: recentlySpoken.joined(separator: " ")) else { return }
+        // Echo is only possible for microphone words heard over Lea's own voice; typed words are never echo, and a
+        // person repeating Lea's words after she stopped ("scan it") means them.
+        let maybeEcho = heardOverPlayback || leaAudible
+        heardOverPlayback = false
+        if fromMic { afterTurn() }
+        guard !text.isEmpty, !TurnTaking.dropAsEcho(text, spoken: recentlySpoken.joined(separator: " "), fromMic: fromMic,
+                                                    overPlayback: maybeEcho) else { return }
         if let stopped = interrupted, TurnTaking.isBack(text, offered: true) || TurnTaking.isBackchannel(text) {
             interrupted = nil
             let line = TurnTaking.resumeLine(stopped.sentence, heard: stopped.heard, n: resumes)
@@ -390,6 +421,7 @@ final class VoiceCoordinator: ObservableObject {
         remember(line)
         state = .speaking
         await output.speak(line)
+        playbackEnded = Date()
     }
 
     private func speakAll(_ lines: [String]) {
@@ -401,6 +433,7 @@ final class VoiceCoordinator: ObservableObject {
                 current = queue.removeFirst()
                 remember(current)
                 await output.speak(current)
+                playbackEnded = Date()
             }
             if !Task.isCancelled {
                 current = ""
@@ -413,6 +446,7 @@ final class VoiceCoordinator: ObservableObject {
     private func interrupt() {
         turn += 1
         let heard = output.stop()
+        playbackEnded = Date()
         speaking?.cancel()
         if !current.isEmpty { interrupted = (current, heard, queue) }
         queue = []

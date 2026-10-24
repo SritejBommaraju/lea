@@ -413,7 +413,9 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                 "readings": await _list(request, "meter-reading", **by)}
 
     # ------------------------------------------------------------ voice: spoken turns and speech tokens
-    app.state.voice_turns, app.state.voice_history = {}, {}
+    from repairos.voice import TurnMemory
+
+    app.state.voice = TurnMemory()
 
     @app.post("/v1/voice/turns")
     async def voice_turn(body: VoiceTurn, request: Request, _d: Device):
@@ -424,25 +426,26 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
         if not body.transcript.strip():
             raise HTTPException(422, "only final, non-empty transcripts")
-        if body.id in request.app.state.voice_turns:
-            return request.app.state.voice_turns[body.id]
-        snap: dict = {}
-        if body.session_id:
-            await _session(request, body.session_id)
-            by = {"session_id": body.session_id}
-            snap = {k: await _list(request, kind, **by) for k, kind in
-                    (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
-        history = request.app.state.voice_history.setdefault(body.conversation_id or body.session_id or "", [])
-        try:
-            reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history, live=body.live)
-        except MissingSettingError as e:
-            raise HTTPException(503, str(e)) from None
-        except Exception as e:  # not cached: the phone can ask again
-            raise HTTPException(502, f"the assistant did not answer: {type(e).__name__}") from None
-        history.append((body.transcript, reply))
-        out = {"id": body.id, "reply": reply, "actions": actions}
-        request.app.state.voice_turns[body.id] = out
-        return out
+        memory = request.app.state.voice
+        key = body.conversation_id or body.session_id or ""
+
+        async def answer() -> dict:
+            snap: dict = {}
+            if body.session_id:
+                await _session(request, body.session_id)
+                by = {"session_id": body.session_id}
+                snap = {k: await _list(request, kind, **by) for k, kind in
+                        (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
+            try:
+                reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, memory.history(key), live=body.live)
+            except MissingSettingError as e:
+                raise HTTPException(503, str(e)) from None
+            except Exception as e:  # not cached: the phone can ask again
+                raise HTTPException(502, f"the assistant did not answer: {type(e).__name__}") from None
+            memory.remember(key, body.transcript, reply)
+            return {"id": body.id, "reply": reply, "actions": actions}
+
+        return await memory.once(body.id, answer)
 
     @app.post("/v1/voice/token")
     async def voice_token(_d: Device):

@@ -24,6 +24,7 @@ struct RootView: View {
     @State private var scanAfterVoiceMode = false
     @State private var offeredSymptom: String?
     @State private var handsFreeBeforeVoiceMode = false
+    @State private var scanAfterReport = false
     private static let recentCount = 3
     @FocusState private var symptomFocused: Bool
 
@@ -79,7 +80,7 @@ struct RootView: View {
                     if granted { newScan() }
                 }
             }
-            .fullScreenCover(item: $active, onDismiss: app.reloadSessions) { record in
+            .fullScreenCover(item: $active, onDismiss: afterSessionFlow) { record in
                 SessionFlowView(record: record).environmentObject(voice)
             }
             .fullScreenCover(isPresented: $showVoiceMode, onDismiss: afterVoiceMode) {
@@ -174,14 +175,20 @@ struct RootView: View {
                 return try await gateway.voiceTurn(request)
             })
         voice.onActions = { actions in
-            // A scan or report already open keeps the screen; Lea talks about it instead.
-            for action in actions where active == nil {
+            // A scan in progress keeps the screen and Lea talks about it. From a finished report, a new scan closes
+            // the report first; nothing else replaces an open flow.
+            let onReport = active != nil && voice.scene?().live["screen"] == "report"
+            for action in actions {
                 switch action.type {
-                case "offer_scan":
+                case "offer_scan" where active == nil:
                     scanOffered = true
                     offeredSymptom = action.symptom
-                case "scan": scanFromVoice(symptom: action.symptom)
-                case "report":
+                case "scan" where active == nil: scanFromVoice(symptom: action.symptom)
+                case "scan" where onReport:
+                    if let said = action.symptom, !said.isEmpty { symptom = said }
+                    scanAfterReport = true
+                    active = nil
+                case "report" where active == nil:
                     showVoiceMode = false
                     active = app.sessions.first { $0.scanID == action.scanID } ?? app.sessions.first
                 default: break
@@ -223,6 +230,14 @@ struct RootView: View {
         if !scanAfterVoiceMode && !handsFreeBeforeVoiceMode && voice.handsFree { voice.setHandsFree(false) }
         if scanAfterVoiceMode {
             scanAfterVoiceMode = false
+            newScan()
+        }
+    }
+
+    private func afterSessionFlow() {
+        app.reloadSessions()
+        if scanAfterReport {
+            scanAfterReport = false
             newScan()
         }
     }

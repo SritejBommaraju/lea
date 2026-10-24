@@ -53,6 +53,7 @@ final class AppleSpeechInput: SpeechInput {
     private var started = false
     private var open = false
     private var done = false
+    private var generation = 0                       // bumped by each begin and cancel: older callbacks are ignored
 
     static func authorize() async -> Bool {
         await withCheckedContinuation { c in SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0 == .authorized) } }
@@ -71,10 +72,15 @@ final class AppleSpeechInput: SpeechInput {
         request.addsPunctuation = true                  // the end-of-turn rules read punctuation, as Parakeet's drafts have
         request.contextualStrings = ["Leah"]   // no part vocabulary: Lea works on any object
         box.request = request
+        generation += 1
+        let mine = generation
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             let text = result?.bestTranscription.formattedString
             let final = result?.isFinal == true
-            Task { @MainActor in self?.handle(text: text, final: final, error: error) }
+            Task { @MainActor in
+                guard let self, self.generation == mine else { return }
+                self.handle(text: text, final: final, error: error)
+            }
         }
     }
 
@@ -86,7 +92,10 @@ final class AppleSpeechInput: SpeechInput {
         box.request?.endAudio()
     }
 
+    /// Cancelled requests are finished: words heard before the cancel never become a turn.
     func cancel() {
+        done = true
+        generation += 1
         endTimer?.cancel()
         task?.cancel()
         task = nil

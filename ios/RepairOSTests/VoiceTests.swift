@@ -46,6 +46,13 @@ struct VoiceTests {
         #expect(T.takesTurn("it hums but won't spin", whileLeaTalks: true))
     }
 
+    @Test func onlyMicWordsOverLeasVoiceAreEcho() {
+        let spoken = "Can you scan it?"
+        #expect(T.dropAsEcho("can you scan it", spoken: spoken, fromMic: true, overPlayback: true))
+        #expect(!T.dropAsEcho("can you scan it", spoken: spoken, fromMic: true, overPlayback: false))   // they said it
+        #expect(!T.dropAsEcho("can you scan it", spoken: spoken, fromMic: false, overPlayback: true))   // typed
+    }
+
     @Test func gatewayRepliesDecode() throws {
         let json = #"{"id":"t1","reply":"Opening a new scan.","actions":[{"type":"scan","symptom":"stops after a minute"},{"type":"report","scan_id":"scan_1"}]}"#
         let r = try JSONDecoder().decode(VoiceReply.self, from: Data(json.utf8))

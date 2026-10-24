@@ -42,6 +42,12 @@ nonisolated enum TurnTaking {
         matches("^(ok(ay)? )?(stop|wait|hold on|pause)( please| a (second|sec|moment))?$", norm(text))
     }
 
+    /// Should this turn be dropped as Lea's own voice? Only microphone words heard over (or just after) her playback
+    /// can be; typed words never are, and repeating her words once she has stopped means them.
+    static func dropAsEcho(_ text: String, spoken: String, fromMic: Bool, overPlayback: Bool) -> Bool {
+        fromMic && overPlayback && isEcho(heard: text, spoken: spoken)
+    }
+
     /// Is what the microphone heard just Lea's own voice coming back? `spoken`: what Lea just said.
     static func isEcho(heard: String, spoken: String) -> Bool {
         let h = norm(heard).split(separator: " ").map(String.init)

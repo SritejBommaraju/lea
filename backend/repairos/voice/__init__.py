@@ -7,15 +7,20 @@ Suspects stay suspects: replies use the suspect's own probability word and never
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
+import time
 import urllib.request
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from repairos.config import get_settings
 
 MODEL = "claude-opus-5-5"
 MAX_TOOL_ROUNDS = 4
+HISTORY_TURNS = 12            # exchanges Claude sees, and all a conversation keeps
 
 def _subject(s: dict) -> str:
     sub = s.get("subject") or {}
@@ -53,6 +58,59 @@ TOOLS = [
     {"name": "open_report", "description": "Show the report for the latest scan on the phone.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
 ]
+
+class TurnMemory:
+    """The gateway's voice memory, bounded. A turn being answered is shared with retries of the same id (one Claude
+    call, one history entry); a finished answer is replayed to retries for `retry_seconds`; a failure is not kept, so
+    the phone can ask again. Each conversation keeps its last HISTORY_TURNS exchanges, and only the
+    `max_conversations` most recently used conversations are kept."""
+
+    def __init__(self, retry_seconds: float = 600, max_turns: int = 1000, max_conversations: int = 200):
+        self.retry_seconds, self.max_turns, self.max_conversations = retry_seconds, max_turns, max_conversations
+        self._done: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+        self._inflight: dict[str, asyncio.Future] = {}
+        self._histories: OrderedDict[str, list[tuple[str, str]]] = OrderedDict()
+
+    async def once(self, turn_id: str, answer: Callable[[], Awaitable[dict]]) -> dict:
+        now = time.monotonic()
+        while self._done and (now - next(iter(self._done.values()))[0] > self.retry_seconds or len(self._done) > self.max_turns):
+            self._done.popitem(last=False)
+        if turn_id in self._done:
+            return self._done[turn_id][1]
+        if (pending := self._inflight.get(turn_id)) is not None:
+            return await asyncio.shield(pending)
+        shared = asyncio.get_running_loop().create_future()
+        self._inflight[turn_id] = shared
+        try:
+            out = await answer()
+        except asyncio.CancelledError:
+            shared.cancel()
+            raise
+        except BaseException as e:
+            shared.set_exception(e)
+            shared.exception()   # retrieved here, so a failure nobody else waited for is not reported as lost
+            raise
+        else:
+            self._done[turn_id] = (time.monotonic(), out)
+            shared.set_result(out)
+            return out
+        finally:
+            self._inflight.pop(turn_id, None)
+
+    def history(self, key: str) -> list[tuple[str, str]]:
+        """A copy of the conversation so far (Claude reads it on another thread)."""
+        if key in self._histories:
+            self._histories.move_to_end(key)
+        return list(self._histories.get(key, []))
+
+    def remember(self, key: str, said: str, replied: str) -> None:
+        h = self._histories.setdefault(key, [])
+        self._histories.move_to_end(key)
+        h.append((said, replied))
+        del h[:-HISTORY_TURNS]
+        while len(self._histories) > self.max_conversations:
+            self._histories.popitem(last=False)
+
 
 _client = None
 _lock = threading.Lock()
@@ -97,10 +155,10 @@ def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], clie
     client = client or _anthropic()
     actions: list[dict] = []
     messages: list[dict] = []
-    for said, replied in history[-12:]:
+    for said, replied in history[-HISTORY_TURNS:]:
         messages += [{"role": "user", "content": said}, {"role": "assistant", "content": replied or "(no reply)"}]
     note = _live_note(live)
-    scanning = bool(live) and live.get("screen") == "scan"
+    screen = (live or {}).get("screen")
     messages.append({"role": "user", "content": [{"type": "text", "text": note}, {"type": "text", "text": transcript}]
                      if note else transcript})
     for _ in range(MAX_TOOL_ROUNDS):
@@ -120,8 +178,10 @@ def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], clie
         for u in uses:
             if u.name == "session_state":
                 out = json.dumps(_brief(snap))
-            elif u.name in ("offer_scan", "start_scan") and scanning:
+            elif u.name in ("offer_scan", "start_scan") and screen == "scan":
                 out = "A scan is already open on the phone; help them with it."
+            elif u.name == "offer_scan" and screen == "report":
+                out = "The report screen has no scan button: ask if they want a new scan, and call start_scan if they say yes."
             elif u.name == "offer_scan":
                 actions.append({"type": "offer_scan", **_symptom(u.input)})
                 out = "The scan button is showing; it opens the scan when they tap it or say yes."
