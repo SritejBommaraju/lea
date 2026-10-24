@@ -326,6 +326,12 @@ class SqliteState:
     async def complete(self, job_id: str, result: dict[str, Any]) -> None:
         await self._update_job(job_id, "status='done', result=?, error=NULL", (json.dumps(result),))
 
+    async def release(self, job_id: str) -> None:
+        def fn(c):
+            c.execute("UPDATE job SET status='queued', worker=NULL, heartbeat_at=NULL, "
+                      "attempts=MAX(attempts - 1, 0) WHERE job_id=? AND status='running'", (job_id,))
+        await self._run(fn, write=True)
+
     async def fail(self, job_id: str, error: str, retry: bool) -> None:
         await self._update_job(job_id, "error=?, worker=NULL, status=CASE WHEN ? AND attempts < ? THEN 'queued' "
                                        "ELSE 'failed' END", (error, int(retry), MAX_ATTEMPTS))

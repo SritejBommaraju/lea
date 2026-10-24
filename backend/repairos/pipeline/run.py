@@ -47,6 +47,8 @@ from repairos.slots.state import AlreadyClaimed, RevConflict
 log = logging.getLogger(__name__)
 
 STILL_WAIT_S = 900.0     # how long a run waits for a still another worker is inspecting
+CLAIM_BEAT_S = 15.0      # a worker refreshes `heartbeat_at` on every still claim it holds this often
+CLAIM_STALE_S = 90.0     # a `running` claim with no heartbeat for this long belongs to a worker that is gone
 POLL_S = 0.5
 OCR_NOT_BUILT = "reading label text needs OCR, which is not built yet (task M8)"
 SKIPPED = "the user skipped this close-up"
@@ -104,6 +106,7 @@ class Context:
         self._vlm_pool: ThreadPoolExecutor | None = None
         self._shares: dict[str, Any] = {}
         self._scan_locks: dict[str, asyncio.Lock] = {}
+        self.held: set[tuple[str, str]] = set()   # (scan_id, still_id) claims this worker holds (beat_claims)
 
     def scan_lock(self, scan_id: str) -> asyncio.Lock:
         """Still-selection decisions of one scan, one at a time (this worker process; one event loop)."""
@@ -410,6 +413,7 @@ async def _claim(ctx: Context, scan: dict, still_id: str) -> tuple[str, dict | N
         if e.status == "done":
             return "done", (await _run_row(ctx, scan["scan_id"]))["stills"][still_id]
         return "wait", None
+    ctx.held.add((scan["scan_id"], still_id))
     return "mine", None
 
 
@@ -421,8 +425,10 @@ async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) ->
         msg = f"{type(e).__name__}: {e}"
         await _update(ctx, scan, {"stills": {still_id: {"status": "failed", "error": msg[:2000],
                                                         "finished_at": _now()}}})
+        ctx.held.discard((scan["scan_id"], still_id))
         raise
     await _update(ctx, scan, {"stills": {still_id: stage}})
+    ctx.held.discard((scan["scan_id"], still_id))
     return stage
 
 
@@ -475,6 +481,8 @@ async def inspect_still_stage(ctx: Context, still_id: str, covered: str | None =
 
 
 async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
+    """Wait for a still another job is inspecting. A claim whose worker is gone (claim_is_stale) is taken over and
+    inspected here, so a restart never leaves a run waiting out STILL_WAIT_S on a dead claim."""
     deadline = time.monotonic() + STILL_WAIT_S
     while time.monotonic() < deadline:
         st = ((await _run_row(ctx, scan["scan_id"])) or {}).get("stills", {}).get(still_id, {})
@@ -482,6 +490,15 @@ async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
             return st
         if st.get("status") == "failed":
             raise PipelineError(f"still {still_id} failed on worker {st.get('worker')}: {st.get('error')}")
+        if not st or claim_is_stale(st, datetime.now(UTC)):
+            row = await ctx.state.get("still", still_id)
+            if row is not None:
+                await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.claim_still",
+                                           {"still_id": still_id, "worker": ctx.worker, "at": _now(), "force": True,
+                                            "scan_id": scan["scan_id"], "session_id": scan["session_id"]})
+                ctx.held.add((scan["scan_id"], still_id))
+                log.info("still %s: took over a claim of %s, which is gone", still_id, st.get("worker"))
+                return await _finish(ctx, scan, row.data, None)
         await asyncio.sleep(POLL_S)
     raise PipelineError(f"still {still_id} is still being inspected by another worker after {STILL_WAIT_S:.0f} s")
 
@@ -725,6 +742,83 @@ WORKER_GONE = "the worker inspecting it stopped before it finished; it is inspec
 
 def _age_s(stamp: str, now: datetime) -> float:
     return (now - datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds()
+
+
+# ------------------------------------------------------------------------------------- claim liveness (restarts)
+def worker_alive(name: str | None) -> bool | None:
+    """Whether the worker that holds a claim still runs: a worker name `host:pid` on this host is checked with its
+    pid (True / False); a worker elsewhere is unknown (None; its heartbeat decides)."""
+    import socket
+
+    host, _, pid = (name or "").rpartition(":")
+    if not pid.isdigit() or host != socket.gethostname():
+        return None
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def claim_is_stale(st: dict, now: datetime, me: str | None = None) -> bool:
+    """A `running` still claim whose worker is gone: its process on this host has exited, or it has had no
+    heartbeat (or start, before its first beat) for CLAIM_STALE_S. A claim of `me` (this worker) is never stale."""
+    if st.get("status") != "running" or (me and st.get("worker") == me):
+        return False
+    if worker_alive(st.get("worker")) is False:
+        return True
+    stamp = st.get("heartbeat_at") or st.get("started_at")
+    return stamp is None or _age_s(stamp, now) > CLAIM_STALE_S
+
+
+async def beat_claims(ctx: Context) -> int:
+    """Refresh `heartbeat_at` on every still claim this worker holds (Worker.run_forever, every CLAIM_BEAT_S)."""
+    n = 0
+    for scan_id, still_id in list(ctx.held):
+        run = await _run_row(ctx, scan_id) or {}
+        st = (run.get("stills") or {}).get(still_id) or {}
+        if st.get("status") != "running" or st.get("worker") != ctx.worker:
+            ctx.held.discard((scan_id, still_id))
+            continue
+        await ctx.state.transition("pipeline-run", run_id_for(scan_id), "pipeline.update", {
+            "scan_id": scan_id, "session_id": run["session_id"], "stills": {still_id: {"heartbeat_at": _now()}}})
+        n += 1
+    return n
+
+
+async def release_claims(ctx: Context, *, worker: str | None = None, now: datetime | None = None
+                         ) -> list[tuple[str, str]]:
+    """Release `running` still claims back to pending and queue their stills again: the claims of `worker` (this
+    worker shutting down), or, with no `worker`, every stale claim (claim_is_stale: its worker is gone; a worker
+    starting up, and every sweep). A live claim of another worker is never touched. Returns (scan_id, still_id)."""
+    import hashlib
+
+    from repairos.slots.state import Job
+
+    now = now or datetime.now(UTC)
+    out = []
+    for row in await ctx.state.list("pipeline-run"):
+        run = row.data
+        for sid, st in (run.get("stills") or {}).items():
+            mine = worker is not None and st.get("status") == "running" and st.get("worker") == worker
+            if not (mine or (worker is None and claim_is_stale(st, now, me=ctx.worker))):
+                continue
+            await ctx.state.transition("pipeline-run", row.id, "pipeline.update", {
+                "scan_id": run["scan_id"], "session_id": run["session_id"], "stills": {sid: None}})
+            ctx.held.discard((run["scan_id"], sid))
+            still = await ctx.state.get("still", sid)
+            if still is not None:
+                kind = "ocr" if still.data.get("kind") == "label" else "detect"
+                key = f"still:{sid}:released:{now.timestamp():.0f}"
+                job_id = f"job_{kind}_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+                await ctx.state.enqueue(Job(kind=kind, job_id=job_id, session_id=run["session_id"],
+                                            scan_id=run["scan_id"], inputs={"kind": "still", "id": sid}))
+            log.info("released the claim of %s on still %s (%s)", st.get("worker"), sid,
+                     "shutting down" if mine else "its worker is gone")
+            out.append((run["scan_id"], sid))
+    return out
 
 
 async def close_abandoned(ctx: Context, now: datetime | None = None) -> list[str]:
