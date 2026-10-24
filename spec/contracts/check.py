@@ -28,7 +28,7 @@ What it does, in order:
 
 Validator: the `jsonschema` package when it is installed (with `referencing` for cross-file $refs), else a small
 stdlib-only validator covering what these contracts use: type, properties, required, additionalProperties, items,
-minItems, maxItems, enum, const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, pattern, $ref
+minItems, maxItems, contains, uniqueItems, enum, const, minimum, maximum, exclusiveMinimum, exclusiveMaximum, minLength, pattern, $ref
 (local `#/...` and sibling files `other.schema.json#/...`), allOf, anyOf, oneOf, not, if/then/else. `format` and
 `x-*` annotations are not checked.
 
@@ -174,6 +174,17 @@ def _validate(value, schema, root: dict, path: str, errors: list[str]) -> None:
         if "items" in schema:
             for i, item in enumerate(value):
                 _validate(item, schema["items"], root, f"{path}[{i}]", errors)
+        if "contains" in schema:
+            def matches(item) -> bool:
+                sub_errors: list[str] = []
+                _validate(item, schema["contains"], root, path, sub_errors)
+                return not sub_errors
+            if not any(matches(item) for item in value):
+                errors.append(f"{path}: no item matches contains")
+        if schema.get("uniqueItems"):
+            seen = [json.dumps(v, sort_keys=True) for v in value]
+            if len(set(seen)) != len(seen):
+                errors.append(f"{path}: items are not unique")
 
     if isinstance(value, dict):
         props = schema.get("properties", {})

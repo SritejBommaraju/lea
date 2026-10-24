@@ -49,8 +49,8 @@ eval: ## score recorded sessions on the benchmark (task M5)
 run-gateway: ## FastAPI gateway on :8000 (task B5)
 	cd backend && .venv/bin/uvicorn repairos.main:app --reload --host $${GATEWAY_HOST:-0.0.0.0} --port 8000
 
-run-workers: ## Phase 1 pipeline workers (task B10)
-	@echo "make run-workers: not built yet (task B10)"; exit 1
+run-workers: ## Phase 1 pipeline worker on the STATE job queue (task B10); ARGS="--once" drains the queue and exits
+	cd backend && .venv/bin/python -m repairos.pipeline.worker $(ARGS)
 
 doctor: ## human prerequisites of the open tasks (HUMAN ACTION NEEDED)
 	python3 -I build/doctor.py

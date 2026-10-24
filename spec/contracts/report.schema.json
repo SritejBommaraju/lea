@@ -1,0 +1,300 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "report.schema.json",
+  "title": "Report",
+  "description": "The Phase 1 inspection report for one scan (task B9), written by the pipeline (B10) and the report builder (B11). Code picks the verdict from a truth table; Claude writes `summary.text` from words only (S5). Every stored finding of the scan appears exactly once: in `findings` (a model judged its state), `not_inspected` (nobody looked at it, I3) or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No probability number appears anywhere: confidence is a word (I6). A vision finding is a suspect; only a meter reading proves or rules out (I1, I2). Phase 1 makes no Grain calls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["report_id", "scan_id", "session_id", "created_at", "verdict", "verdict_reason", "summary", "findings",
+               "not_inspected", "insufficient_evidence", "capture", "models", "grain"],
+  "properties": {
+    "report_id": { "type": "string", "minLength": 1 },
+    "scan_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" },
+    "verdict": {
+      "type": "string",
+      "enum": ["looks_good", "potential_issues", "insufficient_evidence"],
+      "description": "Picked in code (repairos.report.verdict truth table), never by a model."
+    },
+    "verdict_reason": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "rule", "text"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": ["issues_found", "all_inspected_ok", "no_regions", "nothing_inspected", "some_not_inspected"],
+          "description": "issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged."
+        },
+        "rule": { "type": "string", "minLength": 1, "description": "The truth-table row that decided, e.g. V3." },
+        "text": { "type": "string", "minLength": 1, "description": "Why, in plain words (no numbers; it is sent to the summary writer)." }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "written_by", "from_words_only"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "description": "Plain-language summary. No numbers." },
+        "written_by": { "type": "string", "minLength": 1, "description": "Model id that wrote the text." },
+        "from_words_only": { "const": true, "description": "The writer received words only (S5); checked in code before the call." }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" },
+      "description": "Regions a model judged: an issue, or `none` (looked at, no visible issue)."
+    },
+    "not_inspected": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/not_inspected" },
+      "description": "Regions nobody looked at (I3), each with the reason. Never shown as ok."
+    },
+    "insufficient_evidence": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/insufficient" },
+      "description": "Regions looked at that could not be judged (I4), each with the reason."
+    },
+    "next_step": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["action_id", "kind", "instruction"],
+      "description": "The one next action code chose from Jev's judgments (repairos.fusion), when there is one.",
+      "properties": {
+        "action_id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["request_closeup", "request_other_angle", "rescan", "run_reference_compare", "run_continuity_test",
+                   "run_voltage_test", "run_resistance_test", "run_grain_second_opinion",
+                   "report_insufficient_evidence", "report_finding", "ask_user"]
+        },
+        "instruction": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string" }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["depth_source", "stills", "stills_inspected", "keyframes", "coverage_words"],
+      "properties": {
+        "depth_source": { "type": "string", "enum": ["lidar", "none"], "description": "lidar when the scan or a still carries ARKit depth; none otherwise (A8: sizes cannot be claimed)." },
+        "stills": { "type": "integer", "minimum": 0, "description": "Close-up stills received." },
+        "stills_inspected": { "type": "integer", "minimum": 0, "description": "Stills with at least one region a model judged." },
+        "keyframes": { "type": "integer", "minimum": 0 },
+        "scan_points": { "type": "integer", "minimum": 0 },
+        "coverage_words": { "type": "string", "minLength": 1, "description": "The phone's coverage hint in words, or 'not measured'." }
+      }
+    },
+    "models": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["detector", "classifier", "vlm", "summary_writer", "jev", "locate"],
+      "description": "Provenance: which model (and version) did each step, or why a step did not run.",
+      "properties": {
+        "detector": { "type": "string", "minLength": 1 },
+        "classifier": { "type": "string", "minLength": 1 },
+        "vlm": { "type": "string", "minLength": 1 },
+        "ocr": { "type": "string", "minLength": 1 },
+        "summary_writer": { "type": "string", "minLength": 1 },
+        "jev": { "type": "string", "minLength": 1 },
+        "locate": { "type": "string", "minLength": 1 }
+      }
+    },
+    "grain": { "const": "not called", "description": "Phase 1 makes no Grain calls." }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "const": "insufficient_evidence" } }, "required": ["verdict"] },
+      "then": {
+        "properties": {
+          "verdict_reason": {
+            "properties": { "code": { "enum": ["no_regions", "nothing_inspected", "some_not_inspected"] } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "looks_good" } }, "required": ["verdict"] },
+      "then": {
+        "description": "Looks good only when every region was judged and none shows an unresolved issue.",
+        "properties": {
+          "verdict_reason": { "properties": { "code": { "const": "all_inspected_ok" } } },
+          "findings": {
+            "minItems": 1,
+            "items": {
+              "anyOf": [
+                { "properties": { "issue": { "const": "none" } } },
+                { "properties": { "proof": { "properties": { "status": { "const": "ruled_out_by_meter" } } } } }
+              ]
+            }
+          },
+          "not_inspected": { "maxItems": 0 },
+          "insufficient_evidence": { "maxItems": 0 }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "verdict": { "const": "potential_issues" } }, "required": ["verdict"] },
+      "then": { "properties": { "verdict_reason": { "properties": { "code": { "const": "issues_found" } } } } }
+    }
+  ],
+  "$defs": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref"],
+      "description": "Same as Finding.subject.",
+      "properties": {
+        "kind": { "type": "string", "enum": ["part", "wire", "net"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "pins": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "box_px": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0 },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "[x0, y0, x1, y1] in the still's full-resolution pixels."
+    },
+    "crop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["still_id", "box_px"],
+      "properties": {
+        "still_id": { "type": "string", "minLength": 1 },
+        "box_px": { "$ref": "#/$defs/box_px" },
+        "crop_ref": { "type": "string", "description": "blob://sha256:<hex> of the full-resolution crop (GET /v1/blobs/<sha256>)." }
+      }
+    },
+    "photo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["still_id"],
+      "properties": {
+        "still_id": { "type": "string", "minLength": 1 },
+        "box_px": { "$ref": "#/$defs/box_px" },
+        "crop_ref": { "type": "string" }
+      }
+    },
+    "location": {
+      "description": "Where the region is on the scan: the crop box through the still's pose onto the scan (repairos.locate). `not_computed` says why there is none; a location is never made up.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "frame", "point_m", "method"],
+          "properties": {
+            "status": { "const": "computed" },
+            "frame": { "const": "arkit_world", "description": "The scan's frame: metres, Y up." },
+            "point_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+            "extent_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3, "description": "Size of the region on the scan, axis-aligned in arkit_world, when known." },
+            "method": { "type": "string", "minLength": 1, "description": "Locator and version." }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": { "const": "not_computed" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "proof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "description": "Only a meter reading proves or rules out (I1, I2).",
+      "properties": {
+        "status": { "type": "string", "enum": ["not_measured", "confirmed_by_meter", "ruled_out_by_meter"] },
+        "reading_id": { "type": "string", "minLength": 1 }
+      },
+      "if": { "properties": { "status": { "enum": ["confirmed_by_meter", "ruled_out_by_meter"] } } },
+      "then": { "required": ["status", "reading_id"] }
+    },
+    "judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rank", "likelihood_word", "verdict"],
+      "description": "Jev's judgment of this subject, ranked in code (Suspect), in words.",
+      "properties": {
+        "rank": { "type": "integer", "minimum": 1 },
+        "likelihood_word": { "type": "string", "enum": ["very_unlikely", "unlikely", "unsure", "likely", "very_likely"] },
+        "verdict": { "type": "string", "enum": ["suspect", "confirmed", "cleared", "insufficient_evidence", "not_inspected"] }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "subject", "part_class", "issue", "confidence_word", "evidence", "inspected_by",
+                   "crop", "location", "proof"],
+      "properties": {
+        "finding_id": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/subject" },
+        "part_class": { "type": "string", "minLength": 1, "description": "Generic class (vision/generic_classes.py), never a product name." },
+        "issue": {
+          "type": "string",
+          "enum": ["none", "damaged", "broken", "worn", "dirty", "loose", "unseated", "missing", "shifted", "partly",
+                   "wrong_pin", "colour_mismatch", "open", "short", "out_of_range", "unexpected_part",
+                   "unexpected_wire"],
+          "description": "none = a model looked and saw no issue. Every other value is Finding.state: a suspect."
+        },
+        "confidence_word": { "type": "string", "enum": ["low", "medium", "high"] },
+        "evidence": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "inspected_by": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["detector", "classifier", "vlm", "ocr", "meter"] },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Stages that looked at this region. A judged region always includes a state judge (vlm, classifier or meter)."
+        },
+        "crop": { "$ref": "#/$defs/crop" },
+        "location": { "$ref": "#/$defs/location" },
+        "proof": { "$ref": "#/$defs/proof" },
+        "judgment": { "$ref": "#/$defs/judgment" }
+      },
+      "allOf": [
+        {
+          "properties": { "inspected_by": { "contains": { "enum": ["vlm", "classifier", "meter"] } } },
+          "description": "0 regions shown ok (or with an issue) that no model looked at."
+        }
+      ]
+    },
+    "not_inspected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "subject", "part_class", "reason"],
+      "properties": {
+        "finding_id": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/subject" },
+        "part_class": { "type": "string", "minLength": 1 },
+        "photo": { "$ref": "#/$defs/photo" },
+        "location": { "$ref": "#/$defs/location" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "insufficient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "subject", "part_class", "reason", "inspected_by"],
+      "properties": {
+        "finding_id": { "type": "string", "minLength": 1 },
+        "subject": { "$ref": "#/$defs/subject" },
+        "part_class": { "type": "string", "minLength": 1 },
+        "photo": { "$ref": "#/$defs/photo" },
+        "location": { "$ref": "#/$defs/location" },
+        "reason": { "type": "string", "minLength": 1 },
+        "inspected_by": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["detector", "classifier", "vlm", "ocr", "meter"] },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

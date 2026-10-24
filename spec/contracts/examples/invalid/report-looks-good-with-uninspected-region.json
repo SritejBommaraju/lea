@@ -1,0 +1,31 @@
+{
+ "schema": "report",
+ "why": "looks_good is never the verdict while a region was not inspected (I3)",
+ "base": "report.looks_good.json",
+ "patch": {
+  "not_inspected": [
+   {
+    "finding_id": "f_example_c",
+    "subject": {
+     "kind": "part",
+     "ref": "s1/det2"
+    },
+    "part_class": "circuit board",
+    "photo": {
+     "still_id": "s1",
+     "box_px": [
+      0,
+      0,
+      3000,
+      2800
+     ]
+    },
+    "location": {
+     "status": "not_computed",
+     "reason": "the 3D localization module is not installed"
+    },
+    "reason": "the region covers most of the still; take a closer still"
+   }
+  ]
+ }
+}

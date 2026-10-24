@@ -1,0 +1,95 @@
+{
+ "schema": "report",
+ "why": "looks_good is never the verdict while a finding shows an unresolved issue",
+ "base": "report.looks_good.json",
+ "patch": {
+  "findings": [
+   {
+    "finding_id": "f_example_a",
+    "subject": {
+     "kind": "part",
+     "ref": "s1/det0"
+    },
+    "part_class": "connector",
+    "issue": "loose",
+    "confidence_word": "medium",
+    "evidence": [
+     "connector in still s1 looks loose",
+     "vision model: a gap is visible between the plug and its housing",
+     "vision suspect, not proof"
+    ],
+    "inspected_by": [
+     "detector",
+     "vlm"
+    ],
+    "crop": {
+     "still_id": "s1",
+     "box_px": [
+      100,
+      200,
+      612,
+      712
+     ],
+     "crop_ref": "blob://sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "location": {
+     "status": "not_computed",
+     "reason": "the 3D localization module is not installed"
+    },
+    "proof": {
+     "status": "not_measured"
+    },
+    "judgment": {
+     "rank": 1,
+     "likelihood_word": "unsure",
+     "verdict": "suspect"
+    }
+   },
+   {
+    "finding_id": "f_example_b",
+    "subject": {
+     "kind": "part",
+     "ref": "s1/det1"
+    },
+    "part_class": "capacitor",
+    "issue": "none",
+    "confidence_word": "high",
+    "evidence": [
+     "capacitor in still s1 looks ok",
+     "vision suspect, not proof"
+    ],
+    "inspected_by": [
+     "detector",
+     "vlm"
+    ],
+    "crop": {
+     "still_id": "s1",
+     "box_px": [
+      700,
+      200,
+      956,
+      456
+     ]
+    },
+    "location": {
+     "status": "computed",
+     "frame": "arkit_world",
+     "point_m": [
+      0.1,
+      0.02,
+      -0.3
+     ],
+     "extent_m": [
+      0.01,
+      0.01,
+      0.01
+     ],
+     "method": "<locator id and version>"
+    },
+    "proof": {
+     "status": "not_measured"
+    }
+   }
+  ]
+ }
+}

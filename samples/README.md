@@ -8,9 +8,11 @@ make replay SESSION=<session_id | folder path>   # validate, load into a fresh S
 make sessions-check                              # validate every non-held-out session (CI)
 ```
 
-Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store) and `summary.json` with per-stage
-timing, the findings, and the score against `truth.json`. Until the pipeline exists (task B10) the `pipeline`
-stage reports `not_built`; nothing stands in for it. Phase 1 replay makes no Grain calls.
+Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store), `summary.json` with per-stage
+timing, the findings, the score against `truth.json` and each scan's report, and `report_<scan_id>.json` (validated
+against `spec/contracts/report.schema.json`), `.md` and `.html`. The pipeline (B10, `repairos.pipeline.run_session`)
+calls the configured detector, Claude and Jev; a stage that fails fails the replay with the stage and the error.
+Phase 1 replay makes no Grain calls.
 
 ## Where sessions come from
 
@@ -101,6 +103,12 @@ Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, 
 4. `POST /v1/scans` with the ScanPackage whose file fields are those refs; then `POST /v1/stills`, `POST
    /v1/readings`. Bodies are validated against the contracts and the files against the table above (422 with the
    schema path or the list of problems). Posting the same object again is a no-op.
-5. `GET /v1/sessions/<id>/events` (SSE; reconnect with `Last-Event-ID`) streams every row change: findings,
-   suspects, next actions. `GET /v1/sessions/<id>`, `/v1/scans/<id>`, `/v1/findings/<id>`, `/v1/suspects/<id>`
+5. `POST /v1/scans/<scan_id>/complete` once the scan and every still are posted: queues the pipeline run (stills
+   are already being inspected as they arrive; `make run-workers` runs the worker). `GET /v1/scans/<id>/pipeline`
+   gives the stage statuses and, after a failure, the stage and the error. `GET /v1/scans/<id>/report` is the
+   report (404 while it is made, 409 when the pipeline failed); `GET /v1/scans/<id>/report/export?format=html|md`
+   a printable copy.
+6. `GET /v1/sessions/<id>/events` (SSE; reconnect with `Last-Event-ID`) streams every row change: findings,
+   suspects, next actions, the pipeline run, the report; plus `event: report_ready` when a report is published and
+   `event: pipeline_failed` when a run fails. `GET /v1/sessions/<id>`, `/v1/scans/<id>`, `/v1/findings/<id>`, `/v1/suspects/<id>`
    read state. OpenAPI at `/openapi.json`.
