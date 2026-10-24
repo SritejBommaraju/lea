@@ -1,4 +1,4 @@
-"""Ids for recorded sessions (BUILD.md B0.7). Opaque and random: never a product name (GEN1)."""
+"""Ids for recorded sessions (task B6). Opaque and random: never a product name (GEN1)."""
 from __future__ import annotations
 
 import re

@@ -1,4 +1,4 @@
-"""DET=gdino: Grounding DINO tiny, zero-shot open-vocabulary detection (BUILD M.DET.1). No training.
+"""DET=gdino: Grounding DINO tiny, zero-shot open-vocabulary detection (task M1). No training.
 
 Model: IDEA-Research/grounding-dino-tiny on Hugging Face, revision pinned below. Licence: Apache-2.0 for the code
 (`transformers`) and the weights (model card `license: apache-2.0`, checked 2026-10-24,
@@ -28,7 +28,7 @@ MODEL_REPO = "IDEA-Research/grounding-dino-tiny"
 MODEL_REVISION = "a2bb814dd30d776dcf7e30523b00659f4f141c71"
 MODEL_LICENSE = "Apache-2.0"
 
-DEFAULT_MIN_SCORE = 0.30   # BUILD M.DET.1 box threshold
+DEFAULT_MIN_SCORE = 0.30   # box threshold (task M1)
 MAX_TEXT_TOKENS = 250      # the model's text limit is 256 tokens, incl. [CLS]/[SEP]
 
 

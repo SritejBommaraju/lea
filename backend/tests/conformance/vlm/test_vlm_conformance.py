@@ -1,4 +1,4 @@
-"""VLM conformance (BUILD §3.3) on REAL crops, live API (never mocked):
+"""VLM conformance (task M3) on REAL crops, live API (never mocked):
     pytest -m vision backend/tests/conformance/vlm [--impl anthropic]
 Skips with HUMAN ACTION NEEDED when the key or real captures are missing."""
 from __future__ import annotations

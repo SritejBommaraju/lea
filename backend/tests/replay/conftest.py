@@ -1,7 +1,7 @@
-"""Replay fixtures (BUILD.md B0.7).
+"""Replay fixtures (task B6).
 
 - `session(id)`: open a recorded session from samples/sessions/ (held-out sessions raise: only `make eval` reads
-  them, E8.3).
+  them, M5).
 - `recorded_session`: parametrised over every non-held-out real session in samples/sessions/ (none yet = no cases).
 - `format_session`: a minimal folder built from the public contract examples with placeholder ids and tiny
   format-only files (a 4-point PLY, a header-only JPEG). It tests the format code; it is not a capture and never

@@ -1,10 +1,10 @@
-# RepairOS. `make bootstrap` once, then `make test`. Targets for cards that have not landed say so and stop.
+# LEA (RepairOS). `make bootstrap` once, then `make test`. Targets for tasks that have not landed say so and stop.
 SHELL := /bin/bash
 VENV  := backend/.venv
 PY    := $(VENV)/bin/python
 UV    := $(shell command -v uv 2>/dev/null)
 
-.PHONY: bootstrap lock codegen codegen-check contracts check test replay sessions-check eval run-gateway run-workers run-bridge run-stdb doctor next status hooks guard
+.PHONY: bootstrap lock codegen codegen-check contracts check test replay sessions-check eval run-gateway run-workers doctor next status hooks guard
 
 bootstrap: ## create backend/.venv (Python 3.12) and install the backend with dev deps from the lock file
 ifdef UV
@@ -30,40 +30,32 @@ codegen-check: ## fail when a generated file differs from a fresh `make codegen`
 contracts: ## schemas vs examples, plus the private Grain fixtures and gap ledger when private/grain/ is present
 	python3 -I spec/contracts/check.py
 
-check: contracts codegen-check guard test ## everything that exists today (lint, licence check: later cards)
+check: contracts codegen-check guard test ## everything that exists today (licence check: task B15)
 
 test: ## backend unit + conformance tests (pytest)
 	$(VENV)/bin/pytest backend/tests
 
-replay: ## run the pipeline on one recorded session (card B0.7)
-	@test -f tools/replay.py || { echo "make replay: tools/replay.py not built yet (card B0.7)"; exit 1; }
+replay: ## run the pipeline on one recorded session (task B6)
 	@test -n "$(SESSION)" || { echo "usage: make replay SESSION=<session_id under samples/sessions/ | session folder path>"; exit 2; }
 	$(PY) tools/replay.py --session $(SESSION)
 
-sessions-check: ## validate every non-held-out recorded session in samples/sessions/ (card B0.7)
+sessions-check: ## validate every non-held-out recorded session in samples/sessions/ (task B6)
 	$(PY) tools/replay.py --check --all
 
-eval: ## score recorded sessions (card E8.1)
-	@test -f eval/score.py || { echo "make eval: eval/score.py not built yet (card E8.1)"; exit 1; }
+eval: ## score recorded sessions on the benchmark (task M5)
+	@test -f eval/score.py || { echo "make eval: eval/score.py not built yet (task M5)"; exit 1; }
 	$(PY) eval/score.py
 
-run-gateway: ## FastAPI gateway on :8000 (card S2.1)
-	@test -f backend/repairos/main.py || { echo "make run-gateway: backend/repairos/main.py not built yet (card S2.1)"; exit 1; }
+run-gateway: ## FastAPI gateway on :8000 (task B5)
 	cd backend && .venv/bin/uvicorn repairos.main:app --reload --host $${GATEWAY_HOST:-0.0.0.0} --port 8000
 
-run-workers: ## pipeline workers (card F4.8)
-	@echo "make run-workers: not built yet (card F4.8)"; exit 1
+run-workers: ## Phase 1 pipeline workers (task B10)
+	@echo "make run-workers: not built yet (task B10)"; exit 1
 
-run-bridge: ## SpacetimeDB worker bridge (later track)
-	@echo "make run-bridge: SpacetimeDB is later track (STATE=sqlite in the hackathon profile)"; exit 1
-
-run-stdb: ## local SpacetimeDB (later track)
-	spacetime start
-
-doctor: ## human prerequisites for the demo track
+doctor: ## human prerequisites of the open tasks (HUMAN ACTION NEEDED)
 	python3 -I build/doctor.py
 
-next: ## cards ready to claim (ARGS="--stream app --phase1")
+next: ## tasks ready to start, per stream (ARGS="--stream app")
 	python3 -I build/next.py $(ARGS)
 
 status: ## regenerate build/STATUS.md

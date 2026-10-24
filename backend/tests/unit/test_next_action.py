@@ -1,4 +1,4 @@
-"""F4.4: suspect ranking, the meter-reading override (I2) and the next-action truth table. No network: the
+"""B7: suspect ranking, the meter-reading override (I2) and the next-action truth table. No network: the
 Judgment inputs are plain data handed to code, not a stand-in engine."""
 from __future__ import annotations
 

@@ -74,7 +74,7 @@
         "mass_g": { "type": "number", "minimum": 0 },
         "est_cost": { "type": ["number", "null"], "minimum": 0 },
         "est_cost_source": { "type": "string", "enum": ["grain_pilot_estimate", "grain", "repairos_estimate", "unknown"], "description": "Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain is kept for a future priced made[] row." },
-        "printer_available": { "type": "boolean", "description": "True at the hackathon venue." }
+        "printer_available": { "type": "boolean", "description": "True when the user has a 3D printer." }
       }
     },
     "created_at": { "type": "string", "format": "date-time" }

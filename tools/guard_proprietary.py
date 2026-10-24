@@ -168,7 +168,7 @@ def main(argv: list[str]) -> int:
         print("guard_proprietary: Grain internals or private files would be committed:", file=sys.stderr)
         for h in hits:
             print("  " + h, file=sys.stderr)
-        print("Rewrite as an API-level need or a pointer to private/grain/GRAIN_SPEC.md (ask Sritej); "
+        print("Rewrite as an API-level need or a pointer to private/grain/ (ask Sritej); "
               "keep private files out of git.", file=sys.stderr)
         return 1
     print(f"guard_proprietary: {len(files)} file(s) clean")

@@ -28,7 +28,7 @@ node_modules/
 
 # Proprietary Grain material: local only, never committed
 private/
-**/GRAIN_SPEC.md
-**/GRAIN_STATUS.md
+**/GRAIN_SPEC*
+**/GRAIN_STATUS*
 samples/**/grain/*
 !samples/**/grain/README.md

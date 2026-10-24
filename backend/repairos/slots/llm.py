@@ -1,4 +1,4 @@
-"""LLM slot interface (BUILD §3.1, M.LLM.0). Implementations live in repairos.slots.llm_<impl>.
+"""LLM slot interface (task B8). Implementations live in repairos.slots.llm_<impl>.
 
 - `complete(system, messages, *, cache_hint=None) -> str`
 - `structured(schema, system, messages, *, cache_hint=None) -> dict`: validated against `schema` (jsonschema);

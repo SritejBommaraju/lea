@@ -1,9 +1,9 @@
-"""Provider registry (BUILD.md §3.2, B0.9). Config picks the implementation of every slot; code never does.
+"""Provider registry (PLAN.md task B3). Config picks the implementation of every slot; code never does.
 
     from repairos.registry import slot
-    grain = slot("GRAIN")        # the configured GrainClient
+    det = slot("DET")            # the configured Detector
 
-Resolution (same as build/doctor.py): profile = REPAIROS_PROFILE > `profile:` in config/providers.yaml > hackathon;
+Resolution (same as build/_lib.py): profile = REPAIROS_PROFILE > `profile:` in config/providers.yaml > phase1;
 then REPAIROS_SLOT_<SLOT>=<impl> overrides. An implementation lives in `repairos.slots.<slot>_<impl>` (lower case)
 and registers a factory with `@register("<SLOT>", "<impl>")`. Only the selected package is imported, so an
 unselected provider's dependencies are never loaded. There is no fallback wrapper for any slot (owner, 2026-10-24).
@@ -20,7 +20,7 @@ import yaml
 
 from repairos.config import enforce_release, get_settings
 
-DEFAULT_PROFILE = "hackathon"
+DEFAULT_PROFILE = "phase1"
 _FACTORIES: dict[tuple[str, str], Callable[[], Any]] = {}
 
 

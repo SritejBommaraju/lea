@@ -1,8 +1,8 @@
-"""STATE slot interface (BUILD.md §3.1, M.STATE.0). Implementations live in repairos.slots.state_<impl>.
+"""STATE slot interface (task B4). Implementations live in repairos.slots.state_<impl>.
 
 Rows are contract objects (spec/contracts/<kind>.schema.json, validated with repairos.contracts.validate) plus a
 few internal kinds (INTERNAL_KINDS). Every row has a `rev` (optimistic concurrency) and a `session_id` when it
-belongs to one. Writes go through named transitions (TRANSITIONS); each enforces SPEC.md §7 I1-I4 (and I5/S4 where
+belongs to one. Writes go through named transitions (TRANSITIONS); each enforces the PLAN.md invariants I1-I4 (and I5/S4 where
 they touch a row) and raises a typed InvariantViolation naming the rule.
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ class RevConflict(StateError):
 
 
 class InvariantViolation(StateError, ValueError):
-    """A write that would break a SPEC rule. `rule` is the SPEC id (I1, I2, I3, I4, I5, S4) or REF/SCHEMA."""
+    """A write that would break a PLAN.md invariant. `rule` is the invariant id (I1, I2, I3, I4, I5, S4) or REF/SCHEMA."""
 
     def __init__(self, rule: str, message: str):
         self.rule = rule

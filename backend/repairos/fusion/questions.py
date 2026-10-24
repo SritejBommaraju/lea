@@ -1,5 +1,5 @@
 """Every word Jev is asked, every option and every threshold, in one place (TypeSafe skill: "keep all question
-wording in one place"; BUILD F4.1). Jev makes the judgments; code decides (next_action.py truth table).
+wording in one place"; task B7). Jev makes the judgments; code decides (next_action.py truth table).
 
 Per subject, atomic questions, each naming the subject directly and pointing at its evidence by path:
   problem   noul    do the findings show a problem with it?

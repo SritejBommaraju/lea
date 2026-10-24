@@ -1,4 +1,4 @@
-"""B0.1: the scaffold exists, the Makefile has its targets, the package imports."""
+"""B1: the scaffold exists, the Makefile has its targets, the package imports."""
 from __future__ import annotations
 
 import hashlib
@@ -9,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 TARGETS = {"bootstrap", "codegen", "codegen-check", "check", "test", "replay", "eval", "run-gateway", "run-workers",
-           "run-bridge", "run-stdb", "doctor", "next", "status"}
+           "doctor", "next", "status", "hooks", "guard", "contracts", "sessions-check"}
 
 
 def test_makefile_targets_exist():

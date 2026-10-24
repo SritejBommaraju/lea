@@ -1,4 +1,4 @@
-"""FUSION slot interface (BUILD.md §3.1, card M.FUSION.0). Implementations live in repairos.slots.fusion_<impl>.
+"""FUSION slot interface (task B7). Implementations live in repairos.slots.fusion_<impl>.
 
     engine = repairos.registry.slot("FUSION")
     answers = engine.ask(state_words, questions)

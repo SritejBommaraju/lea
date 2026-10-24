@@ -1,4 +1,4 @@
-"""Number -> word bands and enum -> phrase maps for the fusion state (F4.1, S5).
+"""Number -> word bands and enum -> phrase maps for the fusion state (B7, S5).
 
 Numbers are compared here, in code; the engine only ever sees the words. Generic and product-agnostic. The bands
 are unvalidated starting points: change them only with held-out eval numbers in the PR (GEN2).

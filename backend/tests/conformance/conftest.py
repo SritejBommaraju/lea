@@ -1,11 +1,12 @@
-"""Conformance runner (BUILD.md §3.3, B0.9).
+"""Conformance runner (PLAN.md task B3).
 
     pytest backend/tests/conformance/<slot> [--impl <impl>]
 
-A suite lives in backend/tests/conformance/<slot>/ (slot id in lower case: grain, state, det, ...). Its tests take
+A suite lives in backend/tests/conformance/<slot>/ (slot id in lower case: state, det, vlm, ...). Its tests take
 the `impl` fixture: the implementation named by --impl, else the one config/providers.yaml selects. When the
-implementation's human prerequisites (build/tasks.yaml `human`, checked by build/doctor.py's checks) are not met,
-the test is skipped with a loud HUMAN ACTION NEEDED reason. Nothing is faked in their place.
+implementation's human prerequisites (the `human` steps of the build/tasks.yaml task whose `slots` lists it, checked
+by build/doctor.py's checks) are not met, the test is skipped with a loud HUMAN ACTION NEEDED reason. Nothing
+is faked in their place.
 """
 from __future__ import annotations
 
@@ -34,17 +35,15 @@ def _lib():
 
 
 def missing_prerequisites(slot_id: str, impl: str, env: dict | None = None) -> list[str]:
-    """Human steps not met for the card that implements `slot_id`/`impl`, as 'id: what (how)' lines."""
+    """Human steps not met for the task that implements `slot_id`/`impl`, as 'id: what (how)' lines."""
     lib = _lib()
-    data = lib.prepare_tasks(lib.load_tasks())
-    steps = {s["id"]: s for s in data.get("human_steps", [])}
-    human = sorted({h for c in data["cards"] if c.get("slot") == slot_id and c.get("impl") == impl
-                    for h in c.get("human", [])})
-    checks = lib.run_checks({steps[h]["check"] for h in human if h in steps}, offline=True, env=env)
+    data = lib.load_tasks(merged=False)
+    steps = {s["id"]: s for s in data["human_steps"]}
+    human = sorted({h for t in data["tasks"] if f"{slot_id}={impl}" in t["slots"] for h in t["human"]})
+    results = lib.check_steps(data, human, offline=True, env=env)
     out = []
     for h in human:
-        ok = lib.human_step_satisfied(steps[h], checks)[0] if h in steps else False
-        if ok is False:  # None = a manual step the tools cannot check; it does not block
+        if results[h][0] is False:  # None = a manual step the tools cannot check; it does not block
             out.append(f"{h}: {steps.get(h, {}).get('what', '?')} (how: {steps.get(h, {}).get('how', '?')})")
     return out
 

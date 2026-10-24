@@ -1,4 +1,4 @@
-"""VLM=anthropic (BUILD M.VLM.1): claude-haiku-5-5 first, claude-sonnet-5-5 on cannot_tell (Q3).
+"""VLM=anthropic (task M3): claude-haiku-5-5 first, claude-sonnet-5-5 on cannot_tell.
 
 anthropic SDK (Apache-2.0 since 2.0.0; MIT before), imported on first use. Key: ANTHROPIC_API_KEY via config.require (backend only, A6).
 Structured output through `output_config.format` (JSON schema with the state enum), so every answer is one of the

@@ -1,4 +1,4 @@
-"""B0.6: settings load from .env and the environment; secrets never leak; release lockout."""
+"""B3: settings load from .env and the environment; secrets never leak; release lockout."""
 from __future__ import annotations
 
 import logging
@@ -11,8 +11,8 @@ from repairos.config import MissingSettingError, Settings, enforce_release, rele
 
 ROOT = Path(__file__).resolve().parents[3]
 SECRET = "sk-test-not-a-real-key-7f3a"
-HACKATHON = {"GRAIN": "live", "FUSION": "jev", "STATE": "sqlite", "HOST": "local_mac"}
-RELEASE_OK = {"GRAIN": "live", "FUSION": "jev", "STATE": "spacetimedb", "STATE_TARGET": "local", "HOST": "docker_gpu"}
+PHASE1 = {"DET": "owlv2", "FUSION": "jev", "STATE": "sqlite", "HOST": "local_mac"}
+RELEASE_OK = {"DET": "owlv2", "FUSION": "jev", "STATE": "sqlite", "HOST": "server"}
 
 
 @pytest.fixture
@@ -48,13 +48,13 @@ def test_secrets_never_in_repr_logs_or_errors(tmp_path, clean_env, caplog):
         logging.getLogger("repairos.test").info("settings %s %r %s", s, s, s.redact())
     texts = [repr(s), str(s), str(s.redact()), caplog.text, s.model_dump_json()]
     try:
-        s.require("OPENAI_API_KEY")
+        s.require("GRAIN_URL")
     except MissingSettingError as e:
         texts.append(str(e))
     for t in texts:
         assert SECRET not in t
     assert s.redact()["GRAIN_KEY"] == "***"
-    assert s.redact()["OPENAI_API_KEY"] is None
+    assert s.redact()["GRAIN_URL"] is None
 
 
 def test_release_with_replay_grain_exits_with_a_clear_message():
@@ -63,12 +63,11 @@ def test_release_with_replay_grain_exits_with_a_clear_message():
     assert "GRAIN=replay" in str(err.value.code)
 
 
-def test_release_refuses_the_hackathon_profile_and_slot_overrides():
-    assert any("HOST=local_mac" in p for p in release_problems(HACKATHON, environ={}))
-    assert any("REPAIROS_SLOT_LLM" in p for p in release_problems(RELEASE_OK, environ={"REPAIROS_SLOT_LLM": "openai"}))
-    assert any("STATE_TARGET" in p for p in release_problems({**RELEASE_OK, "STATE_TARGET": ""}, environ={}))
+def test_release_refuses_the_phase1_profile_and_slot_overrides():
+    assert any("HOST=local_mac" in p for p in release_problems(PHASE1, environ={}))
+    assert any("REPAIROS_SLOT_DET" in p for p in release_problems(RELEASE_OK, environ={"REPAIROS_SLOT_DET": "gdino"}))
     assert release_problems(RELEASE_OK, environ={}) == []
-    enforce_release(HACKATHON, release=False, environ={"REPAIROS_SLOT_LLM": "openai"})  # dev build: allowed
+    enforce_release(PHASE1, release=False, environ={"REPAIROS_SLOT_DET": "gdino"})  # dev build: allowed
 
 
 def test_env_example_lists_every_setting_and_every_doctor_key():
@@ -89,6 +88,6 @@ def test_backend_starts_without_grain_keys(tmp_path, clean_env):
 
     s = Settings(_env_file=tmp_path / "absent.env")
     reg = Registry(ROOT / "config" / "providers.yaml", environ={}, release=False)
-    assert reg.selected("GRAIN") == "live"
+    assert "GRAIN" not in reg.slots
     with pytest.raises(MissingSettingError, match="GRAIN_KEY"):
         s.require("GRAIN_KEY", "GRAIN=live")

@@ -1,35 +1,49 @@
 # App (stream `app`)
 
-Alias lanes: L1 (iOS capture), plus the iOS screens from L4, L5, L6. **Who:** one person (the owner assigns; §0.B
-had Elysi with Sritej on L1). The owner also builds iOS on this Mac, so this stream overlaps build execution.
+**Who.** One person (the owner assigns); Rohan also builds iOS on his Mac. **Delivers.** The iPhone app: a Polycam-quality LiDAR scan of any object, guided full-resolution close-ups, a
+resumable upload to our gateway, the report screen and an optional meter-reading entry.
 
-**Delivers.** The iPhone 16 Pro / Pro Max app. Phase 1: LiDAR + photo capture of **any** product into a scan
-package (binary PLY in metres, full-resolution JPEG stills with pose and intrinsics, a manifest), uploaded to our
-backend; the findings, parts and plan screens. Phase 2: AR labels and the meter wizard on Grain's reference.
+**Owns.** `ios/RepairOS/**` and `ios/RepairOSTests/**`, except the generated `ios/RepairOS/Contracts/**`
+(`make codegen`).
 
-**Owns.** `ios/RepairOS/**` and `ios/RepairOSTests/**` except the generated `ios/RepairOS/Contracts/**`
-(`make codegen`); `tools/convert_stray.py`, `tools/convert_polycam.py`; `samples/sessions/demo-*/**`.
+**Contracts.** Writes `scan-package`, `still`, `meter-reading` to the gateway. Reads `report`, `finding`,
+`suspect`, `next-action` from it. The phone never holds a key and talks only to the gateway (A6).
 
-**Contracts.** Writes: `scan-package`, `still`, `meter-reading`, `part-on-hand` (to the gateway, S2.1).
-Reads: `finding`, `suspect`, `next-action`, `repair-plan`, `shopping-quote` (from the gateway's live events).
-The phone never holds a key and never talks to Grain or a model (A6).
+## Capture base (decided 2026-10-24)
 
-**Cards, in order.** Loop: [AGENTS.md](../AGENTS.md). `P1` = Phase 1 (no Grain), `P2` = needs Grain ([BUILD.md Phases](../BUILD.md#phases-phase-1-now-no-grain-phase-2-with-grain)); `←` = depends on; links go to the card text.
-- **Capture: shell, probe, Mode A, dense fusion + PLY, upload (L1)**: [C1.1](../BUILD.md#c11-ios-app-shell) P1 2 h · [C1.2](../BUILD.md#c12-device-capability-probe) P1 0.5 h · [C1.3](../BUILD.md#c13-mode-a-capture) P1 3 h ← C1.1 · [C1.4](../BUILD.md#c14-point-fusion-crop-ply-export-scanpackage) P1 2.5 h ← C1.3 · [C1.5](../BUILD.md#c15-upload-client) P1 1 h ← C1.1, S2.1 · [C1.7](../BUILD.md#c17-day-0-converters-stray-scanner-polycam-raw) P1 1.5 h ← B0.7
-- **Mode B stills and AR (L1)**: [I5.1](../BUILD.md#i51-mode-b-guided-close-ups) P1 3 h ← C1.3 · [I5.2](../BUILD.md#i52-ar-labels) P2 1.5 h ← I5.1
-- **Screens: findings, wizard, parts, plan (L6, L4, L5)**: [I5.3](../BUILD.md#i53-findings-and-suspects-ui) P1 1.5 h ← C1.1 · [I5.4](../BUILD.md#i54-meter-wizard-ui) P2 2.5 h ← C1.1, F4.5 · [I5.5](../BUILD.md#i55-parts-on-hand-ui) P1 1.5 h ← C1.1 · [I5.6](../BUILD.md#i56-plan-and-confirm-ui) P1 1.5 h ← C1.1
-- **Demo captures (L1)**: [C1.9](../BUILD.md#c19-demo-captures-through-grain-t12) P2 1 h ← C1.4, C1.5
-- **Later track** (kept, not in the 24 h). P1: C1.6, M.OCRD.0, M.OCRD.1, M.SPEECH.0, M.SPEECH.1, M.SPEECH.2. P2: none.
+Our own ARKit pipeline, not `ObjectCaptureSession`: it exposes no depth or poses and owns the camera.
 
-**Setup (doctor items).** `dev_tools`, `xcode`, `iphone`, `apple_signing`, `repo_access`.
+- `ARWorldTrackingConfiguration` with `sceneReconstruction = .mesh` for the live overlay.
+- `sceneDepth` and confidence into a voxel hash with per-voxel hit counts: the coverage heat map.
+- Our own keyframe picker, scored on sharpness.
+- Close-ups with `captureHighResolutionFrame` in the **same AR session and world frame**. 12 MP is the base;
+  default to 48 MP when the device and iOS allow it in the AR session (probe at startup); ask the user only on a
+  trade-off such as speed.
+- Drift: correct on the phone in real time first (ARKit anchor updates plus our keyframe-level correction).
+- Scan time: as fast as possible; more only where quality needs it, with the target set from measurements.
+- Coaching cues in Apple's Feedback vocabulary: moving too fast, too close, too far, low light, out of view.
+- Borrow from MIT repos: `Dominik-Hagmann/lidar-scanner-ios` (voxel accumulation, confidence gate, binary PLY
+  writer; keep ARKit Y up), `strayrobots/scanner` (raw RGB-D format), `cedanmisquith/SwiftUI-LiDAR` (mesh
+  preview). Apple sample code is allowlisted.
+- Never `arkit-3dgs-scanner` (non-commercial), the `record3d` library (LGPL), or GPL or unlicensed repos.
 
-**What's ready.** `python3 -I build/next.py --stream app` (or `--lane L1`; add `--phase1` for Phase 1 only).
+If on-phone drift correction falls short, the backend refines poses (B13). If our capture underperforms, sessions
+can come from Stray Scanner (MIT) exports (B12). Polycam's terms need its written consent first.
 
-**Hands off / receives.** Sends scan packages and stills to build execution (gateway upload, S2.1); the same
-recorded sessions feed the benchmark (modeling). Receives findings, next actions and plans over SSE. Without a
-reference (Phase 1), Mode B targets come from detector boxes (modeling), not from projected parts.
+## Tasks, in order
 
-**Done when.** A scan of a product the team never tuned on uploads as a valid `scan-package` + `still` set
-(`python3 -I spec/contracts/check.py` green on a recorded example), resumes after a dropped connection, and the
-findings screen shows words, evidence crops, `not_inspected` and `insufficient_evidence`; Phase 2 adds AR labels and
-the wizard.
+| Id | What | Deps |
+|---|---|---|
+| A1 | App shell, device probe, pairing | - |
+| A2 | LiDAR scan with overlay, coverage heat map, keyframes, coaching cues | A1 |
+| A3 | Guided close-ups in the same AR session | A2 |
+| A4 | Resumable upload | A1 |
+| A5 | Report screen | A4, B11 |
+| A6 | Optional meter reading entry | A5 |
+| A7 | First-run usability pass | A5 |
+
+"Done when" for each: [PLAN.md](../PLAN.md) §7. Milestones MS2 and MS3 are this stream's.
+**Setup (doctor items).** `dev_tools`, `xcode`, `iphone`, `apple_signing`, `test_products`; `multimeter` for A6.
+**Done when.** On a product nobody developed against, the app scans, guides close-ups and uploads a session that
+passes `make sessions-check`, then shows its report with crops, confidence words, `not_inspected` and
+`insufficient_evidence` reasons.

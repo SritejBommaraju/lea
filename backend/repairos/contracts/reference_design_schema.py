@@ -100,7 +100,7 @@ class Correction(BaseModel):
 
 class ReferenceDesign(BaseModel):
     """
-    The cached Grain reference for one product model. Built once per product model and never re-run for a product already seen (SPEC.md A4; a design turn takes minutes). Files are Grain's reference artefacts fetched through the API and stored on the backend (handshake H1, private/grain/GRAIN_SPEC.md); the cache is keyed by grain_project_id + last_build until Grain reports last_build.hash (target T11).
+    The cached Grain reference for one product model. Built once per product model and never re-run for a product already seen (a design turn takes minutes). Files are Grain's reference artefacts fetched through the API and stored on the backend (handshake H1, private/grain/); the cache is keyed by grain_project_id + last_build until Grain reports last_build.hash (target T11).
     """
 
     model_config = ConfigDict(

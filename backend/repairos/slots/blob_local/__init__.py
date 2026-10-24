@@ -1,4 +1,4 @@
-"""BLOB=local (M.BLOB.1): content-addressed files under <data>/blobs/<2 hex>/<sha256>.
+"""BLOB=local (task B4): content-addressed files under <data>/blobs/<2 hex>/<sha256>.
 
 <data> is REPAIROS_DATA_DIR, else the repo's data/ (gitignored). Presigned urls are HMAC-signed gateway paths; the
 key is generated once into <data>/blobs/.presign_key (never leaves the machine).

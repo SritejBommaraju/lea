@@ -1,5 +1,5 @@
-"""The next action: a truth table in code over Jev's judgments (card F4.4; TypeSafe skill "judgments from Jev,
-decisions in code"; SPEC I2, I4, S1, S4).
+"""The next action: a truth table in code over Jev's judgments (task B7; TypeSafe skill "judgments from Jev,
+decisions in code"; PLAN I2, I4, S1, S4).
 
 Order of rows:
   1. a confirmed suspect (meter proof)                -> report_finding

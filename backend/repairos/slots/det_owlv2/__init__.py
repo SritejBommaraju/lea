@@ -1,4 +1,4 @@
-"""DET=owlv2: OWLv2 base, zero-shot open-vocabulary detection (BUILD M.DET.4). No training.
+"""DET=owlv2: OWLv2 base, zero-shot open-vocabulary detection (task M1). No training.
 
 Model: google/owlv2-base-patch16-ensemble on Hugging Face, revision pinned below. Licence: Apache-2.0 for the code
 (`transformers`) and the weights (model card `license: apache-2.0`, checked 2026-10-24,

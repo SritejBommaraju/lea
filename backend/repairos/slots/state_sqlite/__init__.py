@@ -1,4 +1,4 @@
-"""STATE=sqlite (M.STATE.11): one SQLite file (WAL) under <data>/state.sqlite3, for the single-laptop build.
+"""STATE=sqlite (task B4): one SQLite file (WAL) under <data>/state.sqlite3, for the single-laptop build.
 
 - `rows`: every contract object as validated JSON with lifted columns (kind, id, rev, session_id, scan_id, status).
 - `events`: append-only row changes; LiveEvents polls it (SSE resumes from Last-Event-ID).

@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[4]
 # REPAIROS_SAMPLES_DIR points the suite at another folder of REAL recorded sessions (same layout as samples/).
 SAMPLES = Path(os.environ.get("REPAIROS_SAMPLES_DIR") or ROOT / "samples") / "sessions"
 HUMAN_CAPTURE = ("HUMAN ACTION NEEDED: record a real capture (samples/): samples/sessions/<session_id>/stills/"
-                 "<still_id>.jpg from the phone (C1.6/C1.8). No synthetic images are used in their place.")
+                 "<still_id>.jpg from the phone (A4) or an import (B12). No synthetic images are used in their place.")
 
 
 def real_stills() -> list[Path]:
@@ -42,7 +42,7 @@ def stills() -> list[Path]:
 
 @pytest.fixture(scope="session")
 def det_impl(request):
-    """--impl, else the configured DET, else gdino when the profile says DET=none (M.DET.5 is a no-detector)."""
+    """--impl, else the configured DET, else gdino when the profile says DET=none (DET=none is no detector)."""
     from repairos.registry import Registry
 
     reg = Registry()

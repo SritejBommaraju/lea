@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate typed contract models from spec/contracts/*.schema.json (BUILD.md B0.2).
+"""Generate typed contract models from spec/contracts/*.schema.json (PLAN.md task B2).
 
     python3 -I tools/codegen/codegen.py           # write the generated files
     python3 -I tools/codegen/codegen.py --check   # regenerate into a temp dir, fail on any difference (drift)

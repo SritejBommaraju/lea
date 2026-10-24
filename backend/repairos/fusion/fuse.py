@@ -1,4 +1,4 @@
-"""One fusion step for a scan: findings + readings -> ranked Suspects + one NextAction (cards F4.1 + F4.4).
+"""One fusion step for a scan: findings + readings -> ranked Suspects + one NextAction (task B7).
 
 A FUSION engine failure raises FusionUnavailable to the caller (owner: Jev down is a blocker, never a degrade).
 `insufficient_evidence` is a real outcome with a reason (I4).

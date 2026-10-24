@@ -37,7 +37,7 @@ def test_cannot_tell_always_an_option():
                                     "repairos.slots.vlm_anthropic", "repairos.slots.llm_anthropic",
                                     "repairos.vision.inspect"])
 def test_import_is_light(module):
-    """Selecting/importing an implementation must not load torch, transformers or the SDK (BUILD §3.2)."""
+    """Selecting/importing an implementation must not load torch, transformers or the SDK (task B3)."""
     code = (f"import sys, {module}; heavy = [m for m in ('torch', 'transformers', 'anthropic', 'PIL') "
             "if m in sys.modules]; print(heavy); sys.exit(1 if heavy else 0)")
     r = subprocess.run([sys.executable, "-c", code], cwd=BACKEND, capture_output=True, text=True, timeout=60)

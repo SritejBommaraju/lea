@@ -1,4 +1,4 @@
-"""BLOB slot interface (BUILD.md §3.1, M.BLOB.0). Implementations live in repairos.slots.blob_<impl>.
+"""BLOB slot interface (task B4). Implementations live in repairos.slots.blob_<impl>.
 
 Content-addressed: a blob's ref is `blob://sha256:<64 hex>` of its bytes, so the same bytes stored twice are one
 object. Resumable uploads stage bytes under the expected sha256 and only become a blob when the hash matches.

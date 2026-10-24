@@ -1,4 +1,4 @@
-"""LLM=anthropic (BUILD M.LLM.1): claude-sonnet-5-5 for assistant and plan text (Q3).
+"""LLM=anthropic (task B8): claude-sonnet-5-5 for plain-word text (report wording, B11).
 
 anthropic SDK (Apache-2.0 since 2.0.0; MIT before), imported on first use. Key: ANTHROPIC_API_KEY via config.require (backend only, A6).
 `cache_hint` becomes a second system block with `cache_control` (prompt caching on the product block). Structured

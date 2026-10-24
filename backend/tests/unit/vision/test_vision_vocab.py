@@ -1,4 +1,4 @@
-"""M.DET.0: one generic vocabulary, runtime prompt building (GEN1)."""
+"""M1: one generic vocabulary, runtime prompt building (GEN1)."""
 from __future__ import annotations
 
 import re

@@ -1,4 +1,4 @@
-"""B0.9: config picks the implementation; only the selected package is imported; release lockout applies."""
+"""B3: config picks the implementation; only the selected package is imported; release lockout applies."""
 from __future__ import annotations
 
 import importlib.util
@@ -38,8 +38,8 @@ def toy(tmp_path, monkeypatch):
 
 def providers(tmp_path: Path, det: str) -> Path:
     p = tmp_path / "providers.yaml"
-    p.write_text(f"profile: hackathon\nprofiles:\n  hackathon:\n    DET: {det}  # comment\n    HOST: local_mac\n"
-                 f"  full:\n    DET: gdino\n    HOST: docker_gpu\n")
+    p.write_text(f"profile: phase1\nprofiles:\n  phase1:\n    DET: {det}  # comment\n    HOST: local_mac\n"
+                 f"  other:\n    DET: gdino\n    HOST: server\n")
     return p
 
 
@@ -58,8 +58,8 @@ def test_swapping_config_changes_the_class_with_no_code_change(toy):
 
 
 def test_profile_from_environment(toy):
-    name, slots = resolve_slots(providers(toy, "florence2"), environ={"REPAIROS_PROFILE": "full"})
-    assert (name, slots["DET"]) == ("full", "gdino")
+    name, slots = resolve_slots(providers(toy, "florence2"), environ={"REPAIROS_PROFILE": "other"})
+    assert (name, slots["DET"]) == ("other", "gdino")
     with pytest.raises(RegistryError, match="unknown provider profile"):
         resolve_slots(providers(toy, "gdino"), environ={"REPAIROS_PROFILE": "nope"})
 
@@ -86,10 +86,11 @@ def test_release_build_refuses_dev_only_profile(toy):
         Registry(providers(toy, "gdino"), environ={}, package="toyslots", release=True)
 
 
-def test_real_providers_file_resolves_hackathon_by_default():
+def test_real_providers_file_resolves_phase1_by_default():
     name, slots = resolve_slots(ROOT / "config" / "providers.yaml", environ={})
-    assert name == "hackathon"
-    assert slots["GRAIN"] == "live" and slots["FUSION"] == "jev" and slots["STATE"] == "sqlite"
+    assert name == "phase1"
+    assert slots["DET"] == "owlv2" and slots["FUSION"] == "jev" and slots["STATE"] == "sqlite"
+    assert "GRAIN" not in slots  # Phase 1 makes no Grain calls
 
 
 def test_registry_matches_build_tools_resolution():
@@ -98,7 +99,7 @@ def test_registry_matches_build_tools_resolution():
         import _lib
     finally:
         sys.path.pop(0)
-    env = {"REPAIROS_PROFILE": "full", "REPAIROS_SLOT_LLM": "openai"}
+    env = {"REPAIROS_SLOT_DET": "gdino"}
     assert resolve_slots(ROOT / "config" / "providers.yaml", environ=env)[1] == _lib.load_providers(environ=env)["slots"]
 
 
@@ -111,12 +112,11 @@ def _conformance_conftest():
 
 def test_conformance_runner_names_missing_human_prerequisites():
     conf = _conformance_conftest()
-    missing = conf.missing_prerequisites("GRAIN", "live", env={})
-    assert any(m.startswith("grain_key:") for m in missing) and any(m.startswith("grain_project:") for m in missing)
-    env = {"GRAIN_URL": "http://grain.invalid", "GRAIN_KEY": "x", "GRAIN_TEST_PROJECT": "p"}
-    assert conf.missing_prerequisites("GRAIN", "live", env=env) == []
+    missing = conf.missing_prerequisites("FUSION", "jev", env={})
+    assert any(m.startswith("jev_key:") for m in missing)
+    assert conf.missing_prerequisites("FUSION", "jev", env={"TYPESAFE_KEY": "x"}) == []
     assert conf.missing_prerequisites("STATE", "sqlite", env={}) == []
-    assert conf.slot_of(ROOT / "backend/tests/conformance/grain/test_x.py") == "GRAIN"
+    assert conf.slot_of(ROOT / "backend/tests/conformance/det/test_x.py") == "DET"
 
 
 LAZY_IMPL = '''

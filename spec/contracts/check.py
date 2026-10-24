@@ -18,7 +18,7 @@ What it does, in order:
    `{"skip": "<reason>"}`. Mapped bodies and requests must validate (a failure here is drift: Grain's real shape
    no longer matches our contract). An unlisted fixture is a failure. When `private/grain/` is absent this prints
    one line, "private Grain fixtures not present; skipped", and the public checks still decide the exit code.
-4. The GAP LEDGER: a schema may declare what Grain should send once a target (T1-T13, SPEC.md §10) lands:
+4. The GAP LEDGER: a schema may declare what Grain should send once a target (T1-T13, recorded privately) lands:
        "x-target-required": [{"path": "readings[*].verdict", "target": "T2"}]
        "x-target-checks":   [{"check": "range_verdict", "path": "readings[*]", "target": "T1"}]
    Paths are dot-separated keys from the document root; `[*]` means every element of an array. A null or absent

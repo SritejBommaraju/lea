@@ -1,4 +1,4 @@
-"""Full-resolution crop rules (M.SEG.0 crops, V3.5): cut from the original still, transforms back to still pixels.
+"""Full-resolution crop rules (task M2): cut from the original still, transforms back to still pixels.
 
 The test images are coordinate gradients (pixel value encodes its position), not product photos."""
 from __future__ import annotations

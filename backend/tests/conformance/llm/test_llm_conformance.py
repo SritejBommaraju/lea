@@ -1,4 +1,4 @@
-"""LLM conformance (BUILD §3.3), live API (never mocked):
+"""LLM conformance (task B8), live API (never mocked):
     pytest -m vision backend/tests/conformance/llm [--impl anthropic]
 Skips with HUMAN ACTION NEEDED when the key is missing."""
 from __future__ import annotations

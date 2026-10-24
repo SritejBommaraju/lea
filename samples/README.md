@@ -1,6 +1,6 @@
 # samples/: recorded real sessions
 
-One folder per **real** capture of one physical unit (BUILD.md B0.7). The backend is developed and regression-tested
+One folder per **real** capture of one physical unit (PLAN.md task B6). The backend is developed and regression-tested
 by replaying these. No synthetic product, no made-up readings (GEN3). Product facts live here, never in code (GEN1).
 
 ```
@@ -9,7 +9,7 @@ make sessions-check                              # validate every non-held-out s
 ```
 
 Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store) and `summary.json` with per-stage
-timing, the findings, and the score against `truth.json`. Until the pipeline exists (card F4.8) the `pipeline`
+timing, the findings, and the score against `truth.json`. Until the pipeline exists (task B10) the `pipeline`
 stage reports `not_built`; nothing stands in for it. Phase 1 replay makes no Grain calls.
 
 ## Where sessions come from
@@ -18,7 +18,7 @@ stage reports `not_built`; nothing stands in for it. Phase 1 replay makes no Gra
   gateway`), so any real run on the laptop is replayable as is. To keep one as a sample: copy the folder to
   `samples/sessions/`, fill in `object_id`, `category`, `operator`, `lighting`, `meter`, write `truth.json`, and
   run `make sessions-check`.
-- The phone exporter (C1.6) and the day-0 converters (C1.7) write the same layout with
+- The app upload (A4) and the importers (B12) write the same layout with
   `repairos.sessions.writer.SessionWriter`.
 
 ## Layout
@@ -69,7 +69,7 @@ Required: `session_id` (= folder name), `device.model`. Recorded when known: `ob
 `source` (`gateway | phone_export | converter`), `split` (`unassigned | train | val | test | heldout`, written by
 eval/assign_split.py), `created_at`, `notes`.
 
-**Held-out sessions** (`split: heldout`) are read only by the evaluation (`make eval`, E8.3). `open_session()`
+**Held-out sessions** (`split: heldout`) are read only by the evaluation (`make eval`, M5). `open_session()`
 raises `HeldoutSession` for anyone else, so no test or tuning run can see them.
 
 ## `truth.json`: expected outcomes
@@ -88,7 +88,7 @@ contract's `subject` and `state`. `negatives: true` means no induced fault: ever
 Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, `not_inspected_missing`,
 `false_alarms`.
 
-## Gateway upload protocol (what the phone does, C1.5)
+## Gateway upload protocol (what the phone does, A4)
 
 1. `POST /v1/devices/pair {"code": "<REPAIROS_PAIRING_CODE>"}` returns `{device_id, token}`; send
    `Authorization: Bearer <token>` from then on.
