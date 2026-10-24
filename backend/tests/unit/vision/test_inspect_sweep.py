@@ -232,3 +232,29 @@ def test_a_tile_request_carries_no_detector_label_and_the_general_checks():
     assert "Detector label" not in text and "close tile" in text and "identify the parts yourself" in text
     _, part = j.crop_request("resistor", None)
     assert "Detector label for this region: <data>resistor</data>" in part
+
+
+def test_a_stopping_worker_starts_no_tile_or_strip_call_and_releases_not_fails():
+    import threading
+
+    from PIL import Image
+
+    from repairos.pipeline.stopping import WorkerStopping
+
+    class Unreached:   # a judge that offers a strip; neither of its methods may be reached once stop is set
+        def inspect_crop(self, *a, **k):
+            raise AssertionError("no tile call may start")
+
+        def compare_parts(self, *a, **k):
+            raise AssertionError("no strip call may start")
+
+    stop = threading.Event()
+    stop.set()
+    board = det((40, 40, 360, 260), "circuit board", 0.6)            # large: swept with tiles only
+    with pytest.raises(WorkerStopping):
+        insp.inspect_still(Image.new("RGB", (400, 300)), still_id="s1", scan_id="sc", detector=object(),
+                           judge=Unreached(), classifier=False, detections=[board], stop=stop)
+    pins = [det((20, 20, 30, 50), "pin"), det((40, 20, 50, 50), "pin")]  # small look-alikes: a strip and part crops
+    with pytest.raises(WorkerStopping):
+        insp.inspect_still(Image.new("RGB", (400, 300)), still_id="s1", scan_id="sc", detector=object(),
+                           judge=Unreached(), classifier=False, detections=pins, stop=stop)

@@ -710,7 +710,7 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     already sends to the VLM is not sent again, its answer is reused (finding_from_other_still), and reused regions do
     not use this still's crop budget. `share` applies to part crops without a classifier only. `stop` (a
     threading.Event): when set, no further VLM call starts (part crop, tile or strip; the worker is shutting down) and
-    the inspection raises."""
+    the inspection raises pipeline.stopping.WorkerStopping (release, not fail)."""
     from repairos.registry import slot
 
     detector = detector or slot("DET")
@@ -851,8 +851,12 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     cscale = context_base.width / im.width if context_base is not None else 1.0
 
     def stop_check() -> None:
+        """Before every vision-model call (part crop, tile, strip): a stopping worker releases the still, never fails
+        it (pipeline/stopping.py)."""
         if stop is not None and stop.is_set():
-            raise RuntimeError("the worker is stopping: no further vision-model call")
+            from repairos.pipeline.stopping import WorkerStopping
+
+            raise WorkerStopping("the worker is stopping: no further vision-model call")
 
     def scale_kw(box: Sequence[float], crop_scale: float) -> dict:
         s = px_of(box) if px_of else None
