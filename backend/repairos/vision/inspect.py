@@ -10,7 +10,8 @@ Numbers stay in `measurements`/`evidence_refs`; evidence sentences use words (S5
 
 Budget and prompt (eval/defects/QUICKWINS.md):
 - regions whose crops would show nearly the same pixels are merged first (vision/ranking.py); a merged region whose
-  box lies inside the kept crop gets the kept crop's answer, else it is `not_inspected` with that reason;
+  detector box shows the same part as the kept one (inspect.same_part) gets the kept answer, else it is
+  `not_inspected` with that reason;
 - each crop gets the failure checklist of its part family (vision/checklists.py); a weak detector label or a crop the
   classifier abstains on gets the general checklist, and a region nobody identified is named `unknown_part`.
 
@@ -46,6 +47,7 @@ from repairos.vision.checklists import UNKNOWN_PART, WEAK_LABEL_BELOW, crop_fami
 from repairos.vision.crops import context_view, crop_region, cut, load_still
 from repairos.vision.generic_classes import DEFECT_TO_CROP_STATE, WIRE_CLASSES
 from repairos.vision.ranking import MERGE_IOU, RANK_BY, rank_regions
+from repairos.vision.tiling import iou
 
 VLM_MAX_SIDE = 1568      # crops are downsized only past this (the VLM's own input limit), never upscaled
 MAX_BOX_FRACTION = 0.5   # a box over half the still is scene-level, not a part: not inspected at crop level
@@ -333,14 +335,22 @@ def inside_share(box: Sequence[float], region: Sequence[float]) -> float:
     return w * h / area if area > 0 else 0.0
 
 
-COVERED_INSIDE = 0.9  # a merged box at least this much inside the kept crop was seen by that look
+COVERED_INSIDE = 0.9  # a merged detector box at least this much inside the kept detector box is part of that part
+
+
+def same_part(box: Sequence[float], kept_box: Sequence[float]) -> bool:
+    """Whether a merged region's detector box shows the part the kept region's VLM look judged: the two DETECTOR
+    boxes overlap at IoU >= MERGE_IOU, or the merged box lies inside the kept box (a pin of a judged connector). The
+    padded crops are not used: crop_region pads small boxes to at least 256 px, so a neighbouring part can sit inside
+    the kept crop without being the part the model judged."""
+    return iou(box, kept_box) >= MERGE_IOU or inside_share(box, kept_box) >= COVERED_INSIDE
 
 
 def finding_from_merged(kept: dict, *, scan_id: str, still_id: str, index: int, det, into: int,
-                        region: Sequence[int]) -> dict:
-    """A region merged into detection `into`: the kept crop's answer when the box lies inside that crop (a model
-    looked at those pixels), else not inspected with that reason (I3)."""
-    looked = kept["state"] not in ("not_inspected",) and inside_share(det.box, region) >= COVERED_INSIDE
+                        into_box: Sequence[float]) -> dict:
+    """A region merged into detection `into` (detector box `into_box`): the kept answer when the detector boxes show
+    the same part (same_part), else not inspected with that reason (I3)."""
+    looked = kept["state"] not in ("not_inspected",) and same_part(det.box, into_box)
     if not looked:
         why = "its crop overlaps the crop of another region, which was inspected in its place" \
             if kept["state"] != "not_inspected" else "it overlaps a region that was not inspected either"
@@ -502,7 +512,7 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     out.timing["vlm_s"] = time.perf_counter() - t1
     for i, into in out.merged.items():
         raw[i] = finding_from_merged(raw[into], scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
-                                     into=into, region=regions[into])
+                                     into=into, into_box=dets[into].box)
     out.part_classes = {i: region_part_class(d, abstained(i)) for i, d in enumerate(dets)}
     out.findings = [validate("finding", raw[i]) for i in sorted(raw)] + [validate("finding", f) for f in rollups]
     return out

@@ -176,10 +176,10 @@ def kept_finding(state="damaged"):
                                   crop=CROP, crop_state=cs)
 
 
-def test_a_merged_region_inside_the_kept_crop_shares_its_answer():
+def test_a_merged_region_on_the_same_detected_part_shares_its_answer():
     f = validate("finding", insp.finding_from_merged(kept_finding(), scan_id="sc", still_id="s1", index=0,
                                                      det=det((0, 0, 100, 100), "cell", 0.5), into=1,
-                                                     region=(0, 0, 256, 256)))
+                                                     into_box=(5, 5, 95, 95)))
     assert f.state.value == "damaged" and f.subject.ref == "s1/det0" and "s1/det1" in f.evidence[1]
     assert f.finding_id != kept_finding()["finding_id"] and not f.is_proof
 
@@ -187,13 +187,27 @@ def test_a_merged_region_inside_the_kept_crop_shares_its_answer():
 def test_a_merged_region_outside_the_kept_crop_is_not_inspected():
     f = validate("finding", insp.finding_from_merged(kept_finding(), scan_id="sc", still_id="s1", index=0,
                                                      det=det((200, 0, 400, 100), "cell", 0.5), into=1,
-                                                     region=(0, 0, 256, 256)))
+                                                     into_box=(5, 5, 95, 95)))
     assert f.state.value == "not_inspected" and "inspected in its place" in f.evidence[0]
     over = insp.finding_not_inspected(scan_id="sc", still_id="s1", index=1, det=det((5, 5, 95, 95), "cap", 0.7),
                                       reason="over this still's crop budget")
     g = insp.finding_from_merged(over, scan_id="sc", still_id="s1", index=0, det=det((5, 5, 90, 90), "cell", 0.5),
-                                 into=1, region=(0, 0, 256, 256))
+                                 into=1, into_box=(5, 5, 95, 95))
     assert g["state"] == "not_inspected"  # never ok, never judged, when the kept region was not looked at (I3)
+
+
+def test_a_neighbour_inside_the_padded_crop_is_not_given_the_kept_answer():
+    # Greptile #6.1: a small kept box is padded to a 256 px crop; a separate part beside it lies inside that crop but
+    # was never the part the model judged, so it must not inherit "ok" (I3).
+    kept = kept_finding(state="ok")
+    beside = det((120, 10, 200, 90), "resistor", 0.5)        # inside CROP.region_px, apart from the kept box
+    assert insp.inside_share(beside.box, CROP.region_px) == 1.0
+    f = insp.finding_from_merged(kept, scan_id="sc", still_id="s1", index=0, det=beside, into=1,
+                                 into_box=(5, 5, 95, 95))
+    assert f["state"] == "not_inspected"
+    pin = det((40, 40, 60, 60), "pin header", 0.5)            # inside the kept detector box: the judged part
+    assert insp.finding_from_merged(kept, scan_id="sc", still_id="s1", index=0, det=pin, into=1,
+                                    into_box=(5, 5, 95, 95))["state"] == "ok"
 
 
 def test_unknown_part_naming():

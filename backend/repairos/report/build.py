@@ -199,6 +199,13 @@ def collapse_rows(rows: list[dict[str, Any]], merge_iou: float = MERGE_IOU) -> l
     return out
 
 
+def is_cosmetic(e: Mapping[str, Any]) -> bool:
+    """A row for the `cosmetic` section: an issue the VLM judged cosmetic, unless a meter reading confirmed a fault
+    there (then it is a proven fault and stays in `findings` and `most_likely`, whatever it looks like)."""
+    return e["issue"] != "none" and e.get("severity") == "cosmetic" and \
+        e["proof"]["status"] != "confirmed_by_meter"
+
+
 def _is_issue(e: Mapping[str, Any]) -> bool:
     return e["issue"] != "none" and e["proof"]["status"] != "ruled_out_by_meter"
 
@@ -269,8 +276,8 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
     not_inspected = group_not_inspected(not_inspected, {fid: int(r.get("regions", 1)) for fid, r in regions.items()},
                                         {f["finding_id"]: f for f in findings})
     judged = sorted(collapse_rows(judged), key=rank_key)
-    cosmetic = [e for e in judged if e["issue"] != "none" and e.get("severity") == "cosmetic"]
-    judged = [e for e in judged if not (e["issue"] != "none" and e.get("severity") == "cosmetic")]
+    cosmetic = [e for e in judged if is_cosmetic(e)]
+    judged = [e for e in judged if not is_cosmetic(e)]
     across = len({s for e in judged + cosmetic for s in photos_of(e)}) > 1 and not any(
         (e.get("location") or {}).get("status") == "computed" for e in judged + cosmetic)
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -292,7 +299,7 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
     report["verdict"] = v.verdict
     report["verdict_reason"] = v.as_reason()
     report["safety"] = safety_notes(judged, cosmetic, undecided)
-    report["limits"] = limits(v.verdict, scan.get("symptom"), unmerged_photos=across)
+    report["limits"] = limits(scan.get("symptom"), judged, unmerged_photos=across)
     if next_action:
         step = {"action_id": next_action["action_id"], "kind": next_action["kind"],
                 "instruction": next_action["instruction"]}
@@ -368,10 +375,10 @@ def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, An
             out.append(f"collapsed row {e['finding_id']}: finding_id is not its first finding, or its regions or "
                        "crops do not match the findings it stands for")
     for e in report.get("cosmetic", []):
-        if e.get("severity") != "cosmetic" or e["issue"] == "none":
+        if not is_cosmetic(e):
             out.append(f"row {e['finding_id']} is listed as cosmetic but is not a cosmetic issue")
     for e in report.get("findings", []):
-        if e["issue"] != "none" and e.get("severity") == "cosmetic":
+        if is_cosmetic(e):
             out.append(f"row {e['finding_id']} is a cosmetic issue listed among the findings")
     issues = [e["finding_id"] for e in report.get("findings", []) if _is_issue(e)]
     if "most_likely" in report and report["most_likely"] != issues[:MOST_LIKELY]:

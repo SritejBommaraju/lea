@@ -296,3 +296,13 @@ def test_mains_note_reads_ok_and_undecided_rows_and_comes_before_unplug():
 def test_wall_power_note_on_a_built_report():
     f = crop_finding("s1", 0, (0, 0, 50, 50), part="wall charger plug prong", state="ok", severity="none")
     assert [n["code"] for n in report([f])["safety"]] == ["mains_power"]
+
+
+def test_a_meter_confirmed_fault_stays_in_findings_even_if_it_looks_cosmetic():
+    # Greptile #6.2: a proven fault must never move to the cosmetic section or drop out of most_likely
+    f = crop_finding("s1", 0, (0, 0, 50, 50), part="housing", severity="cosmetic")
+    sus = {**ex("suspect"), "scan_id": "scan_t", "subject": f["subject"], "finding_ids": [f["finding_id"]],
+           "rank": 1, "verdict": "confirmed", "p_fault_word": "very_likely", "proof_reading_id": "r_1"}
+    rep = report([f], suspects=[sus])
+    assert rep["cosmetic"] == [] and rep["most_likely"] == [f["finding_id"]]
+    assert rep["findings"][0]["proof"]["status"] == "confirmed_by_meter" and rep["verdict"] == "potential_issues"
