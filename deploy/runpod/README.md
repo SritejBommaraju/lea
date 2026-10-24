@@ -136,7 +136,10 @@ third boot worked.
 - It keeps the cache on the container disk (`UV_CACHE_DIR=/tmp/lea-uv-cache`).
 - It copies packages into the venv (`UV_LINK_MODE=copy`), because the cache and the venv are on different
   filesystems.
-- If an install attempt fails, it retries once with an emptied cache, then falls back to pip.
+- If an install attempt fails, it retries once with an emptied cache, then falls back to pip. The pip fallback
+  always rebuilds the venv empty first, for two reasons:
+  - pip never removes packages that an older lock had and the new one dropped;
+  - venvs made by the first version of this script have no pip.
 - The lock marker is written only after an install succeeds. If every attempt fails, the script exits with an error
   and the next boot starts over.
 - Both variables can be overridden in the pod env.

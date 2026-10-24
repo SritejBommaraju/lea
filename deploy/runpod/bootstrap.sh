@@ -123,11 +123,27 @@ else
   rm -f "$LEA_VENV/.lea-lock-sha256"
   hashes=(); grep -q -- '--hash=sha256:' "$LOCK" && hashes=(--require-hashes)
   index=(); [ -n "$TORCH_INDEX" ] && index=(--extra-index-url "$TORCH_INDEX")
-  pip_install() { "$LEA_VENV/bin/python" -m pip install --quiet --no-deps --cache-dir "$UV_CACHE_DIR/pip" \
-                    ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} -r "$LOCK"; }
+  pip_install() { mkdir -p "$UV_CACHE_DIR"; "$LEA_VENV/bin/python" -m pip install --quiet --no-deps \
+                    --cache-dir "$UV_CACHE_DIR/pip" ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} -r "$LOCK"; }
+  # The pip route always starts from an EMPTY venv: pip install never removes a package that an older lock had and
+  # this one dropped (uv pip sync does), and a venv made before --seed has no pip at all. A fresh venv from this
+  # lock alone is exactly the lock, so the marker below stays true. Tries python -m venv, then uv venv --seed, then
+  # ensurepip, and checks that pip runs.
+  fresh_pip_venv() {
+    local py="$PY_BASE"
+    [ -x "$py" ] || py="$(uv python find "$PY_BASE" 2>/dev/null || command -v python3)"
+    log "venv: rebuilding $LEA_VENV empty for the pip install (with $py)"
+    rm -rf "$LEA_VENV"
+    if "$py" -m venv "$LEA_VENV" >/dev/null 2>&1 && "$LEA_VENV/bin/python" -m pip --version >/dev/null 2>&1; then return 0; fi
+    rm -rf "$LEA_VENV"
+    if command -v uv >/dev/null && uv venv --quiet --seed --python "$py" "$LEA_VENV" \
+       && "$LEA_VENV/bin/python" -m pip --version >/dev/null 2>&1; then return 0; fi
+    if [ -x "$LEA_VENV/bin/python" ] && "$LEA_VENV/bin/python" -m ensurepip >/dev/null 2>&1 \
+       && "$LEA_VENV/bin/python" -m pip --version >/dev/null 2>&1; then return 0; fi
+    log "WARNING: could not make a venv with pip from $py"; return 1
+  }
   ok=0
   if command -v uv >/dev/null; then
-    # --seed puts pip in the venv too, for the last-resort fallback below
     [ -x "$LEA_VENV/bin/python" ] || uv venv --quiet --seed --python "$PY_BASE" "$LEA_VENV"
     log "venv: $("$LEA_VENV/bin/python" -V), uv cache $UV_CACHE_DIR (link mode $UV_LINK_MODE)"
     # sync = exactly the lock: packages a previous lock had and this one does not are removed. Two tries, the second
@@ -139,14 +155,16 @@ else
       log "WARNING: uv install attempt $attempt failed; clearing $UV_CACHE_DIR and retrying"
       rm -rf "$UV_CACHE_DIR"
     done
-    if [ "$ok" = 0 ] && "$LEA_VENV/bin/python" -m pip --version >/dev/null 2>&1; then
-      log "WARNING: uv failed twice; installing with pip instead"
-      mkdir -p "$UV_CACHE_DIR"; pip_install && ok=1
+    if [ "$ok" = 0 ]; then
+      log "WARNING: uv failed twice; installing with pip into a fresh venv instead"
+      fresh_pip_venv && pip_install && ok=1
     fi
   else
-    [ -x "$LEA_VENV/bin/python" ] || "$PY_BASE" -m venv "$LEA_VENV"
-    mkdir -p "$UV_CACHE_DIR"
-    pip_install || { log "WARNING: pip install failed; retrying once"; rm -rf "$UV_CACHE_DIR"; mkdir -p "$UV_CACHE_DIR"; pip_install; } && ok=1
+    # no uv: pip into a fresh venv (exactly the lock), one retry with an emptied cache; a retry into the same venv
+    # cannot leave extras, it only holds packages of this lock
+    if fresh_pip_venv; then
+      pip_install || { log "WARNING: pip install failed; retrying once"; rm -rf "$UV_CACHE_DIR"; pip_install; } && ok=1
+    fi
   fi
   rm -rf "$UV_CACHE_DIR"   # ~4-11 GB of wheels on the container disk; the venv on the volume is what persists
   [ "$ok" = 1 ] || { log "ERROR: installing $LEA_LOCK failed (see above); the pod will restart the container"; exit 1; }
