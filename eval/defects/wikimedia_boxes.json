@@ -1,0 +1,566 @@
+{
+ "about": "Defect boxes on the held-out Wikimedia Commons photos (training/datasets/MANIFEST.json, source wikimedia_defective_capacitors). Drawn by eye by the M7 agent on a 1000 px long-side preview with a 100 px grid, 2026-10-24; `box_1000` = [x0, y0, x1, y1] in units of a 1000 px long side. Every visibly failed part is boxed. Not reviewed by a person yet: approximate. Kind `ignore` marks a part whose state could not be judged by eye: a crop touching it is dropped, never counted ok. Kinds: bulging_or_leaking_capacitor (no training class), burnt_part (maps to 'burnt or melted'). Not labelled (defect not identifiable by eye): the Seasonic power-supply photo.",
+ "files": {
+  "Blown_up_electrolytic_capacitor.jpg": [
+   {
+    "box_1000": [
+     240,
+     440,
+     860,
+     610
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_14478294754_.jpg": [
+   {
+    "box_1000": [
+     60,
+     220,
+     220,
+     560
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240830_201510.jpg": [
+   {
+    "box_1000": [
+     470,
+     330,
+     700,
+     640
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240830_201516.jpg": [
+   {
+    "box_1000": [
+     320,
+     170,
+     660,
+     400
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240830_201524.jpg": [
+   {
+    "box_1000": [
+     205,
+     280,
+     250,
+     520
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     715,
+     315,
+     755,
+     360
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240831_083640.jpg": [
+   {
+    "box_1000": [
+     300,
+     270,
+     350,
+     350
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240831_083643.jpg": [
+   {
+    "box_1000": [
+     300,
+     295,
+     345,
+     365
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240831_083648.jpg": [
+   {
+    "box_1000": [
+     310,
+     240,
+     430,
+     340
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Blown_up_electrolytic_capacitor_20240831_083656.jpg": [
+   {
+    "box_1000": [
+     312,
+     335,
+     342,
+     425
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Brand_auf_Platine.jpg": [
+   {
+    "box_1000": [
+     170,
+     120,
+     720,
+     520
+    ],
+    "kind": "burnt_part"
+   }
+  ],
+  "Defekter_Kondensator.jpg": [
+   {
+    "box_1000": [
+     305,
+     195,
+     425,
+     425
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Defekter_Kondesator_Hitzeeinwirkung_auf_Verkabelung.jpg": [
+   {
+    "box_1000": [
+     440,
+     270,
+     620,
+     370
+    ],
+    "kind": "burnt_part"
+   },
+   {
+    "box_1000": [
+     530,
+     0,
+     700,
+     260
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Dell-SE177FP-board-bad-capacitor-20150807-001.jpg": [
+   {
+    "box_1000": [
+     380,
+     280,
+     580,
+     410
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     600,
+     560,
+     800,
+     750
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     0,
+     340,
+     175,
+     500
+    ],
+    "kind": "ignore"
+   }
+  ],
+  "Dell-SE177FP-board-bad-capacitor-20150807-002.jpg": [
+   {
+    "box_1000": [
+     450,
+     320,
+     570,
+     400
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     620,
+     420,
+     720,
+     480
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     500,
+     525,
+     610,
+     600
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     240,
+     420,
+     330,
+     480
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     300,
+     320,
+     390,
+     400
+    ],
+    "kind": "ignore"
+   }
+  ],
+  "Elko-mit-ausgedr_cktem-Gummistopfen.jpg": [
+   {
+    "box_1000": [
+     100,
+     650,
+     330,
+     760
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     690,
+     660,
+     960,
+     750
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     400,
+     640,
+     600,
+     710
+    ],
+    "kind": "ignore"
+   }
+  ],
+  "Entst_rkondensator_geborsten.jpg": [
+   {
+    "box_1000": [
+     70,
+     180,
+     720,
+     960
+    ],
+    "kind": "burnt_part"
+   }
+  ],
+  "Epox_8K3A_GSC_caps.jpg": [
+   {
+    "box_1000": [
+     385,
+     295,
+     450,
+     365
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     465,
+     305,
+     530,
+     375
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     545,
+     320,
+     625,
+     395
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     800,
+     160,
+     860,
+     210
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     795,
+     225,
+     850,
+     280
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     840,
+     460,
+     900,
+     510
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     440,
+     495,
+     490,
+     540
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     85,
+     245,
+     125,
+     285
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     140,
+     255,
+     200,
+     310
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     215,
+     260,
+     290,
+     320
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     250,
+     485,
+     310,
+     530
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     630,
+     535,
+     690,
+     580
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     400,
+     595,
+     470,
+     660
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     780,
+     630,
+     840,
+     680
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     890,
+     620,
+     950,
+     670
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     780,
+     700,
+     830,
+     750
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     225,
+     545,
+     290,
+     600
+    ],
+    "kind": "ignore"
+   }
+  ],
+  "Fried_ESC.jpg": [
+   {
+    "box_1000": [
+     600,
+     480,
+     900,
+     700
+    ],
+    "kind": "burnt_part"
+   },
+   {
+    "box_1000": [
+     140,
+     300,
+     200,
+     360
+    ],
+    "kind": "burnt_part"
+   },
+   {
+    "box_1000": [
+     440,
+     90,
+     570,
+     250
+    ],
+    "kind": "ignore"
+   }
+  ],
+  "Hydroxid-Ausfall-V9A-P1010951-1.JPG": [
+   {
+    "box_1000": [
+     350,
+     70,
+     640,
+     210
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "RotturaDelDielettricoCondensatore.JPG": [
+   {
+    "box_1000": [
+     380,
+     80,
+     800,
+     620
+    ],
+    "kind": "burnt_part"
+   }
+  ],
+  "Tek2445_PSU_board_01_crop_.jpg": [
+   {
+    "box_1000": [
+     200,
+     220,
+     590,
+     400
+    ],
+    "kind": "burnt_part"
+   },
+   {
+    "box_1000": [
+     830,
+     410,
+     900,
+     500
+    ],
+    "kind": "burnt_part"
+   }
+  ],
+  "Vintage_leaky_Sprague_paper_capacitor_14478215842_.jpg": [
+   {
+    "box_1000": [
+     270,
+     270,
+     660,
+     560
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Vintage_leaky_Sprague_paper_capacitor_14478293974_.jpg": [
+   {
+    "box_1000": [
+     100,
+     60,
+     830,
+     310
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   }
+  ],
+  "Vp6_blown_capacitor.jpg": [
+   {
+    "box_1000": [
+     460,
+     340,
+     580,
+     520
+    ],
+    "kind": "bulging_or_leaking_capacitor"
+   },
+   {
+    "box_1000": [
+     405,
+     255,
+     515,
+     320
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     585,
+     305,
+     690,
+     365
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     685,
+     300,
+     795,
+     365
+    ],
+    "kind": "ignore"
+   },
+   {
+    "box_1000": [
+     500,
+     150,
+     630,
+     330
+    ],
+    "kind": "ignore"
+   }
+  ]
+ }
+}

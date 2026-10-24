@@ -46,6 +46,13 @@ geometry = [
     "open3d==0.20.0",
 ]
 
+# Defect classifier training and its benchmark (M7): `uv pip install -e 'backend[vision,train]'`. Not in
+# requirements.lock (run `make lock` when it joins). Licences: pyarrow Apache-2.0 (reads the Hugging Face parquet
+# mirrors). Heads train with torch + numpy from the vision extra; no scikit-learn.
+train = [
+    "pyarrow==21.0.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["repairos"]
 

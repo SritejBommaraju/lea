@@ -1,0 +1,106 @@
+{
+  "about": "Data sources for the defect classifier (task M7, data part of M6). Every source passes L2 (PLAN.md \u00a75): CC BY 4.0, CC BY 2.0/3.0, CC0 or public domain; nothing non-commercial, share-alike or research-only, nothing from closed apps, nothing synthetic. Raw files live under data/datasets/ (gitignored); training/datasets/defects.py builds the crops. `crops` counts are written by `defects.py manifest`.",
+  "checked": "2026-10-24",
+  "sources": [
+    {
+      "id": "visa",
+      "name": "VisA (Visual Anomaly), PCB categories pcb1-pcb4",
+      "url": "https://github.com/amazon-science/spot-diff",
+      "archive": "https://amazon-visual-anomaly.s3.us-west-2.amazonaws.com/VisA_20220922.tar",
+      "licence": "CC BY 4.0",
+      "licence_evidence": "LICENSE-DATASET inside the archive and the repository README",
+      "attribution": "Zou, Jeong, Pemula, Zhang, Dabeer. SPot-the-Difference Self-Supervised Pre-training for Anomaly Detection and Segmentation. ECCV 2022, arXiv:2207.14315",
+      "content": "Photos of four PCB designs (about 1400 x 1070 px), normal and anomalous, with pixel masks. pcb1-3: bent, melt, missing, scratch. pcb4: missing, extra, dirt, wrong place, damage, burnt, scratch.",
+      "use": "pcb1-3 train/val/test, split by board photo (each photo is its own board unit). pcb4 HELD OUT: another board design and defect kinds never trained on; never used for training or thresholds.",
+      "subset": "all anomalous photos; 150 normal photos per board for pcb1-3 and 200 for pcb4, seeded",
+      "crops": {
+        "heldout/defect": 421,
+        "heldout/ok": 1103,
+        "test/defect": 182,
+        "test/ok": 601,
+        "train/defect": 814,
+        "train/ok": 2981,
+        "val/defect": 116,
+        "val/ok": 652
+      }
+    },
+    {
+      "id": "pcb_defect_webcam",
+      "name": "keremberke/pcb-defect-segmentation (Hugging Face mirror of Roboflow Universe 'defects-2q87r', diplom-qz7q6)",
+      "url": "https://huggingface.co/datasets/keremberke/pcb-defect-segmentation",
+      "revision": "04f959cc293074479c654af4febabaa859483769",
+      "licence": "CC BY 4.0",
+      "licence_evidence": "dataset card and README.roboflow.txt; uploader-provided (one Roboflow user)",
+      "content": "189 webcam close-ups (640 x 480) of assembled boards with defect boxes: dry_joint, short_circuit, incorrect_installation, pcb_damage.",
+      "use": "train/val/test split by capture day (train 2022-10-17, 10-30, 11-02; val 10-23; test 11-03)",
+      "crops": {
+        "test/defect": 134,
+        "test/ok": 12,
+        "train/defect": 557,
+        "train/ok": 309,
+        "val/defect": 280,
+        "val/ok": 37
+      }
+    },
+    {
+      "id": "rf100_printed_circuit_board",
+      "name": "Roboflow 100 'printed-circuit-board' (Hugging Face mirror)",
+      "url": "https://universe.roboflow.com/object-detection/printed-circuit-board",
+      "revision": "ed151089e49a93907acd48173393f9a9c72b14d2",
+      "licence": "CC BY 4.0",
+      "licence_evidence": "README.dataset.txt in the archive: 'License: CC BY 4.0'",
+      "attribution": "Roboflow 100 (Ciaglia et al., arXiv:2211.13523)",
+      "content": "Photos of many real boards (640 x 640) with component boxes, no defect annotation.",
+      "use": "ok crops only, split by board name. Assumption: the photographed boards are not defective (not verified per board).",
+      "subset": "300 photos, seeded",
+      "crops": {
+        "test/ok": 388,
+        "train/ok": 1341,
+        "val/ok": 200
+      }
+    },
+    {
+      "id": "wikimedia_defective_capacitors",
+      "name": "Wikimedia Commons, Category:Defective capacitors (capacitor plague)",
+      "url": "https://commons.wikimedia.org/wiki/Category:Defective_capacitors",
+      "licence": "per file: CC0, public domain, CC BY 2.0/3.0/4.0 only (share-alike files excluded)",
+      "licence_evidence": "Commons extmetadata LicenseShortName per file, recorded with author and sha1 in data/datasets/wikimedia/files.json and eval/defects/wikimedia_files.json",
+      "content": "Real photos of blown, bulging, leaking or burnt capacitors, mostly on boards.",
+      "use": "HELD OUT evaluation only (the motivating case; no training data of this kind exists in the sources above).",
+      "crops": {
+        "heldout/defect": 124,
+        "heldout/ok": 53
+      }
+    }
+  ],
+  "excluded": [
+    {
+      "name": "Roboflow 100 cable-damage",
+      "reason": "steel wire rope, not product wiring; many frames are Bandicam screen recordings of someone else's video (provenance)"
+    },
+    {
+      "name": "Roboflow 100 corrosion-bi3q3",
+      "reason": "drone shots of bridges with boxes of a few pixels: not the domain"
+    },
+    {
+      "name": "MVTec AD / 3D-AD, Real-IAD, MANTA, KolektorSDD, MPDD, Innodisk PCB",
+      "reason": "non-commercial or research-only licences"
+    },
+    {
+      "name": "DefectSpectrum",
+      "reason": "MIT annotations on top of MVTec (non-commercial) images"
+    },
+    {
+      "name": "SolDef_AI",
+      "reason": "dataset licence not confirmed"
+    },
+    {
+      "name": "HRIPCB, DeepPCB",
+      "reason": "bare-board etching defects, licences unclear"
+    },
+    {
+      "name": "Polycam or any closed-app capture",
+      "reason": "terms forbid ML training (PLAN.md \u00a710)"
+    }
+  ]
+}
