@@ -1,0 +1,31 @@
+# Proprietary Grain material: local only, never committed (get it from Sritej)
+private/
+**/GRAIN_SPEC.md
+**/GRAIN_STATUS.md
+**/grain-observed/
+samples/**/grain/
+
+# Secrets
+.env
+.env.*
+!.env.example
+backend/.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Xcode / iOS
+xcuserdata/
+DerivedData/
+*.xcuserstate
+ios/Config/Signing.xcconfig
+
+# Data and OS
+data/
+.DS_Store
