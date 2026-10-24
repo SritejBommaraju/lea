@@ -8,7 +8,19 @@ Product-agnostic: prompts come from the generic classes only (no reference in Ph
   detected parts.
 Numbers stay in `measurements`/`evidence_refs`; evidence sentences use words (S5).
 
-    python -m repairos.vision.inspect still.jpg --det <impl> [--vlm <impl>] [--scan-id ID] [--still-id ID]
+With a defect classifier (CLS slot selected, or `classifier=` passed; task M7) the classifier scores every part crop
+first (up to `max_classified`) and decides which crops the VLM sees:
+- flagged (likely defect) and unsure crops go to the VLM, flagged first, most likely defect first, up to `max_crops`;
+  the VLM's state is the finding's state and its sentence the explanation; the classifier's answer is added in
+  words, and a disagreement lowers the confidence;
+- a crop the classifier is confident has no visible defect is `ok` on the classifier's word (a model looked at it,
+  I3), with its confidence in words and no VLM call;
+- a crop unlike the classifier's training data (unfamiliar part or image type) gets no classifier answer and goes
+  to the VLM after the flagged ones;
+- over the VLM budget, a flagged crop is a suspect on the classifier's word alone, and an unsure or unfamiliar crop
+  is `insufficient_evidence` with that reason (I4).
+
+    python -m repairos.vision.inspect still.jpg --det <impl> [--vlm <impl>] [--cls <impl>|none] [--scan-id ID]
 """
 from __future__ import annotations
 
@@ -22,8 +34,10 @@ from pathlib import Path
 from typing import Any
 
 from repairos.contracts import validate
+from repairos.slots.classifier import (ABSTAIN, FLAGGED, OK, UNSURE, DefectScore, confidence_word, evidence_words,
+                                      route)
 from repairos.vision.crops import context_view, cut, load_still
-from repairos.vision.generic_classes import WIRE_CLASSES
+from repairos.vision.generic_classes import DEFECT_TO_CROP_STATE, WIRE_CLASSES
 
 VLM_MAX_SIDE = 1568      # crops are downsized only past this (the VLM's own input limit), never upscaled
 MAX_BOX_FRACTION = 0.5   # a box over half the still is scene-level, not a part: not inspected at crop level
@@ -41,6 +55,8 @@ class Inspection:
     findings: list[Any] = field(default_factory=list)      # repairos.contracts Finding models
     detections: list[Any] = field(default_factory=list)    # slots.detector.Detection
     timing: dict[str, float] = field(default_factory=dict)
+    defect_scores: dict[int, DefectScore] = field(default_factory=dict)  # detection index -> CLS score (M7)
+    routes: dict[int, str] = field(default_factory=dict)   # detection index -> ok | unsure | flagged (CLS routing)
 
 
 def _now() -> str:
@@ -64,8 +80,8 @@ def vlm_answer_for(state: str) -> str:
 
 
 def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, crop_state, crop_file: str | None = None,
-                      sharpness: float | None = None) -> dict:
-    """The Finding (as a dict) for one VLM-inspected crop."""
+                      sharpness: float | None = None, defect_score: DefectScore | None = None) -> dict:
+    """The Finding (as a dict) for one VLM-inspected crop; `defect_score` adds the classifier's answer in words."""
     state = STATE_TO_FINDING[crop_state.state]
     words = crop_state.state.replace("_", " ")
     lead = (f"could not judge the {crop_state.part_class} in still {still_id}" if crop_state.state == "cannot_tell"
@@ -77,6 +93,14 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         f"detector region labelled '{det.label}' ({_strength(det.score)} match)",
         "vision suspect, not proof",
     ]
+    confidence = CONFIDENCE.get(crop_state.confidence_word, 0.35)
+    if defect_score is not None:
+        evidence.insert(2, evidence_words(defect_score))
+        vlm_defect = crop_state.state not in ("ok", "cannot_tell")
+        if (not defect_score.abstained and crop_state.state != "cannot_tell"
+                and vlm_defect != (defect_score.p_defect >= 0.5)):
+            evidence.insert(3, "the defect classifier and the vision model disagree")
+            confidence = CONFIDENCE["low"]
     refs: dict[str, Any] = {"still_ids": [still_id], "crop_box_px": [int(v) for v in crop.region_px]}
     if crop_file:
         refs["crop_file"] = crop_file
@@ -89,7 +113,7 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         "subject": _subject(still_id, index, det.label),
         "state": state,
         "source": "repairos.vision",
-        "confidence": CONFIDENCE.get(crop_state.confidence_word, 0.35),
+        "confidence": confidence,
         "is_proof": False,
         "evidence": evidence,
         "evidence_refs": refs,
@@ -98,6 +122,89 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         "design_trust": "low",
         "created_at": _now(),
     }
+
+
+def finding_from_classifier(*, scan_id: str, still_id: str, index: int, det, crop, score: DefectScore,
+                            reason: str, crop_file: str | None = None, sharpness: float | None = None) -> dict:
+    """The Finding for a crop only the classifier judged (no VLM call): `ok` when it is confident there is no
+    visible defect, a defect suspect when it flags one. Never proof (I1); confidence in words (S5)."""
+    if score.p_defect >= 0.5:
+        state = STATE_TO_FINDING[DEFECT_TO_CROP_STATE[score.defect_class]] if score.defect_class else "damaged"
+        lead = f"region labelled '{det.label}' in still {still_id} looks defective to the defect classifier"
+    else:
+        state = "ok"
+        lead = f"region labelled '{det.label}' in still {still_id} shows no visible defect to the defect classifier"
+    word = confidence_word(score.p_defect)
+    refs: dict[str, Any] = {"still_ids": [still_id], "crop_box_px": [int(v) for v in crop.region_px]}
+    if crop_file:
+        refs["crop_file"] = crop_file
+    meas: dict[str, Any] = {"views": 1}
+    if sharpness is not None:
+        meas["sharpness"] = sharpness
+    return {
+        "finding_id": _fid(scan_id, still_id, index, det.box, det.label),
+        "scan_id": scan_id,
+        "subject": _subject(still_id, index, det.label),
+        "state": state,
+        "source": "repairos.vision",
+        "confidence": CONFIDENCE[word],
+        "is_proof": False,
+        "evidence": [lead, f"{evidence_words(score)} ({word} confidence)",
+                     f"detector region labelled '{det.label}' ({_strength(det.score)} match)",
+                     f"not checked by the vision model: {reason}", "vision suspect, not proof"],
+        "evidence_refs": refs,
+        "measurements": meas,
+        "design_trust": "low",
+        "created_at": _now(),
+    }
+
+
+def finding_classifier_unsure(*, scan_id: str, still_id: str, index: int, det, crop, score: DefectScore,
+                              reason: str) -> dict:
+    """The classifier could not decide (unsure, or abstained on an unfamiliar crop) and the VLM did not look:
+    insufficient evidence, with the reason (I4)."""
+    why = f"the defect classifier gave no answer ({score.abstain_reason})" if score.abstained else \
+        "the defect classifier was unsure"
+    return {
+        "finding_id": _fid(scan_id, still_id, index, det.box, det.label),
+        "scan_id": scan_id,
+        "subject": _subject(still_id, index, det.label),
+        "state": "insufficient_evidence",
+        "source": "repairos.vision",
+        "confidence": 0.0,
+        "is_proof": False,
+        "evidence": [f"could not judge the region labelled '{det.label}' in still {still_id}: {why} and {reason}",
+                     evidence_words(score)],
+        "evidence_refs": {"still_ids": [still_id], "crop_box_px": [int(v) for v in crop.region_px]},
+        "design_trust": "low",
+        "created_at": _now(),
+    }
+
+
+def vlm_queue(scores: dict[int, DefectScore], ok_below: float, flag_at: float) -> tuple[list[int], dict[int, str]]:
+    """(indices for the VLM in order, route per index): flagged first, then abstained (unfamiliar), then unsure,
+    most likely defect first within each. Confident-ok crops are not queued."""
+    routes = {i: route(s, ok_below, flag_at) for i, s in scores.items()}
+    rank = {FLAGGED: 0, ABSTAIN: 1, UNSURE: 2}
+    queue = sorted((i for i, r in routes.items() if r != OK),
+                   key=lambda i: (rank[routes[i]], -scores[i].p_defect if routes[i] != ABSTAIN else 0.0, i))
+    return queue, routes
+
+
+def resolve_classifier(classifier: Any) -> Any:
+    """None = the configured CLS slot (nothing when the profile says `none` or has no CLS line); False = none."""
+    if classifier is False:
+        return None
+    if classifier is not None:
+        return classifier
+    from repairos.registry import RegistryError, default_registry
+
+    reg = default_registry()
+    try:
+        impl = reg.selected("CLS")
+    except RegistryError:
+        return None
+    return None if impl == "none" else reg.slot("CLS")
 
 
 def finding_not_inspected(*, scan_id: str, still_id: str, index: int, det, reason: str) -> dict:
@@ -142,12 +249,16 @@ def order_for_inspection(detections: Sequence[Any]) -> list[int]:
 def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = None, judge: Any = None,
                   prompts: list[str] | None = None, min_score: float | None = None, max_crops: int = 12,
                   with_context: bool = True, crop_dir: str | Path | None = None, workers: int = 4,
-                  sharpness: float | None = None) -> Inspection:
-    """Run detect -> crops -> VLM on one full-resolution still (PIL image, array or path)."""
+                  sharpness: float | None = None, classifier: Any = None, max_classified: int = 48) -> Inspection:
+    """Run detect -> crops -> [defect classifier] -> VLM on one full-resolution still (PIL image, array or path).
+
+    `classifier`: None = the configured CLS slot (off when the profile says `none`), False = off, or a
+    DefectClassifier. `max_crops` is the VLM budget; `max_classified` caps the crops the classifier scores."""
     from repairos.registry import slot
 
     detector = detector or slot("DET")
     judge = judge or slot("VLM")
+    classifier = resolve_classifier(classifier)
     im = load_still(image) if isinstance(image, (str, Path)) else image
     from repairos.vision.crops import as_pil
 
@@ -162,40 +273,67 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         return out
 
     area = im.width * im.height
-    chosen: list[int] = []
+    budget = max_classified if classifier is not None else max_crops
+    candidates: list[int] = []
     raw: dict[int, dict] = {}
     for i in order_for_inspection(dets):
         b = dets[i].box
         if (b[2] - b[0]) * (b[3] - b[1]) > MAX_BOX_FRACTION * area:
             raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
                                            reason="the region covers most of the still; take a closer still")
-        elif len(chosen) >= max_crops:
+        elif len(candidates) >= budget:
             raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
                                            reason="over this still's crop budget")
         else:
-            chosen.append(i)
+            candidates.append(i)
 
     crop_dir = Path(crop_dir) if crop_dir else None
     if crop_dir:
         crop_dir.mkdir(parents=True, exist_ok=True)
+    crops = {i: cut(im, dets[i].box, still_id=still_id, max_side=VLM_MAX_SIDE) for i in candidates}
+
+    def save(i: int) -> str | None:
+        if not crop_dir:
+            return None
+        p = crop_dir / f"{still_id}_det{i}.jpg"
+        crops[i].image.save(p, quality=92)
+        return str(p)
+
+    chosen = candidates
+    if classifier is not None:
+        t2 = time.perf_counter()
+        scores = classifier.classify([crops[i].image for i in candidates])
+        if len(scores) != len(candidates):
+            raise RuntimeError(f"CLS returned {len(scores)} scores for {len(candidates)} crops")
+        out.defect_scores = dict(zip(candidates, scores))
+        out.timing["classify_s"] = time.perf_counter() - t2
+        queue, out.routes = vlm_queue(out.defect_scores, classifier.ok_below, classifier.flag_at)
+        chosen = queue[:max_crops]
+        for i in candidates:
+            s, r = out.defect_scores[i], out.routes[i]
+            kw = dict(scan_id=scan_id, still_id=still_id, index=i, det=dets[i], crop=crops[i], score=s)
+            if r == OK:
+                raw[i] = finding_from_classifier(**kw, reason="the classifier was confident", crop_file=save(i),
+                                                 sharpness=sharpness)
+            elif i not in chosen and r == FLAGGED:
+                raw[i] = finding_from_classifier(**kw, reason="over this still's vision-model budget",
+                                                 crop_file=save(i), sharpness=sharpness)
+            elif i not in chosen and r in (UNSURE, ABSTAIN):
+                raw[i] = finding_classifier_unsure(**kw, reason="the vision-model budget was used up")
 
     def look(i: int) -> tuple[int, dict]:
         d = dets[i]
-        crop = cut(im, d.box, still_id=still_id, max_side=VLM_MAX_SIDE)
         ctx = context_view(im, d.box) if with_context else None
-        state = judge.inspect_crop(crop.image, ctx, part_hint=d.label)
-        crop_file = None
-        if crop_dir:
-            p = crop_dir / f"{still_id}_det{i}.jpg"
-            crop.image.save(p, quality=92)
-            crop_file = str(p)
-        return i, finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crop,
-                                    crop_state=state, crop_file=crop_file, sharpness=sharpness)
+        state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label)
+        return i, finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crops[i],
+                                    crop_state=state, crop_file=save(i), sharpness=sharpness,
+                                    defect_score=out.defect_scores.get(i))
 
     t1 = time.perf_counter()
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        for i, f in pool.map(look, chosen):
-            raw[i] = f
+    if chosen:
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            for i, f in pool.map(look, chosen):
+                raw[i] = f
     out.timing["vlm_s"] = time.perf_counter() - t1
     out.findings = [validate("finding", raw[i]) for i in sorted(raw)]
     return out
@@ -211,16 +349,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("image")
     ap.add_argument("--det", required=True, help="DET implementation id")
     ap.add_argument("--vlm", default=None, help="VLM implementation id (default: the configured one)")
+    ap.add_argument("--cls", default=None, help="CLS implementation id, or none (default: the configured one)")
     ap.add_argument("--scan-id", default="local")
     ap.add_argument("--still-id", default=None)
     ap.add_argument("--max-crops", type=int, default=12)
     ap.add_argument("--crop-dir", default=None)
     a = ap.parse_args(argv)
     reg = Registry()
+    cls = None if a.cls is None else False if a.cls == "none" else reg.load("CLS", a.cls)
     res = inspect_still(a.image, still_id=a.still_id or Path(a.image).stem, scan_id=a.scan_id,
                         detector=reg.load("DET", a.det), judge=reg.load("VLM", a.vlm or reg.selected("VLM")),
-                        max_crops=a.max_crops, crop_dir=a.crop_dir)
-    print(json.dumps({"timing": res.timing, "detections": len(res.detections),
+                        max_crops=a.max_crops, crop_dir=a.crop_dir, classifier=cls)
+    print(json.dumps({"timing": res.timing, "detections": len(res.detections), "routes": res.routes,
                       "findings": [f.model_dump(mode="json", exclude_none=True) for f in res.findings]}, indent=1))
     return 0
 

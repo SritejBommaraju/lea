@@ -1,0 +1,1029 @@
+{
+ "head": {
+  "head_id": "015921955e",
+  "backbone": {
+   "repo": "facebook/dinov2-base",
+   "revision": "f9e44c814b77203eaa57a6bdbbd535f21ede1415",
+   "licence": "Apache-2.0",
+   "frozen": true
+  },
+  "resolution": 224,
+  "pools": [
+   "cls",
+   "mean",
+   "max"
+  ],
+  "thresholds": {
+   "ok_below": 0.14479562640190125,
+   "flag_at": 0.5,
+   "rule": "ok_below: at most 2% of val defect crops below it; flag_at: 0.5"
+  },
+  "calibration": {
+   "defect_platt": [
+    0.9641862678774297,
+    -2.10610928774758
+   ],
+   "kind_temperature": 1.3201814186971086,
+   "fitted_on": "val"
+  },
+  "ood": {
+   "components": 64,
+   "residual_var": 0.26023149490356445,
+   "cutoff": 4.382891654968262,
+   "rule": "abstain when the distance to the train features exceeds the 99% quantile of the val distances (Mahalanobis in the top principal components of the standardised train features plus the residual outside them)",
+   "val_abstain_share": 0.010116731517509728
+  },
+  "defect_head": {
+   "hidden": 0,
+   "weight_decay": 0.0001,
+   "val_auroc": 0.9915039029212258,
+   "val_log_loss": 0.11331348127239929,
+   "val_ece": 0.016543376613045797
+  },
+  "kind_head": {
+   "hidden": 256,
+   "weight_decay": 0.001,
+   "val_accuracy": 0.9573333333333334,
+   "train_counts": {
+    "burnt or melted": 384,
+    "bent or deformed": 126,
+    "missing part": 153,
+    "scratch or surface damage": 88,
+    "solder fault": 163,
+    "misplaced or extra part": 301
+   }
+  },
+  "train_seconds": 20.6
+ },
+ "classifier": {
+  "val (threshold split)": {
+   "n": 1285,
+   "defect": 396,
+   "auroc": 0.9915039029212258,
+   "ece": 0.016543376443960478,
+   "tp": 362,
+   "fp": 15,
+   "fn": 34,
+   "tn": 874,
+   "precision": 0.9602122015915119,
+   "recall": 0.9141414141414141,
+   "f1": 0.9366106080206985,
+   "specificity": 0.983127109111361,
+   "abstain_share": 0.010116731517509728,
+   "answered": {
+    "n": 1272,
+    "auroc": 0.9913821801897252,
+    "precision": 0.9598930481283422,
+    "recall": 0.9134860050890585
+   },
+   "routed_ok_share": 0.6381322957198443,
+   "defects_routed_ok": 7,
+   "defects_routed_ok_share": 0.017676767676767676
+  },
+  "test, all sources": {
+   "n": 1317,
+   "defect": 316,
+   "auroc": 0.9688065099457505,
+   "ece": 0.05759459401848661,
+   "tp": 214,
+   "fp": 6,
+   "fn": 102,
+   "tn": 995,
+   "precision": 0.9727272727272728,
+   "recall": 0.6772151898734177,
+   "f1": 0.7985074626865671,
+   "specificity": 0.994005994005994,
+   "abstain_share": 0.02885345482156416,
+   "answered": {
+    "n": 1279,
+    "auroc": 0.968777256233563,
+    "precision": 0.9768518518518519,
+    "recall": 0.6806451612903226
+   },
+   "routed_ok_share": 0.7357630979498861,
+   "defects_routed_ok": 40,
+   "defects_routed_ok_share": 0.12658227848101267
+  },
+  "test, VisA pcb1-3": {
+   "n": 783,
+   "defect": 182,
+   "auroc": 0.9753067232268563,
+   "ece": 0.0503566974752742,
+   "tp": 129,
+   "fp": 0,
+   "fn": 53,
+   "tn": 601,
+   "precision": 1.0,
+   "recall": 0.7087912087912088,
+   "f1": 0.8295819935691318,
+   "specificity": 1.0,
+   "abstain_share": 0.019157088122605363,
+   "answered": {
+    "n": 768,
+    "auroc": 0.9747797137464314,
+    "precision": 1.0,
+    "recall": 0.7094972067039106
+   },
+   "routed_ok_share": 0.7445721583652618,
+   "defects_routed_ok": 19,
+   "defects_routed_ok_share": 0.1043956043956044
+  },
+  "test, webcam close-ups": {
+   "n": 146,
+   "defect": 134,
+   "auroc": 0.6697761194029851,
+   "ece": 0.3400904151247432,
+   "tp": 85,
+   "fp": 3,
+   "fn": 49,
+   "tn": 9,
+   "precision": 0.9659090909090909,
+   "recall": 0.6343283582089553,
+   "f1": 0.7657657657657658,
+   "specificity": 0.75,
+   "abstain_share": 0.03424657534246575,
+   "answered": {
+    "n": 141,
+    "auroc": 0.6458015267175573,
+    "precision": 0.9655172413793104,
+    "recall": 0.6412213740458015
+   },
+   "routed_ok_share": 0.1780821917808219,
+   "defects_routed_ok": 21,
+   "defects_routed_ok_share": 0.15671641791044777
+  },
+  "test, component boards (ok only)": {
+   "n": 388,
+   "defect": 0,
+   "auroc": null,
+   "ece": 0.02390854172936955,
+   "tp": 0,
+   "fp": 3,
+   "fn": 0,
+   "tn": 385,
+   "precision": 0.0,
+   "recall": null,
+   "f1": null,
+   "specificity": 0.9922680412371134,
+   "abstain_share": 0.04639175257731959,
+   "answered": {
+    "n": 370,
+    "auroc": null,
+    "precision": 0.0,
+    "recall": null
+   },
+   "routed_ok_share": 0.9278350515463918,
+   "defects_routed_ok": 0,
+   "defects_routed_ok_share": null
+  },
+  "held-out VisA pcb4, detector crops": {
+   "n": 999,
+   "defect": 164,
+   "auroc": 0.7356068351102673,
+   "ece": 0.2569833180970383,
+   "tp": 105,
+   "fp": 238,
+   "fn": 59,
+   "tn": 597,
+   "precision": 0.30612244897959184,
+   "recall": 0.6402439024390244,
+   "f1": 0.41420118343195267,
+   "specificity": 0.7149700598802395,
+   "abstain_share": 0.003003003003003003,
+   "answered": {
+    "n": 996,
+    "auroc": 0.7353937030956847,
+    "precision": 0.30701754385964913,
+    "recall": 0.6402439024390244
+   },
+   "routed_ok_share": 0.15315315315315314,
+   "defects_routed_ok": 13,
+   "defects_routed_ok_share": 0.07926829268292683
+  },
+  "held-out VisA pcb4, defect-centred + same place on normal boards": {
+   "n": 525,
+   "defect": 257,
+   "auroc": 0.7877199605087404,
+   "ece": 0.14072042509558658,
+   "tp": 197,
+   "fp": 106,
+   "fn": 60,
+   "tn": 162,
+   "precision": 0.6501650165016502,
+   "recall": 0.7665369649805448,
+   "f1": 0.7035714285714286,
+   "specificity": 0.6044776119402985,
+   "abstain_share": 0.12571428571428572,
+   "answered": {
+    "n": 459,
+    "auroc": 0.7869870820668693,
+    "precision": 0.66,
+    "recall": 0.7366071428571429
+   },
+   "routed_ok_share": 0.14666666666666667,
+   "defects_routed_ok": 13,
+   "defects_routed_ok_share": 0.05058365758754864
+  },
+  "held-out Wikimedia photos, detector crops": {
+   "n": 146,
+   "defect": 93,
+   "auroc": 0.6275106512477175,
+   "ece": 0.39691623621056016,
+   "tp": 39,
+   "fp": 17,
+   "fn": 54,
+   "tn": 36,
+   "precision": 0.6964285714285714,
+   "recall": 0.41935483870967744,
+   "f1": 0.523489932885906,
+   "specificity": 0.6792452830188679,
+   "abstain_share": 0.9315068493150684,
+   "answered": {
+    "n": 10,
+    "auroc": 0.9166666666666666,
+    "precision": 0.5,
+    "recall": 1.0
+   },
+   "routed_ok_share": 0.0136986301369863,
+   "defects_routed_ok": 0,
+   "defects_routed_ok_share": 0.0
+  },
+  "held-out Wikimedia photos, defect-centred crops": {
+   "n": 31,
+   "defect": 31,
+   "auroc": null,
+   "ece": 0.46559399670419926,
+   "tp": 17,
+   "fp": 0,
+   "fn": 14,
+   "tn": 0,
+   "precision": 1.0,
+   "recall": 0.5483870967741935,
+   "f1": 0.7083333333333333,
+   "specificity": null,
+   "abstain_share": 0.8709677419354839,
+   "answered": {
+    "n": 4,
+    "auroc": null,
+    "precision": 1.0,
+    "recall": 0.75
+   },
+   "routed_ok_share": 0.0,
+   "defects_routed_ok": 0,
+   "defects_routed_ok_share": 0.0
+  }
+ },
+ "kinds": {
+  "test, all sources": {
+   "accuracy": 0.6592592592592592,
+   "classes": {
+    "burnt or melted": {
+     "tp": 53,
+     "fp": 10,
+     "fn": 3,
+     "tn": 204,
+     "precision": 0.8412698412698413,
+     "recall": 0.9464285714285714,
+     "f1": 0.8907563025210083,
+     "specificity": 0.9532710280373832,
+     "support": 56
+    },
+    "bent or deformed": {
+     "tp": 52,
+     "fp": 0,
+     "fn": 6,
+     "tn": 212,
+     "precision": 1.0,
+     "recall": 0.896551724137931,
+     "f1": 0.9454545454545454,
+     "specificity": 1.0,
+     "support": 58
+    },
+    "missing part": {
+     "tp": 13,
+     "fp": 4,
+     "fn": 3,
+     "tn": 250,
+     "precision": 0.7647058823529411,
+     "recall": 0.8125,
+     "f1": 0.787878787878788,
+     "specificity": 0.984251968503937,
+     "support": 16
+    },
+    "scratch or surface damage": {
+     "tp": 13,
+     "fp": 10,
+     "fn": 8,
+     "tn": 239,
+     "precision": 0.5652173913043478,
+     "recall": 0.6190476190476191,
+     "f1": 0.5909090909090909,
+     "specificity": 0.9598393574297188,
+     "support": 21
+    },
+    "solder fault": {
+     "tp": 24,
+     "fp": 1,
+     "fn": 72,
+     "tn": 173,
+     "precision": 0.96,
+     "recall": 0.25,
+     "f1": 0.39669421487603307,
+     "specificity": 0.9942528735632183,
+     "support": 96
+    },
+    "misplaced or extra part": {
+     "tp": 23,
+     "fp": 67,
+     "fn": 0,
+     "tn": 180,
+     "precision": 0.25555555555555554,
+     "recall": 1.0,
+     "f1": 0.4070796460176991,
+     "specificity": 0.728744939271255,
+     "support": 23
+    }
+   },
+   "n": 270
+  },
+  "held-out VisA pcb4, defect-centred + same place on normal boards": {
+   "accuracy": 0.25333333333333335,
+   "classes": {
+    "burnt or melted": {
+     "tp": 2,
+     "fp": 47,
+     "fn": 0,
+     "tn": 26,
+     "precision": 0.04081632653061224,
+     "recall": 1.0,
+     "f1": 0.07843137254901959,
+     "specificity": 0.3561643835616438,
+     "support": 2
+    },
+    "bent or deformed": {
+     "tp": 0,
+     "fp": 0,
+     "fn": 0,
+     "tn": 75,
+     "precision": null,
+     "recall": null,
+     "f1": null,
+     "specificity": 1.0,
+     "support": 0
+    },
+    "missing part": {
+     "tp": 13,
+     "fp": 1,
+     "fn": 31,
+     "tn": 30,
+     "precision": 0.9285714285714286,
+     "recall": 0.29545454545454547,
+     "f1": 0.4482758620689656,
+     "specificity": 0.967741935483871,
+     "support": 44
+    },
+    "scratch or surface damage": {
+     "tp": 2,
+     "fp": 1,
+     "fn": 10,
+     "tn": 62,
+     "precision": 0.6666666666666666,
+     "recall": 0.16666666666666666,
+     "f1": 0.26666666666666666,
+     "specificity": 0.9841269841269841,
+     "support": 12
+    },
+    "solder fault": {
+     "tp": 0,
+     "fp": 3,
+     "fn": 0,
+     "tn": 72,
+     "precision": 0.0,
+     "recall": null,
+     "f1": null,
+     "specificity": 0.96,
+     "support": 0
+    },
+    "misplaced or extra part": {
+     "tp": 2,
+     "fp": 4,
+     "fn": 15,
+     "tn": 54,
+     "precision": 0.3333333333333333,
+     "recall": 0.11764705882352941,
+     "f1": 0.1739130434782609,
+     "specificity": 0.9310344827586207,
+     "support": 17
+    }
+   },
+   "n": 75
+  }
+ },
+ "compare": {
+  "held-out VisA pcb4": {
+   "n": 200,
+   "defect": 100,
+   "classifier_abstained": 1,
+   "classifier": {
+    "tp": 67,
+    "fp": 23,
+    "fn": 33,
+    "tn": 77,
+    "precision": 0.7444444444444445,
+    "recall": 0.67,
+    "f1": 0.7052631578947369,
+    "specificity": 0.77,
+    "ci": {
+     "precision": [
+      0.6511627906976745,
+      0.8314636309875814
+     ],
+     "recall": [
+      0.577766323024055,
+      0.7596153846153846
+     ],
+     "auroc": [
+      0.723642218118782,
+      0.8518805870570305
+     ]
+    },
+    "vlm_calls": 0,
+    "cannot_tell": 0,
+    "cost_usd": 0,
+    "auroc": 0.7875
+   },
+   "vlm": {
+    "tp": 18,
+    "fp": 0,
+    "fn": 82,
+    "tn": 100,
+    "precision": 1.0,
+    "recall": 0.18,
+    "f1": 0.3050847457627119,
+    "specificity": 1.0,
+    "ci": {
+     "precision": [
+      1.0,
+      1.0
+     ],
+     "recall": [
+      0.10891089108910891,
+      0.2574556162512803
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 200,
+    "cannot_tell": 2,
+    "cost_usd": 0.0831641
+   },
+   "combined": {
+    "tp": 18,
+    "fp": 0,
+    "fn": 82,
+    "tn": 100,
+    "precision": 1.0,
+    "recall": 0.18,
+    "f1": 0.3050847457627119,
+    "specificity": 1.0,
+    "ci": {
+     "precision": [
+      1.0,
+      1.0
+     ],
+     "recall": [
+      0.10891089108910891,
+      0.2574556162512803
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 168,
+    "cannot_tell": 2,
+    "cost_usd": 0.0723621
+   },
+   "either": {
+    "tp": 67,
+    "fp": 23,
+    "fn": 33,
+    "tn": 77,
+    "precision": 0.7444444444444445,
+    "recall": 0.67,
+    "f1": 0.7052631578947369,
+    "specificity": 0.77,
+    "ci": {
+     "precision": [
+      0.6511627906976745,
+      0.8314636309875814
+     ],
+     "recall": [
+      0.577766323024055,
+      0.7596153846153846
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 200,
+    "cannot_tell": 2,
+    "cost_usd": 0.0831641
+   }
+  },
+  "held-out Wikimedia photos": {
+   "n": 100,
+   "defect": 60,
+   "classifier_abstained": 92,
+   "classifier": {
+    "tp": 31,
+    "fp": 12,
+    "fn": 29,
+    "tn": 28,
+    "precision": 0.7209302325581395,
+    "recall": 0.5166666666666667,
+    "f1": 0.6019417475728156,
+    "specificity": 0.7,
+    "ci": {
+     "precision": [
+      0.5813953488372093,
+      0.8478804347826087
+     ],
+     "recall": [
+      0.39704614604462474,
+      0.6481481481481481
+     ],
+     "auroc": [
+      0.6262496660221759,
+      0.8262834051724138
+     ]
+    },
+    "vlm_calls": 0,
+    "cannot_tell": 0,
+    "cost_usd": 0,
+    "auroc": 0.7279166666666667
+   },
+   "vlm": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975,
+    "ci": {
+     "precision": [
+      0.90625,
+      1.0
+     ],
+     "recall": [
+      0.5254237288135594,
+      0.7678571428571429
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 100,
+    "cannot_tell": 38,
+    "cost_usd": 0.2793468
+   },
+   "combined": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975,
+    "ci": {
+     "precision": [
+      0.90625,
+      1.0
+     ],
+     "recall": [
+      0.5254237288135594,
+      0.7678571428571429
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 100,
+    "cannot_tell": 38,
+    "cost_usd": 0.2793468
+   },
+   "either": {
+    "tp": 40,
+    "fp": 5,
+    "fn": 20,
+    "tn": 35,
+    "precision": 0.8888888888888888,
+    "recall": 0.6666666666666666,
+    "f1": 0.761904761904762,
+    "specificity": 0.875,
+    "ci": {
+     "precision": [
+      0.7872340425531915,
+      0.973007623007623
+     ],
+     "recall": [
+      0.5468394886363637,
+      0.7778248587570621
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 100,
+    "cannot_tell": 38,
+    "cost_usd": 0.2793468
+   }
+  },
+  "held-out, both": {
+   "n": 300,
+   "defect": 160,
+   "classifier_abstained": 93,
+   "classifier": {
+    "tp": 98,
+    "fp": 35,
+    "fn": 62,
+    "tn": 105,
+    "precision": 0.7368421052631579,
+    "recall": 0.6125,
+    "f1": 0.6689419795221844,
+    "specificity": 0.75,
+    "ci": {
+     "precision": [
+      0.6588652181293498,
+      0.8088410364145658
+     ],
+     "recall": [
+      0.5394736842105263,
+      0.6883224391502537
+     ],
+     "auroc": [
+      0.6745859576562242,
+      0.7909393262681417
+     ]
+    },
+    "vlm_calls": 0,
+    "cannot_tell": 0,
+    "cost_usd": 0,
+    "auroc": 0.7322767857142857
+   },
+   "vlm": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 103,
+    "tn": 139,
+    "precision": 0.9827586206896551,
+    "recall": 0.35625,
+    "f1": 0.5229357798165137,
+    "specificity": 0.9928571428571429,
+    "ci": {
+     "precision": [
+      0.9399615384615384,
+      1.0
+     ],
+     "recall": [
+      0.28123929794520547,
+      0.43042670477746015
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 300,
+    "cannot_tell": 40,
+    "cost_usd": 0.3625109
+   },
+   "combined": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 103,
+    "tn": 139,
+    "precision": 0.9827586206896551,
+    "recall": 0.35625,
+    "f1": 0.5229357798165137,
+    "specificity": 0.9928571428571429,
+    "ci": {
+     "precision": [
+      0.9399615384615384,
+      1.0
+     ],
+     "recall": [
+      0.28123929794520547,
+      0.43042670477746015
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 268,
+    "cannot_tell": 40,
+    "cost_usd": 0.3517089
+   },
+   "either": {
+    "tp": 107,
+    "fp": 28,
+    "fn": 53,
+    "tn": 112,
+    "precision": 0.7925925925925926,
+    "recall": 0.66875,
+    "f1": 0.7254237288135594,
+    "specificity": 0.8,
+    "ci": {
+     "precision": [
+      0.721425644028103,
+      0.8571428571428571
+     ],
+     "recall": [
+      0.5930847792664177,
+      0.7451011614837018
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 300,
+    "cannot_tell": 40,
+    "cost_usd": 0.3625109
+   }
+  },
+  "held-out, classifier in distribution": {
+   "n": 207,
+   "defect": 104,
+   "classifier_abstained": 0,
+   "classifier": {
+    "tp": 71,
+    "fp": 27,
+    "fn": 33,
+    "tn": 76,
+    "precision": 0.7244897959183674,
+    "recall": 0.6826923076923077,
+    "f1": 0.702970297029703,
+    "specificity": 0.7378640776699029,
+    "ci": {
+     "precision": [
+      0.6343250861259004,
+      0.8117676179382645
+     ],
+     "recall": [
+      0.5959254709254709,
+      0.7745164281928988
+     ],
+     "auroc": [
+      0.7164418829219025,
+      0.8425162615266782
+     ]
+    },
+    "vlm_calls": 0,
+    "cannot_tell": 0,
+    "cost_usd": 0,
+    "auroc": 0.779126213592233
+   },
+   "vlm": {
+    "tp": 21,
+    "fp": 0,
+    "fn": 83,
+    "tn": 103,
+    "precision": 1.0,
+    "recall": 0.20192307692307693,
+    "f1": 0.336,
+    "specificity": 1.0,
+    "ci": {
+     "precision": [
+      1.0,
+      1.0
+     ],
+     "recall": [
+      0.12841563230796907,
+      0.28003125
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 207,
+    "cannot_tell": 1,
+    "cost_usd": 0.0853773
+   },
+   "combined": {
+    "tp": 21,
+    "fp": 0,
+    "fn": 83,
+    "tn": 103,
+    "precision": 1.0,
+    "recall": 0.20192307692307693,
+    "f1": 0.336,
+    "specificity": 1.0,
+    "ci": {
+     "precision": [
+      1.0,
+      1.0
+     ],
+     "recall": [
+      0.12841563230796907,
+      0.28003125
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 175,
+    "cannot_tell": 1,
+    "cost_usd": 0.0745753
+   },
+   "either": {
+    "tp": 71,
+    "fp": 27,
+    "fn": 33,
+    "tn": 76,
+    "precision": 0.7244897959183674,
+    "recall": 0.6826923076923077,
+    "f1": 0.702970297029703,
+    "specificity": 0.7378640776699029,
+    "ci": {
+     "precision": [
+      0.6343250861259004,
+      0.8117676179382645
+     ],
+     "recall": [
+      0.5959254709254709,
+      0.7745164281928988
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 207,
+    "cannot_tell": 1,
+    "cost_usd": 0.0853773
+   }
+  },
+  "held-out, classifier abstained (unfamiliar)": {
+   "n": 93,
+   "defect": 56,
+   "classifier_abstained": 93,
+   "classifier": {
+    "tp": 27,
+    "fp": 8,
+    "fn": 29,
+    "tn": 29,
+    "precision": 0.7714285714285715,
+    "recall": 0.48214285714285715,
+    "f1": 0.5934065934065934,
+    "specificity": 0.7837837837837838,
+    "ci": {
+     "precision": [
+      0.6206135902636917,
+      0.8947368421052632
+     ],
+     "recall": [
+      0.35583019460138104,
+      0.6153846153846154
+     ],
+     "auroc": [
+      0.6258239716281934,
+      0.8446048464430818
+     ]
+    },
+    "vlm_calls": 0,
+    "cannot_tell": 0,
+    "cost_usd": 0,
+    "auroc": 0.7475868725868726
+   },
+   "vlm": {
+    "tp": 36,
+    "fp": 1,
+    "fn": 20,
+    "tn": 36,
+    "precision": 0.972972972972973,
+    "recall": 0.6428571428571429,
+    "f1": 0.7741935483870968,
+    "specificity": 0.972972972972973,
+    "ci": {
+     "precision": [
+      0.9023780487804879,
+      1.0
+     ],
+     "recall": [
+      0.5159917638984214,
+      0.7627930039668228
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 93,
+    "cannot_tell": 39,
+    "cost_usd": 0.2771336
+   },
+   "combined": {
+    "tp": 36,
+    "fp": 1,
+    "fn": 20,
+    "tn": 36,
+    "precision": 0.972972972972973,
+    "recall": 0.6428571428571429,
+    "f1": 0.7741935483870968,
+    "specificity": 0.972972972972973,
+    "ci": {
+     "precision": [
+      0.9023780487804879,
+      1.0
+     ],
+     "recall": [
+      0.5159917638984214,
+      0.7627930039668228
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 93,
+    "cannot_tell": 39,
+    "cost_usd": 0.2771336
+   },
+   "either": {
+    "tp": 36,
+    "fp": 1,
+    "fn": 20,
+    "tn": 36,
+    "precision": 0.972972972972973,
+    "recall": 0.6428571428571429,
+    "f1": 0.7741935483870968,
+    "specificity": 0.972972972972973,
+    "ci": {
+     "precision": [
+      0.9023780487804879,
+      1.0
+     ],
+     "recall": [
+      0.5159917638984214,
+      0.7627930039668228
+     ],
+     "auroc": null
+    },
+    "vlm_calls": 93,
+    "cannot_tell": 39,
+    "cost_usd": 0.2771336
+   }
+  }
+ },
+ "latency": {
+  "haiku_only": {
+   "n": 253,
+   "median_ms": 1606.0,
+   "p90_ms": 2084.4000000000005
+  },
+  "haiku_then_sonnet_ladder": {
+   "n": 300,
+   "median_ms": 1650.5,
+   "p90_ms": 4099.3
+  },
+  "sonnet_only": {
+   "n": 60,
+   "median_ms": 2504.5,
+   "p90_ms": 5693.3
+  },
+  "escalated_share": 0.15666666666666668,
+  "cost_per_crop_ladder_usd": 0.0012083696666666667,
+  "cost_per_crop_sonnet_usd": 0.0062876,
+  "classifier": {
+   "device": "mps",
+   "per_crop_batched_ms": 20.450672531183045,
+   "per_crop_one_at_a_time_ms": 28.959562499949243,
+   "backbone_load_s": 0.5366358750034124
+  }
+ },
+ "regions_per_still": {
+  "held-out VisA pcb4": {
+   "stills": 300,
+   "candidates_median": 4.0,
+   "candidates_p90": 5.0,
+   "vlm_only_inspected_mean": 3.4066666666666667,
+   "with_classifier_inspected_mean": 3.4066666666666667,
+   "vlm_only_not_inspected_mean": 0.0,
+   "with_classifier_not_inspected_mean": 0.0
+  },
+  "held-out Wikimedia photos": {
+   "stills": 24,
+   "candidates_median": 7.0,
+   "candidates_p90": 33.5,
+   "vlm_only_inspected_mean": 6.958333333333333,
+   "with_classifier_inspected_mean": 13.041666666666666,
+   "vlm_only_not_inspected_mean": 10.666666666666666,
+   "with_classifier_not_inspected_mean": 4.583333333333333
+  },
+  "webcam close-ups": {
+   "stills": 189,
+   "candidates_median": 4.0,
+   "candidates_p90": 17.0,
+   "vlm_only_inspected_mean": 5.079365079365079,
+   "with_classifier_inspected_mean": 6.1534391534391535,
+   "vlm_only_not_inspected_mean": 1.0740740740740742,
+   "with_classifier_not_inspected_mean": 0.0
+  }
+ },
+ "sonnet_only_subset": {
+  "n": 60,
+  "defect": 32,
+  "sonnet": {
+   "tp": 17,
+   "fp": 2,
+   "fn": 15,
+   "tn": 26,
+   "precision": 0.8947368421052632,
+   "recall": 0.53125,
+   "f1": 0.6666666666666666,
+   "specificity": 0.9285714285714286
+  },
+  "haiku_ladder": {
+   "tp": 10,
+   "fp": 1,
+   "fn": 22,
+   "tn": 27,
+   "precision": 0.9090909090909091,
+   "recall": 0.3125,
+   "f1": 0.4651162790697674,
+   "specificity": 0.9642857142857143
+  }
+ },
+ "created_at": "2026-10-24T11:36:58Z"
+}
