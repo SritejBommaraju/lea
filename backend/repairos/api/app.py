@@ -57,7 +57,7 @@ def _named_event(ev) -> tuple[str, dict] | None:
     published, `pipeline_failed` when a run fails (the stage and the error)."""
     if ev.kind == REPORT_KIND:
         return "report_ready", {"scan_id": ev.row["scan_id"], "report_id": ev.row["report_id"],
-                                "verdict": ev.row["verdict"]}
+                                "verdict": ev.row["verdict"], "rev": ev.rev}
     if ev.kind == RUN_KIND and ev.row.get("status") == "failed":
         return "pipeline_failed", {"scan_id": ev.row["scan_id"], "error": ev.row.get("error")}
     return None
@@ -336,26 +336,44 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
     @app.post("/v1/scans", status_code=201)
     async def post_scan(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
+        """The scan package (201, `updated: false`). Posting it again for the same scan_id (more photos of the same
+        object, new keyframes and segments) replaces it (200, `updated: true`, rev + 1); the same content again is
+        an idempotent retry (201, the same rev and jobs). Stills already inspected keep their answers; POST .../complete then re-runs the
+        report over all stills."""
         contracts.validate("scan-package", body)
         await _session(request, body["session_id"])
         b = blob_store(request)
         _refuse(await asyncio.to_thread(_check_scan, b, body))
-        row = await store(request).transition("scan-package", body["scan_id"], "scan.create", body)
+        early = [r.data for r in await store(request).list("still", scan_id=body["scan_id"])]
+        _refuse([f"still {st['still_id']} was posted for this scan under session {st['session_id']}, not "
+                 f"{body['session_id']}" for st in early if st["session_id"] != body["session_id"]])
+        existing = await store(request).get("scan-package", body["scan_id"])
+        if existing is not None and existing.data == body:
+            existing = None   # an identical retry: the same row and jobs, answered like the first post
+        action = "scan.update" if existing is not None else "scan.create"
+        row = await store(request).transition("scan-package", body["scan_id"], action, body)
         jobs = await _jobs(request, "scan-package", body)
         w = recorder(request, body["session_id"])
         await asyncio.to_thread(w.write_scan, body, _fetch(b))
         w.write_session({"device": body["device"], "symptom": body.get("symptom")})
-        return {"scan_id": row.id, "rev": row.rev, "jobs": jobs}
+        out = {"scan_id": row.id, "rev": row.rev, "jobs": jobs, "updated": existing is not None}
+        return JSONResponse(status_code=200, content=out) if existing is not None else out
 
     @app.post("/v1/stills", status_code=201)
     async def post_still(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
+        """A still, validated in full (contract + its files). It may arrive before its scan package: the scan is
+        then pending (`scan_pending: true`) and the still is inspected at once from its own image, pose and
+        intrinsics; the session must exist. The still is linked by its scan_id when the scan package is posted,
+        and fuse, locate and the report run only after that (POST /v1/scans/{scan_id}/complete)."""
         contracts.validate("still", body)
+        await _session(request, body["session_id"])
         b = blob_store(request)
         _refuse(await asyncio.to_thread(_check_still, b, body))
+        pending = await store(request).get("scan-package", body["scan_id"]) is None
         row = await store(request).transition("still", body["still_id"], "still.create", body)
         jobs = await _jobs(request, "still", body)
         await asyncio.to_thread(recorder(request, body["session_id"]).write_still, body, _fetch(b))
-        return {"still_id": row.id, "rev": row.rev, "jobs": jobs}
+        return {"still_id": row.id, "rev": row.rev, "jobs": jobs, "scan_pending": pending}
 
     @app.post("/v1/readings", status_code=201)
     async def post_reading(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
@@ -417,7 +435,8 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
     def _run_view(run: dict | None) -> dict:
         if run is None:
             return {"status": "not_started"}
-        out = {k: run.get(k) for k in ("status", "attempt", "started_at", "finished_at", "report_id", "error")
+        out = {k: run.get(k) for k in ("status", "attempt", "started_at", "finished_at", "report_id", "error",
+                                       "continuation")
                if run.get(k) is not None}
         out["stages"] = {k: {"status": v.get("status")} for k, v in (run.get("stages") or {}).items()}
         out["stills"] = {k: {"status": v.get("status"), **({"error": v["error"]} if v.get("error") else {})}
@@ -430,24 +449,58 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
     @app.get("/v1/scans/{scan_id}/pipeline")
     async def scan_pipeline(scan_id: str, request: Request, _d: Device):
+        """The run's status, `report_rev` (latest finished report), `rebuilding` and `pending` (_pipeline_view). A
+        re-made report is ready when report_rev goes up; status `closed` = a continuation nobody completed in time
+        (the latest report stands; its stills are folded in on the next complete)."""
         await _get(request, "scan-package", scan_id)
-        return _run_view(await _run(request, scan_id))
+        return await _pipeline_view(request, scan_id)
 
-    async def _report(request: Request, scan_id: str) -> dict:
-        await _get(request, "scan-package", scan_id)
+    async def _pipeline_view(request: Request, scan_id: str) -> dict:
+        """The run view plus the report state: `report_rev` = the latest finished report's revision (absent before
+        the first); `rebuilding` = a newer report is being made or new stills are waiting for it; `pending` = the
+        stills added since that report (`new_stills`, `inspected` of them) while it is not current."""
         run = await _run(request, scan_id)
-        if run and run.get("status") == "failed":
-            raise HTTPException(409, {"error": "pipeline_failed", "pipeline": _run_view(run)})
-        reports = await _list(request, REPORT_KIND, scan_id=scan_id)
-        if not reports or (run and run.get("status") != "done"):
-            raise HTTPException(404, {"error": "no_report", "pipeline": _run_view(run)})
-        return reports[-1]
+        view = _run_view(run)
+        row = await store(request).get(REPORT_KIND, f"rep_{scan_id}")
+        status = (run or {}).get("status")
+        if row is None:
+            view["rebuilding"] = status in ("inspecting", "running")
+            return view
+        view["report_rev"] = row.rev
+        view["rebuilding"] = status in ("inspecting", "running")
+        if status != "done":
+            stills = (run or {}).get("stills") or {}
+            in_report = int((row.data.get("capture") or {}).get("stills") or 0)
+            claimed = await store(request).list("still", scan_id=scan_id)
+            new = max(0, len(claimed) - in_report)
+            if new or view["rebuilding"]:
+                view["pending"] = {"new_stills": new,
+                                   "inspected": max(0, sum(1 for st in stills.values() if st.get("status") == "done")
+                                                    - in_report),
+                                   "closed": status == "closed"}
+        return view
+
+    async def _report(request: Request, scan_id: str) -> tuple[dict, int, dict]:
+        """(the latest finished report, its revision, the pipeline view). A newer report being made never hides
+        the finished one; 404 only when no report was ever finished, 409 when the only run failed."""
+        await _get(request, "scan-package", scan_id)
+        view = await _pipeline_view(request, scan_id)
+        row = await store(request).get(REPORT_KIND, f"rep_{scan_id}")
+        if row is None:
+            if view.get("status") == "failed":
+                raise HTTPException(409, {"error": "pipeline_failed", "pipeline": view})
+            raise HTTPException(404, {"error": "no_report", "pipeline": view})
+        return row.data, row.rev, view
 
     @app.get("/v1/scans/{scan_id}/report")
     async def scan_report(scan_id: str, request: Request, _d: Device):
-        """The scan's report (spec/contracts/report.schema.json). 404 while it is being made (with the pipeline
-        status), 409 when the pipeline failed (with the stage and the error)."""
-        return await _report(request, scan_id)
+        """The scan's latest finished report (spec/contracts/report.schema.json), 200, with its revision in
+        `X-Report-Rev` (= `report_rev` of GET .../pipeline; it goes up each time the report is re-made with more
+        photos) and `X-Report-Rebuilding: 1` while a newer one is pending (0 otherwise). 404 only when no report was
+        ever finished (with the pipeline status); 409 when the first run failed (with the stage and the error)."""
+        report, rev, view = await _report(request, scan_id)
+        return JSONResponse(content=report, headers={"X-Report-Rev": str(rev),
+                                                     "X-Report-Rebuilding": "1" if view.get("rebuilding") else "0"})
 
     @app.get("/v1/scans/{scan_id}/report/export", responses={200: {"content": {"text/html": {}, "text/markdown": {}}}})
     async def scan_report_export(scan_id: str, request: Request, _d: Device,
@@ -455,7 +508,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         """A printable copy of the report for sharing: self-contained HTML (crops embedded) or Markdown."""
         from repairos.report.export import crop_thumbnail, to_html, to_markdown
 
-        report = await _report(request, scan_id)
+        report, _rev, _view = await _report(request, scan_id)
         if format == "md":
             return PlainTextResponse(to_markdown(report), media_type="text/markdown; charset=utf-8")
         b = blob_store(request)

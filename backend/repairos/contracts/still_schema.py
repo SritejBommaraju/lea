@@ -175,3 +175,36 @@ class Still(BaseModel):
         None,
         description="True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected.",
     )
+    segment: int | None = Field(
+        None,
+        description="Capture segment (absent = 0). The app starts segment 1 after the person flips the object for the underside: the object moved, so poses from different segments are not in the same object frame. Stills of segment ≥ 1 are pose_reliable false until the segments are registered (on the Mac); their camera pose stays in the session's world frame.",
+        ge=0,
+    )
+    exposure_s: float | None = Field(
+        None, description='Exposure duration of the still (ARKit camera).', gt=0.0
+    )
+    iso: float | None = Field(
+        None,
+        description="ISO of the still, from the frame's EXIF when ARKit gives it.",
+        gt=0.0,
+    )
+    depth_gap_ms: int | None = Field(
+        None,
+        description='Time between the still and the regular ARKit frame its depth_file came from (high-res frames carry no depth).',
+        ge=0,
+    )
+    torch_level: float | None = Field(
+        None,
+        description='Torch level during the still (0 = off); torch_on is level > 0.',
+        ge=0.0,
+        le=1.0,
+    )
+    view_cell: str | None = Field(
+        None,
+        description='The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object). Lets the backend see which sides were photographed.',
+        min_length=1,
+    )
+    low_light: bool | None = Field(
+        None,
+        description='True when the app took the still in low light (it never blocks on light): judge dark detail with care.',
+    )

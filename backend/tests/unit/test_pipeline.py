@@ -289,7 +289,7 @@ def test_routes_complete_pipeline_report_and_export(env):
 
     events = run(state.events_since(scan["session_id"]))
     named = [_named_event(e) for e in events]
-    assert ("report_ready", {"scan_id": sid, "report_id": rep["report_id"], "verdict": rep["verdict"]}) in named
+    assert ("report_ready", {"scan_id": sid, "report_id": rep["report_id"], "verdict": rep["verdict"], "rev": 1}) in named
     assert any(n and n[0] == "pipeline_failed" and n[1]["error"]["stage"] == "fuse" for n in named)
     assert _named_event(RowEvent(1, "s", "finding", "f", "insert", 1, {}, "t")) is None
 

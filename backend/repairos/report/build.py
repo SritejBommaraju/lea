@@ -161,10 +161,13 @@ def same_issue(a: Mapping[str, Any], b: Mapping[str, Any], merge_iou: float = ME
     return None
 
 
-def collapse_rows(rows: list[dict[str, Any]], merge_iou: float = MERGE_IOU) -> list[dict[str, Any]]:
+def collapse_rows(rows: list[dict[str, Any]], merge_iou: float = MERGE_IOU,
+                  stable: frozenset[str] | set[str] = frozenset()) -> list[dict[str, Any]]:
     """Judged rows -> one row per physical issue (same_issue, transitively). The best-ranked row of a group keeps its
-    fields; the group's `finding_ids` (that row first), `regions`, the other `crops`, the union of the evidence, the
-    worst severity and `merged_by` are added. Rows that collapse with nothing are returned unchanged."""
+    fields, unless the group holds a row of the previous report revision (`stable`: its row ids): that row keeps its
+    place, so a finding seen again in a later photo of the same scan is one row with the same id, not a new one. The
+    group's `finding_ids` (the kept row first), `regions`, the other `crops`, the union of the evidence, the worst
+    severity and `merged_by` are added. Rows that collapse with nothing are returned unchanged."""
     parent = list(range(len(rows)))
 
     def root(i: int) -> int:
@@ -185,7 +188,7 @@ def collapse_rows(rows: list[dict[str, Any]], merge_iou: float = MERGE_IOU) -> l
         if len(group) == 1:
             out.append(group[0])
             continue
-        group = sorted(group, key=rank_key)
+        group = sorted(group, key=lambda e: (e["finding_id"] not in stable, rank_key(e)))
         top = dict(group[0])
         top["finding_ids"] = [e["finding_id"] for e in group]
         top["regions"] = len(group)
@@ -195,6 +198,56 @@ def collapse_rows(rows: list[dict[str, Any]], merge_iou: float = MERGE_IOU) -> l
             top["severity"] = min((severity(e) for e in group), key=SEVERITY_ORDER.__getitem__)
         top["merged_by"] = "same_photo_overlap" if len({e["crop"]["still_id"] for e in group}) == 1 \
             else "same_place_on_scan"
+        out.append(top)
+    return out
+
+
+def _same_place(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    """Two rows from different photos showing one place: both located on the scan, regions meeting, same part
+    family (the rule same_issue uses across stills)."""
+    pa, pb = (a.get("photo") or a.get("crop") or {}).get("still_id"), (b.get("photo") or b.get("crop") or {}).get(
+        "still_id")
+    la, lb = a.get("location") or {}, b.get("location") or {}
+    return (pa != pb and la.get("status") == lb.get("status") == "computed" and _boxes_meet(la, lb)
+            and part_family(a["part_class"]) == part_family(b["part_class"]))
+
+
+def merge_undecided(undecided: list[dict[str, Any]], judged: list[dict[str, Any]],
+                    stable: frozenset[str] | set[str] = frozenset()) -> list[dict[str, Any]]:
+    """Could-not-judge rows of a place that is judged in another photo become `superseded_ids` of that judged row
+    (the place is judged now, e.g. from a closer photo added later); could-not-judge rows of one place seen in
+    several photos become one row (`finding_ids`, a row of the previous revision first when there is one).
+    `judged` rows are updated in place; the remaining insufficient_evidence rows are returned."""
+    rest = []
+    for u in undecided:
+        j = next((j for j in judged if _same_place(u, j) and u["photo"]["still_id"] not in photos_of(j)), None) \
+            if u.get("photo") else None
+        if j is None:
+            rest.append(u)
+        else:
+            j.setdefault("superseded_ids", []).append(u["finding_id"])
+    parent = list(range(len(rest)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(rest)):
+        for k in range(i + 1, len(rest)):
+            if root(i) != root(k) and _same_place(rest[i], rest[k]):
+                parent[root(k)] = root(i)
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for i, e in enumerate(rest):
+        groups.setdefault(root(i), []).append(e)
+    out = []
+    for group in groups.values():
+        group = sorted(group, key=lambda e: (e["finding_id"] not in stable, e["finding_id"]))
+        top = dict(group[0])
+        if len(group) > 1:
+            top["finding_ids"] = [e["finding_id"] for e in group]
+            top["reason"] = "; ".join(dict.fromkeys(e["reason"] for e in group))
         out.append(top)
     return out
 
@@ -214,10 +267,13 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
                  suspects: list[Mapping[str, Any]], next_action: Mapping[str, Any] | None,
                  regions: Mapping[str, Mapping[str, Any]], locations: Mapping[str, Mapping[str, Any]],
                  models: Mapping[str, str], now: datetime | None = None,
-                 explains: Mapping[tuple[str, str], str] | None = None) -> dict[str, Any]:
+                 explains: Mapping[tuple[str, str], str] | None = None,
+                 previous: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """The report without `summary` (repairos.report.summary adds it). `regions[finding_id]` gives the region's
     `part_class` and `inspected_by` (the stages that looked); `locations[finding_id]` its report location;
-    `explains[(kind, ref)]` Jev's banded "explains the symptom" judgment (yes | unsettled | no) per subject."""
+    `explains[(kind, ref)]` Jev's banded "explains the symptom" judgment (yes | unsettled | no) per subject.
+    `previous`: the scan's report before this one (more photos were added): its row ids are kept for the same place
+    (collapse_rows, merge_undecided), so the app sees the same finding again, updated, not a duplicate."""
     explains = explains or {}
     by_finding: dict[str, Mapping[str, Any]] = {}
     for s in suspects:
@@ -275,7 +331,10 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
 
     not_inspected = group_not_inspected(not_inspected, {fid: int(r.get("regions", 1)) for fid, r in regions.items()},
                                         {f["finding_id"]: f for f in findings})
-    judged = sorted(collapse_rows(judged), key=rank_key)
+    stable = frozenset(e["finding_id"] for b in ("findings", "cosmetic", "insufficient_evidence")
+                       for e in (previous or {}).get(b, []))
+    judged = sorted(collapse_rows(judged, stable=stable), key=rank_key)
+    undecided = merge_undecided(undecided, judged, stable)
     cosmetic = [e for e in judged if is_cosmetic(e)]
     judged = [e for e in judged if not is_cosmetic(e)]
     across = len({s for e in judged + cosmetic for s in photos_of(e)}) > 1 and not any(
@@ -353,9 +412,20 @@ def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, An
     seen: dict[str, list[str]] = {}
     for bucket in ("findings", "cosmetic", "not_inspected", "insufficient_evidence"):
         for e in report.get(bucket, []):
-            for fid in e.get("finding_ids") or [e["finding_id"]]:
+            for fid in (e.get("finding_ids") or [e["finding_id"]]) + list(e.get("superseded_ids") or []):
                 seen.setdefault(fid, []).append(bucket)
     out = []
+    state = {f["finding_id"]: f["state"] for f in findings}
+    for e in report.get("findings", []) + report.get("cosmetic", []):
+        for fid in e.get("superseded_ids") or []:
+            if state.get(fid) not in UNDECIDED:
+                out.append(f"row {e['finding_id']} supersedes {fid}, which is {state.get(fid)!r}, not a finding that "
+                           "could not be judged")
+    for e in report.get("insufficient_evidence", []):
+        ids = e.get("finding_ids")
+        if ids and (ids[0] != e["finding_id"] or any(state.get(x) not in UNDECIDED for x in ids)):
+            out.append(f"grouped row {e['finding_id']}: finding_id is not its first finding, or it groups a finding "
+                       "that was judged")
     for f in findings:
         where = seen.pop(f["finding_id"], [])
         if len(where) != 1:

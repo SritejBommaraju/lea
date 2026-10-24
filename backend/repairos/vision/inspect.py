@@ -44,7 +44,7 @@ from repairos.contracts import validate
 from repairos.slots.classifier import (ABSTAIN, FLAGGED, OK, UNSURE, DefectScore, confidence_word, evidence_words,
                                       route)
 from repairos.vision.checklists import UNKNOWN_PART, WEAK_LABEL_BELOW, crop_family
-from repairos.vision.crops import context_view, crop_region, cut, load_still
+from repairos.vision.crops import context_view, crop_region, cut, load_still, outline
 from repairos.vision.generic_classes import DEFECT_TO_CROP_STATE, WIRE_CLASSES
 from repairos.vision.ranking import MERGE_IOU, RANK_BY, rank_regions
 from repairos.vision.tiling import iou
@@ -109,7 +109,10 @@ def vlm_answer_for(state: str) -> str:
 
 def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, crop_state, crop_file: str | None = None,
                       sharpness: float | None = None, defect_score: DefectScore | None = None) -> dict:
-    """The Finding (as a dict) for one VLM-inspected crop; `defect_score` adds the classifier's answer in words."""
+    """The Finding (as a dict) for one VLM-inspected crop; `defect_score` adds the classifier's answer in words.
+    The VLM's answer passes the honesty gate first (honest_crop_state): code, not the model, decides what a view
+    that is not clear, or a device that is only open, may claim."""
+    crop_state, gate = honest_crop_state(crop_state)
     state = STATE_TO_FINDING[crop_state.state]
     words = crop_state.state.replace("_", " ")
     part = part_name(crop_state.part_class)
@@ -122,6 +125,8 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         f"detector region labelled '{det.label}' ({_strength(det.score)} match)",
         "vision suspect, not proof",
     ]
+    if gate:
+        evidence.insert(2, gate)
     confidence = CONFIDENCE.get(crop_state.confidence_word, 0.35)
     if defect_score is not None:
         evidence.insert(2, evidence_words(defect_score))
@@ -156,6 +161,42 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
     if (pw := " ".join((getattr(crop_state, "part_words", "") or "").split())[:200]):
         out["part_words"] = pw
     return out
+
+
+ISSUE_STATES = frozenset(s for s in STATE_TO_FINDING if s not in ("ok", "cannot_tell"))
+GET_CLOSER = "take a closer, sharper photo of this spot"
+
+
+def honest_crop_state(cs: Any) -> tuple[Any, str | None]:
+    """(the crop state the finding may claim, the reason in words when code changed the VLM's state).
+
+    Code decides, from the VLM's own typed answers (visibility, open_for_access), never from words in its text:
+    - an issue on a view that is not clear (partial or poor) is cannot_tell: a guess on a soft, small or distant
+      view is not a finding (it becomes insufficient_evidence with the reason, I4);
+    - ok on a poor view is cannot_tell too (ok needs a view sharp enough to show a fault, I3);
+    - an issue that is only the device being open for inspection (cover off, panel open, wiring exposed) is ok:
+      an opened device is the normal state of an inspected device, not a fault;
+    - severity safety needs a clear view; on any other view it is lowered to functional.
+    An answer without visibility (older recordings) passes unchanged."""
+    from dataclasses import replace
+
+    vis = getattr(cs, "visibility", "") or ""
+    if cs.state in ISSUE_STATES and getattr(cs, "open_for_access", False):
+        if vis == "poor":
+            return replace(cs, state="cannot_tell", severity="none"), \
+                f"the view is too unclear to judge; {GET_CLOSER}"
+        return replace(cs, state="ok", severity="none"), \
+            "the device is open for inspection, which is expected and not a fault"
+    if cs.state in ISSUE_STATES and vis in ("partial", "poor"):
+        return replace(cs, state="cannot_tell", severity="none"), \
+            (f"the vision model saw a possible {cs.state.replace('_', ' ')} part, but the view is "
+             f"{'soft, small or partly hidden' if vis == 'partial' else 'blurred, too small or hidden'}, so it is "
+             f"not a finding; {GET_CLOSER}")
+    if cs.state == "ok" and vis == "poor":
+        return replace(cs, state="cannot_tell"), f"the view is too unclear to call it intact; {GET_CLOSER}"
+    if getattr(cs, "severity", "none") == "safety" and vis and vis != "clear":
+        return replace(cs, severity="functional"), "a safety fault needs a clear view; rated functional"
+    return cs, None
 
 
 def severity_of(finding_state: str, vlm_severity: str) -> str | None:
@@ -363,6 +404,31 @@ def finding_from_merged(kept: dict, *, scan_id: str, still_id: str, index: int, 
     return f
 
 
+SHARE_WAIT_S = 300.0   # how long a still waits for another still's answer on a shared region
+
+
+def finding_from_other_still(entry: Any, *, scan_id: str, still_id: str, index: int, det) -> dict:
+    """A region another still of the scan judges (same place on the scan, similar size: pipeline/regions.py): that
+    answer, named for this region, with where it was judged in the evidence; its crop and box stay the other still's
+    (the pixels the model saw). If that check failed, this region is not_inspected with the reason (I3)."""
+    try:
+        kept = entry.result(SHARE_WAIT_S)
+    except Exception as e:  # noqa: BLE001 - the other still's failure is reported there; here the region was not judged
+        return finding_not_inspected(scan_id=scan_id, still_id=still_id, index=index, det=det,
+                                     reason=f"it was to be judged in still {entry.still_id}, which could not judge "
+                                            f"it ({type(e).__name__})")
+    if kept["state"] == "not_inspected":
+        return finding_not_inspected(scan_id=scan_id, still_id=still_id, index=index, det=det,
+                                     reason=f"the same place in still {entry.still_id} was not inspected either")
+    f = dict(kept)
+    f["finding_id"] = _fid(scan_id, still_id, index, det.box, det.label)
+    f["subject"] = _subject(still_id, index, det.label)
+    f["evidence"] = [kept["evidence"][0], f"judged once, in the crop of {entry.still_id}/det{entry.index}, which "
+                     f"shows the same place on the scan (this photo's detector label '{det.label}')"] + \
+        list(kept["evidence"][1:])
+    return f
+
+
 def region_part_class(det, classifier_abstained: bool = False) -> str:
     """The part name for a region before any model names it: the detector label, or `unknown_part` when that label
     is a weak match or the classifier did not recognise the crop (vision/checklists.crop_family)."""
@@ -414,14 +480,21 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
                   prompts: list[str] | None = None, min_score: float | None = None, max_crops: int = 12,
                   with_context: bool = True, crop_dir: str | Path | None = None, workers: int = 4,
                   sharpness: float | None = None, classifier: Any = None, max_classified: int = 48,
-                  min_box_side: float = MIN_BOX_SIDE, max_regions: int | None = None) -> Inspection:
+                  min_box_side: float = MIN_BOX_SIDE, max_regions: int | None = None,
+                  detections: Sequence[Any] | None = None, pool: Any = None, share: Any = None) -> Inspection:
     """Run detect -> crops -> [defect classifier] -> VLM on one full-resolution still (PIL image, array or path).
 
     `classifier`: None = the configured CLS slot (off when the profile says `none`), False = off, or a
     DefectClassifier. `max_crops` is the VLM budget; `max_classified` caps the crops the classifier scores.
     Boxes under `min_box_side` (box_side) are dropped before cropping, and only the `max_regions` best regions after
     merging are kept (default MAX_REGIONS, or the crop budget when that is larger); what is dropped is counted in
-    one not_inspected roll-up finding per reason (finding_rollup)."""
+    one not_inspected roll-up finding per reason (finding_rollup).
+
+    Pipeline hooks (all optional): `detections` = the detector's answer for this still when it was already run (no
+    second pass); `pool` = a shared executor for the VLM calls (bounds Claude calls across stills; `workers` is used
+    only without it); `share` = the scan's cross-still region register (pipeline/regions.py): a region another still
+    already sends to the VLM is not sent again, its answer is reused (finding_from_other_still), and reused regions do
+    not use this still's crop budget. `share` applies without a classifier only."""
     from repairos.registry import slot
 
     detector = detector or slot("DET")
@@ -433,7 +506,7 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     im = as_pil(im)
     out = Inspection(still_id=still_id)
     t0 = time.perf_counter()
-    dets = detector.detect(im, prompts, min_score)
+    dets = list(detections) if detections is not None else detector.detect(im, prompts, min_score)
     out.detections = dets
     out.timing["detect_s"] = time.perf_counter() - t0
     if not dets:
@@ -452,10 +525,26 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
                for k, v in out.dropped.items()]
     out.rollups = {f["finding_id"]: {"part_class": ROLLUP_WORDS[k][0], "regions": len(v)}
                    for f, (k, v) in zip(rollups, out.dropped.items())}
-    candidates = ordered[:budget]
-    for i in ordered[budget:]:
-        raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
-                                       reason="over this still's crop budget")
+    reused: dict[int, Any] = {}     # index -> the share entry of another still that judges the same place
+    owned: dict[int, Any] = {}      # index -> this still's share entry (its answer is set when it arrives)
+    if share is not None and classifier is None:
+        candidates = []
+        for i in ordered:
+            entry, mine = share.claim(still_id, i, dets[i].box, register=len(candidates) < budget)
+            if entry is not None and not mine:
+                reused[i] = entry
+            elif len(candidates) < budget:
+                candidates.append(i)
+                if entry is not None:
+                    owned[i] = entry
+            else:
+                raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
+                                               reason="over this still's crop budget")
+    else:
+        candidates = ordered[:budget]
+        for i in ordered[budget:]:
+            raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
+                                           reason="over this still's crop budget")
 
     crop_dir = Path(crop_dir) if crop_dir else None
     if crop_dir:
@@ -495,21 +584,45 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         sc = out.defect_scores.get(i)
         return bool(sc is not None and sc.abstained)
 
+    context_base = context_view(im) if with_context and chosen else None
+
     def look(i: int) -> tuple[int, dict]:
         d = dets[i]
-        ctx = context_view(im, d.box) if with_context else None
-        state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
-                                   family=crop_family(d.label, d.score, abstained(i)))
-        return i, finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crops[i],
-                                    crop_state=state, crop_file=save(i), sharpness=sharpness,
-                                    defect_score=out.defect_scores.get(i))
+        try:
+            ctx = outline(context_base, d.box, context_base.width / im.width) if context_base is not None else None
+            state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
+                                       family=crop_family(d.label, d.score, abstained(i)))
+            f = finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crops[i],
+                                  crop_state=state, crop_file=save(i), sharpness=sharpness,
+                                  defect_score=out.defect_scores.get(i))
+        except BaseException as e:
+            if i in owned:
+                owned[i].fail(e)
+            raise
+        if i in owned:
+            owned[i].resolve(f)
+        return i, f
 
     t1 = time.perf_counter()
-    if chosen:
-        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-            for i, f in pool.map(look, chosen):
-                raw[i] = f
+    try:
+        if chosen:
+            if pool is not None:
+                for fut in [pool.submit(look, i) for i in chosen]:
+                    i, f = fut.result()
+                    raw[i] = f
+            else:
+                with ThreadPoolExecutor(max_workers=max(1, workers)) as own_pool:
+                    for i, f in own_pool.map(look, chosen):
+                        raw[i] = f
+        for i, entry in reused.items():
+            raw[i] = finding_from_other_still(entry, scan_id=scan_id, still_id=still_id, index=i, det=dets[i])
+    finally:
+        for i, entry in owned.items():   # never leave another still waiting on an answer that will not come
+            if i not in chosen or i not in raw:
+                entry.fail(RuntimeError(f"{still_id}/det{i} was not judged"))
     out.timing["vlm_s"] = time.perf_counter() - t1
+    out.timing["vlm_calls"] = len(chosen)
+    out.timing["reused_regions"] = len(reused)
     for i, into in out.merged.items():
         raw[i] = finding_from_merged(raw[into], scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
                                      into=into, into_box=dets[into].box)

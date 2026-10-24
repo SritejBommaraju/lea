@@ -67,7 +67,14 @@
     "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance." },
     "torch_on": { "type": "boolean" },
     "auto_fired": { "type": "boolean", "description": "True when the app took the shot because the ring filled, tracking was normal and sharpness was high." },
-    "user_skipped": { "type": "boolean", "description": "True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected." }
+    "user_skipped": { "type": "boolean", "description": "True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected." },
+    "segment": { "type": "integer", "minimum": 0, "description": "Capture segment (absent = 0). The app starts segment 1 after the person flips the object for the underside: the object moved, so poses from different segments are not in the same object frame. Stills of segment ≥ 1 are pose_reliable false until the segments are registered (on the Mac); their camera pose stays in the session's world frame." },
+    "exposure_s": { "type": "number", "exclusiveMinimum": 0, "description": "Exposure duration of the still (ARKit camera)." },
+    "iso": { "type": "number", "exclusiveMinimum": 0, "description": "ISO of the still, from the frame's EXIF when ARKit gives it." },
+    "depth_gap_ms": { "type": "integer", "minimum": 0, "description": "Time between the still and the regular ARKit frame its depth_file came from (high-res frames carry no depth)." },
+    "torch_level": { "type": "number", "minimum": 0, "maximum": 1, "description": "Torch level during the still (0 = off); torch_on is level > 0." },
+    "view_cell": { "type": "string", "minLength": 1, "description": "The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object). Lets the backend see which sides were photographed." },
+    "low_light": { "type": "boolean", "description": "True when the app took the still in low light (it never blocks on light): judge dark detail with care." }
   },
   "$defs": {
     "pose_arkit": {

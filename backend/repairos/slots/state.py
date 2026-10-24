@@ -31,7 +31,7 @@ INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha2
 
 TRANSITIONS = (
     "session.create", "device.pair",
-    "scan.create", "scan.set_alignment",
+    "scan.create", "scan.update", "scan.set_alignment",
     "still.create", "still.mark_not_inspected",
     "finding.create",
     "suspect.update_from_fusion", "suspect.confirm", "suspect.clear",

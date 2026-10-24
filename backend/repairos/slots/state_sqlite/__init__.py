@@ -230,6 +230,13 @@ class SqliteState:
             p.setdefault("report_id", id)
             return self._write(c, kind, p, prev.rev if prev else 0)
         row = self._existing(c, kind, id) if action != "suspect.update_from_fusion" else self._get(c, kind, id)
+        if action == "scan.update":   # the scan package posted again (more photos of the same object, A: continue)
+            p.setdefault("scan_id", id)
+            if p["scan_id"] != id:
+                raise StateError(f"scan-package: payload scan_id {p['scan_id']!r} != {id!r}")
+            if p == row.data:
+                return row
+            return self._write(c, kind, p, row.rev)
         if action == "scan.set_alignment":
             return self._write(c, kind, {**row.data, "alignment": p["alignment"]}, row.rev)
         if action == "still.mark_not_inspected":
@@ -276,7 +283,7 @@ class SqliteState:
                 raise AlreadyClaimed(sid, cur["status"], cur.get("worker"))
             data = _merge(base, {"stills": {sid: {"status": "running", "worker": p.get("worker"),
                                                   "started_at": p.get("at") or now(), "error": None}}})
-            if data.get("status") in ("done", "failed"):   # a new still after a report: the report is out of date
+            if data.get("status") in ("done", "failed", "closed"):   # a new still after a report: out of date
                 data["status"] = "inspecting"
         data["run_id"] = id
         return self._write(c, "pipeline-run", data, prev.rev if prev else 0, status=data.get("status"))
