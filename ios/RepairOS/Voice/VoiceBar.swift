@@ -1,0 +1,58 @@
+import SwiftUI
+
+/// Swipe up to talk to Lea (voice mode opens, already listening), hold the mic to talk, or turn on hands-free and just
+/// talk (you can interrupt); "Hey Leah" appears once its model is installed. Partial words show while you speak; Lea's
+/// last reply shows after.
+struct VoiceBar: View {
+    @ObservedObject var voice: VoiceCoordinator
+    var expand: (() -> Void)?
+    @State private var pressing = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(voice.partial.isEmpty ? (voice.lastReply ?? subtitle) : voice.partial)
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer()
+            Toggle(isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) })) { Text("Hands-free").font(.caption2) }
+                .toggleStyle(.button)
+            if voice.wakeAvailable {
+                Toggle(isOn: Binding(get: { voice.wakeOn }, set: { voice.setWake($0) })) { Text("Hey Leah").font(.caption2) }
+                    .toggleStyle(.button)
+            }
+            Image(systemName: pressing ? "mic.circle.fill" : "mic.circle")
+                .font(.system(size: 38))
+                .foregroundStyle(pressing ? Color.red : Color.accentColor)
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in if !pressing { pressing = true; voice.pushToTalkBegan() } }
+                    .onEnded { _ in pressing = false; voice.pushToTalkEnded() })
+                .accessibilityLabel("Hold to talk to Lea")
+            if let expand {
+                Button(action: expand) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .accessibilityLabel("Open voice mode")
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .gesture(DragGesture(minimumDistance: 20).onEnded { drag in
+            if drag.translation.height < -30, let expand { expand() }
+        })
+        .accessibilityAction(named: "Talk to Lea") { expand?() }
+    }
+
+    private var title: String {
+        switch voice.state {
+        case .idle: "Talk to Lea"
+        case .listening: voice.handsFree ? "Listening (hands-free)" : "Listening"
+        case .thinking: "Thinking"
+        case .speaking: "Lea is speaking"
+        }
+    }
+
+    private var subtitle: String {
+        "\(voice.handsFree ? "Just talk; you can interrupt" : "Swipe up to talk, or hold the mic") · \(voice.listenerName)"
+    }
+}

@@ -25,7 +25,7 @@ from typing import Annotated, Any
 import jsonschema
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from repairos import contracts
 from repairos.config import ROOT, get_settings
@@ -72,6 +72,16 @@ class NewSession(BaseModel):
     product_id: str | None = None
     make_model: str | None = None
     symptom: str | None = None
+
+
+class VoiceTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    transcript: str
+    mode: str = "ptt"
+    session_id: str | None = None
+    conversation_id: str | None = None   # one voice-mode conversation; its history follows it into the scan
+    live: dict[str, str] | None = Field(None, max_length=12)   # what the phone shows now (screen, stage, cue, progress)
 
 
 class Pair(BaseModel):
@@ -401,6 +411,52 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                 "suspects": await _list(request, "suspect", **by),
                 "next_actions": await _list(request, "next-action", **by),
                 "readings": await _list(request, "meter-reading", **by)}
+
+    # ------------------------------------------------------------ voice: spoken turns and speech tokens
+    from repairos.voice import TurnMemory
+
+    app.state.voice = TurnMemory()
+
+    @app.post("/v1/voice/turns")
+    async def voice_turn(body: VoiceTurn, request: Request, _d: Device):
+        """A final spoken turn answered by Claude: the reply to speak and what the phone should do (start a scan, open a
+        report). Idempotent by turn id, so a retry after a dropped connection never answers twice."""
+        from repairos import voice
+        from repairos.config import MissingSettingError
+
+        if not body.transcript.strip():
+            raise HTTPException(422, "only final, non-empty transcripts")
+        memory = request.app.state.voice
+        key = body.conversation_id or body.session_id or ""
+
+        async def answer() -> dict:
+            snap: dict = {}
+            if body.session_id:
+                await _session(request, body.session_id)
+                by = {"session_id": body.session_id}
+                snap = {k: await _list(request, kind, **by) for k, kind in
+                        (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
+            try:
+                reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, memory.history(key), live=body.live)
+            except MissingSettingError as e:
+                raise HTTPException(503, str(e)) from None
+            except Exception as e:  # not cached: the phone can ask again
+                raise HTTPException(502, f"the assistant did not answer: {type(e).__name__}") from None
+            memory.remember(key, body.transcript, reply)
+            return {"id": body.id, "reply": reply, "actions": actions}
+
+        return await memory.once(body.id, answer)
+
+    @app.post("/v1/voice/token")
+    async def voice_token(_d: Device):
+        """A short-lived Cartesia grant; 503 naming the missing setting when speech is not set up on the backend."""
+        from repairos import voice
+        from repairos.config import MissingSettingError
+
+        try:
+            return await asyncio.to_thread(voice.cartesia_token)
+        except MissingSettingError as e:
+            raise HTTPException(503, str(e)) from None
 
     @app.get("/v1/scans/{scan_id}")
     async def get_scan(scan_id: str, request: Request, _d: Device):

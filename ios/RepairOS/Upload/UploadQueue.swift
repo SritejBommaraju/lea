@@ -79,6 +79,15 @@ final class UploadQueue {
         Self.live[record.id] = Weak(queue: self)
     }
 
+    /// The gateway session a session's upload created (nil before its first upload): the running queue's, else the
+    /// one saved in `upload.json`. The record itself doesn't carry it; voice uses this to talk about a finished scan.
+    static func gatewaySessionID(of record: SessionRecord, in storage: ScanStorage) -> String? {
+        if let queue = live[record.id]?.queue { return queue.state.gatewaySessionID }
+        let saved = (try? Data(contentsOf: storage.dir(record).appending(path: "upload.json")))
+            .flatMap { try? JSON.decoder.decode(State.self, from: $0) }
+        return saved?.gatewaySessionID
+    }
+
     var isIdle: Bool { pending.isEmpty && !busy }
 
     /// Queues everything not yet posted (used on resume and when the scan finishes).

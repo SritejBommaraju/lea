@@ -26,6 +26,18 @@ struct UploadQueueTests {
         #expect(old.cachedRef(path, stamp: UploadQueue.stamp(of: url)) == nil)
     }
 
+    /// Voice finds a finished scan's gateway session in its saved upload state (the record never holds it).
+    @Test func theGatewaySessionIsReadFromTheSavedUpload() throws {
+        let storage = ScanStorage(root: FileManager.default.temporaryDirectory.appending(path: "repairos-tests-\(UUID().uuidString)"))
+        let record = try storage.newSession(symptom: nil, engine: .arkit)
+        #expect(UploadQueue.gatewaySessionID(of: record, in: storage) == nil)   // not uploaded yet
+        var st = UploadQueue.State()
+        st.gatewaySessionID = "sess_gateway_1"
+        try JSON.encoder.encode(st).write(to: storage.dir(record).appending(path: "upload.json"))
+        #expect(UploadQueue.gatewaySessionID(of: record, in: storage) == "sess_gateway_1")
+        #expect(record.gatewaySessionID == nil)
+    }
+
     /// An unaligned continuation writes its own cloud into `segments[].points_file`: it is uploaded and replaced by
     /// its blob ref like every other file field (the gateway refuses a local path there).
     @Test func everySegmentCloudBecomesABlobRef() async throws {
