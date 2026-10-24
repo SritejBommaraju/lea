@@ -80,6 +80,7 @@ class VoiceTurn(BaseModel):
     transcript: str
     mode: str = "ptt"
     session_id: str | None = None
+    conversation_id: str | None = None   # one voice-mode conversation; its history follows it into the scan
 
 
 class Pair(BaseModel):
@@ -430,7 +431,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             by = {"session_id": body.session_id}
             snap = {k: await _list(request, kind, **by) for k, kind in
                     (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
-        history = request.app.state.voice_history.setdefault(body.session_id or "", [])
+        history = request.app.state.voice_history.setdefault(body.conversation_id or body.session_id or "", [])
         try:
             reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history)
         except MissingSettingError as e:

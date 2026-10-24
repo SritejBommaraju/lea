@@ -36,6 +36,16 @@ def test_final_turns_only_and_failures_are_not_cached(gw):
     assert gw.req("POST", "/v1/voice/turns", {"id": "t4", "transcript": "hello"})[0] == 503   # retried, not a stale answer
 
 
+def test_turns_carry_their_conversation(gw):
+    turn = {"id": "t5", "transcript": "I think the fuse blew", "conversation_id": "c1"}
+    assert gw.req("POST", "/v1/voice/turns", turn)[0] == 503   # accepted; only the missing key stops it
+
+
+def test_scan_symptoms_are_trimmed_and_optional():
+    assert voice._symptom({"symptom": "  won't turn on, maybe the switch  "}) == {"symptom": "won't turn on, maybe the switch"}
+    assert voice._symptom({}) == {} and voice._symptom({"symptom": " "}) == {} and voice._symptom(None) == {}
+
+
 def test_paired_devices_only_and_token_names_the_missing_setting(gw):
     token, gw.token = gw.token, None
     assert gw.req("POST", "/v1/voice/turns", {"id": "t7", "transcript": "hi"})[0] == 401

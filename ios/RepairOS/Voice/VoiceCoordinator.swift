@@ -18,12 +18,19 @@ protocol WakeWordDetector: AnyObject {
 @MainActor
 final class VoiceCoordinator: ObservableObject {
     enum State: Equatable { case idle, listening, thinking, speaking }
+    /// One back-and-forth: what the person said (or typed) and Lea's answer once it arrives.
+    struct Exchange: Identifiable, Equatable {
+        let id: String
+        let said: String
+        var reply: String?
+    }
 
     @Published private(set) var state: State = .idle
     @Published private(set) var partial = ""
     @Published private(set) var lastReply: String?
-    /// The last final thing the person said, for the voice mode's caption.
-    @Published private(set) var lastHeard: String?
+    /// This conversation so far; the gateway keeps the same history under `conversationID`.
+    @Published private(set) var exchanges: [Exchange] = []
+    private(set) var conversationID = VoiceCoordinator.newID("vc")
     @Published private(set) var handsFree = false
     @Published private(set) var wakeOn = false
     @Published private(set) var listenerName = "Apple on-device"
@@ -156,15 +163,31 @@ final class VoiceCoordinator: ObservableObject {
         }
     }
 
-    /// Opened by Siri ("Hey Siri, hey lea"): say a short greeting, then listen for one turn without a button.
+    /// A fresh conversation, as when Siri opens the app: Lea forgets nothing on the phone until this is called.
+    func newConversation() {
+        conversationID = Self.newID("vc")
+        exchanges = []
+        lastReply = nil
+    }
+
+    /// Opened by Siri ("Hey Siri, hey lea"): say a short greeting, then keep the conversation going hands-free, so
+    /// each answer is followed by listening again and the person can keep explaining.
     func greetAndListen(_ greeting: String = "Hey, what's up?") {
         guard state == .idle || state == .listening else { return }
+        handsFree = true
         turnMode = "wake"
         Task {
             await say(greeting)
             if state == .speaking { state = .idle }
             await listen(open: true)
         }
+    }
+
+    /// A typed turn, for detail that is easier to type than say; it joins the same conversation.
+    func send(typed: String) {
+        if state == .speaking || state == .thinking { interrupt() }
+        turnMode = "text"
+        Task { await take(typed) }
     }
 
     /// Hands-free: the mic stays open for the conversation and speech itself takes the turn.
@@ -285,14 +308,15 @@ final class VoiceCoordinator: ObservableObject {
         let mine = turn
         state = .thinking
         partial = text
-        lastHeard = text
+        let id = Self.newID("vt")
+        exchanges.append(Exchange(id: id, said: text))
 
         // Ask the bridge now; react at once; hold the turn with a thinking sound if the answer is slow.
-        let id = "vt_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
         let mode = turnMode
+        let conversation = conversationID
         guard let link else { message = "Pair with the gateway in Settings to talk to Lea."; state = handsFree ? .listening : .idle; return }
         let reply = Task { () -> VoiceReply? in
-            do { return try await link.turn(id, mode, text) } catch {
+            do { return try await link.turn(id, mode, text, conversation) } catch {
                 await MainActor.run { self.message = "Lea couldn't reach the gateway: \(error.localizedDescription)" }
                 return nil
             }
@@ -316,9 +340,14 @@ final class VoiceCoordinator: ObservableObject {
         guard mine == turn else { return }
         guard let answer else { state = handsFree ? .listening : .idle; return }
         lastReply = answer.reply
+        if let i = exchanges.firstIndex(where: { $0.id == id }) { exchanges[i].reply = answer.reply }
         onActions?(answer.actions)
         let reacted = reaction != nil || !fillers.isEmpty
         speakAll(TurnTaking.sentences(reacted ? TurnTaking.stripLead(answer.reply) : answer.reply))
+    }
+
+    private static func newID(_ prefix: String) -> String {
+        "\(prefix)_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
     }
 
     /// `.some(value)` if the task finishes within `seconds`, else nil (the task keeps running).

@@ -1,17 +1,19 @@
 import SwiftUI
 
-/// Voice mode: the whole screen is the conversation. An orb shows whether Lea is listening, thinking or speaking;
-/// captions show what you said and Lea's answer; when Lea asks you to scan the object, a scan card appears and leads
-/// straight into the scan.
+/// Voice mode: a hands-free conversation with Lea. Keep explaining what you think is wrong; each answer is followed by
+/// listening again, and anything easier to type can be typed. The orb shows whether Lea is listening, thinking or
+/// speaking; when Lea asks you to scan the object, a scan button appears and leads straight into the scan.
 struct VoiceModeView: View {
     @ObservedObject var voice: VoiceCoordinator
     let scanOffered: Bool
     let startScan: () -> Void
     let close: () -> Void
     @State private var pressing = false
+    @State private var typed = ""
+    @FocusState private var typing: Bool
 
     var body: some View {
-        VStack(spacing: Spacing.xl) {
+        VStack(spacing: Spacing.l) {
             HStack {
                 Text(status).font(.pillLabel).foregroundStyle(.secondary)
                 Spacer()
@@ -19,34 +21,69 @@ struct VoiceModeView: View {
                     .buttonStyle(RoundIconButtonStyle())
                     .accessibilityLabel("Close voice mode")
             }
-            Spacer()
-            Orb(state: voice.state)
-                .frame(width: 220, height: 220)
-                .accessibilityHidden(true)
-            VStack(spacing: Spacing.m) {
-                if let heard = voice.partial.isEmpty ? voice.lastHeard : voice.partial {
-                    Text(heard).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                }
-                if let reply = voice.lastReply {
-                    Text(reply).font(.sectionTitle).multilineTextAlignment(.center)
-                }
+            if voice.exchanges.isEmpty {
+                Spacer()
+                Orb(state: voice.state).frame(width: 220, height: 220).accessibilityHidden(true)
+                Text(voice.partial.isEmpty ? "Tell Lea what's going on and what you think is wrong." : voice.partial)
+                    .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                Spacer()
+            } else {
+                Orb(state: voice.state).frame(width: 72, height: 72).accessibilityHidden(true)
+                conversation
             }
-            .frame(maxWidth: .infinity)
-            .animation(Motion.standard, value: voice.lastReply)
-            Spacer()
             if scanOffered {
                 Button(action: startScan) { Label("Scan it", systemImage: Symbol.scan) }
                     .buttonStyle(.primary)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                Text("Or just say “okay”.").font(.footnote).foregroundStyle(.secondary)
             }
-            HStack(spacing: Spacing.xl) {
+            controls
+        }
+        .padding(Spacing.gutter)
+        .background(Palette.canvas.ignoresSafeArea())
+        .animation(Motion.settle, value: scanOffered)
+        .animation(Motion.standard, value: voice.exchanges)
+        .sensoryFeedback(Haptic.milestone, trigger: scanOffered) { _, offered in offered }
+    }
+
+    private var conversation: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: Spacing.m) {
+                    ForEach(voice.exchanges) { e in
+                        Bubble(text: e.said, mine: true)
+                        if let reply = e.reply { Bubble(text: reply, mine: false) }
+                    }
+                    if voice.state == .listening, !voice.partial.isEmpty { Bubble(text: voice.partial, mine: true).opacity(0.6) }
+                    Color.clear.frame(height: 1).id("end")
+                }
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: voice.exchanges) { withAnimation(Motion.standard) { proxy.scrollTo("end", anchor: .bottom) } }
+            .onChange(of: voice.partial) { proxy.scrollTo("end", anchor: .bottom) }
+        }
+    }
+
+    private var controls: some View {
+        HStack(spacing: Spacing.m) {
+            FieldWell(symbol: "keyboard") {
+                TextField("Type to Lea", text: $typed, axis: .vertical)
+                    .lineLimit(1...4)
+                    .focused($typing)
+                    .submitLabel(.send)
+                    .onSubmit(send)
+            }
+            if typing || !typed.isEmpty {
+                Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.system(size: 34)) }
+                    .disabled(typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send")
+            } else {
                 Toggle(isOn: Binding(get: { voice.handsFree }, set: { voice.setHandsFree($0) })) {
-                    Label("Hands-free", systemImage: "waveform")
+                    Image(systemName: "waveform")
                 }
                 .toggleStyle(.button)
+                .accessibilityLabel("Hands-free")
                 Image(systemName: pressing ? "mic.circle.fill" : "mic.circle")
-                    .font(.system(size: 64))
+                    .font(.system(size: 44))
                     .foregroundStyle(pressing ? Palette.danger : Palette.accent)
                     .gesture(DragGesture(minimumDistance: 0)
                         .onChanged { _ in if !pressing { pressing = true; voice.pushToTalkBegan() } }
@@ -54,10 +91,13 @@ struct VoiceModeView: View {
                     .accessibilityLabel("Hold to talk to Lea")
             }
         }
-        .padding(Spacing.gutter)
-        .background(Palette.canvas.ignoresSafeArea())
-        .animation(Motion.settle, value: scanOffered)
-        .sensoryFeedback(Haptic.milestone, trigger: scanOffered) { _, offered in offered }
+    }
+
+    private func send() {
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        typed = ""
+        voice.send(typed: text)
     }
 
     private var status: String {
@@ -66,6 +106,25 @@ struct VoiceModeView: View {
         case .listening: "Listening"
         case .thinking: "Thinking"
         case .speaking: "Lea"
+        }
+    }
+}
+
+/// What you said sits on the right; Lea's answers on the left.
+private struct Bubble: View {
+    let text: String
+    let mine: Bool
+
+    var body: some View {
+        HStack {
+            if mine { Spacer(minLength: Spacing.xxl) }
+            Text(text)
+                .font(mine ? .callout : .body)
+                .padding(.horizontal, Spacing.m)
+                .padding(.vertical, Spacing.s)
+                .background(mine ? Palette.accent.opacity(0.14) : Palette.surface,
+                            in: RoundedRectangle(cornerRadius: Radius.medium, style: .continuous))
+            if !mine { Spacer(minLength: Spacing.xxl) }
         }
     }
 }

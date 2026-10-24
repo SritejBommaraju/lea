@@ -28,17 +28,25 @@ Latency-sensitive; begin your visible answer immediately.
 Findings and suspects come from the vision pipeline and are candidates, never proof; only a meter reading proves a fault.
 Use the suspect's own probability word. Never state voltages, polarity or ratings from appearance.
 Safety: only low-voltage products; continuity checks are done unplugged.
+This is a back-and-forth conversation: build on what they told you earlier instead of starting over.
+When they explain what they think is wrong, take their theory seriously and say whether the scan supports it, but treat
+it as a lead, not a finding. Ask at most one short follow-up question at a time when it would narrow things down (what
+happened, when it started, what they already tried) and stop asking once you know enough to look.
 Use tools to read what the scan found and to act on the phone.
 When the person describes a problem and there is no scan yet, ask them to scan the object and call offer_scan (it shows
-a scan button they can accept). Call start_scan only when they ask for a scan or say yes to one you offered."""
+a scan button they can accept). Call start_scan only when they ask for a scan or say yes to one you offered.
+Pass both a symptom that sums up, in their words, what is wrong and what they suspect, so the scan starts with it."""
+
+_SYMPTOM = {"type": "object", "additionalProperties": False, "properties": {"symptom": {
+    "type": "string", "description": "One sentence, in their words: what is wrong and what they think the cause is."}}}
 
 TOOLS = [
     {"name": "session_state", "description": "What this session has: scans, findings, suspects (ranked) and next actions.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "offer_scan", "description": "Show a scan button the person can accept, after asking them to scan the object.",
-     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+     "input_schema": _SYMPTOM},
     {"name": "start_scan", "description": "Open a new guided scan now: they asked for one, or said yes to the offer.",
-     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+     "input_schema": _SYMPTOM},
     {"name": "open_report", "description": "Show the report for the latest scan on the phone.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
 ]
@@ -68,6 +76,11 @@ def _brief(snap: dict) -> dict:
     }
 
 
+def _symptom(given: Any) -> dict:
+    s = given.get("symptom") if isinstance(given, dict) else None
+    return {"symptom": s.strip()[:300]} if isinstance(s, str) and s.strip() else {}
+
+
 def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], client=None) -> tuple[str, list[dict]]:
     """One spoken turn through Claude with tools. Raises MissingSettingError without a key, and on API errors."""
     client = client or _anthropic()
@@ -94,10 +107,10 @@ def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], clie
             if u.name == "session_state":
                 out = json.dumps(_brief(snap))
             elif u.name == "offer_scan":
-                actions.append({"type": "offer_scan"})
+                actions.append({"type": "offer_scan", **_symptom(u.input)})
                 out = "The scan button is showing; it opens the scan when they tap it or say yes."
             elif u.name == "start_scan":
-                actions.append({"type": "scan"})
+                actions.append({"type": "scan", **_symptom(u.input)})
                 out = "The scan screen is opening on the phone."
             elif u.name == "open_report" and snap.get("scans"):
                 actions.append({"type": "report", "scan_id": snap["scans"][-1]["scan_id"]})

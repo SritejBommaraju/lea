@@ -3,7 +3,7 @@ import Foundation
 /// The gateway's side of a conversation: a short-lived Cartesia grant, and the reply to one final spoken turn.
 struct VoiceLink: Sendable {
     var token: @Sendable () async throws -> CartesiaGrant
-    var turn: @Sendable (_ id: String, _ mode: String, _ transcript: String) async throws -> VoiceReply
+    var turn: @Sendable (_ id: String, _ mode: String, _ transcript: String, _ conversationID: String) async throws -> VoiceReply
 }
 
 struct VoiceReply: Decodable, Sendable {
@@ -12,11 +12,12 @@ struct VoiceReply: Decodable, Sendable {
 }
 
 /// Something the gateway asked the phone to do: `offer_scan` (show a scan button), `scan` (start a new scan now) or
-/// `report` (open a scan's report).
+/// `report` (open a scan's report). A scan carries the symptom from the conversation, so the scan starts with it.
 struct VoiceAction: Decodable, Sendable, Equatable {
     let type: String
-    let scanID: String?
-    enum CodingKeys: String, CodingKey { case type, scanID = "scan_id" }
+    var scanID: String?
+    var symptom: String?
+    enum CodingKeys: String, CodingKey { case type, symptom, scanID = "scan_id" }
 }
 
 struct CartesiaGrant: Decodable, Sendable {

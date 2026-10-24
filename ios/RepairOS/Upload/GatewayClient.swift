@@ -193,8 +193,8 @@ struct GatewayClient: Sendable {
 
 extension GatewayClient {
     /// One final spoken turn; `sessionID` gives Lea the session's scans, findings and suspects.
-    func voiceTurn(id: String, mode: String, transcript: String, sessionID: String?) async throws -> VoiceReply {
-        var body: [String: Any] = ["id": id, "mode": mode, "transcript": transcript]
+    func voiceTurn(id: String, mode: String, transcript: String, conversationID: String, sessionID: String?) async throws -> VoiceReply {
+        var body: [String: Any] = ["id": id, "mode": mode, "transcript": transcript, "conversation_id": conversationID]
         if let sessionID { body["session_id"] = sessionID }
         let (data, _) = try await send("POST", "v1/voice/turns", json: body, expect: [200])
         return try JSONDecoder().decode(VoiceReply.self, from: data)

@@ -39,9 +39,9 @@ struct VoiceTests {
     }
 
     @Test func gatewayRepliesDecode() throws {
-        let json = #"{"id":"t1","reply":"Opening a new scan.","actions":[{"type":"scan"},{"type":"report","scan_id":"scan_1"}],"by":"rules"}"#
+        let json = #"{"id":"t1","reply":"Opening a new scan.","actions":[{"type":"scan","symptom":"stops after a minute"},{"type":"report","scan_id":"scan_1"}]}"#
         let r = try JSONDecoder().decode(VoiceReply.self, from: Data(json.utf8))
         #expect(r.reply == "Opening a new scan.")
-        #expect(r.actions == [VoiceAction(type: "scan", scanID: nil), VoiceAction(type: "report", scanID: "scan_1")])
+        #expect(r.actions == [VoiceAction(type: "scan", symptom: "stops after a minute"), VoiceAction(type: "report", scanID: "scan_1")])
     }
 }
