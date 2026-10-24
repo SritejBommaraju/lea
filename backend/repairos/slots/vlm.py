@@ -1,9 +1,9 @@
-"""VLM slot interface (BUILD §3.1, M.VLM.0). Implementations live in repairos.slots.vlm_<impl>.
+"""VLM slot interface (task M3). Implementations live in repairos.slots.vlm_<impl>.
 
 Two questions, both product-agnostic:
 - `inspect_crop(crop, context=None, part_hint=None) -> CropState`: what part is this and what state is it in, one
   of CROP_STATES (vision/generic_classes.py), with a short evidence sentence. Phase 1 (no reference).
-- `judge_crop(crop, render_crop, expectation, options) -> Judgement`: pick exactly one of `options` (V3.5 crop pair,
+- `judge_crop(crop, render_crop, expectation, options) -> Judgement`: pick exactly one of `options` (Phase 2 crop pair,
   Phase 2 with a render; `render_crop` may be None). `cannot_tell` is always added (I4).
 
 Escalation policy (here, the slot wrapper): small model first, larger model only on `cannot_tell` (Q3).

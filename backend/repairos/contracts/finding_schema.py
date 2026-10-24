@@ -12,7 +12,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 class State(StrEnum):
     """
-    Our scan states (ok partly shifted missing, BUILD S2.5), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).
+    Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).
     """
 
     ok = 'ok'
@@ -205,7 +205,7 @@ class Finding(BaseModel):
     subject: Subject
     state: State = Field(
         ...,
-        description='Our scan states (ok partly shifted missing, BUILD S2.5), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).',
+        description='Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).',
     )
     source: Source = Field(
         ...,

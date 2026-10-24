@@ -1,4 +1,4 @@
-"""Evidence -> words: the fusion state builder (card F4.1; SPEC S5, A9, I1, I3, I7).
+"""Evidence -> words: the fusion state builder (task B7; PLAN S5, A9, I1, I3, I7).
 
     fs = build_state(scan_id, findings, readings, symptom="...")
     fs.state      # JSON-ready words for the FUSION slot; no number survives (S5 guard)

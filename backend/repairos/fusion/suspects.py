@@ -1,4 +1,4 @@
-"""Suspect ranking (card F4.4; SPEC I1-I4, I6).
+"""Suspect ranking (task B7; PLAN I1-I4, I6).
 
 Jev's atomic judgments per subject are combined in code: p_fault = P(problem shown) x P(a problem there explains
 the symptom). The verdict is decided in code, in this order:

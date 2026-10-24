@@ -1,4 +1,4 @@
-"""S2.1 gateway (Phase 1): pairing, chunked resumable hash-checked uploads, scan/still/reading ingestion validated
+"""B5 gateway (Phase 1): pairing, chunked resumable hash-checked uploads, scan/still/reading ingestion validated
 against the contracts and the capture files, reads, SSE. Runs a real uvicorn server on localhost; the client is
 stdlib urllib. Bodies are the public contract examples; files are format-only fixtures (not captures)."""
 from __future__ import annotations

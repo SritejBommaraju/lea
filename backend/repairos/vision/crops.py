@@ -1,4 +1,4 @@
-"""Full-resolution crops (BUILD M.SEG.0 crop rules, V3.5).
+"""Full-resolution crops (task M2).
 
 Crops are cut from the ORIGINAL still. The whole still is never downscaled before cropping: a small part that is
 40 px wide at 4032 px would be 10 px at 1024 px and lost. Only the cut crop may be downsized (to `max_side`), never

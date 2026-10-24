@@ -1,4 +1,4 @@
-"""B0.7: session format reader, validator, writer round trip, held-out guard and the replay runner."""
+"""B6: session format reader, validator, writer round trip, held-out guard and the replay runner."""
 from __future__ import annotations
 
 import io

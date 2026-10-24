@@ -1,4 +1,4 @@
-"""M.FUSION.1: the Jev client. Offline tests cover the request shape, recorded real exchanges and typed errors;
+"""B7: the Jev client. Offline tests cover the request shape, recorded real exchanges and typed errors;
 live tests call TypeSafe and skip with HUMAN ACTION NEEDED when TYPESAFE_KEY is missing. Jev is never mocked."""
 from __future__ import annotations
 

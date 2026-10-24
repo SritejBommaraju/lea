@@ -1,7 +1,7 @@
-<!-- Title: start with the card id, e.g. "S2.4 Alignment: gravity-aware ICP". Squash-merge keeps it; next.py counts the card done. -->
+<!-- Title: start with the task id, e.g. "B10 Pipeline orchestrator". Squash-merge keeps it; the build tools count the task done. -->
 
-**Card:** <!-- e.g. S2.4 (BUILD.md §5) -->
-**Stream:** <!-- app | modeling | build | grain -->
+**Task:** <!-- e.g. B10 (PLAN.md §7) -->
+**Stream:** <!-- app | modeling | build -->
 
 ## What changed
 

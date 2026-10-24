@@ -1,4 +1,4 @@
-"""DET slot interface (BUILD.md §3.1): open-vocabulary detection from text prompts on a full-resolution still.
+"""DET slot interface (task M1): open-vocabulary detection from text prompts on a full-resolution still.
 
 Implementations live in repairos.slots.det_<impl>/ (e.g. det_gdino) and register with
 `@repairos.registry.register("DET", "<impl>")`. Keep heavy imports (torch, transformers, weights) inside the

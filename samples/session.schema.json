@@ -36,7 +36,7 @@
     "source": {
       "type": "string",
       "enum": ["gateway", "phone_export", "converter"],
-      "description": "gateway: written by the backend as it received the upload; phone_export: C1.6; converter: C1.7."
+      "description": "gateway: written by the backend as it received the upload; phone_export: the app (A4); converter: an importer (B12)."
     },
     "split": {
       "type": "string",

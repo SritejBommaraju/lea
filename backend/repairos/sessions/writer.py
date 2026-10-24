@@ -1,5 +1,5 @@
 """Write a session folder (samples/README.md). Used by the gateway (every object it receives, so a real run is
-replayable), the phone exporter (C1.6) and the converters (C1.7).
+replayable), the app upload (A4) and the importers (B12).
 
 `fetch(value) -> (bytes, extension)` resolves a file field: a blob ref for the gateway, a local path for a
 converter. Files land at their place in the layout; JSON is the contract object with relative paths.

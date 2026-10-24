@@ -1,4 +1,4 @@
-"""B0.2: generated contract models load every example, reject every invalid case, and decode in Swift."""
+"""B2: generated contract models load every example, reject every invalid case, and decode in Swift."""
 from __future__ import annotations
 
 import json

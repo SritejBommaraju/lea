@@ -1,4 +1,4 @@
-"""M.STATE.11: SQLite specifics (the shared assertions are in tests/conformance/state, run with --impl sqlite)."""
+"""B4: SQLite specifics (the shared assertions are in tests/conformance/state, run with --impl sqlite)."""
 from __future__ import annotations
 
 import asyncio
@@ -60,7 +60,7 @@ def test_stale_running_job_is_reclaimed(tmp_path, monkeypatch):
     asyncio.run(go())
 
 
-def test_registry_selects_sqlite_for_the_hackathon_profile(tmp_path, monkeypatch):
+def test_registry_selects_sqlite_for_the_phase1_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("REPAIROS_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("REPAIROS_PROFILE", raising=False)
     monkeypatch.delenv("REPAIROS_SLOT_STATE", raising=False)

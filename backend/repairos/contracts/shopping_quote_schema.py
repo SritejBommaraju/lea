@@ -143,7 +143,7 @@ class MadeAlternative(BaseModel):
         description="Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain is kept for a future priced made[] row.",
     )
     printer_available: bool | None = Field(
-        None, description='True at the hackathon venue.'
+        None, description='True when the user has a 3D printer.'
     )
 
 

@@ -1,4 +1,4 @@
-"""Detector prompt sets built at runtime (BUILD M.DET.0).
+"""Detector prompt sets built at runtime (task M1).
 
 Phase 1: the generic classes only. Phase 2 adds noun phrases from the reference BOM at runtime (`extra_phrases`);
 nothing product-specific is ever stored in code (GEN1).

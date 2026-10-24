@@ -1,4 +1,4 @@
-"""BLOB conformance (M.BLOB.0, BUILD.md §3.3): byte-exact round trips, content addressing, hash-checked resumable
+"""BLOB conformance (task B4): byte-exact round trips, content addressing, hash-checked resumable
 upload, presign expiry.
 
     pytest backend/tests/conformance/blob [--impl local]

@@ -71,7 +71,7 @@ class Bbox(BaseModel):
 
 class Verdict(StrEnum):
     """
-    ok, partly, damaged (may name missing_region_mm), not_seen (the scan should have shown the part and did not), shifted (shift_mm says by how much), not_visible (the scan could not have seen it; `why` says why). How Grain decides is private (private/grain/GRAIN_SPEC.md, ask Sritej). RepairOS maps these onto Finding.state: ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected.
+    ok, partly, damaged (may name missing_region_mm), not_seen (the scan should have shown the part and did not), shifted (shift_mm says by how much), not_visible (the scan could not have seen it; `why` says why). How Grain decides is private (private/grain/, ask Sritej). RepairOS maps these onto Finding.state: ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected.
     """
 
     ok = 'ok'

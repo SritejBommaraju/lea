@@ -1,4 +1,4 @@
-"""STATE conformance (M.STATE.0, BUILD.md §3.3): the same assertions for every implementation.
+"""STATE conformance (task B4): the same assertions for every implementation.
 
     pytest backend/tests/conformance/state [--impl sqlite]
 

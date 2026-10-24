@@ -21,8 +21,8 @@ Recorded Grain responses, the recorder and the Grain spec sheet are in `private/
 
 | Kind | Files | Rules |
 |---|---|---|
-| RepairOS objects | `finding`, `suspect`, `meter-reading`, `next-action`, `still`, `scan-package`, `reference-design`, `repair-plan`, `part-on-hand`, `shopping-quote` | Ours. `additionalProperties: false`. Examples stay generic (SPEC GEN1: no demo-product names). |
-| Grain exchanges | `grain-scan-record`, `grain-diagnose-response`, `grain-look-response`, `grain-electrical-reference`, `grain-electrical-check-request`, `grain-electrical-check-response`, `grain-call-request`, `grain-call-response`, `grain-error` | Grain owns the shape. Each one matches the private recorded Grain responses, plus target fields marked `"x-target": "T<n>"` (SPEC.md §10). Grain's real names are never renamed. `additionalProperties: true`. |
+| RepairOS objects | `finding`, `suspect`, `meter-reading`, `next-action`, `still`, `scan-package`, `reference-design`, `repair-plan`, `part-on-hand`, `shopping-quote` | Ours. `additionalProperties: false`. Examples stay generic (invariant GEN1: no product names). |
+| Grain exchanges | `grain-scan-record`, `grain-diagnose-response`, `grain-look-response`, `grain-electrical-reference`, `grain-electrical-check-request`, `grain-electrical-check-response`, `grain-call-request`, `grain-call-response`, `grain-error` | Grain owns the shape. Each one matches the private recorded Grain responses, plus target fields marked `"x-target": "T<n>"` (Grain targets, tracked privately). Grain's real names are never renamed. `additionalProperties: true`. |
 
 Nested Grain shapes are reused across files rather than copied: for example `grain-call-response` points
 `diagnosis`, `electrical`, `photos` and `scan` at the endpoint schemas (`"$ref": "grain-diagnose-response.schema.json"`),

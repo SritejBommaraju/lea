@@ -1,4 +1,4 @@
-"""DET conformance (BUILD §3.3) on recorded REAL stills only. Same assertions for every implementation:
+"""DET conformance (task M1) on recorded REAL stills only. Same assertions for every implementation:
     pytest -m vision backend/tests/conformance/det [--impl gdino|owlv2]
 Recall at expected locations needs human box labels (samples/sessions/*/stills/<id>.boxes.json:
 [{"box": [x0, y0, x1, y1], "class": <generic class>}]); until they exist that test skips with HUMAN ACTION NEEDED."""

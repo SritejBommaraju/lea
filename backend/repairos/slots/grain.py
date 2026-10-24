@@ -1,5 +1,5 @@
-"""GRAIN slot interface (BUILD.md §3.1). Card M.GRAIN.0 fills in the Protocol bodies and the conformance suite
-in backend/tests/conformance/grain/. Implementations live in repairos.slots.grain_<impl>."""
+"""GRAIN slot interface (Phase 2, PLAN.md §9). Not in the Phase 1 profile; Phase 2 fills in the Protocol bodies and
+a conformance suite in backend/tests/conformance/grain/. Implementations will live in repairos.slots.grain_<impl>."""
 from __future__ import annotations
 
 from typing import Protocol

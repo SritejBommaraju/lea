@@ -1,4 +1,4 @@
-"""F4.1: evidence -> words. No network."""
+"""B7: evidence -> words. No network."""
 from __future__ import annotations
 
 import json

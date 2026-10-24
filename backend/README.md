@@ -1,6 +1,6 @@
 # RepairOS backend
 
-Python 3.12, FastAPI gateway + workers (BUILD.md §2.2, §4). Rules: AGENTS.md and SPEC.md.
+Python 3.12, FastAPI gateway + pipeline workers. Plan and rules: PLAN.md and AGENTS.md.
 
 ```
 make bootstrap      # backend/.venv (uv if present, else python3 -m venv) + deps from requirements.lock
@@ -12,11 +12,11 @@ make codegen        # regenerate repairos/contracts/ from spec/contracts/ (never
 | Path | What |
 |---|---|
 | `repairos/config.py` | Settings from the environment + `backend/.env`; secrets redacted; release lockout |
-| `repairos/registry.py` | `slot("GRAIN")` returns the implementation `config/providers.yaml` selects |
+| `repairos/registry.py` | `slot("DET")` returns the implementation `config/providers.yaml` selects |
 | `repairos/slots/` | one Protocol per slot (`<slot>.py`), implementations in `<slot>_<impl>/` |
 | `repairos/contracts/` | generated Pydantic v2 models; `contracts.validate(name, data)` checks the full schema |
 | `tests/unit/`, `tests/conformance/<slot>/` | unit tests; per-slot conformance suites (`--impl <impl>`) |
 
 Dependencies are pinned in `pyproject.toml` (direct) and `requirements.lock` (all, `make lock`). Allowed licences:
-Apache-2.0, MIT, BSD (BUILD.md §1.4). Current core set: pydantic, pydantic-settings, PyYAML, jsonschema (MIT);
+Apache-2.0, MIT, BSD (PLAN.md invariant L2). Current core set: pydantic, pydantic-settings, PyYAML, jsonschema (MIT);
 transitive: typing-extensions (PSF-2.0), python-dotenv (BSD-3), packaging (Apache-2.0/BSD-2), the rest MIT.

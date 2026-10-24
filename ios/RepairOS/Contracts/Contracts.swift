@@ -50,13 +50,13 @@ public struct Finding: Codable, Sendable {
     /// Which stage produced it. Grain sources are wrapped Grain results, kept separate so they
     /// are never merged with our measurements.
     public let source: FindingSource
-    /// Our scan states (ok partly shifted missing, BUILD S2.5), Grain /look states (ok broken
-    /// missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin
-    /// colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*),
-    /// and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain
-    /// mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged,
-    /// not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict
-    /// ok->ok, off->out_of_range, open->open,
+    /// Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing
+    /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
+    /// open short), meter state out_of_range, discovery states (unexpected_*), and honesty
+    /// states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose
+    /// verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
+    /// not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok,
+    /// off->out_of_range, open->open,
     /// pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem,
     /// not a fault).
     public let state: FindingState
@@ -278,13 +278,13 @@ public enum FindingSource: String, Codable, Sendable {
     case repairosWireCheck = "repairos.wire_check"
 }
 
-/// Our scan states (ok partly shifted missing, BUILD S2.5), Grain /look states (ok broken
-/// missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin
-/// colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*),
-/// and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain
-/// mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged,
-/// not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict
-/// ok->ok, off->out_of_range, open->open,
+/// Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing
+/// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
+/// open short), meter state out_of_range, discovery states (unexpected_*), and honesty
+/// states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose
+/// verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
+/// not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok,
+/// off->out_of_range, open->open,
 /// pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem,
 /// not a fault).
 public enum FindingState: String, Codable, Sendable {
@@ -1146,10 +1146,9 @@ public struct MissingRegionMmClass: Codable, Sendable {
 
 /// ok, partly, damaged (may name missing_region_mm), not_seen (the scan should have shown
 /// the part and did not), shifted (shift_mm says by how much), not_visible (the scan could
-/// not have seen it; `why` says why). How Grain decides is private
-/// (private/grain/GRAIN_SPEC.md, ask Sritej). RepairOS maps these onto Finding.state:
-/// ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
-/// not_visible->not_inspected.
+/// not have seen it; `why` says why). How Grain decides is private (private/grain/, ask
+/// Sritej). RepairOS maps these onto Finding.state: ok->ok, partly->partly,
+/// shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected.
 public enum PartGrainVerdict: String, Codable, Sendable {
     case damaged = "damaged"
     case notSeen = "not_seen"
@@ -2901,10 +2900,10 @@ public struct Protective: Codable, Sendable {
 }
 
 /// The cached Grain reference for one product model. Built once per product model and never
-/// re-run for a product already seen (SPEC.md A4; a design turn takes minutes). Files are
-/// Grain's reference artefacts fetched through the API and stored on the backend (handshake
-/// H1, private/grain/GRAIN_SPEC.md); the cache is keyed by grain_project_id + last_build
-/// until Grain reports last_build.hash (target T11).
+/// re-run for a product already seen (a design turn takes minutes). Files are Grain's
+/// reference artefacts fetched through the API and stored on the backend (handshake H1,
+/// private/grain/); the cache is keyed by grain_project_id + last_build until Grain reports
+/// last_build.hash (target T11).
 // MARK: - ReferenceDesign
 public struct ReferenceDesign: Codable, Sendable {
     /// Grain's last_build.hash (target T11). null until Grain reports it; then last_build below
@@ -3971,7 +3970,7 @@ public struct MadeAlternative: Codable, Sendable {
     public let file: String?
     public let massG: Double?
     public let material: String?
-    /// True at the hackathon venue.
+    /// True when the user has a 3D printer.
     public let printerAvailable: Bool?
     public let process: String?
 

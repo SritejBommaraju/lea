@@ -15,7 +15,7 @@ dependencies = [
     "pydantic-settings==2.16.1",
     "pyyaml==6.0.3",
     "jsonschema==4.26.0",
-    # Gateway (S2.1): fastapi MIT (starlette BSD-3, anyio MIT), uvicorn BSD-3 (h11 MIT, click BSD-3).
+    # Gateway (B5): fastapi MIT (starlette BSD-3, anyio MIT), uvicorn BSD-3 (h11 MIT, click BSD-3).
     "fastapi==0.162.0",
     "uvicorn==0.54.0",
 ]
@@ -26,10 +26,10 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
 ]
-# Phase 1 perception (M.DET.1/M.DET.4, M.VLM.1, M.LLM.1): `uv pip install -e 'backend[vision]'`. Not in
+# Phase 1 perception (M1, M3, B8): `uv pip install -e 'backend[vision]'`. Not in
 # requirements.lock yet. Licences: transformers Apache-2.0, torch BSD-3-Clause (bundles Apache/BSD/MIT/BSL-1.0
 # parts), pillow MIT-CMU (permissive), anthropic Apache-2.0 (MIT before 2.0.0), numpy
-# BSD-3-Clause. Transitive tqdm is MPL-2.0 AND MIT: flag for the B0.5 licence check. Weights: Grounding DINO tiny
+# BSD-3-Clause. Transitive tqdm is MPL-2.0 AND MIT: flag for the licence check (B15). Weights: Grounding DINO tiny
 # and OWLv2 base, both Apache-2.0, revisions pinned in their slot packages.
 vision = [
     "transformers==5.20.2",

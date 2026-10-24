@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""B0.11: one real Jev call on a small hand-written RepairOS word state (no numbers, S5).
+"""B7: one real Jev call on a small hand-written RepairOS word state (no numbers, S5).
 
     backend/.venv/bin/python tools/jev_smoke.py
 

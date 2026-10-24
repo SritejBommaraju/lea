@@ -1,4 +1,4 @@
-"""The ONE generic vocabulary for vision (BUILD M.DET.0, GEN1, guard rule 3).
+"""The ONE generic vocabulary for vision (task M1, invariant GEN1).
 
 Every class name and crop state used by perception lives here and nowhere else. These are generic electronics and
 mechanical categories that apply to any hardware product: no product names, no refs, no brand words. Product-specific
@@ -35,7 +35,7 @@ GENERIC_CLASSES: tuple[str, ...] = PART_CLASSES + DAMAGE_CLASSES
 # Wire-like classes: a finding about one of these is subject kind "wire", every other class is a "part".
 WIRE_CLASSES: frozenset[str] = frozenset({"wire", "cable", "ribbon cable", "broken wire", "frayed wire", "loose wire"})
 
-# What the VLM may say about one crop (M.VLM.0). `cannot_tell` is always allowed (I4).
+# What the VLM may say about one crop (M3). `cannot_tell` is always allowed (I4).
 CROP_STATES: tuple[str, ...] = (
     "ok", "damaged", "burnt", "cracked", "corroded", "loose", "unplugged", "missing", "cannot_tell",
 )

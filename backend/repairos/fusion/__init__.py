@@ -1,4 +1,4 @@
-"""Evidence fusion (BUILD.md F4.1, F4.4; SPEC A2, I1-I7, S5).
+"""Evidence fusion (PLAN.md task B7; invariants A2, I1-I7, S5).
 
     from repairos.fusion import fuse
     result = fuse(scan_id, findings, readings, symptom="...")

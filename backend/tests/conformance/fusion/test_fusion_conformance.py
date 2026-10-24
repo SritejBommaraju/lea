@@ -1,10 +1,10 @@
-"""FUSION slot conformance (card M.FUSION.0, BUILD.md §3.3): the same assertions for every implementation.
+"""FUSION slot conformance (task B7): the same assertions for every implementation.
 
     pytest backend/tests/conformance/fusion [--impl jev]
 
 Runs against the real engine on a word state built from the contract examples; skips with HUMAN ACTION NEEDED when
 the implementation's key is missing (conftest.py). Recorded real exchanges land in data/fusion/<impl>/ and the
-B0.11 smoke fixture in samples/fusion/.
+Jev smoke fixture in samples/fusion/.
 """
 from __future__ import annotations
 

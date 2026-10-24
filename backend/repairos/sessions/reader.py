@@ -3,7 +3,7 @@
     s = open_session("sess_20261024_1a2b")          # samples/sessions/<id>, or any folder path
     s.scans(), s.stills(), s.readings(), s.parts()  # validated contract dicts (paths relative to s.dir)
 
-Held-out sessions (split: heldout) are refused unless `allow_heldout=True`; only `make eval` passes it (E8.3).
+Held-out sessions (split: heldout) are refused unless `allow_heldout=True`; only `make eval` passes it (M5).
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class SessionError(ValueError):
 
 
 class HeldoutSession(SessionError):
-    """A held-out session was opened outside the evaluation (E8.3)."""
+    """A held-out session was opened outside the evaluation (M5)."""
 
 
 def _load(path: Path) -> Any:

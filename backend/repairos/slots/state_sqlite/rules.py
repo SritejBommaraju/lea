@@ -1,5 +1,5 @@
-"""Row rules every STATE write passes (SPEC.md §7). Pure: `lookup(kind, id) -> dict | None` reads the store inside
-the writing transaction. The same rules apply to every STATE implementation (M.STATE.0)."""
+"""Row rules every STATE write passes (PLAN.md §5 invariants). Pure: `lookup(kind, id) -> dict | None` reads the store inside
+the writing transaction. The same rules apply to every STATE implementation (B4)."""
 from __future__ import annotations
 
 import json

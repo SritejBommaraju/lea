@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Replay one recorded session offline (BUILD.md B0.7). Format: samples/README.md.
+"""Replay one recorded session offline (PLAN.md task B6). Format: samples/README.md.
 
     make replay SESSION=<session_id | path>          # = backend/.venv/bin/python tools/replay.py --session ...
     python tools/replay.py --check [--all | --session X]  # validate only (CI: every non-held-out session)
 
 Steps: validate the folder; load it into a fresh STATE + BLOB (the configured slots, data dir
 data/replay/<session_id>/) through the gateway's transitions; run `repairos.pipeline.run_session` when the pipeline
-exists (card F4.8; until then the run says `not_built` and nothing stands in for it); score the findings against
+exists (task B10; until then the run says `not_built` and nothing stands in for it); score the findings against
 truth.json; write data/replay/<session_id>/summary.json. Phase 1 makes no Grain calls.
 """
 from __future__ import annotations
@@ -79,7 +79,7 @@ async def _replay(path: Path, out_root: Path, allow_heldout: bool) -> dict:
             raise
         pipeline = None
     if pipeline is None or not hasattr(pipeline, "run_session"):
-        stage("pipeline", t0, "not_built", card="F4.8")
+        stage("pipeline", t0, "not_built", task="B10")
     else:
         result = pipeline.run_session(session_id=session.session_id, state=state, blobs=blobs)
         if inspect.isawaitable(result):
@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", action="store_true", help="validate only")
     ap.add_argument("--root", type=Path, default=ROOT / "samples" / "sessions")
     ap.add_argument("--out", type=Path, default=ROOT / "data" / "replay")
-    ap.add_argument("--allow-heldout", action="store_true", help="evaluation only (E8.3)")
+    ap.add_argument("--allow-heldout", action="store_true", help="evaluation only (M5)")
     args = ap.parse_args(argv)
 
     from repairos.sessions.reader import list_sessions, session_path

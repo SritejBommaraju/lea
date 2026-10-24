@@ -1,8 +1,8 @@
-"""FastAPI gateway (BUILD.md S2.1, Phase 1): the only server the phone talks to.
+"""FastAPI gateway (PLAN.md task B5, Phase 1): the only server the phone talks to.
 
 Device pairing, chunked resumable blob uploads (content-hashed), scan package / still / reading ingestion
 validated with repairos.contracts.validate() plus the capture files themselves, read endpoints, SSE live events.
-Every write goes through StateStore.transition (SPEC I1-I4 enforced there). Every object received is also written
+Every write goes through StateStore.transition (PLAN.md invariants I1-I4 enforced there). Every object received is also written
 into a session folder (data/sessions/<session_id>/, the samples/README.md layout) so a real run is replayable.
 The gateway imports slot Protocols only; implementations come from the registry. No Grain calls in Phase 1.
 """
@@ -42,7 +42,7 @@ MAX_BLOB_BYTES = 4 << 30
 SSE_POLL_S = 0.25
 SSE_KEEPALIVE_S = 15.0
 _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
-# Jobs queued when an object arrives; the workers (F4.8) consume them.
+# Jobs queued when an object arrives; the pipeline workers (B10) consume them.
 JOBS_ON = {"scan-package": ["detect"], "still": ["detect"]}
 
 

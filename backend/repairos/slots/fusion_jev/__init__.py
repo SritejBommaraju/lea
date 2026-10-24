@@ -1,4 +1,4 @@
-"""FUSION=jev: Jev, TypeSafe's hosted System One model (card M.FUSION.1; SPEC A2, S5, A6, Q4).
+"""FUSION=jev: Jev, TypeSafe's hosted System One model (task B7; PLAN A2, S5, A6).
 
 Stdlib HTTP (urllib), no SDK dependency: the request is one documented JSON POST. Verified against the live docs on
 2026-10-24:
@@ -38,7 +38,7 @@ from repairos.slots.fusion import (Answers, FusionBadAnswer, FusionError, Fusion
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
 MODEL = "jev-latest"          # the docs' default alias; the versioned id that answered is recorded per call
-TIMEOUT_S = 3.0               # M.FUSION.1: 3 s timeout
+TIMEOUT_S = 3.0               # 3 s timeout
 RETRY_STATUSES = {429, 529}   # docs: retry these with backoff
 RECORD_DIR = ROOT / "data" / "fusion" / "jev"
 
