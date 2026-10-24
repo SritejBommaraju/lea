@@ -30,7 +30,9 @@ def _where(loc: Mapping[str, Any] | None) -> str:
         return "location not computed"
     if loc["status"] == "computed":
         x, y, z = loc["point_m"]
-        return f"on the scan at ({x:.3f}, {y:.3f}, {z:.3f}) m, {loc['frame']}"
+        how = loc["method"].replace("_", " ")
+        return (f"on the scan at ({x:.3f}, {y:.3f}, {z:.3f}) m, {loc['frame']}; location confidence "
+                f"{loc['confidence_word']} ({how})")
     return f"location not computed: {loc['reason']}"
 
 

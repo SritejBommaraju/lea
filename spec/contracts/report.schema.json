@@ -151,6 +151,7 @@
         "pins": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
     "box_px": {
       "type": "array",
       "items": { "type": "integer", "minimum": 0 },
@@ -184,13 +185,18 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "frame", "point_m", "method"],
+          "required": ["status", "frame", "point_m", "region_min_m", "region_max_m", "confidence_word", "method"],
           "properties": {
             "status": { "const": "computed" },
             "frame": { "const": "arkit_world", "description": "The scan's frame: metres, Y up." },
-            "point_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
-            "extent_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3, "description": "Size of the region on the scan, axis-aligned in arkit_world, when known." },
-            "method": { "type": "string", "minLength": 1, "description": "Locator and version." }
+            "point_m": { "$ref": "#/$defs/vec3", "description": "Where the box's centre lands on the scan." },
+            "region_min_m": { "$ref": "#/$defs/vec3", "description": "Axis-aligned box of the region on the scan." },
+            "region_max_m": { "$ref": "#/$defs/vec3" },
+            "normal": { "$ref": "#/$defs/vec3", "description": "Unit surface normal facing the camera (mesh ray cast only)." },
+            "distance_m": { "type": "number", "minimum": 0, "description": "From the still's camera to point_m." },
+            "confidence_word": { "type": "string", "enum": ["low", "medium", "high"], "description": "The locator's own word (uncalibrated, I6)." },
+            "method": { "type": "string", "enum": ["ray_cast_mesh", "ray_cast_point_cloud", "triangulation"] },
+            "notes": { "type": "array", "items": { "type": "string" }, "description": "The locator's reasons for its confidence word." }
           }
         },
         {

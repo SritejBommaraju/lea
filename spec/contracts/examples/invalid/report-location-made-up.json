@@ -1,6 +1,6 @@
 {
  "schema": "report",
- "why": "a computed location needs its point and method; otherwise it is not_computed with a reason",
+ "why": "a computed location needs its point, region, confidence word and method from the locator; otherwise it is not_computed with a reason",
  "base": "report.json",
  "patch": {
   "findings": [
@@ -34,7 +34,13 @@
     },
     "location": {
      "status": "computed",
-     "frame": "arkit_world"
+     "frame": "arkit_world",
+     "point_m": [
+      0.1,
+      0.0,
+      -0.3
+     ],
+     "method": "ray_cast_point_cloud"
     },
     "proof": {
      "status": "not_measured"
@@ -79,12 +85,22 @@
       0.02,
       -0.3
      ],
-     "extent_m": [
-      0.01,
-      0.01,
-      0.01
+     "region_min_m": [
+      0.095,
+      0.015,
+      -0.305
      ],
-     "method": "<locator id and version>"
+     "region_max_m": [
+      0.105,
+      0.025,
+      -0.295
+     ],
+     "distance_m": 0.25,
+     "confidence_word": "medium",
+     "method": "ray_cast_point_cloud",
+     "notes": [
+      "ARKit tracking was limited when the still was taken"
+     ]
     },
     "proof": {
      "status": "not_measured"

@@ -73,10 +73,11 @@ def _proof(suspect: Mapping[str, Any] | None) -> dict[str, Any]:
 def capture_summary(scan: Mapping[str, Any] | None, stills: list[Mapping[str, Any]],
                     judged_stills: set[str]) -> dict[str, Any]:
     kfs = (scan or {}).get("keyframes") or []
-    depth = any(k.get("depth_file") for k in kfs) or any(s.get("depth_file") for s in stills)
     hint = (scan or {}).get("coverage_hint")
     out: dict[str, Any] = {
-        "depth_source": "lidar" if depth else "none",
+        # the scan package's depth_source (absent = lidar, the contract); a loose photo has no scan, so no depth
+        "depth_source": ((scan.get("depth_source") or "lidar") if scan and scan.get("keyframes") is not None
+                         else "none"),
         "stills": len(stills),
         "stills_inspected": len(judged_stills & {s["still_id"] for s in stills}),
         "keyframes": len(kfs),

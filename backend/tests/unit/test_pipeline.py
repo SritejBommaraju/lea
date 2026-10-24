@@ -303,22 +303,71 @@ def test_default_locator_absent_until_the_locate_task_lands():
         pytest.skip("repairos.locate is installed; its own tests cover it")
 
 
-def test_locations_are_checked_never_made_up():
-    loc = li.as_report_location(li.Location(point_m=(0.1, 0.2, -0.3), method="ray to mesh"), "repairos.locate 1")
+def _module_location(**over):
+    """The fields of repairos.locate's Location.to_dict(), as the coordinator specified them."""
+    d = {"scan_id": "scan_7f3a", "still_ids": ["s7"], "point_m": [0.1, 0.2, -0.3], "region_min_m": [0.09, 0.19, -0.31],
+         "region_max_m": [0.11, 0.21, -0.29], "distance_m": 0.25, "confidence": "medium",
+         "method": "ray_cast_point_cloud", "rays_cast": 9, "rays_hit": 7, "support_points": 40,
+         "reasons": ["the ray through the box centre found no scan surface"], "normal": None, "frame": "arkit_world"}
+    return {**d, **over}
+
+
+def test_module_locations_become_report_locations():
+    loc = li.as_report_location(_module_location())
     assert loc == {"status": "computed", "frame": "arkit_world", "point_m": [0.1, 0.2, -0.3],
-                   "method": "repairos.locate 1: ray to mesh"}
-    validate("report", {**ex("report"), "findings": [{**ex("report")["findings"][0], "location": loc}]})
-    assert li.as_report_location({"point_m": [0, 0, 0], "extent_m": [0.01, 0.02, 0]}, "v")["extent_m"] == [0.01,
-                                                                                                     0.02, 0]
-    for bad in ({"point_m": [0, 0]}, {"point_m": [0, float("nan"), 0]}, {"point_m": None},
-                {"point_m": [0, 0, 0], "frame": "design"}, {"point_m": [0, 0, 0], "extent_m": [-1, 0, 0]}):
-        with pytest.raises(li.LocatorError):
-            li.as_report_location(bad, "v")
+                   "region_min_m": [0.09, 0.19, -0.31], "region_max_m": [0.11, 0.21, -0.29],
+                   "confidence_word": "medium", "method": "ray_cast_point_cloud", "distance_m": 0.25,
+                   "notes": ["the ray through the box centre found no scan surface"]}
+    mesh = li.as_report_location(_module_location(method="ray_cast_mesh", normal=[0, 1, 0], reasons=[]))
+    assert mesh["normal"] == [0.0, 1.0, 0.0] and "notes" not in mesh
+    for loc in (loc, mesh, li.as_report_location(_module_location(method="triangulation"))):
+        validate("report", {**ex("report"), "findings": [{**ex("report")["findings"][0], "location": loc}]})
 
 
-def test_pose_reliability():
-    still = ex("still")
-    assert li.pose_reliable(still)
-    assert not li.pose_reliable({**still, "kind": "macro_detail"})
-    assert not li.pose_reliable({**still, "pose_reliable": False})
-    assert not li.pose_reliable({**still, "tracking_state": "limited"})
+@pytest.mark.parametrize("over", [{"point_m": [0, 0]}, {"point_m": [0, float("nan"), 0]}, {"point_m": None},
+                                  {"frame": "design"}, {"confidence": 0.7}, {"confidence": None}, {"method": ""},
+                                  {"region_min_m": [1, 1, 1]}, {"distance_m": -1.0}])
+def test_module_locations_are_checked_never_trusted_blindly(over):
+    with pytest.raises(li.LocatorError):
+        li.as_report_location(_module_location(**over))
+
+
+def test_depth_source_absent_means_lidar():
+    assert li.depth_source(ex("scan-package")) == "lidar"
+    assert li.depth_source({**ex("scan-package"), "depth_source": "none"}) == "none"
+
+
+def _views_case():
+    a = {**ex("still"), "still_id": "sa", "targets": [{"target_id": "t1"}]}
+    b = {**ex("still"), "still_id": "sb", "targets": [{"target_id": "t1"}]}
+    c = {**ex("still"), "still_id": "sc", "targets": [{"target_id": "t2"}]}
+
+    def f(fid, sid, box):
+        return {"finding_id": fid, "evidence_refs": {"still_ids": [sid], "crop_box_px": box}}
+    findings = [f("fa", "sa", [0, 0, 10, 10]), f("fb", "sb", [5, 5, 20, 20]), f("fc", "sc", [1, 1, 2, 2])]
+    return {"sa": a, "sb": b, "sc": c}, findings
+
+
+def test_triangulation_pairs_only_unambiguous_views_of_the_same_target():
+    stills, findings = _views_case()
+    parts = {"fa": "connector", "fb": "connector", "fc": "connector"}
+    views = li.triangulation_views(findings[0], findings, stills, parts)
+    assert [(s["still_id"], b) for s, b in views] == [("sa", (0, 0, 10, 10)), ("sb", (5, 5, 20, 20))]  # sc: other target
+    assert li.triangulation_views(findings[0], findings, stills, {**parts, "fb": "fuse"}) == []        # other part
+    two = findings + [{"finding_id": "fb2", "evidence_refs": {"still_ids": ["sb"], "crop_box_px": [30, 30, 40, 40]}}]
+    assert li.triangulation_views(findings[0], two, stills, {**parts, "fb2": "connector"}) == []      # ambiguous
+    no_target = {**stills, "sa": {**stills["sa"], "targets": []}}
+    assert li.triangulation_views(findings[0], findings, no_target, parts) == []
+
+
+def test_locate_stage_without_the_module_says_so(env):
+    state, blobs, scan = env
+    from repairos.pipeline.run import locate_findings
+
+    ctx = Context(state=state, blobs=blobs)
+    if ctx.locator is not None:
+        pytest.skip("repairos.locate is installed")
+    findings = [{"finding_id": "fa", "evidence_refs": {"still_ids": ["s_skip"], "crop_box_px": [0, 0, 10, 10]}}]
+    out, words = run(locate_findings(ctx, scan, [ex("still")], findings, {}))
+    assert out == {"fa": {"status": "not_computed", "reason": li.NOT_INSTALLED}}
+    assert words.startswith("not available") and "not present" in words
