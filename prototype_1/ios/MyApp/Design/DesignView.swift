@@ -133,9 +133,11 @@ struct DesignView: View {
     }
 
     private func send(_ text: String, checks: [BridgeClient.DimensionCheck] = [], then done: @escaping () -> Void = {}) {
+        struct Body: Encodable { let text, origin, requestId: String; let checks: [BridgeClient.DimensionCheck] }
+        let body = Body(text: text, origin: "text", requestId: "txt-\(UUID().uuidString)", checks: checks)
         Task {
-            if await sync.perform({ c, r in try await c.submitDesign(sessionId: r, text: text, origin: "text", meshReportId: nil,
-                                                                  requestId: "txt-\(UUID().uuidString)", checks: checks) }) != nil { done() }
+            // Kept and re-sent if the bridge is unreachable; the request id makes a repeat harmless.
+            if await sync.sendOrKeep("POST", { "/v1/sessions/\($0)/design-commands" }, body) { done() }
         }
     }
 

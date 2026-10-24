@@ -66,6 +66,20 @@ describe('auth and evidence storage', () => {
   });
 });
 
+describe('asset store housekeeping', () => {
+  it('removes old partial uploads only', async () => {
+    const { mkdir, writeFile, utimes, readdir } = await import('node:fs/promises');
+    const staging = path.join(tmp, 'assets', 'staging');
+    await mkdir(staging, { recursive: true });
+    await writeFile(path.join(staging, 'old'), 'x');
+    await writeFile(path.join(staging, 'fresh'), 'y');
+    const hourAgo = new Date(Date.now() - 2 * 3_600_000);
+    await utimes(path.join(staging, 'old'), hourAgo, hourAgo);
+    expect(await assets.cleanStaging()).toBe(1);
+    expect(await readdir(staging)).toEqual(['fresh']);
+  });
+});
+
 describe('capture -> reconstruction -> QA gate -> candidates -> automatic CAD request', () => {
   it('runs the real Open3D QA and records a module-computed verdict', async () => {
     const fixture = path.join(tmp, 'fixture');
@@ -237,11 +251,14 @@ describe('agent tools', () => {
   it('acts through the same gates: no design without asking, phone actions returned, measured spec sent', async () => {
     // SCRIPTED stand-in for Claude: it calls Lea's real tools in order, so this tests the tools and gates, not Claude.
     const { runAgentTurn } = await import('../src/agent');
-    const script = (calls: [string, unknown][], text: string) => ({ beta: { messages: { toolRunner: async (params: any) => {
-      const results: string[] = [];
-      for (const [name, input] of calls) results.push(String(await params.tools.find((t: any) => t.name === name).run(input)));
-      return { stop_reason: 'end_turn', content: [{ type: 'text', text: `${text} [${results.join(' | ')}]` }] };
-    } } } }) as any;
+    // The runner is iterated message by message (usage is summed per iteration), so the stand-in yields one message.
+    const script = (calls: [string, unknown][], text: string) => ({ beta: { messages: { toolRunner: (params: any) => ({
+      async *[Symbol.asyncIterator]() {
+        const results: string[] = [];
+        for (const [name, input] of calls) results.push(String(await params.tools.find((t: any) => t.name === name).run(input)));
+        yield { stop_reason: 'end_turn', usage: { input_tokens: 1000, output_tokens: 100 }, content: [{ type: 'text', text: `${text} [${results.join(' | ')}]` }] };
+      },
+    }) } } }) as any;
 
     const scan = await runAgentTurn({ store, assets }, sid, 'vt_agent_1', 'Hey Leah, make a render of this for me', undefined, undefined, script([['start_scan', {}]], 'Opening the scan.'));
     expect(scan.actions).toEqual([{ type: 'scan' }]);
@@ -263,6 +280,10 @@ describe('agent tools', () => {
     expect(spec.meshReportId).not.toBe('');
     expect(spec.text).toMatch(/Measured features/);
     expect(spec.text).toMatch(/Wall between planes .* 4\.0 mm thick|Plane 0: 80/);   // the synthetic bracket's 4 mm base / 80 mm plate
+
+    config.agentSessionUsd = 0.0001;   // the turns above spent more than this
+    await expect(runAgentTurn({ store, assets }, sid, 'vt_agent_5', 'what next', undefined, undefined, script([], ''))).rejects.toThrow(/assistant budget/);
+    config.agentSessionUsd = 0;
   });
 });
 

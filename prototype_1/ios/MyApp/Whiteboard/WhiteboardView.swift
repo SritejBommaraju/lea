@@ -32,7 +32,8 @@ struct WhiteboardView: View {
     private func play() async {
         guard await BoardWeb.ready(web) else { return }
         let json = String(data: (try? JSONEncoder().encode(lesson.steps)) ?? Data("[]".utf8), encoding: .utf8) ?? "[]"
-        _ = try? await web.evaluateJavaScript("play(\(json))")
+        let options = lesson.backdrop.map { "{backdrop: 'data:image/jpeg;base64,\($0.base64EncodedString())', w: 600, h: 800}" } ?? "{}"
+        _ = try? await web.evaluateJavaScript("play(\(json), \(options))")
         for (i, step) in lesson.steps.enumerated() {
             guard !Task.isCancelled else { return }
             current = i

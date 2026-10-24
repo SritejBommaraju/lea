@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import UIKit
 
 /// Mirrors the active local session to the bridge and keeps its live state (from SpacetimeDB via the
 /// bridge's event stream) on screen. Local originals are never modified or deleted by syncing.
@@ -12,6 +13,7 @@ final class SessionSync: ObservableObject {
     @Published private(set) var pendingUploads = 0
     @Published private(set) var connection: String = "Not paired"
     @Published var message: String?
+    @Published private(set) var queued = 0      // requests saved while the bridge was unreachable
 
     private(set) var client: BridgeClient?
     private var liveTask: Task<Void, Never>?
@@ -46,7 +48,13 @@ final class SessionSync: ObservableObject {
     func syncActiveSession() async {
         guard let client, let store, !isSyncing else { return }
         isSyncing = true
-        defer { isSyncing = false }
+        // Ask iOS for time to finish uploads in flight if the app is sent to the background.
+        let background = UIApplication.shared.beginBackgroundTask(withName: "Lea upload")
+        defer {
+            isSyncing = false
+            UIApplication.shared.endBackgroundTask(background)
+        }
+        await replayOutbox()
         let local = store.activeSession
         do {
             let remote = local.remoteSessionId ?? "se_\(local.id.uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
@@ -148,6 +156,47 @@ final class SessionSync: ObservableObject {
                 try? await Task.sleep(for: .seconds(3))
             }
         }
+    }
+
+    // MARK: Offline outbox
+
+    struct Saved: Codable { let method: String; let path: String; let body: Data }
+    private var outbox: [Saved] {
+        get { (try? JSONDecoder().decode([Saved].self, from: Data(contentsOf: Self.outboxURL))) ?? [] }
+        set { try? JSONEncoder().encode(newValue).write(to: Self.outboxURL, options: .atomic); queued = newValue.count }
+    }
+    private static let outboxURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("lea-outbox.json")
+
+    /// For requests that are safe to send twice (they carry their own id or are refused once done): send now, or
+    /// keep for later if the bridge is unreachable. Returns false only when the bridge refused it.
+    @discardableResult
+    func sendOrKeep<B: Encodable>(_ method: String, _ path: (String) -> String, _ body: B) async -> Bool {
+        guard let client, let remote = remoteId else { message = BridgeClient.Failure.notConfigured.errorDescription; return false }
+        let saved = Saved(method: method, path: path(remote), body: BridgeClient.encodedBody(body))
+        do {
+            try await client.sendRaw(saved.method, saved.path, json: saved.body)
+            snapshot = try? await client.snapshot(remote)
+            return true
+        } catch BridgeClient.Failure.transport {
+            try? FileManager.default.createDirectory(at: Self.outboxURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            outbox.append(saved)
+            message = "The bridge is unreachable; Lea will send this when it's back."
+            return true
+        } catch {
+            message = error.localizedDescription
+            return false
+        }
+    }
+
+    private func replayOutbox() async {
+        guard let client, !outbox.isEmpty else { queued = outbox.count; return }
+        var left: [Saved] = []
+        for saved in outbox {
+            do { try await client.sendRaw(saved.method, saved.path, json: saved.body) }
+            catch BridgeClient.Failure.transport { left.append(saved) }   // still offline: keep it
+            catch { message = "A saved request was refused: \(error.localizedDescription)" }   // already done or no longer valid
+        }
+        outbox = left
     }
 
     /// Runs a bridge call, surfaces its error, refreshes the snapshot.

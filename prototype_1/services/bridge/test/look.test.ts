@@ -2,6 +2,7 @@
 // Jev itself is a LOCAL STAND-IN here (no key on this machine): it checks the request shape VEL uses with the real API
 // and returns fixed answers, so this proves Lea's plumbing and rules, not Jev's judgement.
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -94,5 +95,36 @@ describe('intent routing (VEL route.mjs pattern)', () => {
     answers = { intent: { choice: 'capture_help', confidence: 0.8 } };
     expect((await routeTranscriptWithJev('k', 'is this photo good enough')).kind).toBe('clarify');
     expect(await routeTranscriptWithJev('', 'what did you find')).toMatchObject({ kind: 'status', by: 'patterns' });
+  });
+});
+
+describe('ranking checks (Jev stand-in)', () => {
+  it('orders by Jev probability, and says unable_to_rank when Jev does not answer', async () => {
+    const { HarnessStore } = await import('./harness-store');
+    const { createApi } = await import('../src/http');
+    const { AssetStore } = await import('../src/assets');
+    const { DeviceAuth } = await import('../src/auth');
+    const { GrainClient } = await import('../src/grain');
+    const store = new HarnessStore(), auth = new DeviceAuth(tmp), token = auth.pair('t');
+    const server = createApi({ store, assets: new AssetStore(path.join(tmp, 'a')), auth, grain: new GrainClient(config.grainUrl, '') });
+    await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const api = (m: string, p: string, body?: unknown) => fetch(base + p, { method: m, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }).then(r => r.json() as any);
+    await api('POST', '/v1/sessions', { id: 'se_rank', title: 'rank' });
+    const photo = Buffer.from('p'), ref = Buffer.from('r');
+    for (const [id, kind, b] of [['as_c', 'photo_closeup', photo], ['as_r', 'reference_photo', ref]] as const) {
+      await fetch(`${base}/v1/sessions/se_rank/assets/${id}`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'x-lea-kind': kind, 'x-lea-sha256': createHash('sha256').update(b).digest('hex'), 'Content-Type': 'image/jpeg' }, body: b });
+    }
+    await store.call('record_finding', { id: 'fd_1', sessionId: 'se_rank', subject: 'fan lead', problem: 'maybe broken', source: 'vision', evidenceAssetIds: ['as_c'], referenceAssetId: 'as_r', meshReportId: '', regionJson: '{}', confidenceKind: 'model_word', confidenceText: 'medium', detail: '' });
+    const a = await api('POST', '/v1/sessions/se_rank/findings/fd_1/checks', { purpose: 'diagnose', instruction: 'look at the lead', safety: 'unplugged', powerState: 'off' });
+    const b = await api('POST', '/v1/sessions/se_rank/findings/fd_1/checks', { purpose: 'diagnose', instruction: 'continuity A to B', safety: 'unplugged', powerState: 'off', expectedMin: 0, expectedMax: 4.99, expectedUnit: 'ohm', expectedSource: 'rule' });
+    config.jevKey = 'test-key';
+    answers = { next: { choice: b.id, probabilities: { [a.id]: 0.2, [b.id]: 0.8 } } };
+    expect(await api('GET', '/v1/sessions/se_rank/next-checks')).toEqual({ ranked: true, order: [b.id, a.id] });
+    process.env.LEA_JEV_URL = 'http://127.0.0.1:9/v1/systemone';
+    expect(await api('GET', '/v1/sessions/se_rank/next-checks')).toEqual({ ranked: false, reason: 'unable_to_rank', order: [a.id, b.id] });
+    process.env.LEA_JEV_URL = `http://127.0.0.1:${(jev.address() as AddressInfo).port}/v1/systemone`;
+    config.jevKey = '';
+    server.close();
   });
 });

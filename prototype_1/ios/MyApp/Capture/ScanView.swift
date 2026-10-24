@@ -7,7 +7,7 @@ import SwiftUI
 @MainActor
 final class LeaActions: ObservableObject {
     struct Closeup: Equatable { let subject: String; let box: AgentAction.Box? }
-    struct Whiteboard: Identifiable { let id = UUID(); let title: String; let steps: [AgentAction.Step] }
+    struct Whiteboard: Identifiable { let id = UUID(); let title: String; let steps: [AgentAction.Step]; var backdrop: Data? = nil }
 
     @Published var tab = 0
     @Published var scanning = false
@@ -26,7 +26,13 @@ final class LeaActions: ObservableObject {
             case "screen": tab = ["capture": 1, "repair": 3, "design": 4][action.screen ?? ""] ?? tab
             case "closeup" where !scanning:   // the guided scan owns the camera; a close-up waits until it closes
                 tab = 1; closeup = Closeup(subject: action.subject ?? "", box: action.box)
-            case "whiteboard": whiteboard = Whiteboard(title: action.title ?? "Whiteboard", steps: action.steps ?? [])
+            case "whiteboard":
+                let board = Whiteboard(title: action.title ?? "Whiteboard", steps: action.steps ?? [])
+                if action.over == "camera" {
+                    Task { var b = board; b.backdrop = await frameProvider?(); whiteboard = b }   // drawn over what the camera sees
+                } else {
+                    whiteboard = board
+                }
             default: break
             }
         }

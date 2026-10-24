@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 
 /// Candidates from geometry and close-ups, each linked to its evidence and saved reference, with the
@@ -8,6 +9,7 @@ struct RepairView: View {
     @State private var compareSubject = ""
     @State private var closeupId: UUID?
     @State private var referenceId: UUID?
+    @State private var walking = false
 
     var body: some View {
         NavigationStack {
@@ -20,6 +22,10 @@ struct RepairView: View {
                         .buttonStyle(.bordered)
                     }
                     compareCard
+                    if sync.snapshot?.checks.contains(where: { $0.outcome == "pending" }) == true {
+                        Button { walking = true } label: { Label("Walk through the checks", systemImage: "gauge.with.dots.needle.50percent").frame(maxWidth: .infinity) }
+                            .buttonStyle(.borderedProminent).tint(.mint)
+                    }
                     if let snap = sync.snapshot {
                         if snap.findings.isEmpty {
                             ContentUnavailableView("No candidates yet", systemImage: "magnifyingglass",
@@ -36,6 +42,7 @@ struct RepairView: View {
                 .padding()
             }
             .navigationTitle("Repair")
+            .sheet(isPresented: $walking) { MeterWizard() }
         }
     }
 
@@ -176,7 +183,8 @@ private struct FindingDetail: View {
                                     purpose: "verify_repair", instruction: "Repeat the check that found the fault: \(checks.last?.instruction ?? "inspect the area again")",
                                     safety: checks.last?.safety ?? "Unplug the product and remove batteries first.", powerState: checks.last?.powerState ?? "off",
                                     expectedMin: checks.last?.expectedMin, expectedMax: checks.last?.expectedMax,
-                                    expectedUnit: checks.last?.expectedUnit ?? "", expectedSource: checks.last?.expectedSource ?? ""))
+                                    expectedUnit: checks.last?.expectedUnit ?? "", expectedSource: checks.last?.expectedSource ?? "",
+                                    net: checks.last?.net ?? ""))
                             }
                             guard let check else { return }
                             _ = await sync.perform { client, remote in try await client.recordRepair(sessionId: remote, findingId: findingId, action: repairAction, verifyCheckId: check.id) }
@@ -235,6 +243,8 @@ private struct AddCheckSheet: View {
     @State private var maxText = ""
     @State private var source = ""
     @State private var power = "off"
+    @State private var net = ""
+    @State private var designNets: [GrainNets.Net] = []
 
     var body: some View {
         NavigationStack {
@@ -251,6 +261,16 @@ private struct AddCheckSheet: View {
                         Text("On, low voltage only").tag("on_low_voltage")
                     }
                 }
+                if unit == "V", !designNets.isEmpty {
+                    Picker("Range from the Grain design", selection: $net) {
+                        Text("None (type it)").tag("")
+                        ForEach(designNets, id: \.self) { n in Text("\(n.net): \(n.min.formatted())–\(n.max.formatted()) V").tag(n.net) }
+                    }
+                    .onChange(of: net) {
+                        guard let n = designNets.first(where: { $0.net == net }) else { return }
+                        minText = n.min.formatted(); maxText = n.max.formatted(); source = n.source
+                    }
+                }
                 if !unit.isEmpty {
                     TextField("Expected minimum", text: $minText).keyboardType(.decimalPad)
                     TextField("Expected maximum", text: $maxText).keyboardType(.decimalPad)
@@ -259,6 +279,10 @@ private struct AddCheckSheet: View {
                 Section { Text("Continuity and resistance are always measured unpowered. Do not use this flow above low voltage.").font(.caption) }
             }
             .navigationTitle("New check")
+            .task {
+                // Quiet on failure: a design without electrical data simply offers no ranges.
+                if let c = sync.client, let r = sync.remoteId, let nets = try? await c.grainElectrical(sessionId: r) { designNets = nets.nets }
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
@@ -268,7 +292,8 @@ private struct AddCheckSheet: View {
                                 try await client.addCheck(sessionId: remote, findingId: findingId, .init(
                                     purpose: "diagnose", instruction: instruction,
                                     safety: powerState == "off" ? "Unplug the product and remove batteries first." : "Low-voltage supply only; keep fingers off exposed conductors.",
-                                    powerState: powerState, expectedMin: Double(minText), expectedMax: Double(maxText), expectedUnit: unit, expectedSource: source))
+                                    powerState: powerState, expectedMin: Double(minText), expectedMax: Double(maxText), expectedUnit: unit, expectedSource: source,
+                                    net: unit == "V" ? net : ""))
                             }
                             dismiss()
                         }
@@ -319,11 +344,9 @@ private struct OutcomeSheet: View {
                     Button("Save") {
                         Task {
                             await sync.syncActiveSession()
-                            _ = await sync.perform { client, remote in
-                                try await client.recordOutcome(sessionId: remote, checkId: check.id, .init(
-                                    observed: observed, observationAssetId: photoId.map(SessionSync.assetId),
-                                    readingValue: Double(readingText), readingUnit: readingText.isEmpty ? nil : check.expectedUnit, note: note))
-                            }
+                            await sync.sendOrKeep("POST", { "/v1/sessions/\($0)/checks/\(check.id)/outcome" }, BridgeClient.OutcomeRequest(
+                                observed: observed, observationAssetId: photoId.map(SessionSync.assetId),
+                                readingValue: Double(readingText), readingUnit: readingText.isEmpty ? nil : check.expectedUnit, note: note))
                             dismiss()
                         }
                     }
@@ -336,6 +359,7 @@ private struct OutcomeSheet: View {
 
 private struct EvidenceThumb: View {
     @EnvironmentObject private var sync: SessionSync
+    @EnvironmentObject private var store: CaptureStore
     let assetId: String
     let isReference: Bool
     @State private var image: UIImage?
@@ -352,9 +376,30 @@ private struct EvidenceThumb: View {
             Text(String((asset?.sha256 ?? "").prefix(12))).font(.caption2.monospaced()).foregroundStyle(.tertiary)
         }
         .task {
-            guard asset?.mediaType.hasPrefix("image") == true, let client = sync.client, let remote = sync.remoteId,
-                  let data = try? await client.assetData(sessionId: remote, assetId: assetId) else { return }
-            image = UIImage(data: data)
+            guard let asset, asset.mediaType.hasPrefix("image") else { return }
+            if let cached = Thumbnails.cache.object(forKey: asset.sha256 as NSString) { image = cached; return }
+            // The original is usually on this iPhone already; otherwise download it once.
+            let local = store.activeSession.photos.first { SessionSync.assetId($0.id) == assetId }
+                .map { store.photoURL($0, in: store.activeSession) }
+            var data: Data?
+            if let local { data = try? Data(contentsOf: local) }
+            else if let client = sync.client, let remote = sync.remoteId { data = try? await client.assetData(sessionId: remote, assetId: assetId) }
+            guard let data, let thumb = Thumbnails.make(data) else { return }
+            Thumbnails.cache.setObject(thumb, forKey: asset.sha256 as NSString)
+            image = thumb
         }
+    }
+}
+
+/// Small, decoded-once thumbnails keyed by content hash, so evidence lists don't decode full 12 MP photos.
+private enum Thumbnails {
+    static let cache = NSCache<NSString, UIImage>()
+
+    static func make(_ data: Data, maxPixels: Int = 400) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                                        kCGImageSourceCreateThumbnailWithTransform: true,
+                                                                        kCGImageSourceThumbnailMaxPixelSize: maxPixels] as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg)
     }
 }

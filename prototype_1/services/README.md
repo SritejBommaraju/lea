@@ -48,9 +48,9 @@ Without `ANTHROPIC_API_KEY` the bridge answers with the rule-based router instea
 
 ## Tests (run on this Mac, 24 Oct 2026)
 
-- `cd module && npm test`: 20 reducer invariants, run in SpacetimeDB's portable datastore (wasm).
-- `cd bridge && npm test`: 17 tests (look/intent use a stand-in Jev; the agent test uses a scripted stand-in for Claude that calls the real tools) over real HTTP, with the module's reducers, the **live local Grain** and **real Open3D**. Object Capture is replaced by a synthetic mesh there, because no real photo set exists yet.
-- `cd reconstruction && .venv/bin/python -m pytest tests`: 6 geometry tests (QA, ambiguity, hole/wall features) on a **synthetic** asymmetric bracket.
+- `cd module && npm test`: 23 reducer invariants, run in SpacetimeDB's portable datastore (wasm).
+- `cd bridge && npm test`: 23 tests (set `LEA_TEST_GRAIN_PROJECTS` to the local Grain projects folder to include the STEP and model.glb cases) (look/intent use a stand-in Jev; the agent test uses a scripted stand-in for Claude that calls the real tools) over real HTTP, with the module's reducers, the **live local Grain** and **real Open3D**. Object Capture is replaced by a synthetic mesh there, because no real photo set exists yet.
+- `cd reconstruction && .venv/bin/python -m pytest tests`: 7 geometry tests (QA, ambiguity, holes, walls, slots, cylinders) on a **synthetic** asymmetric bracket.
 
 None of these is the live SpacetimeDB server, a real photo reconstruction, or the phone.
 
@@ -58,11 +58,17 @@ None of these is the live SpacetimeDB server, a real photo reconstruction, or th
 
 1. Install SpacetimeDB (official installer): `curl -sSf https://install.spacetimedb.com | sh`, then `spacetime version install 2.13.0 && spacetime version use 2.13.0`.
 2. `spacetime start` (leave running), then `cd module && spacetime publish --server local lea`.
-3. (No codegen: the bridge builds its client schema from `module/src/shapes.ts`.)
+3. No codegen: the bridge builds its database client from `module/src/shapes.ts`, the same shapes the module uses.
 4. `cp .env.example .env` and fill in the keys you have. Grain's design agent is configured on the Grain side (ask Sritej for the service URL and key).
 5. `cd bridge && npm start` (first run creates the bridge identity), stop it, run `npm run authorize`, then start it again.
 6. `npm run pair "iPhone"`. In Lea: Session → gear → the bridge URL it prints plus the token.
 7. Xcode: open `Lea.xcodeproj`, choose your team under Signing, then run on the iPhone.
+
+## Maintenance
+
+- `cd bridge && npm run verify`: re-hashes every stored asset (files are named by their SHA-256).
+- `cd bridge && npm run backup -- <folder>`: copies the bridge data and SpacetimeDB's data together (stop `spacetime start` first).
+- The bridge trims events older than 7 days every 6 hours, clears partial uploads older than an hour at start, and warns when FileVault is off.
 
 ## Owner inputs still required
 

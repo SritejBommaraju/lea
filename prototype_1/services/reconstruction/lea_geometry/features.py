@@ -18,6 +18,7 @@ MAX_POINTS = 600_000
 
 
 def planes(pcd: o3d.geometry.PointCloud, max_planes: int = 8, min_share: float = 0.04, dist_mm: float = 0.6):
+    """Dominant planes, and the points no plane took (curved surfaces: cylinders, fillets)."""
     rest, out, total = pcd, [], len(pcd.points)
     for _ in range(max_planes):
         if len(rest.points) < total * min_share:
@@ -30,6 +31,38 @@ def planes(pcd: o3d.geometry.PointCloud, max_planes: int = 8, min_share: float =
         pts = np.asarray(rest.select_by_index(idx).points)
         out.append({"normal": n, "offset": -d / np.linalg.norm([a, b, c]), "points": pts})
         rest = rest.select_by_index(idx, invert=True)
+    return out, rest
+
+
+def cylinders(rest: o3d.geometry.PointCloud, spacing: float, min_points: int = 300):
+    """Clusters of the non-planar points whose distance from their main axis is nearly constant: bosses, pins,
+    standoffs, shafts. Anything curved but not cylindrical (fillets, freeform) is left out, not guessed."""
+    if len(rest.points) < min_points:
+        return []
+    labels = np.asarray(rest.cluster_dbscan(eps=3 * spacing, min_points=20))
+    pts_all = np.asarray(rest.points)
+    out = []
+    for label in sorted(set(labels.tolist()) - {-1}):
+        pts = pts_all[labels == label]
+        if len(pts) < min_points:
+            continue
+        centre = pts.mean(axis=0)
+        vals, vecs = np.linalg.eigh(np.cov((pts - centre).T))
+        for axis in (vecs[:, 2], vecs[:, 0]):   # long cylinders: largest spread; short wide bosses: smallest
+            rel = pts - centre
+            along = rel @ axis
+            radial = np.linalg.norm(rel - np.outer(along, axis), axis=1)
+            # The wall is where most points sit at one distance from the axis; small end caps don't shift that peak.
+            counts, edges = np.histogram(radial, bins=max(8, int(radial.max() / (spacing / 2)) + 1))
+            peak = float((edges[counts.argmax()] + edges[counts.argmax() + 1]) / 2)
+            wall = np.abs(radial - peak) < max(0.08 * peak, spacing)
+            if peak < 1.0 or wall.mean() < 0.5:
+                continue
+            r, length = float(np.median(radial[wall])), float(along[wall].max() - along[wall].min())
+            if length >= 1.0:
+                out.append({"diameter_mm": round(2 * r, 2), "length_mm": round(length, 2), "axis": [round(float(x), 3) for x in axis],
+                            "centre_mm": [round(float(x), 2) for x in centre]})
+                break
     return out
 
 
@@ -81,7 +114,8 @@ def holes_in_plane(pts: np.ndarray, n: np.ndarray, spacing: float, min_d_mm: flo
             centre_uv = lo + (c.mean(axis=0) + 0.5) * spacing
             centre = centre_uv[0] * u + centre_uv[1] * v
             roundness = min(ext) / max(ext)
-            holes.append({"diameter_mm": round(float(d), 2), "round": bool(roundness > 0.8), "extent_mm": [round(float(x), 2) for x in ext],
+            kind = "hole" if roundness > 0.8 else "slot" if roundness < 0.62 else "opening"
+            holes.append({"diameter_mm": round(float(d), 2), "round": bool(roundness > 0.8), "kind": kind, "extent_mm": [round(float(x), 2) for x in ext],
                           "centre_in_plane_mm": [round(float(x), 2) for x in centre_uv], "centre_mm": [round(float(x), 2) for x in centre]})
     return holes
 
@@ -95,7 +129,7 @@ def extract(mesh_path: str) -> dict:
     area = mesh.get_surface_area()
     spacing = max(0.5, float(np.sqrt(6 * area / MAX_POINTS)))
     pcd = mesh.sample_points_uniformly(number_of_points=int(min(6 * area / spacing ** 2, MAX_POINTS)))
-    found = planes(pcd)
+    found, rest = planes(pcd)
     out_planes = []
     for i, p in enumerate(found):
         u, v = _basis(p["normal"])
@@ -123,7 +157,8 @@ def extract(mesh_path: str) -> dict:
         del p["holes"]
     for h in holes:
         del h["c"]
-    return {"spacing_mm": round(spacing, 2), "planes": out_planes, "holes": holes, "walls": sorted(walls, key=lambda w: w["thickness_mm"])[:6]}
+    return {"spacing_mm": round(spacing, 2), "planes": out_planes, "holes": holes, "cylinders": cylinders(rest, spacing),
+            "walls": sorted(walls, key=lambda w: w["thickness_mm"])[:6]}
 
 
 if __name__ == "__main__":

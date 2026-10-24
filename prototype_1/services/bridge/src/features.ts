@@ -13,7 +13,8 @@ import type { MeshReportRow, StateStore } from './state';
 interface Features {
   spacing_mm: number;
   planes: { id: number; normal: number[]; offset_mm: number; size_mm: number[] }[];
-  holes: { diameter_mm: number; round: boolean; extent_mm: number[]; centre_mm: number[]; plane: number }[];
+  holes: { diameter_mm: number; round: boolean; kind?: 'hole' | 'slot' | 'opening'; extent_mm: number[]; centre_mm: number[]; plane: number }[];
+  cylinders?: { diameter_mm: number; length_mm: number; axis: number[]; centre_mm: number[] }[];
   walls: { planes: number[]; thickness_mm: number }[];
   error?: string;
 }
@@ -43,9 +44,14 @@ export async function featureSpec(deps: { store: StateStore; assets: AssetStore 
   for (const p of f.planes) lines.push(`- Plane ${p.id}: ${p.size_mm.map(r1).join(' × ')} mm, normal [${p.normal.join(', ')}], offset ${r1(p.offset_mm)}`);
   for (const w of f.walls) lines.push(`- Wall between planes ${w.planes.join(' and ')}: ${r1(w.thickness_mm)} mm thick`);
   for (const h of f.holes) {
-    lines.push(`- ${h.round ? 'Round hole' : 'Opening'} in plane ${h.plane}: ${h.round ? `Ø${r1(h.diameter_mm)}` : `${h.extent_mm.map(r1).join(' × ')}`} mm at [${h.centre_mm.map(r1).join(', ')}]`);
+    const kind = h.kind ?? (h.round ? 'hole' : 'opening');
+    const size = kind === 'hole' ? `Ø${r1(h.diameter_mm)}` : `${[...h.extent_mm].sort((a, b) => b - a).map(r1).join(' × ')}`;
+    lines.push(`- ${kind === 'hole' ? 'Round hole' : kind === 'slot' ? 'Slot' : 'Opening'} in plane ${h.plane}: ${size} mm at [${h.centre_mm.map(r1).join(', ')}]`);
   }
   if (!f.holes.length) lines.push('- No holes larger than 2 mm were seen.');
-  lines.push('Features smaller than about 2 mm, internal geometry and unseen faces are not in this list.');
+  for (const c of f.cylinders ?? []) {
+    lines.push(`- Cylinder (boss, pin or standoff): Ø${r1(c.diameter_mm)} mm, ${r1(c.length_mm)} mm long, axis [${c.axis.join(', ')}], centred at [${c.centre_mm.map(r1).join(', ')}]`);
+  }
+  lines.push('Fillet and chamfer sizes, features smaller than about 2 mm, internal geometry and unseen faces are not measured.');
   return lines.join('\n');
 }

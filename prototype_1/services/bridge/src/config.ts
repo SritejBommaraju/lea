@@ -31,6 +31,7 @@ export const config = {
   cartesiaVoiceId: env('CARTESIA_VOICE_ID'),
   anthropicConfigured: Boolean(env('ANTHROPIC_API_KEY') || env('ANTHROPIC_AUTH_TOKEN')),
   jevKey: env('JEV_API_KEY'),
+  agentSessionUsd: Number(env('LEA_AGENT_SESSION_USD', '0')),   // 0 = no cap; the owner sets the budget
   geometryPython: env('LEA_GEOMETRY_PYTHON', path.join(SERVICES_DIR, 'reconstruction/.venv/bin/python')),
   stepPython: env('LEA_STEP_PYTHON', path.join(SERVICES_DIR, '.cad-venv/bin/python')),   // build123d, for STEP re-import
   objcap: env('LEA_OBJCAP', path.join(SERVICES_DIR, 'reconstruction/objcap/lea-objcap')),

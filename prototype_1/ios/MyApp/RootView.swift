@@ -8,6 +8,7 @@ struct RootView: View {
     @EnvironmentObject private var conversation: VoiceCoordinator
     @EnvironmentObject private var actions: LeaActions
     @StateObject private var voice = VoiceRecorder()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         TabView(selection: $actions.tab) {
@@ -31,6 +32,7 @@ struct RootView: View {
         }
         .onAppear { voice.onFinished = { url, duration in store.addVoiceClip(from: url, duration: duration) } }
         .onChange(of: store.activeSessionID) { Task { await sync.syncActiveSession() } }
+        .onChange(of: scenePhase) { if scenePhase == .active { Task { await sync.syncActiveSession() } } }   // resume uploads and saved requests
         .fullScreenCover(isPresented: $actions.scanning) { ScanView() }
         .sheet(item: $actions.whiteboard) { WhiteboardView(lesson: $0) }
         .alert("Lea", isPresented: Binding(
@@ -55,6 +57,7 @@ private struct SessionView: View {
     @EnvironmentObject private var store: CaptureStore
     @Binding var selectedTab: Int
     @State private var showingSettings = false
+    @State private var deleting: CaptureSession?
 
     var body: some View {
         NavigationStack {
@@ -105,6 +108,7 @@ private struct SessionView: View {
                                 }
                             }
                             .buttonStyle(.plain)
+                            .contextMenu { Button("Delete from this iPhone", role: .destructive) { deleting = session } }
                             Divider()
                         }
                         Button { store.newSession() } label: { Label("New session", systemImage: "plus.circle.fill") }
@@ -120,6 +124,10 @@ private struct SessionView: View {
                 Button { showingSettings = true } label: { Image(systemName: "gearshape") }
             }
             .sheet(isPresented: $showingSettings) { BridgeSettingsView() }
+            .confirmationDialog("Delete this session's photos, voice notes and scans from this iPhone?", isPresented: Binding(
+                get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Delete", role: .destructive) { if let s = deleting { store.deleteSession(s.id) }; deleting = nil }
+            } message: { Text("Anything already uploaded stays on the bridge.") }
         }
     }
 
@@ -149,7 +157,7 @@ private struct CaptureView: View {
                         .font(.subheadline).foregroundStyle(.secondary)
 
                     ZStack {
-                        CameraPreview(session: camera.session)
+                        CameraPreview(camera: camera)
                         CoachOverlay(seen: coach.seen, frameSize: coach.frameSize)
                         if !camera.isReady {
                             Color.black.opacity(0.7)
@@ -160,7 +168,7 @@ private struct CaptureView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 22))
 
                     if ObjectScanner.supported {
-                        Button { actions.scanning = true } label: {
+                        Button { if store.lowOnSpace { store.errorMessage = "This iPhone is nearly out of space. A scan needs a few hundred megabytes." } else { actions.scanning = true } } label: {
                             Label("3D scan (guided)", systemImage: "cube.transparent").frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent).tint(.mint)
@@ -195,7 +203,7 @@ private struct CaptureView: View {
                     HStack {
                         Label("\(store.activeSession.photos.filter { $0.effectiveRole == role }.count) \(role.title.lowercased())", systemImage: "photo.stack")
                         Spacer()
-                        Button { camera.takePhoto() } label: {
+                        Button { if store.lowOnSpace { store.errorMessage = "This iPhone is nearly out of space. Free some space before taking more photos." } else { camera.takePhoto() } } label: {
                             Image(systemName: "camera.fill")
                                 .font(.title2).frame(width: 68, height: 68)
                         }

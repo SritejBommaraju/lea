@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Typed client for the local Lea bridge. The bridge is the only SpacetimeDB client; this app never
@@ -77,6 +78,11 @@ nonisolated final class BridgeClient: Sendable {
         do {
             let (data, response) = try await session.data(for: request)
             try check(data, response)
+            // The bridge sends the digest it stored; a file that changed on disk is refused, not shown as evidence.
+            if let expected = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-Lea-SHA256"),
+               SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() != expected {
+                throw Failure.http(0, "the downloaded file does not match its recorded hash")
+            }
             return data
         } catch let error as Failure { throw error } catch { throw Failure.transport(error.localizedDescription) }
     }
@@ -148,7 +154,13 @@ nonisolated final class BridgeClient: Sendable {
         let expectedMax: Double?
         let expectedUnit: String
         let expectedSource: String
+        var net: String = ""            // the circuit, when the range came from the design
     }
+
+    struct NextChecks: Decodable, Sendable { let ranked: Bool; let reason: String?; let order: [String] }
+
+    /// Pending checks in the order to do them (Jev-ranked; `ranked` false with reason unable_to_rank otherwise).
+    func nextChecks(sessionId: String) async throws -> NextChecks { try await get("/v1/sessions/\(sessionId)/next-checks") }
 
     func addCheck(sessionId: String, findingId: String, _ check: CheckRequest) async throws -> RepairCheck {
         try await send("POST", "/v1/sessions/\(sessionId)/findings/\(findingId)/checks", check)
@@ -255,6 +267,20 @@ nonisolated final class BridgeClient: Sendable {
             return try decode(data, response)
         } catch let error as Failure { throw error } catch let error as DecodingError { throw Failure.transport("unexpected response: \(error)") } catch { throw Failure.transport(error.localizedDescription) }
     }
+
+    /// Replays a request saved while offline (body already JSON-encoded).
+    func sendRaw(_ method: String, _ path: String, json: Data) async throws {
+        var request = makeRequest(method, path)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = json
+        do {
+            let (data, response) = try await session.data(for: request)
+            try check(data, response)
+        } catch let error as Failure { throw error } catch { throw Failure.transport(error.localizedDescription) }
+    }
+
+    /// The JSON body a typed call would send, for saving it while offline.
+    static func encodedBody<B: Encodable>(_ body: B) -> Data { (try? JSONEncoder().encode(body)) ?? Data("{}".utf8) }
 
     private func check(_ data: Data, _ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { throw Failure.transport("no HTTP response") }

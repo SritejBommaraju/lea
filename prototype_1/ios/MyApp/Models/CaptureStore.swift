@@ -164,27 +164,43 @@ final class CaptureStore: ObservableObject {
         sessionURL(session.id).appendingPathComponent(mesh.filename)
     }
 
+    /// Writes and hashes the photo off the main thread (a 12 MP JPEG is several megabytes), then records it in the
+    /// session it was taken in.
     func addPhoto(_ data: Data, role: PhotoRole = .orbit, subject: String? = nil) {
-        do {
-            let id = UUID()
-            let filename = "photo-\(id.uuidString).jpg"
-            let folder = try ensureSessionFolder()
-            try data.write(to: folder.appendingPathComponent(filename), options: .atomic)
-            let (width, height) = imageDimensions(data)
-            let record = PhotoRecord(
-                id: id,
-                filename: filename,
-                sha256: hash(data),
-                capturedAt: Date(),
-                width: width,
-                height: height,
-                role: role,
-                subject: subject
-            )
-            mutateActiveSession { $0.photos.append(record) }
-        } catch {
-            errorMessage = "Photo was not saved: \(error.localizedDescription)"
+        let target = activeSessionID, capturedAt = Date()
+        let folder: URL
+        do { folder = try ensureSessionFolder() } catch { errorMessage = "Photo was not saved: \(error.localizedDescription)"; return }
+        Task {
+            do {
+                let record = try await Task.detached { () throws -> PhotoRecord in
+                    let id = UUID()
+                    let filename = "photo-\(id.uuidString).jpg"
+                    let url = folder.appendingPathComponent(filename)
+                    try data.write(to: url, options: .atomic)
+                    let size = Self.imageDimensions(at: url)
+                    return PhotoRecord(id: id, filename: filename, sha256: try Self.fileHash(url), capturedAt: capturedAt,
+                                       width: size.0, height: size.1, role: role, subject: subject)
+                }.value
+                mutate(target) { $0.photos.append(record) }
+            } catch {
+                errorMessage = "Photo was not saved: \(error.localizedDescription)"
+            }
         }
+    }
+
+    /// Under 500 MB free, new photos and scans are refused up front rather than failing after the shot.
+    var lowOnSpace: Bool {
+        let free = (try? rootURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?.volumeAvailableCapacityForImportantUsage
+        return free.map { $0 < 500_000_000 } ?? false
+    }
+
+    /// Deletes a session's files from this iPhone only (what was uploaded stays on the bridge).
+    func deleteSession(_ id: UUID) {
+        try? fileManager.removeItem(at: sessionURL(id))
+        sessions.removeAll { $0.id == id }
+        if sessions.isEmpty { sessions = [CaptureSession()] }
+        if !sessions.contains(where: { $0.id == activeSessionID }) { activeSessionID = sessions[0].id }
+        saveIndex()
     }
 
     func addVoiceClip(from temporaryURL: URL, duration: TimeInterval) {
@@ -353,15 +369,5 @@ final class CaptureStore: ObservableObject {
 
     private func hash(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func imageDimensions(_ data: Data) -> (Int, Int) {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
-            return (0, 0)
-        }
-        return (width, height)
     }
 }

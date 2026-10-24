@@ -22,6 +22,7 @@ struct BridgeSettingsView: View {
                         status("Close-up comparison", h.vision.anthropicConfigured)
                     }
                 }
+                DeviceCheckRow()
             }
             .navigationTitle("Settings")
             .toolbar {

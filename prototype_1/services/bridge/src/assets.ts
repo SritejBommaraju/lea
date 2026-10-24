@@ -3,7 +3,7 @@
 // is registered after that, so a row never points at a partial file.
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream, existsSync } from 'node:fs';
-import { mkdir, rename, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -66,6 +66,18 @@ export class AssetStore {
   }
 
   async size(sha256: string) { return (await stat(this.pathFor(sha256))).size; }
+
+  /** Removes partial uploads a crash left in staging/ (older than an hour, so none in progress). Returns the count. */
+  async cleanStaging(olderThanMs = 3_600_000): Promise<number> {
+    const dir = path.join(this.root, 'staging');
+    const names = await readdir(dir).catch(() => [] as string[]);
+    let removed = 0;
+    for (const n of names) {
+      const file = path.join(dir, n);
+      if (Date.now() - (await stat(file)).mtimeMs > olderThanMs) { await rm(file, { force: true }); removed++; }
+    }
+    return removed;
+  }
 
   open(sha256: string) { return createReadStream(this.pathFor(sha256)); }
 }

@@ -11,7 +11,8 @@ import { config } from './config';
 import { GrainClient, GrainError } from './grain';
 import { lastJsonLine, newId, run, sha256Hex } from './jobs/context';
 import { type EventRow, ReducerError, sessionSnapshot, type StateStore, toWire } from './state';
-import { type ClientAction, runAgentTurn } from './agent';
+import { AgentBudgetError, type ClientAction, runAgentTurn } from './agent';
+import { askJev } from './jev';
 import { lookAtFrame } from './look';
 import { mintCartesiaToken, routeTranscriptWithJev, statusReply, VoiceUnavailable } from './voice';
 
@@ -293,6 +294,25 @@ export function createApi(deps: ApiDeps) {
     return toWire(store.read().checks.find(c => c.id === id));
   });
 
+  // Pending checks in the order to do them. Jev ranks them; when it can't, the list says so and keeps creation order.
+  route('GET', '/v1/sessions/:sid/next-checks', async (_q, _r, p) => {
+    session(p.sid);
+    const t = store.read();
+    const pending = t.checks.filter(c => c.sessionId === p.sid && c.outcome === 'pending')
+      .sort((a, b) => Number(a.createdAt.microsSinceUnixEpoch - b.createdAt.microsSinceUnixEpoch));
+    if (pending.length < 2) return { ranked: pending.length === 1, order: pending.map(c => c.id) };
+    const about = (c: typeof pending[number]) => {
+      const f = t.findings.find(x => x.id === c.findingId);
+      return `${c.instruction} (checks: ${f?.subject ?? 'a finding'}, ${f?.problem ?? ''}; ${c.powerState === 'off' ? 'unplugged' : 'powered'})`;
+    };
+    const res = config.jevKey ? await askJev(config.jevKey, {
+      findings: t.findings.filter(f => f.sessionId === p.sid).map(f => `${f.subject}: ${f.problem} (${f.state}, ${f.confidenceText})`),
+    }, { next: { type: 'choice', instructions: 'Which check should the person do first: the one most likely to find or rule out the fault, safe ones first?', criteria: Object.fromEntries(pending.map(c => [c.id, about(c)])) } }) : null;
+    const probs = res?.answers.next?.probabilities;
+    if (!probs) return { ranked: false, reason: 'unable_to_rank', order: pending.map(c => c.id) };
+    return { ranked: true, order: [...pending].sort((a, b) => (probs[b.id] ?? 0) - (probs[a.id] ?? 0)).map(c => c.id) };
+  });
+
   route('POST', '/v1/sessions/:sid/checks/:cid/outcome', async (req, _r, p) => {
     const b = await body<{ observed: string; observationAssetId?: string; readingValue?: number; readingUnit?: string; note?: string }>(req);
     const check = store.read().checks.find(c => c.id === p.cid && c.sessionId === p.sid);
@@ -331,12 +351,13 @@ export function createApi(deps: ApiDeps) {
     if (!transcript.trim()) throw new HttpError(409, 'only final, non-empty transcripts are recorded');
     const prior = store.read().voiceTurns.find(v => v.id === b.id);
     if (prior) return { turn: toWire(prior), actions: [] };
-    let reply = '', commandId = '', actions: ClientAction[] = [];
+    let reply = '', commandId = '', actions: ClientAction[] = [], note = '';
     if (config.anthropicConfigured) {
       try {
         ({ reply, actions } = await runAgentTurn({ store, assets }, p.sid, b.id, transcript, b.frame ? Buffer.from(b.frame, 'base64') : undefined, b.focus));
       } catch (e) {
-        console.error('[agent]', e);   // fall through to the rule-based router below
+        if (e instanceof AgentBudgetError) note = `I've used this session's assistant budget, so I'll keep to simple commands. `;
+        else console.error('[agent]', e);   // fall through to the rule-based router below
       }
     }
     if (!reply) {
@@ -351,6 +372,7 @@ export function createApi(deps: ApiDeps) {
         reply = intent.question;
       }
     }
+    reply = note + reply;
     await call('record_voice_turn', { id: b.id, sessionId: p.sid, mode: b.mode, transcript, replyText: reply, audioAssetId: b.audioAssetId ?? '', commandId });
     return { turn: toWire(store.read().voiceTurns.find(v => v.id === b.id)), actions };
   });

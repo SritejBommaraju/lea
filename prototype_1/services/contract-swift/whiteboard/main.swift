@@ -16,7 +16,9 @@ final class Probe: NSObject, WKNavigationDelegate {
         """
         Task { @MainActor in
             do {
-                let n = try await w.evaluateJavaScript("play(\(lesson))")
+                let n = try await w.evaluateJavaScript("play(\(lesson), {backdrop: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', w: 600, h: 800})")
+                let bg = try await w.evaluateJavaScript("document.getElementById('board').style.backgroundImage.length > 20 && document.getElementById('board').getAttribute('viewBox')")
+                print("backdrop viewBox=\(String(describing: bg))")
                 let d1 = try await w.evaluateJavaScript("step(0)")
                 try await Task.sleep(for: .seconds(2))
                 let d2 = try await w.evaluateJavaScript("step(1)")

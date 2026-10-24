@@ -6,7 +6,9 @@
     "pair": "tsx scripts/pair.ts",
     "authorize": "tsx scripts/authorize.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify": "tsx scripts/verify.ts",
+    "backup": "tsx scripts/backup.ts"
   },
   "type": "module",
   "dependencies": {

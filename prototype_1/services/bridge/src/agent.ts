@@ -19,9 +19,18 @@ export type ClientAction =
   | { type: 'scan' }
   | { type: 'closeup'; subject: string; box: { left: number; top: number; right: number; bottom: number } | null }
   | { type: 'screen'; screen: 'capture' | 'repair' | 'design' }
-  | { type: 'whiteboard'; title: string; steps: { say: string; svg: string }[] };
+  | { type: 'whiteboard'; title: string; over: 'board' | 'camera'; steps: { say: string; svg: string }[] };
 
 export interface AgentTurn { reply: string; actions: ClientAction[] }
+
+/** The session has spent its LEA_AGENT_SESSION_USD; the bridge answers with the rule-based router instead. */
+export class AgentBudgetError extends Error {}
+
+// claude-opus-5-5 list prices per million tokens: input, output, cache read, cache write (1.25x input).
+const PRICE = { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 };
+const spent = new Map<string, number>();   // per session, since the bridge started
+const cost = (u: Anthropic.Beta.BetaUsage) => ((u.input_tokens ?? 0) * PRICE.input + (u.output_tokens ?? 0) * PRICE.output
+  + (u.cache_read_input_tokens ?? 0) * PRICE.cacheRead + (u.cache_creation_input_tokens ?? 0) * PRICE.cacheWrite) / 1e6;
 
 const SYSTEM = `You are Lea, a repair copilot talking with someone through their iPhone while they look at a physical product.
 Your reply is spoken aloud: one to three short sentences, plain words, no lists, no markdown, no symbols that read badly aloud.
@@ -48,6 +57,9 @@ export function asksForDesign(transcript: string): boolean {
 export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore }, sessionId: string, turnId: string, transcript: string, frameJpeg: Buffer | undefined,
   focusFindingId?: string, client = new Anthropic()): Promise<AgentTurn> {
   const { store } = deps;
+  if (config.agentSessionUsd > 0 && (spent.get(sessionId) ?? 0) >= config.agentSessionUsd) {
+    throw new AgentBudgetError(`this session reached its $${config.agentSessionUsd} assistant budget`);
+  }
   const actions: ClientAction[] = [];
   const frame = frameJpeg ? await prepareFrame(frameJpeg).catch(() => undefined) : undefined;
   const snap = () => sessionSnapshot(store.read(), sessionId)!;
@@ -108,13 +120,14 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
     }),
     betaZodTool({
       name: 'explain_on_whiteboard',
-      description: 'Teach visually: 2-6 steps, each one spoken sentence with a simple SVG drawing (viewBox 0 0 800 500, strokes and short labels, no images).',
+      description: 'Teach visually: 2-6 steps, each one spoken sentence with a simple SVG drawing (strokes and short labels, no images). over "board": blank whiteboard, viewBox 0 0 800 500. over "camera": drawn over the current camera frame, viewBox 0 0 600 800, so point at what you see in it.',
       inputSchema: z.object({
         title: z.string(),
+        over: z.enum(['board', 'camera']),
         steps: z.array(z.object({ say: z.string(), svg: z.string().describe('one <svg viewBox="0 0 800 500">...</svg>') })),
       }),
-      run: async ({ title, steps }) => {
-        actions.push({ type: 'whiteboard', title, steps: steps.slice(0, 8) });
+      run: async ({ title, over, steps }) => {
+        actions.push({ type: 'whiteboard', title, over: over === 'camera' && frame ? 'camera' : 'board', steps: steps.slice(0, 8) });
         return 'The whiteboard is showing; each step is spoken as it is drawn, so keep your reply to one short line.';
       },
     }),
@@ -186,7 +199,7 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
   ];
 
   // The last few spoken turns, as plain text, so "zoom in on that" has its context.
-  const history = snap().voiceTurns.slice(-6).flatMap(v => [
+  const history = snap().voiceTurns.slice(-12).flatMap(v => [
     { role: 'user' as const, content: v.transcript },
     { role: 'assistant' as const, content: v.replyText || '(no reply)' },
   ]);
@@ -196,7 +209,7 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
   if (focus) content.push({ type: 'text', text: `The person selected this candidate on the 3D model: ${focus.subject}, ${focus.problem} (finding ${focus.id}, ${focus.state}). ${focus.detail}` });
   content.push({ type: 'text', text: transcript });
 
-  const final = await client.beta.messages.toolRunner({
+  const runner = client.beta.messages.toolRunner({
     model: AGENT_MODEL,
     max_tokens: 16000,
     max_iterations: 6,
@@ -204,10 +217,17 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
     output_config: { effort: 'low' },
+    cache_control: { type: 'ephemeral' },   // the system prompt and tools repeat every turn
     system: SYSTEM,
     tools,
     messages: [...history, { role: 'user', content }],
   });
+  let final: Anthropic.Beta.BetaMessage | undefined;
+  for await (const message of runner) {
+    final = message;
+    spent.set(sessionId, (spent.get(sessionId) ?? 0) + cost(message.usage));
+  }
+  if (!final) return { reply: 'Sorry, I didn’t catch that. Could you say it again?', actions };
   if (final.stop_reason === 'refusal') return { reply: 'I can’t help with that one.', actions: [] };
   const reply = final.content.flatMap(b => (b.type === 'text' ? [b.text] : [])).join(' ').trim();
   return { reply: reply || (actions.length ? 'Okay.' : 'Sorry, I didn’t catch that. Could you say it again?'), actions };

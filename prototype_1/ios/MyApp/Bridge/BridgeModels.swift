@@ -102,6 +102,8 @@ nonisolated struct RepairCheck: Codable, Identifiable, Sendable {
     let readingValue: Double?
     let readingUnit: String
     let note: String
+    let net: String?
+    let crossCheck: String?
 }
 
 nonisolated struct RepairAttempt: Codable, Identifiable, Sendable {
@@ -282,6 +284,7 @@ nonisolated struct AgentAction: Codable, Sendable, Equatable {
     let box: Box?
     let screen: String?
     let title: String?
+    let over: String?             // whiteboard: "board" or "camera"
     let steps: [Step]?
 }
 

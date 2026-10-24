@@ -102,3 +102,18 @@ def test_features_find_plate_thickness_and_holes(tmp_path):
         assert abs(h["diameter_mm"] - 5.0) < 0.8 and h["round"]
     xs = sorted(h["centre_mm"][0] for h in holes)
     assert any(abs(x - 15) < 1 for x in xs) and any(abs(x - 65) < 1 for x in xs)
+
+
+def test_features_find_a_boss_and_a_slot(tmp_path):
+    from lea_geometry.features import extract
+    plate = perforated_plate(holes=((15.0, 15.0, 2.5),))
+    # an elongated slot: two overlapping circles cut from the same plate builder
+    slot = perforated_plate(holes=tuple((x, 15.0, 2.0) for x in np.arange(55.0, 69.0, 0.5)))
+    boss = o3d.geometry.TriangleMesh.create_cylinder(radius=5, height=10, resolution=96, split=8).translate((40, 15, 9))
+    for name, m in (("boss.ply", plate + boss), ("slot.ply", slot)):
+        o3d.io.write_triangle_mesh(str(tmp_path / name), m)
+    f = extract(str(tmp_path / "boss.ply"))
+    assert any(abs(c["diameter_mm"] - 10) < 0.8 and abs(c["length_mm"] - 10) < 1.5 for c in f["cylinders"]), f["cylinders"]
+    s = extract(str(tmp_path / "slot.ply"))
+    slots = [h for h in s["holes"] if h["kind"] == "slot"]
+    assert slots and max(slots[0]["extent_mm"]) > 15 and min(slots[0]["extent_mm"]) < 5.5, s["holes"]

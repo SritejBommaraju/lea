@@ -7,7 +7,7 @@
   :root { --paper: #fbfaf6; --ink: #1d2433; }
   @media (prefers-color-scheme: dark) { :root { --paper: #1b1e24; --ink: #e8ebf1; } }
   html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); overflow: hidden; }
-  svg { width: 100%; height: 100%; display: block; color: var(--ink); }
+  svg { width: 100%; height: 100%; display: block; color: var(--ink); background-size: 100% 100%; }
 </style>
 </head>
 <body>
@@ -16,10 +16,14 @@
 <script>
   // Lea drives this page: play(steps) loads a lesson, step(i) draws step i and returns its drawing time in ms.
   let stage = null, steps = [];
-  window.play = (lesson) => {
+  // opts.backdrop: a camera frame (data URL) drawn under the ink, filling a w x h drawing space.
+  window.play = (lesson, opts = {}) => {
     steps = (lesson || []).map((s) => ({ say: String(s.say || ""), svg: String(s.svg || "").replace(/\bclass=(["'])tex\1/g, "") }));
-    stage = new window.VelStage(document.getElementById("board"), { handDrawn: true });
-    stage.size(800, 500);
+    const svg = document.getElementById("board");
+    svg.style.backgroundImage = opts.backdrop ? `url("${opts.backdrop}")` : "";
+    svg.style.aspectRatio = opts.backdrop ? `${opts.w} / ${opts.h}` : "";
+    stage = new window.VelStage(svg, { handDrawn: !opts.backdrop });
+    stage.size(opts.w || 800, opts.h || 500);
     stage.clear();
     return steps.length;
   };

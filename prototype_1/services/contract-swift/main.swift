@@ -64,6 +64,15 @@ let sized = try await client.submitDesign(sessionId: sid, text: "bracket 80 mm l
                                           checks: [.init(axis: "longest", mm: 80, tolMm: 0.5)])
 check("design request carries its STEP dimension checks", sized.text == "bracket 80 mm long" && !sized.jobId.isEmpty)
 
+struct Saved: Encodable { let text, origin, requestId: String }
+try await client.sendRaw("POST", "/v1/sessions/\(sid)/design-commands", json: BridgeClient.encodedBody(Saved(text: "replayed offline", origin: "text", requestId: "swift-outbox-1")))
+try await client.sendRaw("POST", "/v1/sessions/\(sid)/design-commands", json: BridgeClient.encodedBody(Saved(text: "replayed offline", origin: "text", requestId: "swift-outbox-1")))
+let replayed = try await client.snapshot(sid).designCommands.filter { $0.text == "replayed offline" }.count
+check("an outbox request replayed twice is recorded once", replayed == 1)
+
+let next = try await client.nextChecks(sessionId: sid)
+check("next checks decode (none pending)", next.order.isEmpty, "ranked=\(next.ranked)")
+
 if let framePath = env["LEA_FRAME"] {
     let frame = try Data(contentsOf: URL(fileURLWithPath: framePath))
     let seen = try await client.look(sessionId: sid, frame: frame, subject: "fan connector", referenceAssetId: nil)
