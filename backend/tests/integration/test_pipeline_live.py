@@ -3,8 +3,9 @@
     pytest -m live backend/tests/integration            # needs ANTHROPIC_API_KEY and TYPESAFE_KEY in backend/.env
 
 - `test_summary_writer_live`: Claude writes the summary of the generic example report from words only.
-- `test_run_scan_live_without_photos`: the whole run (inspect, Jev, locate, Claude, publish) on a scan whose
-  stills cannot be inspected (a label still, a skipped still): the honest answer is insufficient_evidence (V1).
+- `test_run_scan_live_without_photos`: the whole run (inspect, fuse, locate, Claude, publish) on a scan whose
+  stills cannot be inspected (a label still, a skipped still): the honest answer is insufficient_evidence (V1), and
+  Jev is not asked (only not_inspected subjects: code decides, I3).
 - `test_pipeline_on_real_photos`: every real photo in $REPAIROS_SAMPLES_DIR/photos/*.jpg (each with its licence in
   <name>.licence.txt: public domain, CC0 or CC-BY, L2) through detector -> crops -> Claude VLM -> Jev -> report.
 - `test_replay_recorded_sessions`: MS1 on every recorded real session in $REPAIROS_SAMPLES_DIR/sessions.
@@ -81,7 +82,7 @@ def test_run_scan_live_without_photos(tmp_path, monkeypatch):
     validate("report", rep)
     assert rep["verdict"] == "insufficient_evidence" and rep["verdict_reason"]["code"] == "nothing_inspected"
     assert len(rep["not_inspected"]) == 2 and rep["findings"] == []
-    assert rep["models"]["jev"].startswith("jev-")
+    assert rep["models"]["jev"] == "not called (nothing to judge)"   # nobody looked: code decides, Jev is not asked
     assert rep["models"]["locate"].startswith(("not available", "repairos.locate"))   # before / after the merge
     for e in rep["not_inspected"]:   # these stills have no box: never a location
         assert e.get("location", {"status": "not_computed"})["status"] == "not_computed"
@@ -122,7 +123,8 @@ def test_pipeline_on_real_photos(tmp_path):
         dets = [{"index": i, "label": d.label, "box_px": [int(v) for v in d.box]} for i, d in enumerate(res.detections)]
         fused = fuse(scan["scan_id"], findings, [], None, engine=reg.slot("FUSION"))
         rep = build_report(scan=scan, stills=[], findings=findings, suspects=fused.suspects,
-                           next_action=fused.next_action, regions=regions_for(findings, dets, "whole photo"),
+                           next_action=fused.next_action,
+                           regions=regions_for(findings, dets, "whole photo", res.rollups),
                            locations={f["finding_id"]: not_computed("a loose photo has no scan to place it on")
                                       for f in findings},
                            models={"detector": det.model_id, "classifier": "not selected (CLS=none)",

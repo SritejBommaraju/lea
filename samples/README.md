@@ -30,6 +30,24 @@ Phase 1 replay makes no Grain calls.
   fusion and the mesh, else a numpy voxel fusion runs. `import.json` records the source, the fusion method and
   measured spacing, and every assumption (tracking state not recorded, distortion not applied, etc.). Real exports
   for the importer tests go in `samples/imports/<name>/` (backend/tests/replay/test_imports.py).
+- **Plain iPhone photos** (PLAN.md §6a step 1): put 5 to 10 Camera photos (JPEG or HEIC, any size) of one unit in a
+  folder, then
+
+  ```
+  python3 -I tools/import_photos.py ~/Desktop/unit-photos --out samples/sessions/sess_20261024_unit1 \
+      --symptom "won't turn on"
+  make replay SESSION=sess_20261024_unit1
+  ```
+
+  The folder name after `--out` is the session id (`sess_...`; leave `--out` out for a new random one). HEIC is
+  converted with macOS `sips`; every photo is turned upright and re-encoded once at full resolution, JPEG quality
+  92, with **all EXIF, GPS, XMP and other metadata removed** (only the ICC colour profile stays). Photos have no
+  AR session, so the scan has `depth_source: none` and no keyframes, and each photo is an `unguided` still with
+  `pose_reliable: false` and no `camera`: detection, Jev and the report run, and every finding's location says
+  "not computed". Intrinsics are estimated from the EXIF 35 mm-equivalent focal length when it is there (else left
+  out). `import.json` lists each photo's source file, capture time and its source, the intrinsics source (`exif`
+  or `unknown`), what metadata was removed (GPS included), and what was skipped (videos, other files, duplicates,
+  subfolders). Fill in `object_id`, `truth.json` etc. by hand afterwards, as for any session.
 
 ## Layout
 

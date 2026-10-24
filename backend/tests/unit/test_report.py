@@ -209,3 +209,61 @@ def test_exports_show_words_never_a_probability():
 def test_html_embeds_crops_when_given():
     page = to_html(ex("report"), lambda ref: b"\xff\xd8jpeg")
     assert "data:image/jpeg;base64," in page
+
+
+# ------------------------------------------------------------------------- many not-inspected regions per still
+def _flooded_report(extra_small: int, budget_rows: int):
+    """One still with real findings plus many regions nobody looked at: a roll-up of `extra_small` tiny boxes and
+    `budget_rows` regions over the crop budget (the shape vision.inspect writes)."""
+    scan, still = ex("scan-package"), ex("still")
+    sid = still["still_id"]
+    findings, regions = _findings(scan["scan_id"], sid, ["loose", "ok"])
+    tiny = [Detection((10 * i, 10, 10 * i + 8, 18), "screw", 0.2) for i in range(extra_small)]
+    roll = insp.finding_rollup(scan_id=scan["scan_id"], still_id=sid, what=insp.SMALL_REGIONS,
+                               indices=list(range(extra_small)), dets=tiny)
+    findings.append(roll)
+    regions[roll["finding_id"]] = {"part_class": "small regions", "inspected_by": ["detector"],
+                                   "regions": extra_small}
+    for i in range(budget_rows):
+        det = Detection((500 + i, 500, 700 + i, 700), "screw", 0.3)
+        f = insp.finding_not_inspected(scan_id=scan["scan_id"], still_id=sid, index=100 + i, det=det,
+                                       reason="over this still's crop budget")
+        findings.append(f)
+        regions[f["finding_id"]] = {"part_class": "screw", "inspected_by": ["detector"]}
+    rep = build_report(scan=scan, stills=[still], findings=findings, suspects=[], next_action=None, regions=regions,
+                       locations={f["finding_id"]: NOT_COMPUTED for f in findings},
+                       models={"detector": "d", "classifier": "c", "vlm": "v", "ocr": "o", "summary_writer": "s",
+                               "jev": "j", "locate": "l"})
+    return rep, findings
+
+
+def test_many_not_inspected_regions_of_a_still_become_one_row_with_the_exact_count():
+    rep, findings = _flooded_report(extra_small=41, budget_rows=3)
+    assert len(rep["not_inspected"]) == 1
+    row = rep["not_inspected"][0]
+    # 41 tiny boxes in the roll-up, 3 over the budget, 1 scene-sized box (from _findings)
+    assert row["regions"] == 45 and len(row["finding_ids"]) == 5 and row["finding_id"] == row["finding_ids"][0]
+    assert row["reason"].startswith("45 regions in this photo were not inspected: 41 regions: too small")
+    assert "3 regions: over this still's crop budget" in row["reason"]
+    assert honesty_violations(rep, findings) == []                  # every finding in exactly one row (MS1)
+    assert [e["issue"] for e in rep["findings"]] == ["loose", "none"]   # real findings are not buried
+    assert rep["verdict"] == "potential_issues"
+    validate("report", {**rep, "summary": TEST_SUMMARY})
+    assert "45 regions in this photo were not inspected" in to_markdown({**rep, "summary": TEST_SUMMARY})
+    assert_words_only(words_for(rep))                               # the count stays out of the summary writer
+
+
+def test_a_few_not_inspected_regions_keep_their_own_rows():
+    rep, findings = _build(["ok"])
+    assert len(rep["not_inspected"]) == 1 and "finding_ids" not in rep["not_inspected"][0]
+    assert honesty_violations(rep, findings) == []
+
+
+def test_a_grouped_row_that_drops_or_doubles_a_finding_is_caught():
+    rep, findings = _flooded_report(extra_small=5, budget_rows=2)
+    bad = copy.deepcopy(rep)
+    bad["not_inspected"][0]["finding_ids"] = bad["not_inspected"][0]["finding_ids"][:-1]
+    assert any("no bucket" in p for p in honesty_violations(bad, findings))
+    bad = copy.deepcopy(rep)
+    bad["not_inspected"][0]["regions"] = 1
+    assert any("fewer regions" in p for p in honesty_violations(bad, findings))

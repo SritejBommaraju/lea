@@ -158,6 +158,8 @@ def _jev_down() -> JevEngine:
 
 def test_worker_runs_stages_and_a_jev_outage_is_a_clear_error_state(env):
     state, blobs, scan = env
+    judged = ex("finding")   # a region a model judged: fusion must ask Jev about it (not_inspected ones it never asks)
+    run(state.transition("finding", judged["finding_id"], "finding.create", judged))
     _queue(state, scan)
     w = Worker(state, blobs, name="w-test")
     w.ctx._slots["FUSION"] = _jev_down()
@@ -176,7 +178,8 @@ def test_worker_runs_stages_and_a_jev_outage_is_a_clear_error_state(env):
     for sid, part in (("s_label", "label"), ("s_skip", "whole photo")):
         st = runrow["stills"][sid]
         assert st["status"] == "done" and st["regions"][st["finding_ids"][0]]["part_class"] == part
-    findings = [r.data for r in run(state.list("finding", scan_id=scan["scan_id"]))]
+    findings = [r.data for r in run(state.list("finding", scan_id=scan["scan_id"]))
+                if r.data["finding_id"] != judged["finding_id"]]
     assert sorted(f["state"] for f in findings) == ["not_inspected", "not_inspected"]   # never ok (I3)
     assert {f["source"] for f in findings} == {"repairos.ocr", "repairos.vision"}
     assert run(state.list("report", scan_id=scan["scan_id"])) == []                      # no report made up
@@ -248,6 +251,8 @@ def test_routes_complete_pipeline_report_and_export(env):
 
     state, blobs, scan = env
     sid = scan["scan_id"]
+    judged = ex("finding")   # a judged region, so the fuse stage needs Jev (which is down here)
+    run(state.transition("finding", judged["finding_id"], "finding.create", judged))
     with serve(create_app(state, blobs, pairing_code=CODE)) as c:
         status, out, _ = c.req("POST", "/v1/devices/pair", {"code": CODE}, auth=False)
         c.token = out["token"]
@@ -269,9 +274,9 @@ def test_routes_complete_pipeline_report_and_export(env):
         assert status == 200 and out["status"] == "failed" and out["stills"]["s_label"]["status"] == "done"
 
         # The route serves whatever report the pipeline publishes; publish one built from the stored findings.
-        findings = [r.data for r in run(state.list("finding", scan_id=sid))]
         runrow = run(state.get("pipeline-run", run_id_for(sid))).data
         regions = {k: v for st in runrow["stills"].values() for k, v in st["regions"].items()}
+        findings = [r.data for r in run(state.list("finding", scan_id=sid)) if r.data["finding_id"] in regions]
         rep = _report_for(scan, findings, regions)
         run(state.transition("report", rep["report_id"], "report.publish", rep))
         upd(state, scan, {"status": "done", "report_id": rep["report_id"], "error": None})

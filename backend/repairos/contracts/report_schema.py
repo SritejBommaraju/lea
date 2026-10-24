@@ -94,6 +94,26 @@ class NextStep(BaseModel):
     reason: str | None = None
 
 
+class Code1(StrEnum):
+    unplug_first = 'unplug_first'
+    battery_hazard = 'battery_hazard'
+    capacitor_charge = 'capacitor_charge'
+    heat_damage = 'heat_damage'
+    mains_power = 'mains_power'
+
+
+class SafetyItem(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    code: Code1
+    text: str = Field(..., min_length=1)
+
+
+class Limit(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
 class DepthSource(StrEnum):
     """
     lidar when the scan or a still carries ARKit depth; none otherwise (A8: sizes cannot be claimed).
@@ -354,6 +374,29 @@ class InspectedByEnum(StrEnum):
     meter = 'meter'
 
 
+class Severity(StrEnum):
+    """
+    How much the issue matters (the vision model's word per crop; absent = not judged, treated as functional). Cosmetic issues are listed in `cosmetic`, never in `findings`.
+    """
+
+    cosmetic = 'cosmetic'
+    functional = 'functional'
+    safety = 'safety'
+
+
+class FindingId(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class MergedBy(StrEnum):
+    """
+    Why the findings of a collapsed row are one issue.
+    """
+
+    same_photo_overlap = 'same_photo_overlap'
+    same_place_on_scan = 'same_place_on_scan'
+
+
 class Finding(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -376,18 +419,61 @@ class Finding(BaseModel):
     location: Location
     proof: Proof
     judgment: Judgment | None = None
+    severity: Severity | None = Field(
+        None,
+        description="How much the issue matters (the vision model's word per crop; absent = not judged, treated as functional). Cosmetic issues are listed in `cosmetic`, never in `findings`.",
+    )
+    part_words: str | None = Field(
+        None,
+        description='Plain words that let a person find the part in the photo.',
+        min_length=1,
+    )
+    finding_ids: list[FindingId] | None = Field(
+        None,
+        description='A collapsed row: the findings of one physical issue (same still and overlapping crops, or the same place on the scan across stills) with the same issue, finding_id first. Each finding appears in no other row (MS1).',
+        min_length=2,
+    )
+    regions: int | None = Field(
+        None, description='How many findings this collapsed row stands for.', ge=2
+    )
+    crops: list[Crop] | None = Field(
+        None,
+        description='The crops of the other findings in a collapsed row (`crop` is the first).',
+        min_length=1,
+    )
+    merged_by: MergedBy | None = Field(
+        None, description='Why the findings of a collapsed row are one issue.'
+    )
 
 
 class NotInspected(BaseModel):
+    """
+    One row of regions nobody looked at (I3). A row stands for one region, or, when `finding_ids` is present, for every not-inspected region of one still grouped into one row (so real findings are not buried under many small regions); `regions` is then the exact number of detector regions it covers.
+    """
+
     model_config = ConfigDict(
         extra='forbid',
     )
-    finding_id: str = Field(..., min_length=1)
+    finding_id: str = Field(
+        ...,
+        description='The finding of this row; for a grouped row, the first of `finding_ids`.',
+        min_length=1,
+    )
     subject: Subject
     part_class: str = Field(..., min_length=1)
     photo: Photo | None = None
     location: Location | None = None
     reason: str = Field(..., min_length=1)
+    regions: int | None = Field(
+        None,
+        description='How many detector regions this row stands for. Absent means one.',
+        ge=1,
+    )
+    finding_ids: list[FindingId] | None = Field(
+        None,
+        description='A grouped row: every finding it covers, finding_id first. Each appears in no other row (MS1).',
+        min_length=1,
+    )
 
 
 class Insufficient(BaseModel):
@@ -425,6 +511,10 @@ class Report(BaseModel):
         ...,
         description='Regions a model judged: an issue, or `none` (looked at, no visible issue).',
     )
+    cosmetic: list[Finding] | None = Field(
+        None,
+        description='Issues the vision model judged cosmetic (looks worn but would not stop the device working). Listed apart; they never make the verdict potential_issues on their own.',
+    )
     not_inspected: list[NotInspected] = Field(
         ...,
         description='Regions nobody looked at (I3), each with the reason. Never shown as ok.',
@@ -436,6 +526,14 @@ class Report(BaseModel):
     next_step: NextStep | None = Field(
         None,
         description="The one next action code chose from Jev's judgments (repairos.fusion), when there is one.",
+    )
+    safety: list[SafetyItem] | None = Field(
+        None,
+        description='Safety notes chosen by code from the findings (repairos.report.safety); shown before anything else.',
+    )
+    limits: list[Limit] | None = Field(
+        None,
+        description='What photos cannot tell (always shown), plus a meter suggestion when a reported symptom is not explained.',
     )
     capture: Capture
     models: Models = Field(

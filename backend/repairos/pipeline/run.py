@@ -188,13 +188,21 @@ def vlm_part_class(f: dict) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def regions_for(findings: list[dict], detections: list[dict], whole: str) -> dict[str, dict]:
+def regions_for(findings: list[dict], detections: list[dict], whole: str,
+                rollups: dict[str, dict] | None = None) -> dict[str, dict]:
     """finding_id -> {part_class, inspected_by} for one still's findings from vision.inspect. The part class is the
     VLM's generic name for what it looked at (detector labels are often wrong, e.g. a damage prompt on an intact
-    part); a region no VLM looked at keeps the detector's label from the generic vocabulary."""
-    labels = {d["index"]: d["label"] for d in detections}
+    part); a region no VLM looked at keeps the detector's label from the generic vocabulary, or `unknown_part` when
+    that label was a weak match (vision.inspect.region_part_class)."""
+    labels = {d["index"]: d.get("part_class") or d["label"] for d in detections}
     out = {}
+    rollups = rollups or {}
     for f in findings:
+        if f["finding_id"] in rollups:   # detector regions not kept (too small / past the cap): counted, not looked at
+            r = rollups[f["finding_id"]]
+            out[f["finding_id"]] = {"part_class": r["part_class"], "inspected_by": ["detector"],
+                                    "regions": int(r["regions"])}
+            continue
         idx = _det_index(f["subject"]["ref"])
         if idx is not None and idx not in labels:
             raise PipelineError(f"finding {f['finding_id']} names detection {idx}, which the detector did not return")
@@ -217,7 +225,7 @@ async def _store_findings(ctx: Context, findings: list[dict]) -> tuple[list[str]
     return ids, kept
 
 
-def _inspect_sync(ctx: Context, scan_id: str, still: dict) -> tuple[list[dict], list[dict], str, str]:
+def _inspect_sync(ctx: Context, scan_id: str, still: dict) -> tuple[list[dict], list[dict], str, str, dict]:
     from repairos.vision.inspect import inspect_still
 
     detector, judge = ctx.slot("DET"), ctx.slot("VLM")
@@ -233,10 +241,14 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict) -> tuple[list[dict], 
         if crop and not crop.startswith(REF_PREFIX):
             refs["crop_file"] = ctx.blobs.put(Path(crop).read_bytes(), "image/jpeg")
         findings.append(f)
-    dets = [{"index": i, "label": d.label, "box_px": [max(0, int(round(v))) for v in d.box]}
-            for i, d in enumerate(res.detections)]
+    dets = [{"index": i, "label": d.label, "box_px": [max(0, int(round(v))) for v in d.box],
+             "part_class": res.part_classes.get(i, d.label)} for i, d in enumerate(res.detections)]
     vlm = " then ".join(getattr(judge, "models", ())) or type(judge).__name__
-    return findings, dets, getattr(detector, "model_id", type(detector).__name__), vlm
+    dropped = {i: why for why, idx in res.dropped.items() for i in idx}
+    for d in dets:
+        if d["index"] in dropped:
+            d["not_kept"] = dropped[d["index"]]
+    return findings, dets, getattr(detector, "model_id", type(detector).__name__), vlm, res.rollups
 
 
 async def _inspect_one(ctx: Context, scan: dict, still: dict) -> dict:
@@ -253,8 +265,8 @@ async def _inspect_one(ctx: Context, scan: dict, still: dict) -> dict:
         findings = [not_inspected_finding(scan_id, sid, "label", OCR_NOT_BUILT, "repairos.ocr")]
         regions = {findings[0]["finding_id"]: {"part_class": "label", "inspected_by": []}}
     else:
-        findings, dets, det_id, vlm = await asyncio.to_thread(_inspect_sync, ctx, scan_id, still)
-        regions = regions_for(findings, dets, "whole photo")
+        findings, dets, det_id, vlm, rollups = await asyncio.to_thread(_inspect_sync, ctx, scan_id, still)
+        regions = regions_for(findings, dets, "whole photo", rollups)
         stage.update(detections=dets, detector=det_id, vlm=vlm)
     ids, kept = await _store_findings(ctx, findings)
     stage.update(status="done", finding_ids=ids, regions=regions, finished_at=_now(),
@@ -357,9 +369,15 @@ async def run_scan(ctx: Context, scan_id: str) -> dict:
                                    result.next_action)
         suspects = [r.data for r in await ctx.state.list("suspect", scan_id=scan_id)]
         jev = result.answers.model if result.answers else "not called (nothing to judge)"
+        asked = {k for b in result.batches for k in b.subjects}
     except Exception as e:
         raise await _fail(ctx, scan, "fuse", e) from e
     await _update(ctx, scan, {"stages": {"fuse": {"status": "done", "finished_at": _now(), "jev_model": jev,
+                                                  "jev_requests": len(result.batches),
+                                                  "jev_questions": len(result.questions),
+                                                  "subjects_judged": len(asked),
+                                                  "subjects_decided_in_code": len(result.fusion_state.subjects)
+                                                  - len(asked),
                                                   "outcome": result.outcome, "suspects": len(result.suspects),
                                                   "next_action_id": result.next_action["action_id"],
                                                   "seconds": round(time.monotonic() - t0, 3)}}})
@@ -445,6 +463,8 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NOT_INSTALLED)
         elif not sid or sid not in by_still or not box:
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NO_BOX)
+        elif "camera" not in by_still[sid]:
+            out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NO_POSE)
         elif lidar:
             if scan_local is None:
                 scan_local = await asyncio.to_thread(_local_scan, ctx, scan)

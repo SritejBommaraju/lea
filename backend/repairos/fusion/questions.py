@@ -114,19 +114,25 @@ def subject_questions(i: int, s: Subject, base_seed: int) -> list[Question]:
 
 
 def judged_subjects(fs: FusionState) -> list[Subject]:
-    """Subjects with findings a person could judge. A subject known only from a meter reading (a net nobody
-    photographed) gets no questions: its verdict is the reading's, in code (skill: leave out what no one could
-    judge)."""
-    return [s for s in fs.subjects.values() if s.finding_ids]
+    """Subjects with findings a person could judge. Two kinds get no questions, because code already decides them
+    (skill: leave out what no one could judge):
+      - known only from a meter reading (a net nobody photographed): its verdict is the reading's;
+      - every finding says not_inspected (I3): nobody looked, so verdict not_inspected and the next step a
+        close-up (suspects.verdict_of, next_action.step_for). Asking Jev about them only adds noise and tokens."""
+    return [s for s in fs.subjects.values() if s.finding_ids and not s.not_inspected_only]
+
+
+def question_groups(fs: FusionState, seed: int | None = None) -> tuple[list[tuple[Subject, list[Question]]], int]:
+    """Each judged subject with its atomic questions (they travel in one request, fusion/batches.py), and the base
+    seed used for the option shuffles."""
+    base = default_seed(fs.scan_id) if seed is None else seed
+    return [(s, subject_questions(i, s, base)) for i, s in enumerate(judged_subjects(fs))], base
 
 
 def build_questions(fs: FusionState, seed: int | None = None) -> tuple[list[Question], int]:
     """All questions for one fusion step and the base seed used for the option shuffles."""
-    base = default_seed(fs.scan_id) if seed is None else seed
-    out: list[Question] = []
-    for i, s in enumerate(judged_subjects(fs)):
-        out += subject_questions(i, s, base)
-    return out, base
+    groups, base = question_groups(fs, seed)
+    return [q for _, qs in groups for q in qs], base
 
 
 def band(p: float) -> str:

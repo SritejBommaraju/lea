@@ -1,0 +1,4149 @@
+{
+ "created_at": "2026-10-24T12:08:47Z",
+ "sample": "heldout",
+ "arms": {
+  "haiku_ladder": {
+   "both": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 103,
+    "tn": 139,
+    "precision": 0.9827586206896551,
+    "recall": 0.35625,
+    "f1": 0.5229357798165137,
+    "specificity": 0.9928571428571429,
+    "n": 300,
+    "defect": 160,
+    "ci": {
+     "precision": [
+      0.9411545215100966,
+      1.0
+     ],
+     "recall": [
+      0.28259045812664135,
+      0.427754268608175
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 40,
+    "cannot_tell_share": 0.13333333333333333,
+    "cost_usd": 0.3625109,
+    "cost_per_crop_usd": 0.0012083696666666667,
+    "latency_median_ms": 1650.5,
+    "latency_p90_ms": 4099.3,
+    "escalated": 47,
+    "vs_baseline": {
+     "recall": [
+      0.0,
+      0.0
+     ],
+     "precision": [
+      0.0,
+      0.0
+     ],
+     "f1": [
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "pcb4": {
+    "tp": 18,
+    "fp": 0,
+    "fn": 82,
+    "tn": 100,
+    "precision": 1.0,
+    "recall": 0.18,
+    "f1": 0.3050847457627119,
+    "specificity": 1.0,
+    "n": 200,
+    "defect": 100,
+    "ci": {
+     "precision": [
+      1.0,
+      1.0
+     ],
+     "recall": [
+      0.1111111111111111,
+      0.2580735773831098
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 2,
+    "cannot_tell_share": 0.01,
+    "cost_usd": 0.0831641,
+    "cost_per_crop_usd": 0.0004158205,
+    "latency_median_ms": 1583.5,
+    "latency_p90_ms": 2122.0,
+    "escalated": 3,
+    "vs_baseline": {
+     "recall": [
+      0.0,
+      0.0
+     ],
+     "precision": [
+      0.0,
+      0.0
+     ],
+     "f1": [
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "wikimedia": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975,
+    "n": 100,
+    "defect": 60,
+    "ci": {
+     "precision": [
+      0.9189051296194154,
+      1.0
+     ],
+     "recall": [
+      0.53125,
+      0.7705277538107563
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 38,
+    "cannot_tell_share": 0.38,
+    "cost_usd": 0.2793468,
+    "cost_per_crop_usd": 0.002793468,
+    "latency_median_ms": 2120.5,
+    "latency_p90_ms": 5677.100000000006,
+    "escalated": 44,
+    "vs_baseline": {
+     "recall": [
+      0.0,
+      0.0
+     ],
+     "precision": [
+      0.0,
+      0.0
+     ],
+     "f1": [
+      0.0,
+      0.0
+     ]
+    }
+   }
+  },
+  "sonnet": {
+   "both": {
+    "tp": 99,
+    "fp": 2,
+    "fn": 61,
+    "tn": 138,
+    "precision": 0.9801980198019802,
+    "recall": 0.61875,
+    "f1": 0.7586206896551724,
+    "specificity": 0.9857142857142858,
+    "n": 300,
+    "defect": 160,
+    "ci": {
+     "precision": [
+      0.95,
+      1.0
+     ],
+     "recall": [
+      0.5389106402579457,
+      0.692391304347826
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 54,
+    "cannot_tell_share": 0.18,
+    "cost_usd": 1.979778,
+    "cost_per_crop_usd": 0.00659926,
+    "latency_median_ms": 2743.0,
+    "latency_p90_ms": 4928.900000000001,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.18180569430569427,
+      0.34247969098438996
+     ],
+     "precision": [
+      -0.027278982485404456,
+      0.021602782728493124
+     ],
+     "f1": [
+      0.1606127343911692,
+      0.31319208776098717
+     ]
+    }
+   },
+   "pcb4": {
+    "tp": 60,
+    "fp": 1,
+    "fn": 40,
+    "tn": 99,
+    "precision": 0.9836065573770492,
+    "recall": 0.6,
+    "f1": 0.7453416149068324,
+    "specificity": 0.99,
+    "n": 200,
+    "defect": 100,
+    "ci": {
+     "precision": [
+      0.9464285714285714,
+      1.0
+     ],
+     "recall": [
+      0.5054860088365243,
+      0.6969873150105709
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 2,
+    "cannot_tell_share": 0.01,
+    "cost_usd": 1.329522,
+    "cost_per_crop_usd": 0.006647610000000001,
+    "latency_median_ms": 2890.0,
+    "latency_p90_ms": 5293.5,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.32350569259962053,
+      0.5232585307541839
+     ],
+     "precision": [
+      -0.0535714285714286,
+      0.0
+     ],
+     "f1": [
+      0.33675694812932333,
+      0.5469242112254112
+     ]
+    }
+   },
+   "wikimedia": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975,
+    "n": 100,
+    "defect": 60,
+    "ci": {
+     "precision": [
+      0.9189051296194154,
+      1.0
+     ],
+     "recall": [
+      0.5262934879571811,
+      0.7692307692307693
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 52,
+    "cannot_tell_share": 0.52,
+    "cost_usd": 0.6502560000000001,
+    "cost_per_crop_usd": 0.006502560000000001,
+    "latency_median_ms": 2445.0,
+    "latency_p90_ms": 3518.3000000000006,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      -0.09433962264150941,
+      0.10347400926402467
+     ],
+     "precision": [
+      -0.00569680477650121,
+      0.006521739130434856
+     ],
+     "f1": [
+      -0.06950174573592198,
+      0.07688469072714901
+     ]
+    }
+   }
+  },
+  "haiku_ladder_cl": {
+   "both": {
+    "tp": 68,
+    "fp": 4,
+    "fn": 92,
+    "tn": 136,
+    "precision": 0.9444444444444444,
+    "recall": 0.425,
+    "f1": 0.5862068965517241,
+    "specificity": 0.9714285714285714,
+    "n": 300,
+    "defect": 160,
+    "ci": {
+     "precision": [
+      0.8852301387137452,
+      0.9871835443037975
+     ],
+     "recall": [
+      0.34567013056221685,
+      0.5
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 41,
+    "cannot_tell_share": 0.13666666666666666,
+    "cost_usd": 0.32670554,
+    "cost_per_crop_usd": 0.0010890184666666667,
+    "latency_median_ms": 1530.5,
+    "latency_p90_ms": 3517.7000000000003,
+    "escalated": 49,
+    "vs_baseline": {
+     "recall": [
+      0.01851567825494203,
+      0.1210191082802548
+     ],
+     "precision": [
+      -0.08877726618439513,
+      0.0016276526819107675
+     ],
+     "f1": [
+      0.008903305911222084,
+      0.11524354520035297
+     ]
+    }
+   },
+   "pcb4": {
+    "tp": 25,
+    "fp": 1,
+    "fn": 75,
+    "tn": 99,
+    "precision": 0.9615384615384616,
+    "recall": 0.25,
+    "f1": 0.3968253968253968,
+    "specificity": 0.99,
+    "n": 200,
+    "defect": 100,
+    "ci": {
+     "precision": [
+      0.8748991935483871,
+      1.0
+     ],
+     "recall": [
+      0.17706801470588238,
+      0.3431446821152703
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 1,
+    "cannot_tell_share": 0.005,
+    "cost_usd": 0.07384924,
+    "cost_per_crop_usd": 0.0003692462,
+    "latency_median_ms": 1425.0,
+    "latency_p90_ms": 2026.3999999999999,
+    "escalated": 3,
+    "vs_baseline": {
+     "recall": [
+      0.010201504844361999,
+      0.1368421052631579
+     ],
+     "precision": [
+      -0.1251008064516129,
+      0.0
+     ],
+     "f1": [
+      0.011730450792456505,
+      0.17947553733692564
+     ]
+    }
+   },
+   "wikimedia": {
+    "tp": 43,
+    "fp": 3,
+    "fn": 17,
+    "tn": 37,
+    "precision": 0.9347826086956522,
+    "recall": 0.7166666666666667,
+    "f1": 0.8113207547169811,
+    "specificity": 0.925,
+    "n": 100,
+    "defect": 60,
+    "ci": {
+     "precision": [
+      0.8540890957446808,
+      1.0
+     ],
+     "recall": [
+      0.6037654521795706,
+      0.8307692307692308
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 40,
+    "cannot_tell_share": 0.4,
+    "cost_usd": 0.25285630000000003,
+    "cost_per_crop_usd": 0.002528563,
+    "latency_median_ms": 2550.5,
+    "latency_p90_ms": 3895.3000000000006,
+    "escalated": 46,
+    "vs_baseline": {
+     "recall": [
+      -0.029457720588235297,
+      0.16072868663594478
+     ],
+     "precision": [
+      -0.10412018497330287,
+      0.00454545454545463
+     ],
+     "f1": [
+      -0.0375521862426928,
+      0.10420924350040218
+     ]
+    }
+   }
+  },
+  "sonnet_cl": {
+   "both": {
+    "tp": 133,
+    "fp": 9,
+    "fn": 27,
+    "tn": 131,
+    "precision": 0.9366197183098591,
+    "recall": 0.83125,
+    "f1": 0.8807947019867549,
+    "specificity": 0.9357142857142857,
+    "n": 300,
+    "defect": 160,
+    "ci": {
+     "precision": [
+      0.8943661971830986,
+      0.9735228347811129
+     ],
+     "recall": [
+      0.7735849056603774,
+      0.8853551147264216
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 52,
+    "cannot_tell_share": 0.17333333333333334,
+    "cost_usd": 1.7563520000000001,
+    "cost_per_crop_usd": 0.005854506666666667,
+    "latency_median_ms": 2216.0,
+    "latency_p90_ms": 2617.6000000000004,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.3933159509202454,
+      0.5555739514348786
+     ],
+     "precision": [
+      -0.0897470301989408,
+      -0.0032879361852843794
+     ],
+     "f1": [
+      0.2819598323808761,
+      0.4409275022630577
+     ]
+    }
+   },
+   "pcb4": {
+    "tp": 90,
+    "fp": 8,
+    "fn": 10,
+    "tn": 92,
+    "precision": 0.9183673469387755,
+    "recall": 0.9,
+    "f1": 0.9090909090909091,
+    "specificity": 0.92,
+    "n": 200,
+    "defect": 100,
+    "ci": {
+     "precision": [
+      0.8599622641509433,
+      0.9681097828471156
+     ],
+     "recall": [
+      0.8408459595959596,
+      0.9519345238095237
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 1,
+    "cannot_tell_share": 0.005,
+    "cost_usd": 1.192252,
+    "cost_per_crop_usd": 0.00596126,
+    "latency_median_ms": 2255.5,
+    "latency_p90_ms": 2617.6,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.6276595744680851,
+      0.8000471698113207
+     ],
+     "precision": [
+      -0.14003773584905663,
+      -0.03189021715288442
+     ],
+     "f1": [
+      0.4869064673430636,
+      0.711662059798657
+     ]
+    }
+   },
+   "wikimedia": {
+    "tp": 43,
+    "fp": 1,
+    "fn": 17,
+    "tn": 39,
+    "precision": 0.9772727272727273,
+    "recall": 0.7166666666666667,
+    "f1": 0.826923076923077,
+    "specificity": 0.975,
+    "n": 100,
+    "defect": 60,
+    "ci": {
+     "precision": [
+      0.925,
+      1.0
+     ],
+     "recall": [
+      0.6,
+      0.8363636363636363
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 51,
+    "cannot_tell_share": 0.51,
+    "cost_usd": 0.5641,
+    "cost_per_crop_usd": 0.005641,
+    "latency_median_ms": 2155.5,
+    "latency_p90_ms": 2623.300000000001,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      -0.03508771929824561,
+      0.16981132075471694
+     ],
+     "precision": [
+      -0.0013869132290184188,
+      0.012316603967168297
+     ],
+     "f1": [
+      -0.024659863945578175,
+      0.1197193820792306
+     ]
+    }
+   }
+  },
+  "sonnet_cl_unknown": {
+   "both": {
+    "tp": 135,
+    "fp": 7,
+    "fn": 25,
+    "tn": 133,
+    "precision": 0.9507042253521126,
+    "recall": 0.84375,
+    "f1": 0.8940397350993378,
+    "specificity": 0.95,
+    "n": 300,
+    "defect": 160,
+    "ci": {
+     "precision": [
+      0.9124025942000394,
+      0.9851851851851852
+     ],
+     "recall": [
+      0.7865759041211102,
+      0.8975903614457831
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 53,
+    "cannot_tell_share": 0.17666666666666667,
+    "cost_usd": 1.7216120000000001,
+    "cost_per_crop_usd": 0.005738706666666667,
+    "latency_median_ms": 2279.5,
+    "latency_p90_ms": 3105.4000000000015,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.409061004784689,
+      0.566671974522293
+     ],
+     "precision": [
+      -0.07247699143129165,
+      0.005174996213842213
+     ],
+     "f1": [
+      0.29656920422037136,
+      0.45747813890906164
+     ]
+    }
+   },
+   "pcb4": {
+    "tp": 91,
+    "fp": 6,
+    "fn": 9,
+    "tn": 94,
+    "precision": 0.9381443298969072,
+    "recall": 0.91,
+    "f1": 0.9238578680203046,
+    "specificity": 0.94,
+    "n": 200,
+    "defect": 100,
+    "ci": {
+     "precision": [
+      0.8865920805998125,
+      0.9801980198019802
+     ],
+     "recall": [
+      0.8514851485148515,
+      0.9615476190476191
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 2,
+    "cannot_tell_share": 0.01,
+    "cost_usd": 1.164268,
+    "cost_per_crop_usd": 0.00582134,
+    "latency_median_ms": 2337.5,
+    "latency_p90_ms": 3231.1,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.6435643564356436,
+      0.8130959923966419
+     ],
+     "precision": [
+      -0.11340791940018748,
+      -0.01980198019801982
+     ],
+     "f1": [
+      0.5067518195429971,
+      0.7233554614922416
+     ]
+    }
+   },
+   "wikimedia": {
+    "tp": 44,
+    "fp": 1,
+    "fn": 16,
+    "tn": 39,
+    "precision": 0.9777777777777777,
+    "recall": 0.7333333333333333,
+    "f1": 0.838095238095238,
+    "specificity": 0.975,
+    "n": 100,
+    "defect": 60,
+    "ci": {
+     "precision": [
+      0.926829268292683,
+      1.0
+     ],
+     "recall": [
+      0.6211580086580086,
+      0.8461805555555555
+     ],
+     "auroc": null
+    },
+    "cannot_tell": 51,
+    "cannot_tell_share": 0.51,
+    "cost_usd": 0.557344,
+    "cost_per_crop_usd": 0.00557344,
+    "latency_median_ms": 2202.5,
+    "latency_p90_ms": 2721.2000000000003,
+    "escalated": 0,
+    "vs_baseline": {
+     "recall": [
+      0.0,
+      0.18644067796610175
+     ],
+     "precision": [
+      0.0,
+      0.01299160595502048
+     ],
+     "f1": [
+      0.0,
+      0.13278816199376953
+     ]
+    }
+   }
+  }
+ },
+ "pairs": {
+  "checklist at the Haiku ladder | both": {
+   "from": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 103,
+    "tn": 139,
+    "precision": 0.9827586206896551,
+    "recall": 0.35625,
+    "f1": 0.5229357798165137,
+    "specificity": 0.9928571428571429
+   },
+   "to": {
+    "tp": 68,
+    "fp": 4,
+    "fn": 92,
+    "tn": 136,
+    "precision": 0.9444444444444444,
+    "recall": 0.425,
+    "f1": 0.5862068965517241,
+    "specificity": 0.9714285714285714
+   },
+   "delta_ci": {
+    "recall": [
+     0.01851567825494203,
+     0.1210191082802548
+    ],
+    "precision": [
+     -0.08877726618439513,
+     0.0016276526819107675
+    ],
+    "f1": [
+     0.008903305911222084,
+     0.11524354520035297
+    ]
+   }
+  },
+  "checklist at the Haiku ladder | pcb4": {
+   "from": {
+    "tp": 18,
+    "fp": 0,
+    "fn": 82,
+    "tn": 100,
+    "precision": 1.0,
+    "recall": 0.18,
+    "f1": 0.3050847457627119,
+    "specificity": 1.0
+   },
+   "to": {
+    "tp": 25,
+    "fp": 1,
+    "fn": 75,
+    "tn": 99,
+    "precision": 0.9615384615384616,
+    "recall": 0.25,
+    "f1": 0.3968253968253968,
+    "specificity": 0.99
+   },
+   "delta_ci": {
+    "recall": [
+     0.010201504844361999,
+     0.1368421052631579
+    ],
+    "precision": [
+     -0.1251008064516129,
+     0.0
+    ],
+    "f1": [
+     0.011730450792456505,
+     0.17947553733692564
+    ]
+   }
+  },
+  "checklist at the Haiku ladder | wikimedia": {
+   "from": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975
+   },
+   "to": {
+    "tp": 43,
+    "fp": 3,
+    "fn": 17,
+    "tn": 37,
+    "precision": 0.9347826086956522,
+    "recall": 0.7166666666666667,
+    "f1": 0.8113207547169811,
+    "specificity": 0.925
+   },
+   "delta_ci": {
+    "recall": [
+     -0.029457720588235297,
+     0.16072868663594478
+    ],
+    "precision": [
+     -0.10412018497330287,
+     0.00454545454545463
+    ],
+    "f1": [
+     -0.0375521862426928,
+     0.10420924350040218
+    ]
+   }
+  },
+  "checklist at Sonnet | both": {
+   "from": {
+    "tp": 99,
+    "fp": 2,
+    "fn": 61,
+    "tn": 138,
+    "precision": 0.9801980198019802,
+    "recall": 0.61875,
+    "f1": 0.7586206896551724,
+    "specificity": 0.9857142857142858
+   },
+   "to": {
+    "tp": 133,
+    "fp": 9,
+    "fn": 27,
+    "tn": 131,
+    "precision": 0.9366197183098591,
+    "recall": 0.83125,
+    "f1": 0.8807947019867549,
+    "specificity": 0.9357142857142857
+   },
+   "delta_ci": {
+    "recall": [
+     0.14106153560141288,
+     0.28655157000782205
+    ],
+    "precision": [
+     -0.08290576441804866,
+     -0.011432205234511345
+    ],
+    "f1": [
+     0.06692259304387457,
+     0.1832374664484945
+    ]
+   }
+  },
+  "checklist at Sonnet | pcb4": {
+   "from": {
+    "tp": 60,
+    "fp": 1,
+    "fn": 40,
+    "tn": 99,
+    "precision": 0.9836065573770492,
+    "recall": 0.6,
+    "f1": 0.7453416149068324,
+    "specificity": 0.99
+   },
+   "to": {
+    "tp": 90,
+    "fp": 8,
+    "fn": 10,
+    "tn": 92,
+    "precision": 0.9183673469387755,
+    "recall": 0.9,
+    "f1": 0.9090909090909091,
+    "specificity": 0.92
+   },
+   "delta_ci": {
+    "recall": [
+     0.20789518607033114,
+     0.39626973430881784
+    ],
+    "precision": [
+     -0.12000760286225402,
+     -0.01607362958478501
+    ],
+    "f1": [
+     0.09364164930978915,
+     0.24425434893211667
+    ]
+   }
+  },
+  "checklist at Sonnet | wikimedia": {
+   "from": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975
+   },
+   "to": {
+    "tp": 43,
+    "fp": 1,
+    "fn": 17,
+    "tn": 39,
+    "precision": 0.9772727272727273,
+    "recall": 0.7166666666666667,
+    "f1": 0.826923076923077,
+    "specificity": 0.975
+   },
+   "delta_ci": {
+    "recall": [
+     -0.018181818181818188,
+     0.15874741200828155
+    ],
+    "precision": [
+     -0.00039215686274507444,
+     0.011207210728414517
+    ],
+    "f1": [
+     -0.012590863226475337,
+     0.1167880752762824
+    ]
+   }
+  },
+  "Sonnet instead of the ladder, no checklist | both": {
+   "from": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 103,
+    "tn": 139,
+    "precision": 0.9827586206896551,
+    "recall": 0.35625,
+    "f1": 0.5229357798165137,
+    "specificity": 0.9928571428571429
+   },
+   "to": {
+    "tp": 99,
+    "fp": 2,
+    "fn": 61,
+    "tn": 138,
+    "precision": 0.9801980198019802,
+    "recall": 0.61875,
+    "f1": 0.7586206896551724,
+    "specificity": 0.9857142857142858
+   },
+   "delta_ci": {
+    "recall": [
+     0.18180569430569427,
+     0.34247969098438996
+    ],
+    "precision": [
+     -0.027278982485404456,
+     0.021602782728493124
+    ],
+    "f1": [
+     0.1606127343911692,
+     0.31319208776098717
+    ]
+   }
+  },
+  "Sonnet instead of the ladder, no checklist | pcb4": {
+   "from": {
+    "tp": 18,
+    "fp": 0,
+    "fn": 82,
+    "tn": 100,
+    "precision": 1.0,
+    "recall": 0.18,
+    "f1": 0.3050847457627119,
+    "specificity": 1.0
+   },
+   "to": {
+    "tp": 60,
+    "fp": 1,
+    "fn": 40,
+    "tn": 99,
+    "precision": 0.9836065573770492,
+    "recall": 0.6,
+    "f1": 0.7453416149068324,
+    "specificity": 0.99
+   },
+   "delta_ci": {
+    "recall": [
+     0.32350569259962053,
+     0.5232585307541839
+    ],
+    "precision": [
+     -0.0535714285714286,
+     0.0
+    ],
+    "f1": [
+     0.33675694812932333,
+     0.5469242112254112
+    ]
+   }
+  },
+  "Sonnet instead of the ladder, no checklist | wikimedia": {
+   "from": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975
+   },
+   "to": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975
+   },
+   "delta_ci": {
+    "recall": [
+     -0.09433962264150941,
+     0.10347400926402467
+    ],
+    "precision": [
+     -0.00569680477650121,
+     0.006521739130434856
+    ],
+    "f1": [
+     -0.06950174573592198,
+     0.07688469072714901
+    ]
+   }
+  },
+  "Sonnet instead of the ladder, with checklist | both": {
+   "from": {
+    "tp": 68,
+    "fp": 4,
+    "fn": 92,
+    "tn": 136,
+    "precision": 0.9444444444444444,
+    "recall": 0.425,
+    "f1": 0.5862068965517241,
+    "specificity": 0.9714285714285714
+   },
+   "to": {
+    "tp": 133,
+    "fp": 9,
+    "fn": 27,
+    "tn": 131,
+    "precision": 0.9366197183098591,
+    "recall": 0.83125,
+    "f1": 0.8807947019867549,
+    "specificity": 0.9357142857142857
+   },
+   "delta_ci": {
+    "recall": [
+     0.3271545584045584,
+     0.4879518072289156
+    ],
+    "precision": [
+     -0.057761967488383546,
+     0.046411997733902484
+    ],
+    "f1": [
+     0.22325608925752277,
+     0.37240790530818607
+    ]
+   }
+  },
+  "Sonnet instead of the ladder, with checklist | pcb4": {
+   "from": {
+    "tp": 25,
+    "fp": 1,
+    "fn": 75,
+    "tn": 99,
+    "precision": 0.9615384615384616,
+    "recall": 0.25,
+    "f1": 0.3968253968253968,
+    "specificity": 0.99
+   },
+   "to": {
+    "tp": 90,
+    "fp": 8,
+    "fn": 10,
+    "tn": 92,
+    "precision": 0.9183673469387755,
+    "recall": 0.9,
+    "f1": 0.9090909090909091,
+    "specificity": 0.92
+   },
+   "delta_ci": {
+    "recall": [
+     0.5576704545454546,
+     0.7353328173374613
+    ],
+    "precision": [
+     -0.10893433093309329,
+     0.03277216229970925
+    ],
+    "f1": [
+     0.4033762413644213,
+     0.6162015449555828
+    ]
+   }
+  },
+  "Sonnet instead of the ladder, with checklist | wikimedia": {
+   "from": {
+    "tp": 43,
+    "fp": 3,
+    "fn": 17,
+    "tn": 37,
+    "precision": 0.9347826086956522,
+    "recall": 0.7166666666666667,
+    "f1": 0.8113207547169811,
+    "specificity": 0.925
+   },
+   "to": {
+    "tp": 43,
+    "fp": 1,
+    "fn": 17,
+    "tn": 39,
+    "precision": 0.9772727272727273,
+    "recall": 0.7166666666666667,
+    "f1": 0.826923076923077,
+    "specificity": 0.975
+   },
+   "delta_ci": {
+    "recall": [
+     -0.08064516129032251,
+     0.08064516129032262
+    ],
+    "precision": [
+     -0.0009472383408553636,
+     0.10544297556812877
+    ],
+    "f1": [
+     -0.043243892931392934,
+     0.07737806388896648
+    ]
+   }
+  },
+  "unknown_part checklist for weak labels | both": {
+   "from": {
+    "tp": 133,
+    "fp": 9,
+    "fn": 27,
+    "tn": 131,
+    "precision": 0.9366197183098591,
+    "recall": 0.83125,
+    "f1": 0.8807947019867549,
+    "specificity": 0.9357142857142857
+   },
+   "to": {
+    "tp": 135,
+    "fp": 7,
+    "fn": 25,
+    "tn": 133,
+    "precision": 0.9507042253521126,
+    "recall": 0.84375,
+    "f1": 0.8940397350993378,
+    "specificity": 0.95
+   },
+   "delta_ci": {
+    "recall": [
+     0.0,
+     0.03289473684210531
+    ],
+    "precision": [
+     -0.010950653002489904,
+     0.04197111114179328
+    ],
+    "f1": [
+     0.0,
+     0.030302016155299375
+    ]
+   }
+  },
+  "unknown_part checklist for weak labels | pcb4": {
+   "from": {
+    "tp": 90,
+    "fp": 8,
+    "fn": 10,
+    "tn": 92,
+    "precision": 0.9183673469387755,
+    "recall": 0.9,
+    "f1": 0.9090909090909091,
+    "specificity": 0.92
+   },
+   "to": {
+    "tp": 91,
+    "fp": 6,
+    "fn": 9,
+    "tn": 94,
+    "precision": 0.9381443298969072,
+    "recall": 0.91,
+    "f1": 0.9238578680203046,
+    "specificity": 0.94
+   },
+   "delta_ci": {
+    "recall": [
+     0.0,
+     0.03125
+    ],
+    "precision": [
+     -0.01115600613837463,
+     0.057945954468354544
+    ],
+    "f1": [
+     -0.004438141875475035,
+     0.03581493873142123
+    ]
+   }
+  },
+  "unknown_part checklist for weak labels | wikimedia": {
+   "from": {
+    "tp": 43,
+    "fp": 1,
+    "fn": 17,
+    "tn": 39,
+    "precision": 0.9772727272727273,
+    "recall": 0.7166666666666667,
+    "f1": 0.826923076923077,
+    "specificity": 0.975
+   },
+   "to": {
+    "tp": 44,
+    "fp": 1,
+    "fn": 16,
+    "tn": 39,
+    "precision": 0.9777777777777777,
+    "recall": 0.7333333333333333,
+    "f1": 0.838095238095238,
+    "specificity": 0.975
+   },
+   "delta_ci": {
+    "recall": [
+     0.0,
+     0.05555555555555547
+    ],
+    "precision": [
+     0.0,
+     0.003090948090948107
+    ],
+    "f1": [
+     0.0,
+     0.03896147535260407
+    ]
+   }
+  },
+  "all kept changes vs M3 | both": {
+   "from": {
+    "tp": 57,
+    "fp": 1,
+    "fn": 103,
+    "tn": 139,
+    "precision": 0.9827586206896551,
+    "recall": 0.35625,
+    "f1": 0.5229357798165137,
+    "specificity": 0.9928571428571429
+   },
+   "to": {
+    "tp": 135,
+    "fp": 7,
+    "fn": 25,
+    "tn": 133,
+    "precision": 0.9507042253521126,
+    "recall": 0.84375,
+    "f1": 0.8940397350993378,
+    "specificity": 0.95
+   },
+   "delta_ci": {
+    "recall": [
+     0.409061004784689,
+     0.566671974522293
+    ],
+    "precision": [
+     -0.07247699143129165,
+     0.005174996213842213
+    ],
+    "f1": [
+     0.29656920422037136,
+     0.45747813890906164
+    ]
+   }
+  },
+  "all kept changes vs M3 | pcb4": {
+   "from": {
+    "tp": 18,
+    "fp": 0,
+    "fn": 82,
+    "tn": 100,
+    "precision": 1.0,
+    "recall": 0.18,
+    "f1": 0.3050847457627119,
+    "specificity": 1.0
+   },
+   "to": {
+    "tp": 91,
+    "fp": 6,
+    "fn": 9,
+    "tn": 94,
+    "precision": 0.9381443298969072,
+    "recall": 0.91,
+    "f1": 0.9238578680203046,
+    "specificity": 0.94
+   },
+   "delta_ci": {
+    "recall": [
+     0.6435643564356436,
+     0.8130959923966419
+    ],
+    "precision": [
+     -0.11340791940018748,
+     -0.01980198019801982
+    ],
+    "f1": [
+     0.5067518195429971,
+     0.7233554614922416
+    ]
+   }
+  },
+  "all kept changes vs M3 | wikimedia": {
+   "from": {
+    "tp": 39,
+    "fp": 1,
+    "fn": 21,
+    "tn": 39,
+    "precision": 0.975,
+    "recall": 0.65,
+    "f1": 0.78,
+    "specificity": 0.975
+   },
+   "to": {
+    "tp": 44,
+    "fp": 1,
+    "fn": 16,
+    "tn": 39,
+    "precision": 0.9777777777777777,
+    "recall": 0.7333333333333333,
+    "f1": 0.838095238095238,
+    "specificity": 0.975
+   },
+   "delta_ci": {
+    "recall": [
+     0.0,
+     0.18644067796610175
+    ],
+    "precision": [
+     0.0,
+     0.01299160595502048
+    ],
+    "f1": [
+     0.0,
+     0.13278816199376953
+    ]
+   }
+  }
+ },
+ "noise_floor": {
+  "n": 100,
+  "same_state": 98,
+  "same_flag": 98
+ },
+ "rank_dev": {
+  "set": "dev",
+  "groups": {
+   "all": {
+    "stills": 160,
+    "defects": 377,
+    "strategies": {
+     "score": {
+      "4": {
+       "defects_seen": 185,
+       "share": 0.4907161803713528,
+       "stills_with_a_defect_seen": 100,
+       "crops_mean": 3.2375,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 208,
+       "share": 0.5517241379310345,
+       "stills_with_a_defect_seen": 110,
+       "crops_mean": 5.325,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 6.45,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.7": {
+      "4": {
+       "defects_seen": 185,
+       "share": 0.4907161803713528,
+       "stills_with_a_defect_seen": 100,
+       "crops_mean": 3.23125,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 213,
+       "share": 0.5649867374005305,
+       "stills_with_a_defect_seen": 113,
+       "crops_mean": 4.96875,
+       "vs_score_ci": [
+        0.0,
+        0.028660646961242583
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.75625,
+       "vs_score_ci": [
+        0.0,
+        0.008547619047619017
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.5": {
+      "4": {
+       "defects_seen": 196,
+       "share": 0.519893899204244,
+       "stills_with_a_defect_seen": 106,
+       "crops_mean": 2.99375,
+       "vs_score_ci": [
+        0.008128985602524532,
+        0.05264557670772675
+       ]
+      },
+      "8": {
+       "defects_seen": 218,
+       "share": 0.5782493368700266,
+       "stills_with_a_defect_seen": 116,
+       "crops_mean": 4.3125,
+       "vs_score_ci": [
+        0.005347593582887722,
+        0.05288491813602013
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.625,
+       "vs_score_ci": [
+        -0.007833410796549733,
+        0.008130081300812945
+       ]
+      },
+      "999": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.6625,
+       "vs_score_ci": [
+        -0.008152729238241896,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)": {
+      "4": {
+       "defects_seen": 180,
+       "share": 0.47745358090185674,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 3.2375,
+       "vs_score_ci": [
+        -0.04936360227698812,
+        0.023690509518477055
+       ]
+      },
+      "8": {
+       "defects_seen": 209,
+       "share": 0.5543766578249337,
+       "stills_with_a_defect_seen": 112,
+       "crops_mean": 5.325,
+       "vs_score_ci": [
+        -0.016707777229636952,
+        0.020468960863697733
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.45,
+       "vs_score_ci": [
+        0.0,
+        0.008671148529781321
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)+merge0.7": {
+      "4": {
+       "defects_seen": 188,
+       "share": 0.4986737400530504,
+       "stills_with_a_defect_seen": 100,
+       "crops_mean": 3.23125,
+       "vs_score_ci": [
+        -0.020649539228464946,
+        0.036944213097429325
+       ]
+      },
+      "8": {
+       "defects_seen": 214,
+       "share": 0.5676392572944297,
+       "stills_with_a_defect_seen": 115,
+       "crops_mean": 4.96875,
+       "vs_score_ci": [
+        -6.0975609756094146e-05,
+        0.033658854166666655
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.7625,
+       "vs_score_ci": [
+        0.0,
+        0.008772572927921002
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.90625,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)+merge0.5": {
+      "4": {
+       "defects_seen": 190,
+       "share": 0.5039787798408488,
+       "stills_with_a_defect_seen": 102,
+       "crops_mean": 3.00625,
+       "vs_score_ci": [
+        -0.014646030873528438,
+        0.04348384933497264
+       ]
+      },
+      "8": {
+       "defects_seen": 218,
+       "share": 0.5782493368700266,
+       "stills_with_a_defect_seen": 116,
+       "crops_mean": 4.33125,
+       "vs_score_ci": [
+        0.002557544757033292,
+        0.05789573114145561
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.63125,
+       "vs_score_ci": [
+        -0.007980327705208023,
+        0.008152729238241896
+       ]
+      },
+      "999": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.66875,
+       "vs_score_ci": [
+        -0.0084269662921348,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)": {
+      "4": {
+       "defects_seen": 179,
+       "share": 0.47480106100795755,
+       "stills_with_a_defect_seen": 95,
+       "crops_mean": 3.2375,
+       "vs_score_ci": [
+        -0.04534213197969544,
+        0.012536922663802356
+       ]
+      },
+      "8": {
+       "defects_seen": 210,
+       "share": 0.5570291777188329,
+       "stills_with_a_defect_seen": 112,
+       "crops_mean": 5.325,
+       "vs_score_ci": [
+        -0.008404544916558144,
+        0.020350320360702456
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.45,
+       "vs_score_ci": [
+        0.0,
+        0.008747638141976592
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)+merge0.7": {
+      "4": {
+       "defects_seen": 185,
+       "share": 0.4907161803713528,
+       "stills_with_a_defect_seen": 99,
+       "crops_mean": 3.23125,
+       "vs_score_ci": [
+        -0.025497561485964465,
+        0.025497561485964465
+       ]
+      },
+      "8": {
+       "defects_seen": 214,
+       "share": 0.5676392572944297,
+       "stills_with_a_defect_seen": 115,
+       "crops_mean": 4.96875,
+       "vs_score_ci": [
+        -0.002688353186679418,
+        0.035401252478359735
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.7625,
+       "vs_score_ci": [
+        0.0,
+        0.008598480129562816
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.90625,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)+merge0.5": {
+      "4": {
+       "defects_seen": 190,
+       "share": 0.5039787798408488,
+       "stills_with_a_defect_seen": 102,
+       "crops_mean": 3.00625,
+       "vs_score_ci": [
+        -0.008474576271186474,
+        0.03621169916434541
+       ]
+      },
+      "8": {
+       "defects_seen": 218,
+       "share": 0.5782493368700266,
+       "stills_with_a_defect_seen": 116,
+       "crops_mean": 4.33125,
+       "vs_score_ci": [
+        0.0026804303804688874,
+        0.054985157733093135
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.63125,
+       "vs_score_ci": [
+        -0.008000000000000007,
+        0.008000534759358297
+       ]
+      },
+      "999": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.66875,
+       "vs_score_ci": [
+        -0.008646157818460395,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)": {
+      "4": {
+       "defects_seen": 177,
+       "share": 0.46949602122015915,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 3.2375,
+       "vs_score_ci": [
+        -0.054297447509263054,
+        0.007958088774761587
+       ]
+      },
+      "8": {
+       "defects_seen": 207,
+       "share": 0.5490716180371353,
+       "stills_with_a_defect_seen": 112,
+       "crops_mean": 5.325,
+       "vs_score_ci": [
+        -0.024000600600600514,
+        0.019706172942584373
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.45,
+       "vs_score_ci": [
+        0.0,
+        0.009011747309619667
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)+merge0.7": {
+      "4": {
+       "defects_seen": 184,
+       "share": 0.4880636604774536,
+       "stills_with_a_defect_seen": 100,
+       "crops_mean": 3.23125,
+       "vs_score_ci": [
+        -0.029569892473118253,
+        0.023599400738624488
+       ]
+      },
+      "8": {
+       "defects_seen": 213,
+       "share": 0.5649867374005305,
+       "stills_with_a_defect_seen": 114,
+       "crops_mean": 4.96875,
+       "vs_score_ci": [
+        -0.005236638163256799,
+        0.03234759757968975
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.7625,
+       "vs_score_ci": [
+        0.0,
+        0.0086975591151792
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.90625,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)+merge0.5": {
+      "4": {
+       "defects_seen": 189,
+       "share": 0.5013262599469496,
+       "stills_with_a_defect_seen": 102,
+       "crops_mean": 3.00625,
+       "vs_score_ci": [
+        -0.009134878819810326,
+        0.03288387615320098
+       ]
+      },
+      "8": {
+       "defects_seen": 220,
+       "share": 0.583554376657825,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 4.33125,
+       "vs_score_ci": [
+        0.008106477791464414,
+        0.06340835974358769
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.65,
+       "vs_score_ci": [
+        -0.007896836506159039,
+        0.007980327705207913
+       ]
+      },
+      "999": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.68125,
+       "vs_score_ci": [
+        -0.008404544916558251,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)": {
+      "4": {
+       "defects_seen": 174,
+       "share": 0.46153846153846156,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 3.2375,
+       "vs_score_ci": [
+        -0.0663302170579214,
+        0.005118791223583229
+       ]
+      },
+      "8": {
+       "defects_seen": 207,
+       "share": 0.5490716180371353,
+       "stills_with_a_defect_seen": 110,
+       "crops_mean": 5.325,
+       "vs_score_ci": [
+        -0.025143195656267655,
+        0.019287764003673172
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.45,
+       "vs_score_ci": [
+        0.0,
+        0.008549471661863562
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.7": {
+      "4": {
+       "defects_seen": 185,
+       "share": 0.4907161803713528,
+       "stills_with_a_defect_seen": 102,
+       "crops_mean": 3.23125,
+       "vs_score_ci": [
+        -0.027323423864285053,
+        0.028571428571428525
+       ]
+      },
+      "8": {
+       "defects_seen": 212,
+       "share": 0.5623342175066313,
+       "stills_with_a_defect_seen": 113,
+       "crops_mean": 4.96875,
+       "vs_score_ci": [
+        -0.006077805834873918,
+        0.029490814333277996
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.76875,
+       "vs_score_ci": [
+        0.0,
+        0.008499187161988192
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.9125,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.5": {
+      "4": {
+       "defects_seen": 192,
+       "share": 0.5092838196286472,
+       "stills_with_a_defect_seen": 104,
+       "crops_mean": 3.00625,
+       "vs_score_ci": [
+        -0.002836223636317833,
+        0.04306432613606004
+       ]
+      },
+      "8": {
+       "defects_seen": 220,
+       "share": 0.583554376657825,
+       "stills_with_a_defect_seen": 117,
+       "crops_mean": 4.33125,
+       "vs_score_ci": [
+        0.005318096334138026,
+        0.06333716948296188
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.6625,
+       "vs_score_ci": [
+        -0.006111780735771877,
+        0.00793809523809521
+       ]
+      },
+      "999": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.69375,
+       "vs_score_ci": [
+        -0.008499794193845223,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)": {
+      "4": {
+       "defects_seen": 174,
+       "share": 0.46153846153846156,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 3.2375,
+       "vs_score_ci": [
+        -0.06281439922123706,
+        0.0048555587283457035
+       ]
+      },
+      "8": {
+       "defects_seen": 207,
+       "share": 0.5490716180371353,
+       "stills_with_a_defect_seen": 111,
+       "crops_mean": 5.325,
+       "vs_score_ci": [
+        -0.024463240563784093,
+        0.017242621484646756
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.45,
+       "vs_score_ci": [
+        -0.008087901382866547,
+        0.007958620689655204
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 6.9,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)+merge0.7": {
+      "4": {
+       "defects_seen": 185,
+       "share": 0.4907161803713528,
+       "stills_with_a_defect_seen": 103,
+       "crops_mean": 3.23125,
+       "vs_score_ci": [
+        -0.025578918523931255,
+        0.024877172739792307
+       ]
+      },
+      "8": {
+       "defects_seen": 213,
+       "share": 0.5649867374005305,
+       "stills_with_a_defect_seen": 114,
+       "crops_mean": 4.96875,
+       "vs_score_ci": [
+        0.0,
+        0.029263183482040742
+       ]
+      },
+      "12": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.76875,
+       "vs_score_ci": [
+        0.0,
+        0.008474576271186418
+       ]
+      },
+      "999": {
+       "defects_seen": 223,
+       "share": 0.5915119363395226,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.9125,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)+merge0.5": {
+      "4": {
+       "defects_seen": 192,
+       "share": 0.5092838196286472,
+       "stills_with_a_defect_seen": 105,
+       "crops_mean": 3.00625,
+       "vs_score_ci": [
+        -0.002681691696273533,
+        0.04210804054992353
+       ]
+      },
+      "8": {
+       "defects_seen": 220,
+       "share": 0.583554376657825,
+       "stills_with_a_defect_seen": 117,
+       "crops_mean": 4.33125,
+       "vs_score_ci": [
+        0.010692357751181214,
+        0.06175872054231497
+       ]
+      },
+      "12": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.6625,
+       "vs_score_ci": [
+        -0.007614697562676759,
+        0.008087349067560782
+       ]
+      },
+      "999": {
+       "defects_seen": 222,
+       "share": 0.5888594164456233,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.69375,
+       "vs_score_ci": [
+        -0.008800926895684952,
+        0.0
+       ]
+      }
+     }
+    }
+   },
+   "pcb_defect_webcam": {
+    "stills": 46,
+    "defects": 153,
+    "strategies": {
+     "score": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.891304347826087,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 114,
+       "share": 0.7450980392156863,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.260869565217392,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 5.108695652173913,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 6.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.7": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.869565217391304,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 114,
+       "share": 0.7450980392156863,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.6521739130434785,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.760869565217392,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.5": {
+      "4": {
+       "defects_seen": 112,
+       "share": 0.7320261437908496,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.760869565217391,
+       "vs_score_ci": [
+        0.0,
+        0.023816695352839954
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.6739130434782608,
+       "vs_score_ci": [
+        0.0,
+        0.023255813953488413
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.717391304347826,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.717391304347826,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)": {
+      "4": {
+       "defects_seen": 109,
+       "share": 0.7124183006535948,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.891304347826087,
+       "vs_score_ci": [
+        -0.0510995695302264,
+        0.021130506442912766
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.260869565217392,
+       "vs_score_ci": [
+        0.0,
+        0.021590610723100322
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 5.108695652173913,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 6.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)+merge0.7": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.869565217391304,
+       "vs_score_ci": [
+        -0.02532870559412007,
+        0.02758620689655178
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.022058823529411686
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.673913043478261,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.782608695652174,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)+merge0.5": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.760869565217391,
+       "vs_score_ci": [
+        -0.025986926980304473,
+        0.025646551724137944
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.6956521739130435,
+       "vs_score_ci": [
+        0.0,
+        0.02159061072310043
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.717391304347826,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.717391304347826,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)": {
+      "4": {
+       "defects_seen": 110,
+       "share": 0.7189542483660131,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.891304347826087,
+       "vs_score_ci": [
+        -0.045162911330847794,
+        0.024004838709677435
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.260869565217392,
+       "vs_score_ci": [
+        0.0,
+        0.020979020979020935
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 5.108695652173913,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 6.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)+merge0.7": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.869565217391304,
+       "vs_score_ci": [
+        -0.03125,
+        0.03125
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.022222222222222147
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.673913043478261,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.782608695652174,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)+merge0.5": {
+      "4": {
+       "defects_seen": 112,
+       "share": 0.7320261437908496,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.760869565217391,
+       "vs_score_ci": [
+        -0.014184397163120588,
+        0.03053435114503811
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.6956521739130435,
+       "vs_score_ci": [
+        0.0,
+        0.022905167351732272
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.717391304347826,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.717391304347826,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)": {
+      "4": {
+       "defects_seen": 109,
+       "share": 0.7124183006535948,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.891304347826087,
+       "vs_score_ci": [
+        -0.06330121744739177,
+        0.025005252100840352
+       ]
+      },
+      "8": {
+       "defects_seen": 113,
+       "share": 0.738562091503268,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.260869565217392,
+       "vs_score_ci": [
+        -0.02873666583974202,
+        0.014290890269151191
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 5.108695652173913,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 6.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)+merge0.7": {
+      "4": {
+       "defects_seen": 110,
+       "share": 0.7189542483660131,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.869565217391304,
+       "vs_score_ci": [
+        -0.04065455450472872,
+        0.025814885093822425
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.023819124423963153
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.673913043478261,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.782608695652174,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)+merge0.5": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.760869565217391,
+       "vs_score_ci": [
+        -0.02515723270440251,
+        0.024393984737393404
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.6956521739130435,
+       "vs_score_ci": [
+        0.0,
+        0.021448412698412606
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.739130434782609,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.739130434782609,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)": {
+      "4": {
+       "defects_seen": 107,
+       "share": 0.6993464052287581,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.891304347826087,
+       "vs_score_ci": [
+        -0.07603363504302162,
+        0.014189499464258397
+       ]
+      },
+      "8": {
+       "defects_seen": 114,
+       "share": 0.7450980392156863,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.260869565217392,
+       "vs_score_ci": [
+        -0.018193111236589395,
+        0.01681758910460729
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 5.108695652173913,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 6.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.7": {
+      "4": {
+       "defects_seen": 110,
+       "share": 0.7189542483660131,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.869565217391304,
+       "vs_score_ci": [
+        -0.044593132451412804,
+        0.02174210026134472
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.021739130434782598
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.695652173913044,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.804347826086956,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.5": {
+      "4": {
+       "defects_seen": 111,
+       "share": 0.7254901960784313,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.760869565217391,
+       "vs_score_ci": [
+        -0.025982570061517437,
+        0.02722026741731177
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.6956521739130435,
+       "vs_score_ci": [
+        0.0,
+        0.02139518331858585
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.760869565217391,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.760869565217391,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)": {
+      "4": {
+       "defects_seen": 107,
+       "share": 0.6993464052287581,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.891304347826087,
+       "vs_score_ci": [
+        -0.08229048450458315,
+        0.019870860927152307
+       ]
+      },
+      "8": {
+       "defects_seen": 113,
+       "share": 0.738562091503268,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.260869565217392,
+       "vs_score_ci": [
+        -0.03076923076923077,
+        0.014388489208633115
+       ]
+      },
+      "12": {
+       "defects_seen": 114,
+       "share": 0.7450980392156863,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 5.108695652173913,
+       "vs_score_ci": [
+        -0.021739130434782594,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 6.021739130434782,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)+merge0.7": {
+      "4": {
+       "defects_seen": 109,
+       "share": 0.7124183006535948,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.869565217391304,
+       "vs_score_ci": [
+        -0.051948051948051965,
+        0.019367656483657375
+       ]
+      },
+      "8": {
+       "defects_seen": 114,
+       "share": 0.7450980392156863,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.021739130434782,
+       "vs_score_ci": [
+        -0.020000000000000018,
+        0.01923701298701302
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.695652173913044,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 4.804347826086956,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)+merge0.5": {
+      "4": {
+       "defects_seen": 110,
+       "share": 0.7189542483660131,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 2.760869565217391,
+       "vs_score_ci": [
+        -0.037321457229979135,
+        0.020979020979020938
+       ]
+      },
+      "8": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.6956521739130435,
+       "vs_score_ci": [
+        0.0,
+        0.022393329960367712
+       ]
+      },
+      "12": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.760869565217391,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 115,
+       "share": 0.7516339869281046,
+       "stills_with_a_defect_seen": 38,
+       "crops_mean": 3.760869565217391,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     }
+    }
+   },
+   "visa": {
+    "stills": 114,
+    "defects": 224,
+    "strategies": {
+     "score": {
+      "4": {
+       "defects_seen": 74,
+       "share": 0.33035714285714285,
+       "stills_with_a_defect_seen": 62,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 94,
+       "share": 0.41964285714285715,
+       "stills_with_a_defect_seen": 72,
+       "crops_mean": 5.754385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 80,
+       "crops_mean": 6.991228070175438,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 7.254385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.7": {
+      "4": {
+       "defects_seen": 74,
+       "share": 0.33035714285714285,
+       "stills_with_a_defect_seen": 62,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 99,
+       "share": 0.4419642857142857,
+       "stills_with_a_defect_seen": 75,
+       "crops_mean": 5.350877192982456,
+       "vs_score_ci": [
+        0.004366337573571302,
+        0.0480508752946632
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.201754385964913,
+       "vs_score_ci": [
+        0.0,
+        0.014423076923076929
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.359649122807017,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.5": {
+      "4": {
+       "defects_seen": 84,
+       "share": 0.375,
+       "stills_with_a_defect_seen": 68,
+       "crops_mean": 3.087719298245614,
+       "vs_score_ci": [
+        0.012764605120807808,
+        0.0826177140687298
+       ]
+      },
+      "8": {
+       "defects_seen": 103,
+       "share": 0.45982142857142855,
+       "stills_with_a_defect_seen": 78,
+       "crops_mean": 4.5701754385964914,
+       "vs_score_ci": [
+        0.004714797344514326,
+        0.08265274820455447
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 4.991228070175438,
+       "vs_score_ci": [
+        -0.013215859030836996,
+        0.013890503875968995
+       ]
+      },
+      "999": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.043859649122807,
+       "vs_score_ci": [
+        -0.01449628844114529,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)": {
+      "4": {
+       "defects_seen": 71,
+       "share": 0.3169642857142857,
+       "stills_with_a_defect_seen": 58,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.0643932403433476,
+        0.03954651801698007
+       ]
+      },
+      "8": {
+       "defects_seen": 94,
+       "share": 0.41964285714285715,
+       "stills_with_a_defect_seen": 74,
+       "crops_mean": 5.754385964912281,
+       "vs_score_ci": [
+        -0.029917739628040063,
+        0.029796863536316925
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.991228070175438,
+       "vs_score_ci": [
+        0.0,
+        0.014707693422196466
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 7.254385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)+merge0.7": {
+      "4": {
+       "defects_seen": 77,
+       "share": 0.34375,
+       "stills_with_a_defect_seen": 62,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.028931646005509657,
+        0.062222222222222234
+       ]
+      },
+      "8": {
+       "defects_seen": 99,
+       "share": 0.4419642857142857,
+       "stills_with_a_defect_seen": 77,
+       "crops_mean": 5.350877192982456,
+       "vs_score_ci": [
+        -0.009346891316747841,
+        0.05263157894736842
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.201754385964913,
+       "vs_score_ci": [
+        0.0,
+        0.015308084772370447
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.359649122807017,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.0)+merge0.5": {
+      "4": {
+       "defects_seen": 79,
+       "share": 0.35267857142857145,
+       "stills_with_a_defect_seen": 64,
+       "crops_mean": 3.1052631578947367,
+       "vs_score_ci": [
+        -0.02233942972350228,
+        0.07200288461538462
+       ]
+      },
+      "8": {
+       "defects_seen": 103,
+       "share": 0.45982142857142855,
+       "stills_with_a_defect_seen": 78,
+       "crops_mean": 4.587719298245614,
+       "vs_score_ci": [
+        -0.00010373443983401863,
+        0.0883779805710921
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.0,
+       "vs_score_ci": [
+        -0.013761467889908178,
+        0.013160805775500734
+       ]
+      },
+      "999": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.052631578947368,
+       "vs_score_ci": [
+        -0.01463593974175037,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)": {
+      "4": {
+       "defects_seen": 69,
+       "share": 0.3080357142857143,
+       "stills_with_a_defect_seen": 57,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.0669642857142857,
+        0.022941089024804646
+       ]
+      },
+      "8": {
+       "defects_seen": 95,
+       "share": 0.42410714285714285,
+       "stills_with_a_defect_seen": 74,
+       "crops_mean": 5.754385964912281,
+       "vs_score_ci": [
+        -0.018801985139181538,
+        0.026788717168481756
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.991228070175438,
+       "vs_score_ci": [
+        0.0,
+        0.014713235294117643
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 7.254385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)+merge0.7": {
+      "4": {
+       "defects_seen": 74,
+       "share": 0.33035714285714285,
+       "stills_with_a_defect_seen": 61,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.0349383283536352,
+        0.032110091743119296
+       ]
+      },
+      "8": {
+       "defects_seen": 99,
+       "share": 0.4419642857142857,
+       "stills_with_a_defect_seen": 77,
+       "crops_mean": 5.350877192982456,
+       "vs_score_ci": [
+        -0.009216589861751114,
+        0.05431103948428683
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.201754385964913,
+       "vs_score_ci": [
+        0.0,
+        0.014355792234081672
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.359649122807017,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.02)+merge0.5": {
+      "4": {
+       "defects_seen": 78,
+       "share": 0.3482142857142857,
+       "stills_with_a_defect_seen": 64,
+       "crops_mean": 3.1052631578947367,
+       "vs_score_ci": [
+        -0.013454429766088998,
+        0.05140548222372098
+       ]
+      },
+      "8": {
+       "defects_seen": 103,
+       "share": 0.45982142857142855,
+       "stills_with_a_defect_seen": 78,
+       "crops_mean": 4.587719298245614,
+       "vs_score_ci": [
+        -0.00011520737327188235,
+        0.08881515444015442
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.0,
+       "vs_score_ci": [
+        -0.012931034482758619,
+        0.013576203208556157
+       ]
+      },
+      "999": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.052631578947368,
+       "vs_score_ci": [
+        -0.01463593974175037,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)": {
+      "4": {
+       "defects_seen": 68,
+       "share": 0.30357142857142855,
+       "stills_with_a_defect_seen": 58,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.06639097225417565,
+        0.013394358584240876
+       ]
+      },
+      "8": {
+       "defects_seen": 94,
+       "share": 0.41964285714285715,
+       "stills_with_a_defect_seen": 74,
+       "crops_mean": 5.754385964912281,
+       "vs_score_ci": [
+        -0.033909216556339584,
+        0.03500219298245612
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.991228070175438,
+       "vs_score_ci": [
+        0.0,
+        0.01389213395638635
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 7.254385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)+merge0.7": {
+      "4": {
+       "defects_seen": 74,
+       "share": 0.33035714285714285,
+       "stills_with_a_defect_seen": 62,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.036200853398354195,
+        0.03669724770642202
+       ]
+      },
+      "8": {
+       "defects_seen": 98,
+       "share": 0.4375,
+       "stills_with_a_defect_seen": 76,
+       "crops_mean": 5.350877192982456,
+       "vs_score_ci": [
+        -0.013518141429100307,
+        0.047826607031412526
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.201754385964913,
+       "vs_score_ci": [
+        0.0,
+        0.015075376884422067
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.359649122807017,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.05)+merge0.5": {
+      "4": {
+       "defects_seen": 78,
+       "share": 0.3482142857142857,
+       "stills_with_a_defect_seen": 64,
+       "crops_mean": 3.1052631578947367,
+       "vs_score_ci": [
+        -0.014018691588785048,
+        0.051548811770969497
+       ]
+      },
+      "8": {
+       "defects_seen": 105,
+       "share": 0.46875,
+       "stills_with_a_defect_seen": 80,
+       "crops_mean": 4.587719298245614,
+       "vs_score_ci": [
+        0.009254022121669111,
+        0.09747845139794292
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.017543859649122,
+       "vs_score_ci": [
+        -0.012932433945365031,
+        0.013275811209439546
+       ]
+      },
+      "999": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.06140350877193,
+       "vs_score_ci": [
+        -0.014925373134328346,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)": {
+      "4": {
+       "defects_seen": 67,
+       "share": 0.29910714285714285,
+       "stills_with_a_defect_seen": 58,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.08190041998231656,
+        0.01465739774129258
+       ]
+      },
+      "8": {
+       "defects_seen": 93,
+       "share": 0.41517857142857145,
+       "stills_with_a_defect_seen": 72,
+       "crops_mean": 5.754385964912281,
+       "vs_score_ci": [
+        -0.04091847372810674,
+        0.028809560248954168
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.991228070175438,
+       "vs_score_ci": [
+        0.0,
+        0.016409138472270667
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 7.254385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.7": {
+      "4": {
+       "defects_seen": 75,
+       "share": 0.33482142857142855,
+       "stills_with_a_defect_seen": 64,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.0346511895184462,
+        0.044128066206239526
+       ]
+      },
+      "8": {
+       "defects_seen": 97,
+       "share": 0.4330357142857143,
+       "stills_with_a_defect_seen": 75,
+       "crops_mean": 5.350877192982456,
+       "vs_score_ci": [
+        -0.013956763838847103,
+        0.043668652223682526
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.201754385964913,
+       "vs_score_ci": [
+        0.0,
+        0.01485519801980199
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.359649122807017,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.5": {
+      "4": {
+       "defects_seen": 81,
+       "share": 0.36160714285714285,
+       "stills_with_a_defect_seen": 66,
+       "crops_mean": 3.1052631578947367,
+       "vs_score_ci": [
+        -0.004589847956238936,
+        0.06897607318789581
+       ]
+      },
+      "8": {
+       "defects_seen": 105,
+       "share": 0.46875,
+       "stills_with_a_defect_seen": 79,
+       "crops_mean": 4.587719298245614,
+       "vs_score_ci": [
+        0.0048297621524166345,
+        0.09778231292517009
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.026315789473684,
+       "vs_score_ci": [
+        -0.013218795888399405,
+        0.013159343844191962
+       ]
+      },
+      "999": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.0701754385964914,
+       "vs_score_ci": [
+        -0.014150943396226414,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)": {
+      "4": {
+       "defects_seen": 67,
+       "share": 0.29910714285714285,
+       "stills_with_a_defect_seen": 58,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.08212874082439303,
+        0.017103347889374076
+       ]
+      },
+      "8": {
+       "defects_seen": 94,
+       "share": 0.41964285714285715,
+       "stills_with_a_defect_seen": 73,
+       "crops_mean": 5.754385964912281,
+       "vs_score_ci": [
+        -0.03349938424888459,
+        0.03256194305585743
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.991228070175438,
+       "vs_score_ci": [
+        0.0,
+        0.014021997883971134
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 7.254385964912281,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)+merge0.7": {
+      "4": {
+       "defects_seen": 76,
+       "share": 0.3392857142857143,
+       "stills_with_a_defect_seen": 65,
+       "crops_mean": 3.3771929824561404,
+       "vs_score_ci": [
+        -0.026440567967275053,
+        0.04681200679252823
+       ]
+      },
+      "8": {
+       "defects_seen": 99,
+       "share": 0.4419642857142857,
+       "stills_with_a_defect_seen": 76,
+       "crops_mean": 5.350877192982456,
+       "vs_score_ci": [
+        0.004463298040455105,
+        0.0444603825136612
+       ]
+      },
+      "12": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.201754385964913,
+       "vs_score_ci": [
+        0.0,
+        0.014782001323432081
+       ]
+      },
+      "999": {
+       "defects_seen": 108,
+       "share": 0.48214285714285715,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 6.359649122807017,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 1.0)+merge0.5": {
+      "4": {
+       "defects_seen": 82,
+       "share": 0.36607142857142855,
+       "stills_with_a_defect_seen": 67,
+       "crops_mean": 3.1052631578947367,
+       "vs_score_ci": [
+        0.004670753665437711,
+        0.0683943089430894
+       ]
+      },
+      "8": {
+       "defects_seen": 105,
+       "share": 0.46875,
+       "stills_with_a_defect_seen": 79,
+       "crops_mean": 4.587719298245614,
+       "vs_score_ci": [
+        0.01369400222139948,
+        0.09624780672155488
+       ]
+      },
+      "12": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.026315789473684,
+       "vs_score_ci": [
+        -0.013394358584240826,
+        0.013217320962145717
+       ]
+      },
+      "999": {
+       "defects_seen": 107,
+       "share": 0.47767857142857145,
+       "stills_with_a_defect_seen": 81,
+       "crops_mean": 5.0701754385964914,
+       "vs_score_ci": [
+        -0.014086167951102823,
+        0.0
+       ]
+      }
+     }
+    }
+   }
+  }
+ },
+ "rank_heldout": {
+  "set": "heldout",
+  "groups": {
+   "all": {
+    "stills": 124,
+    "defects": 304,
+    "strategies": {
+     "score": {
+      "4": {
+       "defects_seen": 207,
+       "share": 0.680921052631579,
+       "stills_with_a_defect_seen": 117,
+       "crops_mean": 2.6451612903225805,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 3.193548387096774,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 3.443548387096774,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 212,
+       "share": 0.6973684210526315,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.508064516129032,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.5": {
+      "4": {
+       "defects_seen": 209,
+       "share": 0.6875,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 2.629032258064516,
+       "vs_score_ci": [
+        0.0,
+        0.017302038122287377
+       ]
+      },
+      "8": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 3.056451612903226,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 3.2580645161290325,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 212,
+       "share": 0.6973684210526315,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.758064516129032,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)": {
+      "4": {
+       "defects_seen": 210,
+       "share": 0.6907894736842105,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 2.6451612903225805,
+       "vs_score_ci": [
+        0.0,
+        0.022222222222222147
+       ]
+      },
+      "8": {
+       "defects_seen": 210,
+       "share": 0.6907894736842105,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 3.193548387096774,
+       "vs_score_ci": [
+        -0.010603546188793505,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 3.443548387096774,
+       "vs_score_ci": [
+        -0.008709030100334508,
+        0.009868421052631526
+       ]
+      },
+      "999": {
+       "defects_seen": 212,
+       "share": 0.6973684210526315,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 5.508064516129032,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.5": {
+      "4": {
+       "defects_seen": 210,
+       "share": 0.6907894736842105,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 2.629032258064516,
+       "vs_score_ci": [
+        0.0,
+        0.022805983001984356
+       ]
+      },
+      "8": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 3.056451612903226,
+       "vs_score_ci": [
+        -0.007520221007063166,
+        0.009202453987730012
+       ]
+      },
+      "12": {
+       "defects_seen": 211,
+       "share": 0.694078947368421,
+       "stills_with_a_defect_seen": 118,
+       "crops_mean": 3.2580645161290325,
+       "vs_score_ci": [
+        -0.010716212744090514,
+        0.009125687225467145
+       ]
+      },
+      "999": {
+       "defects_seen": 212,
+       "share": 0.6973684210526315,
+       "stills_with_a_defect_seen": 119,
+       "crops_mean": 4.75,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     }
+    }
+   },
+   "visa": {
+    "stills": 100,
+    "defects": 268,
+    "strategies": {
+     "score": {
+      "4": {
+       "defects_seen": 176,
+       "share": 0.6567164179104478,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.47,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.6,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.6,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.6,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.5": {
+      "4": {
+       "defects_seen": 176,
+       "share": 0.6567164179104478,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.47,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.59,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.59,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.59,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)": {
+      "4": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.47,
+       "vs_score_ci": [
+        0.0,
+        0.012346954392408993
+       ]
+      },
+      "8": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.6,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.6,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.6,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.5": {
+      "4": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.47,
+       "vs_score_ci": [
+        0.0,
+        0.011857707509881465
+       ]
+      },
+      "8": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.59,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.59,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 177,
+       "share": 0.6604477611940298,
+       "stills_with_a_defect_seen": 96,
+       "crops_mean": 2.59,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     }
+    }
+   },
+   "wikimedia_defective_capacitors": {
+    "stills": 24,
+    "defects": 36,
+    "strategies": {
+     "score": {
+      "4": {
+       "defects_seen": 31,
+       "share": 0.8611111111111112,
+       "stills_with_a_defect_seen": 21,
+       "crops_mean": 3.375,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "8": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 5.666666666666667,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 6.958333333333333,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 35,
+       "share": 0.9722222222222222,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 17.625,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "score+merge0.5": {
+      "4": {
+       "defects_seen": 33,
+       "share": 0.9166666666666666,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 3.2916666666666665,
+       "vs_score_ci": [
+        0.0,
+        0.1481944444444444
+       ]
+      },
+      "8": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 5.0,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 6.041666666666667,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      },
+      "999": {
+       "defects_seen": 35,
+       "share": 0.9722222222222222,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 13.791666666666666,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)": {
+      "4": {
+       "defects_seen": 33,
+       "share": 0.9166666666666666,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 3.375,
+       "vs_score_ci": [
+        0.0,
+        0.14708605664488017
+       ]
+      },
+      "8": {
+       "defects_seen": 33,
+       "share": 0.9166666666666666,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 5.666666666666667,
+       "vs_score_ci": [
+        -0.09090909090909094,
+        0.0
+       ]
+      },
+      "12": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 6.958333333333333,
+       "vs_score_ci": [
+        -0.10344827586206895,
+        0.05882352941176472
+       ]
+      },
+      "999": {
+       "defects_seen": 35,
+       "share": 0.9722222222222222,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 17.625,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     },
+     "likelihood(bonus 0.1)+merge0.5": {
+      "4": {
+       "defects_seen": 33,
+       "share": 0.9166666666666666,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 3.2916666666666665,
+       "vs_score_ci": [
+        0.0,
+        0.14708605664488017
+       ]
+      },
+      "8": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 5.0,
+       "vs_score_ci": [
+        -0.10724206349206354,
+        0.05882352941176472
+       ]
+      },
+      "12": {
+       "defects_seen": 34,
+       "share": 0.9444444444444444,
+       "stills_with_a_defect_seen": 22,
+       "crops_mean": 6.041666666666667,
+       "vs_score_ci": [
+        -0.10344827586206895,
+        0.05882352941176472
+       ]
+      },
+      "999": {
+       "defects_seen": 35,
+       "share": 0.9722222222222222,
+       "stills_with_a_defect_seen": 23,
+       "crops_mean": 13.75,
+       "vs_score_ci": [
+        0.0,
+        0.0
+       ]
+      }
+     }
+    }
+   }
+  }
+ }
+}

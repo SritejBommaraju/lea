@@ -17,6 +17,9 @@ class Detection:
     box: tuple[float, float, float, float]  # x0, y0, x1, y1 in pixels of the image passed to detect()
     label: str                              # the prompt that matched, verbatim
     score: float                            # 0..1, the detector's own score (not a calibrated probability, I6)
+    damage_score: float | None = None       # 0..1, the same box's best score over the DAMAGE_CLASSES prompts that
+                                            # were asked (None = the detector cannot score a box per prompt); used
+                                            # to rank crops by defect likelihood, never shown as a number
 
 
 class Detector(Protocol):

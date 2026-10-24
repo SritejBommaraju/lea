@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from repairos.contracts import validate
 from repairos.fusion import words
 from repairos.fusion.override import Proof, SubjectKey, proofs, reading_subjects, reading_verdict
-from repairos.slots.fusion import NUMERIC_TOKEN, UNIT_TOKEN, assert_words_only
+from repairos.slots.fusion import NUMERIC_TOKEN, UNIT_TOKEN, assert_words_only, identifier_pattern
 
 _SCRUB = re.compile(r"~?(?:" + UNIT_TOKEN.pattern + r")|~?(?:" + NUMERIC_TOKEN.pattern + r")\s?%?")
 _REPEAT = re.compile(r"(?:\[measured\][\s,x×/-]*){2,}")
@@ -72,8 +72,9 @@ def scrub(text: str, allowed: tuple[str, ...] = ()) -> str:
     for i, name in enumerate(sorted(allowed, key=len, reverse=True)):
         token = "\x00" + _letters(i) + "\x00"
         if name and name in text:
-            text = text.replace(name, token)
-            protected[token] = name
+            text, n = identifier_pattern(name).subn(token, text)
+            if n:
+                protected[token] = name
     text = _SCRUB.sub(words.MEASURED, text)
     text = _REPEAT.sub(words.MEASURED + " ", text).strip()
     for token, name in protected.items():

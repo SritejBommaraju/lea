@@ -1,0 +1,18 @@
+# VLM=anthropic: which Claude models judge each crop, at what effort, and with which prompt.
+# Read by backend/repairos/slots/vlm_anthropic (load_vlm_config). Code never picks a model. Point elsewhere for an
+# experiment with REPAIROS_VLM_CONFIG=<file>. A change of default is a PLAN.md §10 decision row, chosen from
+# measurements (eval/defects/QUICKWINS.md).
+
+version: 1
+# The escalation ladder: the first model judges every crop; the next answers only when the one before says
+# cannot_tell. cannot_tell from the last model is insufficient_evidence with the reason (I4).
+# Measured 2026-10-24 on 300 held-out crops: Sonnet alone beat Haiku -> Sonnet on recall at the same precision, and
+# nowhere identifiable at runtime was Haiku equal, so Sonnet judges every crop. The old ladder, for comparison:
+# crop_models: [claude-haiku-5-5, claude-sonnet-5-5]
+crop_models: [claude-sonnet-5-5]
+effort:
+  claude-haiku-5-5: low
+  claude-sonnet-5-5: medium
+# Per-part-family failure checklists in the crop prompt (vision/checklists.py). Measured the same day: recall up,
+# precision slightly down, on held-out crops.
+checklists: true

@@ -6,6 +6,10 @@ Every stored finding of the scan lands in exactly one bucket (MS1):
   not_inspected          not_inspected / not_seen_in_photo: nobody looked (I3), with the reason
   insufficient_evidence  insufficient_evidence / unsure: looked at, could not judge (I4), with the reason
 Numbers never become user-facing confidence: Finding.confidence becomes a word (I6).
+
+A still whose not-inspected rows cover GROUP_AT or more detector regions gets one grouped row ("N regions in this
+photo were not inspected: ..."), with `finding_ids` (each finding still in exactly one row) and the exact region
+count in `regions` (a roll-up finding from vision.inspect stands for many regions: `regions[fid]["regions"]`).
 """
 from __future__ import annotations
 
@@ -16,8 +20,10 @@ from typing import Any
 from repairos.fusion import words
 from repairos.report.verdict import decide, facts_of
 from repairos.slots.blob import REF_PREFIX
+from repairos.report.safety import limits, safety_notes
 
 NOT_LOOKED_AT = {"not_inspected", "not_seen_in_photo"}
+GROUP_AT = 3   # not-inspected regions in one still from which they become one row
 UNDECIDED = {"insufficient_evidence", "unsure"}
 NOT_PROOF = "vision suspect, not proof"
 JUDGES = {"vlm", "classifier", "meter"}
@@ -141,6 +147,8 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
             judged.append(e)
             judged_stills.add(e["crop"]["still_id"])
 
+    not_inspected = group_not_inspected(not_inspected, {fid: int(r.get("regions", 1)) for fid, r in regions.items()},
+                                        {f["finding_id"]: f for f in findings})
     judged.sort(key=lambda e: (e["issue"] == "none", (e.get("judgment") or {}).get("rank", 1 << 30),
                                e["finding_id"]))
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -159,6 +167,8 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
     v = decide(facts_of(report))
     report["verdict"] = v.verdict
     report["verdict_reason"] = v.as_reason()
+    report["safety"] = safety_notes(judged)
+    report["limits"] = limits(v.verdict, scan.get("symptom"))
     if next_action:
         step = {"action_id": next_action["action_id"], "kind": next_action["kind"],
                 "instruction": next_action["instruction"]}
@@ -168,18 +178,63 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
     return report
 
 
+def _why(f: Mapping[str, Any]) -> str:
+    """The reason a finding was not inspected, without its subject: the text after "not inspected: "."""
+    lead = next((s.strip() for s in f.get("evidence") or [] if s.strip() and s.strip() != NOT_PROOF), "")
+    _, sep, tail = lead.partition("not inspected: ")
+    return tail.strip() if sep and tail.strip() else _reason(f)
+
+
+def group_not_inspected(rows: list[dict[str, Any]], counts: Mapping[str, int],
+                        findings: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """One row per still for stills whose not-inspected rows cover GROUP_AT or more regions; other rows unchanged
+    (a single roll-up row gets its exact `regions`). Rows with no still keep their own row."""
+    by_still: dict[str, list[dict[str, Any]]] = {}
+    out: list[dict[str, Any]] = []
+    for e in rows:
+        sid = (e.get("photo") or {}).get("still_id")
+        (by_still.setdefault(sid, []) if sid else out).append(e)
+    for sid in sorted(by_still):
+        group = by_still[sid]
+        total = sum(counts.get(e["finding_id"], 1) for e in group)
+        if len(group) == 1 or total < GROUP_AT:
+            for e in group:
+                if counts.get(e["finding_id"], 1) > 1:
+                    e = {**e, "regions": counts[e["finding_id"]]}
+                out.append(e)
+            continue
+        reasons: dict[str, int] = {}
+        for e in group:
+            why = _why(findings[e["finding_id"]])
+            reasons[why] = reasons.get(why, 0) + counts.get(e["finding_id"], 1)
+        parts = "; ".join(f"{n} {'region' if n == 1 else 'regions'}: {why}"
+                          for why, n in sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0])))
+        ids = [e["finding_id"] for e in group]
+        out.append({"finding_id": ids[0], "subject": {"kind": "part", "ref": f"{sid}/not_inspected"},
+                    "part_class": "regions in this photo", "photo": {"still_id": sid},
+                    "reason": f"{total} regions in this photo were not inspected: {parts}",
+                    "regions": total, "finding_ids": ids})
+    return out
+
+
 def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, Any]]) -> list[str]:
     """MS1: every stored finding in exactly one bucket; nothing shown judged that no model looked at."""
     seen: dict[str, list[str]] = {}
     for bucket in ("findings", "not_inspected", "insufficient_evidence"):
         for e in report.get(bucket, []):
-            seen.setdefault(e["finding_id"], []).append(bucket)
+            for fid in e.get("finding_ids") or [e["finding_id"]]:
+                seen.setdefault(fid, []).append(bucket)
     out = []
     for f in findings:
         where = seen.pop(f["finding_id"], [])
         if len(where) != 1:
             out.append(f"finding {f['finding_id']} ({f['state']}) is in {where or 'no bucket'}")
     out += [f"report lists {fid}, which is not a stored finding of the scan" for fid in seen]
+    for e in report.get("not_inspected", []):
+        ids = e.get("finding_ids")
+        if ids and (ids[0] != e["finding_id"] or e.get("regions", 1) < len(ids)):
+            out.append(f"grouped row {e['finding_id']}: finding_id is not its first finding, or it counts fewer "
+                       "regions than it groups")
     for e in report.get("findings", []):
         if not JUDGES & set(e["inspected_by"]):
             out.append(f"finding {e['finding_id']} shown as judged but no model looked at it")

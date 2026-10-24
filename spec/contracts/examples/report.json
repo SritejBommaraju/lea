@@ -134,6 +134,24 @@
         "reason": "the 3D localization module is not installed"
       },
       "reason": "the region covers most of the still; take a closer still"
+    },
+    {
+      "finding_id": "f_example_d",
+      "subject": {
+        "kind": "part",
+        "ref": "s2/not_inspected"
+      },
+      "part_class": "regions in this photo",
+      "photo": {
+        "still_id": "s2"
+      },
+      "reason": "23 regions in this photo were not inspected: 21 regions: too small in this photo to judge; take a closer photo of the area; 2 regions: over this still's crop budget",
+      "regions": 23,
+      "finding_ids": [
+        "f_example_d",
+        "f_example_e",
+        "f_example_f"
+      ]
     }
   ],
   "insufficient_evidence": [

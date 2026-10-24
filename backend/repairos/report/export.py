@@ -13,8 +13,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from repairos.fusion import words
+from repairos.report.safety import LIMITS
 
-TITLE = {"looks_good": "Looks good", "potential_issues": "Potential issues",
+TITLE = {"looks_good": "No visible problems found", "potential_issues": "Potential issues",
          "insufficient_evidence": "Not enough evidence"}
 PROOF = {"not_measured": "suspicion from photos, not proof", "confirmed_by_meter": "confirmed by a meter reading",
          "ruled_out_by_meter": "ruled out by a meter reading"}
@@ -54,6 +55,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
            report["summary"]["text"], "", f"**Why this verdict:** {report['verdict_reason']['text']}", ""]
     issues = [e for e in report["findings"] if e["issue"] != "none"]
     fine = [e for e in report["findings"] if e["issue"] == "none"]
+    if report.get("safety"):
+        out = out[:2] + ["## Safety first", ""] + [f"- {n['text']}" for n in report["safety"]] + [""] + out[2:]
     if report.get("next_step"):
         out += [f"**Next step:** {report['next_step']['instruction']}", ""]
     out += ["## Potential issues", ""]
@@ -77,7 +80,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             "", "## Models", ""]
     out += [f"- {k.replace('_', ' ')}: {v}" for k, v in m.items()]
     out += [f"- summary written by {report['summary']['written_by']} from words only", "- Grain: not called", "",
-            "Photo findings are suspicions; only a meter reading proves a fault.", ""]
+            "## What photos cannot tell", ""]
+    out += [f"- {line}" for line in report.get("limits") or LIMITS] + [""]
     return "\n".join(out)
 
 
@@ -127,6 +131,9 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
         f"<p>{esc(report['summary']['text'])}</p>",
         f"<p><strong>Why this verdict:</strong> {esc(report['verdict_reason']['text'])}</p>",
     ]
+    if report.get("safety"):
+        parts.insert(1, "<h2>Safety first</h2><ul>" + "".join(f"<li>{esc(n['text'])}</li>" for n in report["safety"])
+                     + "</ul>")
     if report.get("next_step"):
         parts.append(f"<p><strong>Next step:</strong> {esc(report['next_step']['instruction'])}</p>")
     parts.append(section("Potential issues", [item(e, [
@@ -150,7 +157,9 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
                  f"Scan coverage: {esc(cap['coverage_words'])}.<br>"
                  + "<br>".join(f"{esc(k.replace('_', ' '))}: {esc(v)}" for k, v in report["models"].items())
                  + f"<br>Summary written by {esc(report['summary']['written_by'])} from words only. Grain: not called."
-                 "</p><p class=\"muted\">Photo findings are suspicions; only a meter reading proves a fault.</p>")
+                 "</p>")
+    parts.append("<h2>What photos cannot tell</h2><ul>"
+                 + "".join(f"<li>{esc(line)}</li>" for line in report.get("limits") or LIMITS) + "</ul>")
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             f"<title>Inspection report</title><style>{_CSS}</style></head><body>{''.join(parts)}</body></html>\n")
