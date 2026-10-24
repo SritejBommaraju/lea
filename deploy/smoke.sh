@@ -157,8 +157,8 @@ echo "  total ${TOTAL} s; scan $SCAN in session $SID"
 # 8. optional: replay a real recorded scan through the live gateway and worker (inside the pod)
 if [ -n "$REQUEUE" ]; then
   ROOT="$(cd "$HERE/.." && pwd)"
-  RPY=""; for c in /opt/venv/bin/python "$ROOT/backend/.venv/bin/python"; do [ -x "$c" ] && { RPY="$c"; break; }; done
-  [ -n "$RPY" ] || RPY="$(command -v python)"   # the image's venv, the Mac's make bootstrap venv, else PATH
+  RPY=""; for c in /opt/venv/bin/python "${LEA_VENV:-/workspace/venv}/bin/python" "$ROOT/backend/.venv/bin/python"; do [ -x "$c" ] && { RPY="$c"; break; }; done
+  [ -n "$RPY" ] || RPY="$(command -v python)"   # the image venv, the Route B venv, the Mac venv, else PATH
   [ -f "${REPAIROS_DATA_DIR:-$ROOT/data}/state.sqlite3" ] || die "--requeue reads STATE locally: no ${REPAIROS_DATA_DIR:-$ROOT/data}/state.sqlite3 here (run it inside the pod)"
   echo "replaying $REQUEUE with tools/requeue_scan.py (scan package, stills, complete: the at-Done order)"
   token="$(sed -n 's/^Authorization: Bearer //p' "$AUTH")"

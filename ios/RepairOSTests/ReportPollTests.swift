@@ -32,3 +32,21 @@ struct ReportPollTests {
         #expect(ReportPoll.decide(showingRev: 0, status: "done", reportRev: 1, rebuilding: false) == .fetch)
     }
 }
+
+/// The progress steps read each stage's status: a run lists every stage as `pending` from its start (Greptile, PR #7).
+struct PipelineProgressTests {
+    func view(_ stages: [String: String], stills: [String: String] = [:]) -> [String: Any] {
+        ["stages": stages.mapValues { ["status": $0] }, "stills": stills.mapValues { ["status": $0] }]
+    }
+
+    @Test func stepFollowsTheStageStatusNotItsPresence() {
+        var p = PipelineProgress()
+        p.update(view(["select": "done", "inspect": "running", "fuse": "pending", "locate": "pending", "report": "pending"],
+                      stills: ["s1": "done", "s2": "running"]))
+        #expect(p.step == .inspect && p.stillsDone == 1 && p.stillsTotal == 2)
+        p.update(view(["select": "done", "inspect": "done", "fuse": "running", "locate": "pending", "report": "pending"]))
+        #expect(p.step == .weigh)
+        p.update(view(["select": "done", "inspect": "done", "fuse": "done", "locate": "done", "report": "running"]))
+        #expect(p.step == .write)
+    }
+}

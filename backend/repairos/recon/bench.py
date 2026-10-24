@@ -35,11 +35,11 @@ def apple_path(name: str, images: Path, out: Path, max_gb: float) -> dict:
             "skipped": len(s.get("skipped_samples") or []), "errors": s.get("errors")}
 
 
-def sub(step: str, *args: str) -> dict:
-    """Run one Python step in a fresh process (its own peak RSS)."""
+def sub(step: str, *args: str, max_gb: float = 6.0) -> dict:
+    """Run one Python step in a fresh process (its own peak RSS), stopped once it is over `max_gb` (memory_watch)."""
     t0 = time.monotonic()
-    p = subprocess.run([sys.executable, "-m", "repairos.recon.bench", "--step", step, *args], capture_output=True,
-                       text=True)
+    p = subprocess.run([sys.executable, "-m", "repairos.recon.bench", "--step", step, "--max-memory", str(max_gb),
+                        *args], capture_output=True, text=True)
     if p.returncode != 0:
         return {"path": step, "ok": False, "error": p.stderr.strip().splitlines()[-1:] or ["?"]}
     d = json.loads(p.stdout.strip().splitlines()[-1])
@@ -176,11 +176,12 @@ def main(argv=None) -> int:
     ap.add_argument("--max-memory", type=float, default=6.0)
     ap.add_argument("--min-free", type=float, default=25.0)
     a = ap.parse_args(argv)
-    if a.step == "tsdf":
-        print(json.dumps(step_tsdf(*a.rest)))
-        return 0
-    if a.step == "merge":
-        print(json.dumps(step_merge(*a.rest), default=str))
+    if a.step in ("tsdf", "merge"):
+        from repairos.recon.build import memory_watch
+
+        with memory_watch(a.max_memory, f"the {a.step} step"):
+            row = step_tsdf(*a.rest) if a.step == "tsdf" else step_merge(*a.rest)
+        print(json.dumps(row, default=str))
         return 0
     out = a.out
     out.mkdir(parents=True, exist_ok=True)
@@ -192,7 +193,7 @@ def main(argv=None) -> int:
             rows.append(apple_path(name, a.ref, out, a.max_memory))
         elif name.startswith("tsdf_"):
             rows.append(sub("tsdf", name.split("_", 1)[1], str(out / "samples_ref" / "samples.json"),
-                            str(out / "apple_reduced")))
+                            str(out / "apple_reduced"), max_gb=a.max_memory))
         elif name == "merge" and a.other:
             from repairos.recon.merge import link_images
 
@@ -209,7 +210,7 @@ def main(argv=None) -> int:
             check_free_memory(a.min_free)
             rows.append(sub("merge", str(out / "samples_ref" / "samples.json"), str(a.ref),
                             str(out / "samples_other" / "samples.json"), str(a.other), str(out / "joint"),
-                            str(out / "cache")))
+                            str(out / "cache"), max_gb=a.max_memory))
         (out / "bench.json").write_text(json.dumps(rows, indent=1, default=str) + "\n")
     print(table(rows))
     return 0

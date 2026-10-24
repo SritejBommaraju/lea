@@ -40,7 +40,8 @@ TRANSITIONS = (
     "reading.record",
     "part.add",
     "plan.create", "plan.confirm", "plan.reopen",
-    "pipeline.update", "pipeline.claim_still",
+    "pipeline.update", "pipeline.claim_still", "pipeline.beat_still", "pipeline.finish_still",
+    "pipeline.release_still",
     "report.publish",
 )
 
@@ -68,6 +69,17 @@ class AlreadyClaimed(StateError):
     def __init__(self, still_id: str, status: str, worker: str | None):
         self.still_id, self.status, self.worker = still_id, status, worker
         super().__init__(f"still {still_id} is {status} (worker {worker})")
+
+
+class StaleReport(StateError):
+    """report.publish of a draft built from fewer stills than the report already published for the scan: a run that
+    started before more stills arrived finished after the run that used them. Stills are only ever added to a scan,
+    so the still count orders the drafts; the newer report stands and nothing is written."""
+
+    def __init__(self, report_id: str, draft_stills: int, published_stills: int):
+        self.report_id, self.draft_stills, self.published_stills = report_id, draft_stills, published_stills
+        super().__init__(f"report {report_id}: this draft used {draft_stills} still(s), the published report "
+                         f"{published_stills}; the newer report stands")
 
 
 class InvariantViolation(StateError, ValueError):
@@ -136,6 +148,10 @@ class JobQueue(Protocol):
     async def heartbeat(self, job_id: str) -> None: ...
     async def complete(self, job_id: str, result: dict[str, Any]) -> None: ...
     async def fail(self, job_id: str, error: str, retry: bool) -> None: ...
+    async def release(self, job_id: str) -> None:
+        """Put a running job back in the queue untried (its worker is shutting down): status queued, no worker,
+        the attempt not counted."""
+        ...
     async def get_job(self, job_id: str) -> Job | None: ...
 
 
