@@ -30,6 +30,8 @@ final class LiveEvents {
     private(set) var hero: String?
     /// The gateway's photo-real recreation revision (`recreation_ready`; Report/Recreation fetches it).
     private(set) var recreationRev: Int?
+    /// The gateway's splat revision (`recreation_ready` with `kind: splat`; RecreationCenter.fetchGatewaySplat).
+    private(set) var splatRev: Int?
     private(set) var reportRev: Int?
     /// "Fix it" offers for the top finding's part (`fix_ready`), when the search finished after the report.
     private(set) var fix: FixIt?
@@ -154,7 +156,9 @@ final class LiveEvents {
         case "report_ready":
             if let rev = obj["rev"] as? Int { reportRev = rev }
         case "recreation_ready":
-            if let rev = obj["rev"] as? Int, rev != recreationRev { recreationRev = rev }
+            if (obj["kind"] as? String) == "splat" {
+                if let rev = obj["rev"] as? Int, rev != splatRev { splatRev = rev }
+            } else if let rev = obj["rev"] as? Int, rev != recreationRev { recreationRev = rev }
         case "product_brief":   // what the object is, from public sources (Voice/PreScan says it before the scan)
             if let b = ProductBrief(json: obj), b != brief { brief = b }
         case "lead":   // the person's guess, researched by the backend (Voice/ says it during the scan)

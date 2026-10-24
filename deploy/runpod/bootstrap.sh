@@ -99,15 +99,27 @@ fi
 took "repo" "$T"
 
 # ------------------------------------------------------------------ 2. system libraries open3d loads (container disk)
+# open3d (the scan mesh, the textured recreation) loads libGL, libEGL (its headless rendering module; the pod's
+# recreation failed with "libEGL.so.1: cannot open shared object file", 2026-10-24) and libgomp at import. Each library
+# missing from the loader cache is installed once per container start (the container disk is fresh on every start);
+# nothing runs when they are all there. After the venv, any library open3d still cannot resolve is logged (step 3).
 T=$SECONDS
-if command -v ldconfig >/dev/null && ! ldconfig -p | grep -q 'libGL.so.1'; then
+want_libs=("libGL.so.1:libgl1" "libEGL.so.1:libegl1" "libgomp.so.1:libgomp1")
+missing_pkgs=()
+if command -v ldconfig >/dev/null; then
+  cache="$(ldconfig -p)"
+  for pair in "${want_libs[@]}"; do
+    grep -q "${pair%%:*}" <<<"$cache" || missing_pkgs+=("${pair##*:}")
+  done
+fi
+if [ "${#missing_pkgs[@]}" -gt 0 ]; then
   if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
-    log "installing libgl1 libgomp1 for open3d (the container disk is fresh on every start)"
+    log "installing ${missing_pkgs[*]} for open3d"
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null \
-      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libgl1 libgomp1 >/dev/null \
-      || log "WARNING: apt-get failed; the 3D scan mesh will report 'failed' until libGL is present"
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing_pkgs[@]}" >/dev/null \
+      || log "WARNING: apt-get failed; the 3D scan mesh and the textured recreation will report 'failed' until ${missing_pkgs[*]} are present"
   else
-    log "WARNING: libGL.so.1 missing and no root apt-get; the 3D scan mesh will be unavailable"
+    log "WARNING: ${missing_pkgs[*]} missing and no root apt-get; the 3D scan mesh and the textured recreation will be unavailable"
   fi
 fi
 took "system libraries" "$T"
@@ -176,6 +188,18 @@ else
   echo "$WANT" > "$LEA_VENV/.lea-lock-sha256"   # written last: an interrupted install is redone on the next boot
 fi
 took "venv" "$T"
+# open3d's native modules: name any shared library the loader still cannot find (the mesh would fail on it)
+O3D_MISSING="$("$LEA_VENV/bin/python" -c '
+import glob, importlib.util, os, subprocess
+spec = importlib.util.find_spec("open3d")
+libs = set()
+if spec and spec.origin:
+    for so in glob.glob(os.path.join(os.path.dirname(spec.origin), "**", "*.so*"), recursive=True):
+        out = subprocess.run(["ldd", so], capture_output=True, text=True).stdout
+        libs |= {line.split()[0] for line in out.splitlines() if "not found" in line}
+print(" ".join(sorted(libs)))
+' 2>/dev/null || true)"
+[ -z "$O3D_MISSING" ] || log "WARNING: open3d cannot find $O3D_MISSING; the 3D scan mesh and the textured recreation will fail (add its package to step 2)"
 
 export PATH="$LEA_VENV/bin:$PATH" PYTHONPATH="$LEA_CHECKOUT/backend" PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1
 

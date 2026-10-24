@@ -46,6 +46,8 @@ SH_C0 = 0.28209479177387814
 STILL_TRAIN_PX = 1008          # stills are trained at this width (12 MP is 4032); keyframes at their own 640 px
 REGION_GROW = 0.6              # Gaussians kept within the box footprint grown by this share of its larger side
 BYTES_PER_GAUSSIAN = 32
+SURFACE_KEEP_M = 0.012         # with the object's LiDAR surface: Gaussians kept within this of it (about the noise)
+MIN_OPACITY = 0.05             # fainter Gaussians are dropped from the file (floaters, half-faded background)
 
 
 def unavailable_reason() -> str | None:
@@ -129,6 +131,22 @@ def region_mask(p: np.ndarray, box: Any, ground_y: float | None) -> np.ndarray:
     return (np.abs(local[:, 0]) <= gx) & (np.abs(local[:, 2]) <= gz) & (p[:, 1] >= bottom) & (p[:, 1] <= top)
 
 
+def near_surface_mask(p: np.ndarray, surface: np.ndarray, radius: float = SURFACE_KEEP_M) -> np.ndarray:
+    """Points within about `radius` of any surface vertex (a voxel hash of the surface at `radius`, dilated by one
+    cell: exact inside `radius`, never beyond 2 * sqrt(3) * radius). No dependency beyond numpy."""
+    if not len(surface) or not len(p):
+        return np.zeros(len(p), dtype=bool)
+    lo = np.minimum(surface.min(0), p.min(0)) - 2 * radius
+    def keys(x: np.ndarray) -> np.ndarray:
+        c = np.floor((x - lo) / radius).astype(np.int64)
+        return (c[:, 0] << 42) | (c[:, 1] << 21) | c[:, 2]
+    cells = np.floor((surface - lo) / radius).astype(np.int64)
+    offsets = np.array([[i, j, k] for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)], dtype=np.int64)
+    grown = np.unique((cells[:, None, :] + offsets[None]).reshape(-1, 3), axis=0)
+    occupied = np.unique((grown[:, 0] << 42) | (grown[:, 1] << 21) | grown[:, 2])
+    return np.isin(keys(p), occupied, assume_unique=False)
+
+
 def initial_points(pkg: Mapping[str, Any], box: Any, *, max_points: int = 150_000) -> tuple[np.ndarray, np.ndarray]:
     """Seeds: high-confidence keyframe depth points (with their keyframe's colours) in a wide region around the box
     (the background is trained too, then cropped), thinned to `max_points`. (N x 3 metres, N x 3 0..1)."""
@@ -202,10 +220,12 @@ def _load_image(v: TrainView) -> np.ndarray:
 
 def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box: Any, *, steps: int,
                max_gaussians: int, timeout_s: float, max_bytes: int = 15_000_000, mem_cap_gb: float = 10.0,
-               log_every: int = 500, gate: Callable[[], Any] | None = None, label: str = ""
-               ) -> SplatResult:   # pragma: no cover - needs CUDA
+               log_every: int = 500, gate: Callable[[], Any] | None = None, label: str = "",
+               surface: np.ndarray | None = None) -> SplatResult:   # pragma: no cover - needs CUDA
     """Trains the splat (L1 + 0.2 D-SSIM, gsplat's default densification) and returns the cropped `.splat`.
-    `gate()` is entered around every step (a context manager; the pipeline's waits while the detector wants the GPU)."""
+    `gate()` is entered around every step (a context manager; the pipeline's waits while the detector wants the GPU).
+    `surface`: the object's LiDAR surface vertices (recreation.surface, the textured mesh's: the object and its table
+    patch, neighbours cleared); the file then keeps only Gaussians near it, else the grown box region."""
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -324,19 +344,26 @@ def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box:
     del params, optimizers, state, images
     torch.cuda.empty_cache()   # give the memory back to the detector
     frames = frames_from_scan_package(pkg, Path("/"))
-    keep = region_mask(means, box, ground_height(frames, box, GROW)) & (opac > 0.02)
+    in_region = region_mask(means, box, ground_height(frames, box, GROW))
+    crop = "box region"
+    if surface is not None and len(surface):
+        keep = near_surface_mask(means, surface) & in_region & (opac > MIN_OPACITY)
+        crop = "object surface"
+    else:
+        keep = in_region & (opac > MIN_OPACITY)
     data = splat_bytes(means[keep], scales[keep], quats[keep], opac[keep], rgb[keep], max_bytes=max_bytes)
     count = len(data) // BYTES_PER_GAUSSIAN
     out = SplatResult(data, count, {"load_s": round(load_s, 2), "train_s": round(train_s, 2),
                                     "paused_s": round(paused, 2), "total_s": round(time.monotonic() - t0, 2)},
                       {"steps": step + 1, "stopped": stopped, "views": len(views), "seeds": int(len(p0)),
-                       "gaussians_trained": int(len(means)), "gaussians_in_box": int(keep.sum()),
+                       "gaussians_trained": int(len(means)), "gaussians_in_box": int(in_region.sum()),
+                       "gaussians_cropped": int(keep.sum()), "crop": crop,
                        "gaussians_kept": count, "loss_first": round(losses[0], 4) if losses else None,
                        "loss_last": round(losses[-1], 4) if losses else None, "gpu_peak_gb": round(peak_gb, 2),
                        "sh_degree": 0})
     log.info("splat %s: done, %d steps (stopped by %s) in %.1f s train / %.1f s total, %d Gaussians kept of %d "
-             "trained, %.2f MB, GPU peak %.2f GB, loss %s -> %s", label, step + 1, stopped, train_s,
-             out.seconds["total_s"], count, len(means), len(data) / 1e6, peak_gb, out.stats["loss_first"],
+             "trained (crop: %s), %.2f MB, GPU peak %.2f GB, loss %s -> %s", label, step + 1, stopped, train_s,
+             out.seconds["total_s"], count, len(means), crop, len(data) / 1e6, peak_gb, out.stats["loss_first"],
              out.stats["loss_last"])
     return out
 

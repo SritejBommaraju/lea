@@ -140,14 +140,30 @@ def build_splat(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str
         raise RecreationUnavailable("the scan has no object box")
     box = ObjectBox.from_contract(pkg_local["crop_box"])
     stills = sorted(stills_local, key=lambda s: -(s.get("sharpness") or 0.0))[: int(cfg["max_stills"])]
+    # The object's LiDAR surface (the textured mesh's, CPU, seconds): the splat is cropped to it and framed on it;
+    # without it (no usable depth, open3d missing) the grown box region and the box are used.
+    surf = None
+    try:
+        from repairos.recreation.surface import scan_surface
+
+        surf = scan_surface(pkg_local)
+    except Exception as e:  # noqa: BLE001 - the crop falls back to the box region
+        log.info("splat %s: no object surface for the crop (%s: %s); cropping to the box region", label,
+                 type(e).__name__, e)
     out = splat.train_scan(pkg_local, stills, box, steps=int(cfg["splat_steps"]),
                            max_gaussians=int(cfg["splat_max_gaussians"]), timeout_s=float(cfg["splat_timeout_s"]),
                            max_bytes=int(float(cfg["splat_max_mb"]) * 1e6), mem_cap_gb=float(cfg["splat_gpu_mem_gb"]),
-                           log_every=int(cfg["splat_log_every"]), gate=gate, label=label)
+                           log_every=int(cfg["splat_log_every"]), gate=gate, label=label,
+                           surface=None if surf is None else surf.vertices)
     if out.count == 0:
         raise RecreationUnavailable("the trained splat kept no Gaussians inside the object box")
     focus = [float(x) for x in box.centre]
     radius = float(0.5 * (box.extent ** 2).sum() ** 0.5)
+    if surf is not None:
+        from repairos.recreation.surface import object_focus
+
+        centre, radius = object_focus(surf.vertices, surf.ground_y, box)
+        focus, radius = [float(x) for x in centre], float(radius)
     return Recreation("splat", "splat", out.data, focus, radius, out.seconds, out.stats)
 
 

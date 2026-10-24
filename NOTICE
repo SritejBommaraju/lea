@@ -9,3 +9,9 @@ The defect classifier head (training/models/cls_dinov2/) is trained on data unde
 - "defects" PCB dataset by Roboflow Universe user diplom-qz7q6 (mirror: keremberke/pcb-defect-segmentation).
 - Roboflow 100 "printed-circuit-board", https://universe.roboflow.com/object-detection/printed-circuit-board
 Its backbone, facebook/dinov2-base (Meta AI), is Apache-2.0. Sources and licences: training/datasets/MANIFEST.json.
+
+The photo-real splat tier (backend/repairos/recreation/splat.py, run on the GPU pod only) uses gsplat
+(https://github.com/nerfstudio-project/gsplat, v1.5.3), Copyright the gsplat authors, Apache License 2.0. It is not
+vendored: deploy/runpod/bootstrap.sh installs it on the pod (LEA_SPLAT=1) from deploy/runpod/requirements.splat.lock
+(hash-pinned) and compiles its CUDA kernels there. gsplat bundles OpenGL Mathematics (GLM), MIT License (or the
+Happy Bunny License). The original Inria 3D Gaussian Splatting code (non-commercial) is not used.

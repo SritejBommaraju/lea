@@ -399,3 +399,26 @@ def test_requeue_upload_names_every_blob_once():
     assert mod.blob_refs(scan, stills) == [a, b, c]
     pkg, copies = mod._copy(scan, stills, "scan_2", "sess_new")
     assert pkg["session_id"] == copies[0]["session_id"] == "sess_new" and copies[0]["still_id"] == "scan_2_s1"
+
+
+def test_splat_crop_keeps_the_object_surface_and_drops_the_walls(capture):
+    """The crop the trainer applies with the object's surface: Gaussians on the cube and its table patch stay, a
+    wall 30 cm behind it and a floater above it go (the first pod splat kept walls from an oversized box)."""
+    from repairos.recreation.splat import SURFACE_KEEP_M, near_surface_mask
+    from repairos.recreation.surface import scan_surface
+    from repairos.recreation.texture import load_scan_dir
+
+    pkg, _stills = load_scan_dir(capture, "scan_test")
+    s = scan_surface(pkg)
+    rng = np.random.default_rng(5)
+    on_cube = np.c_[rng.uniform(-0.04, 0.04, 200), np.full(200, CUBE + 0.004), rng.uniform(-0.04, 0.04, 200)]
+    wall = np.c_[rng.uniform(-0.2, 0.2, 200), rng.uniform(0, 0.3, 200), np.full(200, -0.30)]
+    floater = np.array([[0.0, CUBE + 0.08, 0.0]])
+    keep = near_surface_mask(np.vstack([on_cube, wall, floater]), s.vertices)
+    assert keep[:200].mean() > 0.95 and not keep[200:].any()
+    # exact inside the radius, bounded outside it
+    plane = np.c_[rng.uniform(-1, 1, 500), np.zeros(500), rng.uniform(-1, 1, 500)]
+    probe = np.array([[0.0, SURFACE_KEEP_M * 0.5, 0.0], [0.0, SURFACE_KEEP_M * 4, 0.0]])
+    dense = np.c_[np.repeat(np.linspace(-0.05, 0.05, 41), 41), np.zeros(41 * 41), np.tile(np.linspace(-0.05, 0.05, 41), 41)]
+    assert near_surface_mask(probe, dense).tolist() == [True, False]
+    assert not near_surface_mask(probe, np.zeros((0, 3))).any() and near_surface_mask(np.zeros((0, 3)), plane).shape == (0,)

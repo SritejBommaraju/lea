@@ -1,3 +1,4 @@
+import Metal
 import SceneKit
 import SwiftUI
 import UIKit
@@ -49,6 +50,7 @@ struct RecreationView: View {
     @State private var loaded: Loaded?
     @State private var failed = false
     @State private var visible = true
+    @State private var retry = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var center: RecreationCenter { .shared }
 
@@ -59,16 +61,32 @@ struct RecreationView: View {
         var origin: String
     }
 
-    /// What this build can draw: textured meshes (PLY + atlas, or USDZ). A splat needs the splat renderer.
+    /// What this build can draw: textured meshes (PLY + atlas, or USDZ) and, on a device with Metal, Gaussian
+    /// splats (`.splat`, RecreationSplat).
     nonisolated static func canDraw(_ m: RecreationManifest) -> Bool {
-        m.kind == "textured_mesh" && (m.file.hasSuffix(".ply") || m.file.hasSuffix(".usdz"))
+        switch m.kind {
+        case "textured_mesh": m.file.hasSuffix(".ply") || m.file.hasSuffix(".usdz")
+        case "splat": m.file.hasSuffix(".splat") && metalAvailable
+        default: false
+        }
     }
+
+    nonisolated static let metalAvailable = MTLCreateSystemDefaultDevice() != nil
+
+    /// Recreations that failed to load or to draw in this run (`folder#origin#rev`): skipped, so the next one down
+    /// (the textured mesh) is shown instead.
+    @MainActor static var failedIDs: Set<String> = []
 
     var body: some View {
         ZStack {
             if let loaded {
                 RecreationHost(loaded: loaded, markers: markers.map(Self.marker), focus: focus, spin: spin && !reduceMotion,
-                               animate: !reduceMotion, active: visible, onMarkerTap: onMarkerTap)
+                               animate: !reduceMotion, active: visible, onMarkerTap: onMarkerTap,
+                               onDrawFailure: { id in
+                                   Self.failedIDs.insert(id)
+                                   self.loaded = nil
+                                   retry += 1
+                               })
                     .id(loaded.id)
                     .transition(.opacity)
             } else if !failed {
@@ -83,35 +101,45 @@ struct RecreationView: View {
 
     private var reloadKey: String {
         switch source {
-        case .scan(let u): "\(u.path)#\(center.version[u.path] ?? 0)"
-        case .folder(let u): u.path
+        case .scan(let u): "\(u.path)#\(center.version[u.path] ?? 0)#\(retry)"
+        case .folder(let u): "\(u.path)#\(retry)"
         case .none: "none"
         }
     }
 
     private func load() async {
-        let pick: (RecreationManifest, URL)?
+        let picks: [(RecreationManifest, URL)]
         switch source {
-        case .scan(let dir): pick = RecreationCenter.best(in: dir)
+        case .scan(let dir): picks = RecreationCenter.candidates(in: dir)
         case .folder(let f):
-            pick = (try? Data(contentsOf: f.appending(path: "recreation.json")))
-                .flatMap { try? JSONDecoder().decode(RecreationManifest.self, from: $0) }.map { ($0, f) }
-        case .none: pick = nil
+            picks = (try? Data(contentsOf: f.appending(path: "recreation.json")))
+                .flatMap { try? JSONDecoder().decode(RecreationManifest.self, from: $0) }
+                .flatMap { Self.canDraw($0) ? [($0, f)] : nil } ?? []
+        case .none: picks = []
         }
-        guard let (m, folder) = pick else { failed = loaded == nil; return }
-        let id = "\(folder.path)#\(m.origin)#\(m.rev)"
-        guard loaded?.id != id else { return }
-        if let next = await Self.read(m, folder: folder, id: id) {
-            withAnimation(.easeInOut(duration: 0.45)) { loaded = next }
-        } else {
-            failed = loaded == nil
+        // The best one that loads: a splat that cannot be read or started falls back to the textured mesh.
+        for (m, folder) in picks {
+            let id = "\(folder.path)#\(m.origin)#\(m.rev)"
+            if Self.failedIDs.contains(id) { continue }
+            if loaded?.id == id { return }
+            if let next = await Self.read(m, folder: folder, id: id) {
+                withAnimation(.easeInOut(duration: 0.45)) { loaded = next }
+                return
+            }
+            Self.failedIDs.insert(id)
         }
+        failed = loaded == nil
     }
 
     @concurrent
     private static func read(_ m: RecreationManifest, folder: URL, id: String) async -> Loaded? {
         let focus = m.focusCenter.flatMap { c in c.count == 3 ? (SIMD3(c[0], c[1], c[2]), m.focusRadius ?? 0.1) : nil }
         let url = folder.appending(path: m.file)
+        if m.kind == "splat" {
+            guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+                  let scene = await SplatScene.load(data, focus: focus) else { return nil }
+            return Loaded(id: id, content: .splat(scene), focus: focus, origin: m.origin)
+        }
         if m.file.hasSuffix(".usdz") {
             guard let scene = try? SCNScene(url: url) else { return nil }
             return Loaded(id: id, content: .sceneFile(scene), focus: focus, origin: m.origin)
@@ -153,10 +181,45 @@ private struct RecreationHost: UIViewRepresentable {
     let animate: Bool
     let active: Bool
     let onMarkerTap: (String) -> Void
+    var onDrawFailure: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    func makeUIView(context: Context) -> SCNView {
+    /// The SceneKit view, with the splat's Metal view under it when the content is a splat (SceneKit then draws only
+    /// the markers, on a transparent background, and owns the camera and gestures for both).
+    final class Container: UIView {
+        let scn: SCNView
+        let splat: SplatMetalView?
+        init(scn: SCNView, splat: SplatMetalView?) {
+            self.scn = scn
+            self.splat = splat
+            super.init(frame: .zero)
+            backgroundColor = .clear
+            for v in [splat, scn].compactMap({ $0 as UIView? }) {
+                v.translatesAutoresizingMaskIntoConstraints = true
+                v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+                addSubview(v)
+            }
+        }
+        required init?(coder: NSCoder) { nil }
+    }
+
+    func makeUIView(context: Context) -> Container {
+        let view = makeSceneView(context: context)
+        let c = context.coordinator
+        var splatView: SplatMetalView?
+        if case .splat(let sp) = loaded.content, let v = SplatMetalView(splat: sp, stage: c.stage) {
+            let id = loaded.id
+            let report = onDrawFailure
+            v.onFailure = { report(id) }
+            v.isPaused = !active
+            splatView = v
+        }
+        c.splatView = splatView
+        return Container(scn: view, splat: splatView)
+    }
+
+    private func makeSceneView(context: Context) -> SCNView {
         let c = context.coordinator
         let view = FittingSCNView(frame: .zero)
         view.backgroundColor = .clear
@@ -187,8 +250,10 @@ private struct RecreationHost: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: SCNView, context: Context) {
+    func updateUIView(_ container: Container, context: Context) {
+        let view = container.scn
         let c = context.coordinator
+        container.splat?.isPaused = !active
         c.onMarkerTap = onMarkerTap
         if c.stage.markers != markers || c.focus != focus {
             c.stage.place(markers, focus: focus)
@@ -212,6 +277,7 @@ private struct RecreationHost: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         let stage = RecreationStage()
         weak var view: SCNView?
+        weak var splatView: SplatMetalView?
         var focus: String?
         var onMarkerTap: (String) -> Void = { _ in }
 

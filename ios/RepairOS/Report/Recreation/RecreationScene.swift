@@ -27,6 +27,9 @@ enum RecreationContent: @unchecked Sendable {
     case sceneFile(SCNScene)
     /// Coloured points (the phone's LiDAR cloud): only as a fallback and for comparisons.
     case points([SIMD3<Float>], [SIMD3<Float>]?)
+    /// The gateway's Gaussian splat (RecreationSplat): drawn by a Metal view under the scene; the stage keeps the
+    /// camera, the turntable and the markers (snapped to the Gaussians' centres).
+    case splat(SplatScene)
 }
 
 @MainActor
@@ -91,6 +94,9 @@ final class RecreationStage {
             surface = p
             modelNode.geometry = Self.pointGeometry(p, colors: colors)
             for q in p { lo = simd_min(lo, q); hi = simd_max(hi, q) }
+        case .splat(let sp):
+            surface = sp.surface
+            (lo, hi) = (sp.lo, sp.hi)
         }
         if let focus {
             focusCenter = focus.center

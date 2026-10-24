@@ -116,9 +116,11 @@ struct GatewayClient: Sendable {
     }
 
     /// GET /v1/scans/{id}/recreation: the photo-real recreation (Report/Recreation), its kind, revision, file format
-    /// and the object's centre + radius for framing (`X-Recreation-*`). 404 until it is built.
-    func recreation(scanID: String) async throws -> (data: Data, kind: String, rev: Int, format: String, focusCenter: [Float]?, focusRadius: Float?) {
-        let (data, http) = try await send("GET", "v1/scans/\(scanID)/recreation", expect: [200])
+    /// and the object's centre + radius for framing (`X-Recreation-*`). 404 until it is built. `kind: "splat"` asks
+    /// for the Gaussian splat (404 until the GPU pod trained one); nil, the textured mesh.
+    func recreation(scanID: String, kind: String? = nil) async throws -> (data: Data, kind: String, rev: Int, format: String, focusCenter: [Float]?, focusRadius: Float?) {
+        let query = kind.map { "?kind=\($0)" } ?? ""
+        let (data, http) = try await send("GET", "v1/scans/\(scanID)/recreation\(query)", expect: [200])
         let focus = http.value(forHTTPHeaderField: "X-Recreation-Focus")?.split(separator: ",").compactMap { Float($0) }
         return (data, http.value(forHTTPHeaderField: "X-Recreation-Kind") ?? "", Int(http.value(forHTTPHeaderField: "X-Recreation-Rev") ?? "") ?? 0,
                 http.value(forHTTPHeaderField: "X-Recreation-Format") ?? "", focus.map { Array($0.prefix(3)) },

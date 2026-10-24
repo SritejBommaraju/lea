@@ -38,10 +38,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+# Runpod's proxy (Cloudflare) refuses urllib's default signature with error 1010, so name the client.
+UA = "lea-requeue/1.0"
+
 def _call(base: str, token: str, method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(base + path, data=data, method=method,
-                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+                                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", "User-Agent": UA})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read() or b"{}")
@@ -80,7 +83,7 @@ def _upload(base: str, token: str, blobs: object, ref: str, chunk: int = 8 << 20
     as the phone does); 0 when it was already there, else the bytes sent."""
     sha = ref.rpartition(":")[2]
     size = blobs.size(ref)
-    auth = {"Authorization": f"Bearer {token}"}
+    auth = {"Authorization": f"Bearer {token}", "User-Agent": UA}
     head = urllib.request.Request(f"{base}/v1/blobs/{sha}", method="HEAD", headers=auth)
     try:
         with urllib.request.urlopen(head, timeout=60) as r:
@@ -88,7 +91,9 @@ def _upload(base: str, token: str, blobs: object, ref: str, chunk: int = 8 << 20
                 return 0
             start = int(r.headers.get("Upload-Offset") or 0)
     except urllib.error.HTTPError as e:
-        raise SystemExit(f"HEAD blob {sha[:12]}: HTTP {e.code}") from None
+        if e.code != 404:   # 404 = the gateway has no part of it yet: upload from the start
+            raise SystemExit(f"HEAD blob {sha[:12]}: HTTP {e.code}") from None
+        start = 0
     sent = 0
     with blobs.open(ref) as f:
         f.seek(start)

@@ -352,3 +352,41 @@ These need a decision:
   - They live only in the private image and are not added to the repo.
   - Invariant L2 needs an owner ruling on them (B15).
 - **`certifi` (MPL-2.0)** comes in with open3d's dependency tree. It was already flagged in `pyproject.toml`.
+
+## The photo-real splat tier (Route B, `LEA_SPLAT=1`)
+
+A per-scan Gaussian splat (`backend/repairos/recreation/splat.py`, gsplat 1.5.3, Apache-2.0) is trained on the pod
+after the scan's textured mesh. Turn it on with the pod env `LEA_SPLAT=1`. That also sets
+`LEA_RECREATION_ENGINE=splat` unless it is set. `LEA_SPLAT_JOBS` is the number of compile jobs (default 4).
+
+**Install.** gsplat publishes no prebuilt wheel for this venv's torch `2.14.1+cu126` on Python 3.12. Its index
+(https://docs.gsplat.studio/whl/gsplat/, read 2026-10-24) stops at torch 2.4 + cu124 and cp310. So `bootstrap.sh`
+step 4b runs in the background:
+1. Installs `requirements.splat.lock`: gsplat's plain wheel plus jaxtyping, ninja and wadler-lindig, hash-checked,
+   `--no-deps`. Re-pin it with `lock_splat.sh`.
+2. JIT-compiles the CUDA kernels once with the image's `nvcc` into `/workspace/torch_extensions`. The runpod/pytorch
+   image is built FROM `nvidia/cuda:*-cudnn-devel`.
+3. Runs a smoke render.
+4. Writes `/workspace/torch_extensions/.lea-gsplat-ready`.
+
+The gateway starts at once. Until that marker exists, the worker keeps the mesh as the recreation. A restart only
+checks the marker: the lock sha, torch, the GPU arch and the nvcc release. The full setup log is in
+`/workspace/.splat-setup.log`.
+
+**Log lines** (Runpod logs):
+- `[bootstrap] splat: LEA_SPLAT=1 ...`
+- `[splat-setup] installing / compiling ... / READY ...` or `FAILED: <why>`
+- `[worker] splat <scan>: start ...`, then `step N/3000, loss, Gaussians, GPU now/peak` every 500 steps, then
+  `done ... MB`
+- `[worker] splat for scan <id> ready` or `... skipped: <why>` / `... failed ... the textured mesh stays`
+
+**One splat on a saved scan** from the Mac, through the gateway (device-auth):
+
+```
+~/lea/backend/.venv/bin/python tools/requeue_scan.py --scan <scan_id> --data-dir ~/lea/data \
+  --gateway https://<pod_id>-8000.proxy.runpod.net --token-file <token file> --upload --wait-recreation 600
+```
+
+`--upload` makes a session on the pod, uploads the scan's blobs (HEAD first, then chunked PUT) and posts the scan
+like the phone. `--wait-recreation` prints the `recreation` and `splat` records from `GET .../pipeline`. Fetch the
+file with `GET /v1/scans/<new id>/recreation?kind=splat`.

@@ -9,8 +9,20 @@ Portions adapted from NeRFCapture, Copyright (c) 2023 Jad Abou-Chakra (MIT Licen
 Portions adapted from lidar-scanner-ios, Copyright (c) 2026 Dominik Hagmann (MIT License)
 Portions adapted from Apple's sample "Displaying a point cloud using scene depth", Copyright © 2026 Apple Inc.
 (licence text in RepairOS/Capture/ThirdParty/AppleScenePointCloud/LICENSE.txt, MIT-style)
+MetalSplatter, Copyright (c) 2026 Sean Cier (MIT License), release 1.0.1 (commit 71ff248e3016ac43c0a9271e322538421b28c360,
+https://github.com/scier/MetalSplatter), vendored in RepairOS/Report/Recreation/ThirdParty/MetalSplatter (licence
+text in its LICENSE)
 
 What was taken, per file:
+
+- MetalSplatter (MIT): the Gaussian splat renderer, `Report/Recreation/ThirdParty/MetalSplatter/` = its
+  `MetalSplatter/Sources` (EncodedSplatPoint, MTLBufferPool, MetalBuffer, SplatChunk, SplatChunk+sortByLocality,
+  SplatRenderer, SplatSorter), `MetalSplatter/Resources` (the .metal shaders and headers) and `SplatIO/Sources/
+  SplatPoint.swift` (with the `clamped` helper from `SplatIO/Sources/Comparable+clamped.swift`). Changes: no
+  `import SplatIO` (one module), shaders from the app's default library (`Bundle.main`) and a failed library load
+  throws instead of stopping the app, the file logger renamed and `Foundation.log` spelled out (the app has a global
+  `log`). The `.splat` reader is ours (`Report/Recreation/RecreationSplat.swift`); SPZ, PLY and the converter are
+  not taken.
 
 - Apple "Displaying a point cloud using scene depth": the depth unprojection and YCbCr-to-RGB conversion in
   `Capture/PointCloud.metal` (accumulation, camera background and box dimming are ours).
