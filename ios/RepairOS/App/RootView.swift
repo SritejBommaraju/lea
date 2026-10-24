@@ -1,5 +1,4 @@
 import AVFoundation
-import Combine
 import SwiftUI
 
 /// Home: what lea does, the optional symptom line and one Start button within thumb reach (launch → scanning in
@@ -18,15 +17,6 @@ struct RootView: View {
     @State private var starts = 0
     @State private var showAll = false
     @State private var pendingDelete: SessionRecord?
-    @StateObject private var voice = VoiceCoordinator()
-    @State private var showVoiceMode = false
-    @State private var scanOffered = false
-    @State private var scanAfterVoiceMode = false
-    @State private var offeredSymptom: String?
-    @State private var handsFreeBeforeVoiceMode = false
-    @State private var scanAfterReport = false
-    /// Siri opened the app while consent or pairing was on screen: voice mode opens when they close (greeting or not).
-    @State private var voiceModeWaiting: Bool?
     private static let recentCount = 3
     @FocusState private var symptomFocused: Bool
 
@@ -57,20 +47,15 @@ struct RootView: View {
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .background(Palette.canvas.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: Spacing.s) {
-                    VoiceBar(voice: voice, expand: { openVoiceMode(greet: false) }).padding(.horizontal, Spacing.m)
-                    startBar
-                }
-            }
+            .safeAreaInset(edge: .bottom) { startBar }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showAll) {
                 ScansView(open: { active = $0 }).toolbar(.visible, for: .navigationBar)
             }
             .confirmDeleteScan($pendingDelete)
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showPairing, onDismiss: openWaitingVoiceMode) { PairingView() }
-            .fullScreenCover(isPresented: $showConsent, onDismiss: openWaitingVoiceMode) {
+            .sheet(isPresented: $showPairing) { PairingView() }
+            .fullScreenCover(isPresented: $showConsent) {
                 ConsentView { agreed in
                     showConsent = false
                     if agreed { afterConsent() }
@@ -82,34 +67,22 @@ struct RootView: View {
                     if granted { newScan() }
                 }
             }
-            .fullScreenCover(item: $active, onDismiss: afterSessionFlow) { record in
-                SessionFlowView(record: record).environmentObject(voice)
+            .fullScreenCover(item: $active, onDismiss: app.reloadSessions) { record in
+                SessionFlowView(record: record)
             }
-            .fullScreenCover(isPresented: $showVoiceMode, onDismiss: afterVoiceMode) {
-                VoiceModeView(voice: voice, scanOffered: scanOffered, startScan: { scanFromVoice() }, close: { showVoiceMode = false })
-            }
-            .alert("Lea", isPresented: Binding(get: { voice.message != nil && active == nil && !showVoiceMode }, set: { if !$0 { voice.message = nil } })) {
-                Button("OK") { voice.message = nil }
-            } message: { Text(voice.message ?? "") }
             .alert("Can't start", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
             } message: { Text(error ?? "") }
             .task {
                 try? await Task.sleep(for: .milliseconds(300))
                 if app.autostart, active == nil { newScan() }
-                if CommandLine.arguments.contains("--voice-mode") { openVoiceMode(greet: false) }   // smoke tests
-            }
-            .onReceive(NotificationCenter.default.publisher(for: VoiceLaunch.requested)) { _ in
-                if VoiceLaunch.take() { openVoiceMode(greet: true) }
             }
             .onAppear {
-                connectVoice()
                 if !Consent.accepted && !devAutostart {
                     showConsent = true
                 } else {
                     offerPairingOnce()
                 }
-                if VoiceLaunch.take() { openVoiceMode(greet: true) }   // Siri opened the app before this screen existed
             }
         }
         .tint(Palette.accent)
@@ -155,102 +128,6 @@ struct RootView: View {
         if !app.isPaired && !UserDefaults.standard.bool(forKey: "pairingOffered") {
             UserDefaults.standard.set(true, forKey: "pairingOffered")
             showPairing = true
-        }
-    }
-
-    /// Voice talks to the gateway the app is paired with now (read at each turn), about the most recent session.
-    private func connectVoice() {
-        voice.attach()
-        voice.wakeDetector = voice.wakeDetector ?? SoundWakeDetector()
-        let app = app
-        voice.link = VoiceLink(
-            token: {
-                guard let gateway = await app.gateway else { throw GatewayError.message("Not paired.") }
-                return try await gateway.voiceToken()
-            },
-            turn: { request in
-                let (gateway, latest) = await MainActor.run {   // the newest scan that reached the gateway
-                    (app.gateway, app.sessions.lazy.compactMap { UploadQueue.gatewaySessionID(of: $0, in: app.storage) }.first)
-                }
-                guard let gateway else { throw GatewayError.message("Pair with the gateway in Settings to talk to Lea.") }
-                var request = request
-                if request.sessionID == nil && request.live.isEmpty { request.sessionID = latest }   // home: the latest scan
-                return try await gateway.voiceTurn(request)
-            })
-        voice.onActions = { actions in
-            // A scan in progress keeps the screen and Lea talks about it. From a finished report, a new scan closes
-            // the report first; nothing else replaces an open flow.
-            let onReport = active != nil && voice.scene?().live["screen"] == "report"
-            for action in actions {
-                switch action.type {
-                case "offer_scan" where active == nil:
-                    scanOffered = true
-                    offeredSymptom = action.symptom
-                case "scan" where active == nil: scanFromVoice(symptom: action.symptom)
-                case "scan" where onReport:
-                    if let said = action.symptom, !said.isEmpty { symptom = said }
-                    scanAfterReport = true
-                    active = nil
-                case "report" where active == nil:
-                    showVoiceMode = false
-                    active = app.sessions.first { $0.scanID == action.scanID } ?? app.sessions.first
-                default: break
-                }
-            }
-        }
-    }
-
-    /// Voice mode is a hands-free conversation. Siri's "Hey lea" starts a new one and Lea asks what's up; the voice
-    /// bar's button picks up the current one. Closing it puts hands-free back as it was.
-    private func openVoiceMode(greet: Bool) {
-        // One full-screen view at a time: wait for consent or pairing (both come before talking to Lea anyway).
-        guard !showConsent && !showPairing else { voiceModeWaiting = greet; return }
-        voice.warmUp()
-        handsFreeBeforeVoiceMode = voice.handsFree
-        showVoiceMode = true
-        if greet {
-            voice.newConversation()
-            voice.greetAndListen()
-        } else if !voice.handsFree {
-            voice.setHandsFree(true)
-        }
-    }
-
-    private func openWaitingVoiceMode() {
-        guard let greet = voiceModeWaiting, !showConsent, !showPairing, active == nil else { return }
-        voiceModeWaiting = nil
-        openVoiceMode(greet: greet)
-    }
-
-    /// A scan Lea started (or the person accepted) opens once voice mode has closed; two full-screen covers can't
-    /// show at once.
-    private func scanFromVoice(symptom said: String? = nil) {
-        if let said = said ?? offeredSymptom, !said.isEmpty { symptom = said }
-        scanOffered = false
-        offeredSymptom = nil
-        if showVoiceMode {
-            scanAfterVoiceMode = true
-            showVoiceMode = false
-        } else {
-            newScan()
-        }
-    }
-
-    /// A scan started from voice mode keeps the conversation hands-free, so Lea talks you through it.
-    private func afterVoiceMode() {
-        scanOffered = false
-        if !scanAfterVoiceMode && !handsFreeBeforeVoiceMode && voice.handsFree { voice.setHandsFree(false) }
-        if scanAfterVoiceMode {
-            scanAfterVoiceMode = false
-            newScan()
-        }
-    }
-
-    private func afterSessionFlow() {
-        app.reloadSessions()
-        if scanAfterReport {
-            scanAfterReport = false
-            newScan()
         }
     }
 
