@@ -32,6 +32,8 @@ final class VoiceCoordinator: ObservableObject {
     @Published private(set) var exchanges: [Exchange] = []
     private(set) var conversationID = VoiceCoordinator.newID("vc")
     @Published private(set) var handsFree = false
+    /// Microphone loudness, 0...1, about ten times a second while the mic is open (the scan bar's meter).
+    @Published private(set) var level: Float = 0
     @Published private(set) var wakeOn = false
     @Published private(set) var listenerName = "Apple on-device"
     @Published var message: String?
@@ -64,6 +66,7 @@ final class VoiceCoordinator: ObservableObject {
     private var resumes = 0
     private var speaking: Task<Void, Never>?
     private var turnMode = "ptt"
+    private var recognizerErrors = 0                 // in a row; hands-free retries a couple of times before stopping
 
     /// Starts watching for audio interruptions and route changes (once).
     func attach() {
@@ -273,15 +276,28 @@ final class VoiceCoordinator: ObservableObject {
             }
         case .transcript(let text):
             partial = ""
+            recognizerErrors = 0
             Task { await take(text) }
         case .noSpeech:
             partial = ""
             afterTurn()
         case .error(let text):
             partial = ""
-            message = text
-            // A recognizer that keeps failing would otherwise restart in a tight loop: hands-free stops instead.
-            if handsFree { setHandsFree(false) } else { afterTurn() }
+            // One hiccup must not end a conversation in the middle of a scan: hands-free listens again after a
+            // moment. A recognizer that keeps failing would loop, so after three in a row hands-free stops and says why.
+            recognizerErrors += 1
+            if handsFree && recognizerErrors < 3 {
+                pipe.input = nil
+                input = nil
+                Task {
+                    try? await Task.sleep(for: .seconds(1))
+                    if handsFree, input == nil { await listen(open: true) }
+                }
+            } else {
+                message = text
+                recognizerErrors = 0
+                if handsFree { setHandsFree(false) } else { afterTurn() }
+            }
         }
     }
 
@@ -417,6 +433,7 @@ final class VoiceCoordinator: ObservableObject {
         let format = inputNode.outputFormat(forBus: 0)
         pipe.prepare(from: format)
         pipe.wake = wakeOn ? wakeDetector : nil
+        pipe.onLevel = { [weak self] value in Task { @MainActor in self?.level = value } }
         pipe.onWake = { [weak self] in
             Task { @MainActor in
                 guard let self, self.state == .idle else { return }
@@ -434,6 +451,7 @@ final class VoiceCoordinator: ObservableObject {
         guard !wakeOn, engine.isRunning else { return }   // "Hey Leah" keeps the engine listening while it is on
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        level = 0
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
@@ -448,15 +466,30 @@ nonisolated final class AudioPipe: @unchecked Sendable {
     private var _input: SpeechInput?
     private var _wake: WakeWordDetector?
     var onWake: (() -> Void)?
+    var onLevel: ((Float) -> Void)?
+    private var levelFrames: AVAudioFrameCount = 0
 
     var input: SpeechInput? { get { lock.withLock { _input } } set { lock.withLock { _input = newValue } } }
     var wake: WakeWordDetector? { get { lock.withLock { _wake } } set { lock.withLock { _wake = newValue } } }
 
     func prepare(from format: AVAudioFormat) { converter = AVAudioConverter(from: format, to: target) }
 
+    /// RMS of the first channel, mapped from -50...0 dB to 0...1, at most every 100 ms.
+    private func reportLevel(_ buffer: AVAudioPCMBuffer) {
+        levelFrames += buffer.frameLength
+        guard levelFrames >= AVAudioFrameCount(buffer.format.sampleRate / 10), let onLevel,
+              let samples = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+        levelFrames = 0
+        var sum: Float = 0
+        for i in 0..<Int(buffer.frameLength) { sum += samples[i] * samples[i] }
+        let db = 10 * log10(max(sum / Float(buffer.frameLength), 1e-10))
+        onLevel(min(1, max(0, (db + 50) / 50)))
+    }
+
     func push(_ buffer: AVAudioPCMBuffer) {
         let input = self.input
         input?.feed(native: buffer)
+        reportLevel(buffer)
         guard let converter else { return }
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16_000 / buffer.format.sampleRate) + 32
         guard let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }

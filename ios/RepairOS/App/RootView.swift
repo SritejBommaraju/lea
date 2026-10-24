@@ -85,7 +85,7 @@ struct RootView: View {
             .fullScreenCover(isPresented: $showVoiceMode, onDismiss: afterVoiceMode) {
                 VoiceModeView(voice: voice, scanOffered: scanOffered, startScan: { scanFromVoice() }, close: { showVoiceMode = false })
             }
-            .alert("Lea", isPresented: Binding(get: { voice.message != nil }, set: { if !$0 { voice.message = nil } })) {
+            .alert("Lea", isPresented: Binding(get: { voice.message != nil && active == nil && !showVoiceMode }, set: { if !$0 { voice.message = nil } })) {
                 Button("OK") { voice.message = nil }
             } message: { Text(voice.message ?? "") }
             .alert("Can't start", isPresented: .constant(error != nil)) {

@@ -31,6 +31,11 @@ struct VoiceModeView: View {
                 VoiceOrb(state: voice.state).frame(width: 72, height: 72).accessibilityHidden(true)
                 conversation
             }
+            if let problem = voice.message {
+                // Voice mode covers the home screen's alert, so Lea's problems show here.
+                Text(problem).font(.footnote).foregroundStyle(Palette.caution).multilineTextAlignment(.center)
+                    .onTapGesture { voice.message = nil }
+            }
             if scanOffered {
                 Button(action: startScan) { Label("Scan it", systemImage: Symbol.scan) }
                     .buttonStyle(.primary)
