@@ -139,13 +139,13 @@ tasks:
     human: [test_products]
     done_when: "People new to the app go from scan to report without help; what they hit is fixed or filed"
   - id: A8
-    title: "StandardCyborg evaluation: LiDAR depth into StandardCyborgFusion for live drift correction; optional TrueDepth small-object mode"
+    title: "No-LiDAR mode for any ARKit iPhone: world-tracking poses + guided stills; backend geometry when needed"
     stream: app
     phase: 1
     depends_on: [A2]
-    owns: [ios/RepairOS/Capture/StandardCyborg/**]
+    owns: [ios/RepairOS/Capture/NoLidar/**]
     human: [iphone, test_products]
-    done_when: "Measured against A2 on the same real objects; the better one is kept; licence check passes"
+    done_when: "On a non-LiDAR iPhone a real object goes from scan to report; the report states what it cannot claim without depth"
 
   # ---------------------------------------------------------------- Modeling + benchmark
   - id: M1

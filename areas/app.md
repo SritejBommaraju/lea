@@ -41,7 +41,7 @@ can come from Stray Scanner (MIT) exports (B12).
 | A5 | Report screen | A4, B11 |
 | A6 | Optional meter reading entry | A5 |
 | A7 | First-run usability pass | A5 |
-| A8 | StandardCyborg evaluation: LiDAR depth into its fusion for live drift correction; optional TrueDepth small-object mode | A2 |
+| A8 | No-LiDAR mode for any ARKit iPhone (posed stills; backend geometry when needed) | A2 |
 
 "Done when" for each: [PLAN.md](../PLAN.md) §7. Milestones MS2 and MS3 are this stream's.
 **Setup (doctor items).** `dev_tools`, `xcode`, `iphone`, `apple_signing`, `test_products`; `multimeter` for A6.

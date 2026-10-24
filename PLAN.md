@@ -124,7 +124,7 @@ and Apple samples. Never `arkit-3dgs-scanner` (non-commercial), `record3d` (LGPL
 | A5 | Report screen (live via SSE) | `ios/RepairOS/Report/**` | Renders verdict, findings with crops and confidence words, `not_inspected`, `insufficient_evidence` reasons; never shows a probability number | A4, B11 |
 | A6 | Optional meter reading entry | `ios/RepairOS/Meter/**` | Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out | A5 |
 | A7 | First-run usability pass | `ios/RepairOS/**` (fixes) | People new to the app go from scan to report without help; what they hit is fixed or filed | A5 |
-| A8 | StandardCyborg evaluation ([StandardCyborgCocoa](https://github.com/StandardCyborg/StandardCyborgCocoa), MIT): (a) feed LiDAR `sceneDepth` frames into StandardCyborgFusion's real-time fusion and ICP as A2's on-phone drift correction; (b) optional close-range TrueDepth mode for small objects turned in front of the front camera | `ios/RepairOS/Capture/StandardCyborg/**` | Measured against A2 on the same real objects (drift, geometry detail); keep what wins; licence check passes (Fusion code under the README's MIT grant; Eigen and SparseICP MPL-2.0, unmodified) | A2 |
+| A8 | No-LiDAR mode for any ARKit iPhone: world-tracking poses + guided stills without `sceneDepth` (the NeRFCapture pattern, MIT); geometry and scale from the backend (photo reconstruction or monocular depth) when needed; the scan package records its depth source | `ios/RepairOS/Capture/**` | On a non-LiDAR iPhone, a real object goes from scan to report; the report states what it cannot claim without depth (e.g. sizes) | A2 |
 
 ### Modeling + benchmark
 
@@ -199,12 +199,11 @@ Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-
 | 2026-10-24 | Jev is required: no deterministic fusion fallback. A meter reading still wins in code. | Owner |
 | 2026-10-24 | One laptop: SQLite state, local blobs. | Owner |
 | 2026-10-24 | A trained defect classifier is planned; it is selected only when it beats the baseline (MS5). | Owner |
-| 2026-10-24 | Capture base: our own ARKit pipeline, not `ObjectCaptureSession`; Apple Sample Code License allowlisted. | Owner, capture research |
+| 2026-10-24 | Capture base: fork [Stray Scanner](https://github.com/strayrobots/scanner) (MIT; App Store app; raw RGB-D video with depth, confidence, ARKit poses, intrinsics, distortion), then add a live mesh overlay, coverage, coaching, guided stills and upload. Borrow the no-LiDAR posed-image path from [NeRFCapture](https://github.com/jc211/NeRFCapture) (MIT), mesh preview from [SwiftUI-LiDAR](https://github.com/cedanmisquith/SwiftUI-LiDAR) (MIT), the PLY writer from [lidar-scanner-ios](https://github.com/Dominik-Hagmann/lidar-scanner-ios) (MIT). Not `ObjectCaptureSession`. LiDAR is used when present, never required. Apple Sample Code License allowlisted. | Owner, repo check |
 | 2026-10-24 | Drift: correct on the phone in real time first; backend pose-graph loop closure (B13) is acceptable if that is not good enough. | Owner |
 | 2026-10-24 | Stills: 12 MP is the base; default to 48 MP when the device and iOS allow it in the AR session (probed at startup); ask the user only on a trade-off. | Owner |
 | 2026-10-24 | Scan time: as fast as possible; more time only where quality needs it, with the target set from measurements. | Owner |
 | 2026-10-24 | Closed scanner apps (e.g. Polycam) are not used: their terms forbid integration and ML training without written consent. Imports come only from apps whose terms allow it (Stray Scanner, MIT). | Owner, terms check |
-| 2026-10-24 | StandardCyborg (MIT): not a wholesale switch, because it scans with the front TrueDepth camera only (no rear LiDAR). It is evaluated as the on-phone fusion and drift-correction engine fed with LiDAR depth, and as a close-range small-object mode (A8). | Owner, repo check |
 | 2026-10-24 | This file replaces the old build and spec documents. | Owner |
 
 ## 11. Open questions
@@ -212,7 +211,6 @@ Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-
 | Question | Owner |
 |---|---|
 | Who runs the App and the Modeling + benchmark streams? | Owner |
-| If A8 adopts StandardCyborgFusion: allow its MPL-2.0 dependencies (Eigen, SparseICP; used unmodified) in the app? | Owner |
 | Should close-up targets come from an on-device detector in Phase 1, and for which classes (connector, chip, wire, damage, label)? | App + Modeling |
 | OCR on the phone (Apple Vision) or on backend crops? Decide by M5 numbers. | Modeling |
 | Where and on what budget does the classifier train (M7)? | Owner |
