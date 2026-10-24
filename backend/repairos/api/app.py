@@ -607,6 +607,11 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             view["progress"] = {k: v for k, v in run["progress"].items() if k != "at"}
         if ((run or {}).get("fix") or {}).get("status"):
             view["fix_status"] = run["fix"]["status"]   # searching | done | none | timeout | failed | stale
+        for key in ("recreation", "splat"):              # the photo-real tier: status, size, timings, why not
+            rec = (run or {}).get(key) or {}
+            if rec.get("status"):
+                view[key] = {k: rec[k] for k in ("status", "kind", "rev", "format", "bytes", "seconds", "stats",
+                                                 "reason", "rebuild_error") if rec.get(k) is not None}
         row = await store(request).get(REPORT_KIND, f"rep_{scan_id}")
         status = (run or {}).get("status")
         if row is None:

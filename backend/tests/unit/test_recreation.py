@@ -383,3 +383,19 @@ def test_splat_route_and_live_event_name_the_mesh_fallback(gw):  # noqa: F811
                         "url": f"/v1/scans/{scan_id}/recreation?kind=splat&rev=1", "bytes": len(sp),
                         "fallback_url": f"/v1/scans/{scan_id}/recreation?rev=3", "fallback_kind": "textured_mesh",
                         "fallback_rev": 3}
+
+
+def test_requeue_upload_names_every_blob_once():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("requeue_scan", Path(__file__).resolve().parents[3] / "tools" /
+                                                  "requeue_scan.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    a, b, c = (f"blob://sha256:{ch * 64}" for ch in "abc")
+    scan = {"scan_id": "scan_1", "points_file": a, "keyframes": [{"keyframe_id": "kf_0", "image_file": b,
+                                                                   "depth_file": c}]}
+    stills = [{"still_id": "scan_1_s1", "image_file": b, "depth_file": a}]
+    assert mod.blob_refs(scan, stills) == [a, b, c]
+    pkg, copies = mod._copy(scan, stills, "scan_2", "sess_new")
+    assert pkg["session_id"] == copies[0]["session_id"] == "sess_new" and copies[0]["still_id"] == "scan_2_s1"
