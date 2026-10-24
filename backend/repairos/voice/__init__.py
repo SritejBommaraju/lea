@@ -106,7 +106,7 @@ def cartesia_token(seconds: int = 300) -> dict[str, Any]:
     """A short-lived Cartesia token for the phone's speech (STT and TTS). Raises MissingSettingError when not set up."""
     s = get_settings()
     key = s.require("CARTESIA_API_KEY", "voice")
-    voice = s.require("CARTESIA_VOICE_ID", "voice")
+    voice = s.cartesia_voice_id
     version = s.cartesia_version
     req = urllib.request.Request("https://api.cartesia.ai/access-token", method="POST",
                                  data=json.dumps({"grants": {"stt": True, "tts": True}, "expires_in": seconds}).encode(),

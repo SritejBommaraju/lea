@@ -18,7 +18,7 @@ from repairos.config import Settings  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def no_keys(monkeypatch):
-    keyless = lambda: Settings(_env_file=None, anthropic_api_key=None, cartesia_api_key=None, cartesia_voice_id=None)  # noqa: E731
+    keyless = lambda: Settings(_env_file=None, anthropic_api_key=None, cartesia_api_key=None)  # noqa: E731
     monkeypatch.setattr(gateway, "get_settings", keyless)
     monkeypatch.setattr(voice, "get_settings", keyless)
 

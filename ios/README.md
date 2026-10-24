@@ -31,7 +31,7 @@ after (`xcrun simctl shutdown all`).
 
 Hold the mic in the bar above **Start scan**, or turn on **Hands-free** and just talk (you can interrupt Lea). Speech is
 recognised on the iPhone (Apple, on-device where supported); spoken replies use the system voice, or Cartesia when the
-backend has `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` (the phone gets a short-lived token from `POST /v1/voice/token`).
+backend has `CARTESIA_API_KEY` (and optionally `CARTESIA_VOICE_ID`; the phone gets a short-lived token from `POST /v1/voice/token`).
 Each final turn goes to `POST /v1/voice/turns`, where Claude (the backend's `ANTHROPIC_API_KEY`) answers over the
 session's scans, findings and suspects. Lea can start a scan or open a report when asked.
 "Hey Leah" appears once a `HeyLeah.mlmodel` (Create ML sound classifier) is added to the app. Code: `RepairOS/Voice/`,
