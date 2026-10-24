@@ -39,6 +39,7 @@ from repairos.contracts import validate
 from repairos.fusion.state import vlm_part_class
 from repairos.pipeline import locate_iface
 from repairos.pipeline.config import load_pipeline_config
+from repairos.pipeline.stopping import WorkerStopping, is_stopping  # noqa: F401 (WorkerStopping re-exported)
 from repairos.report import build_report, honesty_violations, report_id_for, write_summary
 from repairos.sessions.layout import EXT_BY_TYPE, ext_for, map_files
 from repairos.slots.blob import REF_PREFIX
@@ -57,10 +58,6 @@ DETECTIONS_KEPT = 256    # detector answers kept in memory per worker (by blob),
 
 class PipelineError(RuntimeError):
     """A pipeline precondition is not met (configuration, missing object). Raised inside a stage."""
-
-
-class WorkerStopping(RuntimeError):
-    """The worker is shutting down: inspection stops before its next detector or model call."""
 
 
 class PipelineFailed(RuntimeError):
@@ -457,11 +454,25 @@ async def _write_still(ctx: Context, scan: dict, still_id: str, stage: dict) -> 
         ctx.held.discard((scan["scan_id"], still_id))
 
 
+async def _release_mine(ctx: Context, scan: dict, still_id: str) -> None:
+    """Give this worker's claim on a still back (pending), only if it is still this worker's (owner-checked)."""
+    try:
+        await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.release_still",
+                                   {"still_id": still_id, "worker": ctx.worker})
+    except AlreadyClaimed:
+        pass
+    finally:
+        ctx.held.discard((scan["scan_id"], still_id))
+
+
 async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) -> dict:
     still_id = still["still_id"]
     try:
         stage = await _inspect_one(ctx, scan, still, covered)
     except Exception as e:
+        if is_stopping(e):   # shutting down: release, never fail (pipeline/stopping.py)
+            await _release_mine(ctx, scan, still_id)
+            raise WorkerStopping(f"still {still_id} released: the worker is stopping") from e
         msg = f"{type(e).__name__}: {e}"
         await _write_still(ctx, scan, still_id, {"status": "failed", "error": msg[:2000], "finished_at": _now()})
         raise
@@ -618,6 +629,12 @@ async def _inspect_all(ctx: Context, scan: dict, stills: list[dict]) -> dict[str
             return sid, await inspect_still_stage(ctx, sid)   # labels, skipped, and stills claimed during the scan
 
     results = await asyncio.gather(*(one(sid) for sid in mine + others), return_exceptions=True)
+    stopped = [r for r in results if isinstance(r, BaseException) and is_stopping(r)]
+    if stopped:   # shutting down: the run is not failed; its job goes back to the queue
+        for sid in mine:
+            if (scan["scan_id"], sid) in ctx.held:
+                await _release_mine(ctx, scan, sid)
+        raise WorkerStopping(f"scan {scan['scan_id']}: inspection stopped, the worker is stopping") from stopped[0]
     for sid, r in zip(mine + others, results):
         if isinstance(r, BaseException):
             raise await _fail(ctx, scan, "inspect", r, sid) from r

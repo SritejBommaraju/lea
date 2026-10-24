@@ -32,6 +32,7 @@ from typing import Any
 
 from repairos.pipeline.run import (Context, PipelineFailed, close_abandoned, inspect_still_stage, record_capture,
                                    release_claims, run_scan)
+from repairos.pipeline.stopping import is_stopping
 from repairos.slots.state import Job
 
 KINDS = ["detect", "ocr", "pipeline"]
@@ -101,6 +102,10 @@ class Worker:
         try:
             result = await handle(self.ctx, job)
         except Exception as e:
+            if is_stopping(e):   # shutting down: the job goes back to the queue untried, never failed
+                await self.state.release(job.job_id)
+                log.info("job %s (%s) released: the worker is stopping", job.job_id, job.kind)
+                return await self.state.get_job(job.job_id)
             retry = transient(e)
             log.error("job %s (%s) failed%s: %s", job.job_id, job.kind, ", will retry" if retry else "", e)
             await self.state.fail(job.job_id, f"{type(e).__name__}: {e}"[:4000], retry=retry)

@@ -278,8 +278,9 @@ class SqliteState:
           pipeline.beat_still    {still_id, worker, at}: refresh heartbeat_at of `worker`'s running claim;
           pipeline.finish_still  {still_id, worker, stage}: write the still's result, only while `worker` still
                                  holds the running claim (a released or taken-over claim is never written over);
-          pipeline.release_still {still_id, expect}: back to pending (the entry removed), only if the claim is
-                                 still exactly `expect`."""
+          pipeline.release_still {still_id, expect | worker}: back to pending (the entry removed), only if the
+                                 claim is still exactly `expect`, or (with `worker`) still that worker's running
+                                 claim."""
         prev = self._get(c, "pipeline-run", id)
         base = prev.data if prev else {"run_id": id, "scan_id": p.get("scan_id"), "session_id": p.get("session_id"),
                                        "status": "inspecting", "attempt": 0, "stages": {}, "stills": {}}
@@ -316,7 +317,7 @@ class SqliteState:
                     refuse()
                 data = _merge(base, {"stills": {sid: p["stage"]}})
             elif action == "pipeline.release_still":
-                if not same(p.get("expect") or {}):
+                if not (same(p["expect"]) if "expect" in p else owned):
                     refuse()
                 data = _merge(base, {"stills": {sid: None}})
             else:

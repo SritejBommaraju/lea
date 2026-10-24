@@ -225,3 +225,83 @@ def test_claims_beat_in_every_mode_not_only_run_forever(env, tmp_path, monkeypat
     jobs = run(w.drain())
     assert [j.status for j in jobs] == ["done"]
     assert _stills(state, scan)["s_label"].get("heartbeat_at")      # beaten while held, without run_forever
+
+
+# ----------------------------------------- Greptile round 3: stopping is "release, not fail" (WorkerStopping)
+def _stop_aware_inspection(R, monkeypatch, ignore_stop: bool = False, error: Exception | None = None):
+    """Replace only the per-still inspection body: it waits for the worker's stop flag and then runs the real
+    inspect_still, whose real stop check raises WorkerStopping (no model is reached: the judge is a bare object).
+    `ignore_stop`: a model call still in flight past the grace period. `error`: a real inspection error."""
+    from PIL import Image
+
+    from repairos.slots.detector import Detection
+    from repairos.vision.inspect import inspect_still
+
+    async def inspect_one(ctx, scan, still, covered=None):
+        if error is not None:
+            raise error
+        while not ctx.stopping.is_set():
+            await asyncio.sleep(0.02)
+        if ignore_stop:
+            await asyncio.sleep(3600)
+        await asyncio.to_thread(inspect_still, Image.new("RGB", (400, 300)), still_id=still["still_id"],
+                                scan_id=scan["scan_id"], detector=object(), judge=object(), classifier=False,
+                                detections=[Detection(box=(10, 10, 60, 60), label="connector", score=0.5)],
+                                stop=ctx.stopping)
+    monkeypatch.setattr(R, "_inspect_one", inspect_one)
+
+
+def _serve_until_claimed_then_sigterm(state, scan, w, grace_s):
+    async def go():
+        server = asyncio.create_task(W.serve(w, grace_s=grace_s))
+        for _ in range(500):
+            row = await state.get("pipeline-run", run_id_for(scan["scan_id"]))
+            if row and (row.data.get("stills") or {}).get("s_label", {}).get("status") == "running":
+                break
+            await asyncio.sleep(0.02)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(server, 20)
+    run(go())
+
+
+@pytest.mark.parametrize("within_grace", [True, False])
+def test_stopping_mid_inspection_releases_and_never_fails(env, monkeypatch, within_grace):  # noqa: F811
+    from repairos.pipeline import run as R
+
+    state, blobs, scan = env
+    _stop_aware_inspection(R, monkeypatch, ignore_stop=not within_grace)
+    run(state.enqueue(Job(kind="ocr", job_id="job_stop", inputs={"kind": "still", "id": "s_label"})))
+    w = W.Worker(state, blobs, name=f"{socket.gethostname()}:{os.getpid()}", jobs_at_once=1, poll_s=0.02)
+    _serve_until_claimed_then_sigterm(state, scan, w, grace_s=5.0 if within_grace else 0.2)
+    stills = _stills(state, scan)
+    assert "s_label" not in stills                                  # pending, never "failed"
+    job = run(state.get_job("job_stop"))
+    assert job.status == "queued" and job.attempts == 0 and job.worker is None and not job.error
+    if not within_grace:                                            # cancelled: released and queued again
+        assert _queued_for(state, "s_label")
+
+
+def test_a_real_inspection_error_still_fails(env, monkeypatch):  # noqa: F811
+    from repairos.pipeline import run as R
+
+    state, blobs, scan = env
+    _stop_aware_inspection(R, monkeypatch, error=ValueError("a real bug"))
+    run(state.enqueue(Job(kind="ocr", job_id="job_bug", inputs={"kind": "still", "id": "s_label"})))
+    jobs = run(W.Worker(state, blobs, name="w").drain())
+    assert [j.status for j in jobs] == ["failed"] and "a real bug" in jobs[0].error
+    st = _stills(state, scan)["s_label"]
+    assert st["status"] == "failed" and "a real bug" in st["error"]
+
+
+def test_the_stop_signal_has_one_import_path():
+    from repairos.pipeline.run import WorkerStopping as from_run
+    from repairos.pipeline.stopping import WorkerStopping, is_stopping
+
+    assert from_run is WorkerStopping
+    try:
+        try:
+            raise WorkerStopping("stop")
+        except WorkerStopping as e:
+            raise RuntimeError("wrapped") from e
+    except RuntimeError as wrapped:
+        assert is_stopping(wrapped) and not is_stopping(ValueError("x"))

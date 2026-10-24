@@ -592,7 +592,9 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         d = dets[i]
         try:
             if stop is not None and stop.is_set():
-                raise RuntimeError("the worker is stopping: no further vision-model call")
+                from repairos.pipeline.stopping import WorkerStopping
+
+                raise WorkerStopping("the worker is stopping: no further vision-model call")
             ctx = outline(context_base, d.box, context_base.width / im.width) if context_base is not None else None
             state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
                                        family=crop_family(d.label, d.score, abstained(i)))
