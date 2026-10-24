@@ -314,6 +314,8 @@ def regions_for(findings: list[dict], detections: list[dict], whole: str,
     VLM's generic name for what it looked at (detector labels are often wrong, e.g. a damage prompt on an intact
     part); a region no VLM looked at keeps the detector's label from the generic vocabulary, or `unknown_part` when
     that label was a weak match (vision.inspect.region_part_class)."""
+    from repairos.vision.inspect import TILE_REF   # close tiles (vision.inspect): judged by the VLM, no detector box
+
     labels = {d["index"]: d.get("part_class") or d["label"] for d in detections}
     out = {}
     rollups = rollups or {}
@@ -326,9 +328,11 @@ def regions_for(findings: list[dict], detections: list[dict], whole: str,
         idx = _det_index(f["subject"]["ref"])
         if idx is not None and idx not in labels:
             raise PipelineError(f"finding {f['finding_id']} names detection {idx}, which the detector did not return")
-        looked = f["state"] != "not_inspected" and idx is not None
+        tile = f["subject"]["ref"].rpartition("/")[2].startswith(TILE_REF)
+        looked = f["state"] != "not_inspected" and (idx is not None or tile)
         part = (vlm_part_class(f) if looked else None) or (labels[idx] if idx is not None else whole)
-        out[f["finding_id"]] = {"part_class": part, "inspected_by": ["detector", "vlm"] if looked else ["detector"]}
+        out[f["finding_id"]] = {"part_class": part, "inspected_by": (["vlm"] if tile else ["detector", "vlm"])
+                                if looked else ["detector"]}
     return out
 
 
@@ -349,6 +353,7 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict
                   ) -> tuple[list[dict], list[dict], str, str, dict, dict]:
     from repairos.vision.crops import load_still
     from repairos.vision.inspect import inspect_still
+    from repairos.vision.scale import PixelScale
 
     detector, judge = ctx.slot("DET"), ctx.slot("VLM")
     t0 = time.perf_counter()
@@ -356,11 +361,13 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict
     t1 = time.perf_counter()
     dets, cached = ctx.detections_for(scan_id, still["image_file"], im)
     t2 = time.perf_counter()
-    share = ctx.share(scan_id).for_still(still, ctx.depth(scan_id, still))
+    depth = ctx.depth(scan_id, still)
+    share = ctx.share(scan_id).for_still(still, depth)
     crop_dir = ctx.workdir(scan_id) / "crops" / still["still_id"]
     res = inspect_still(im, still_id=still["still_id"], scan_id=scan_id, detector=detector, judge=judge,
                         crop_dir=crop_dir, sharpness=still.get("sharpness"), detections=dets, pool=ctx.vlm_pool,
-                        share=share, max_crops=ctx.config["max_crops_per_still"], stop=ctx.stopping)
+                        share=share, max_crops=ctx.config["max_crops_per_still"], stop=ctx.stopping,
+                        scale=PixelScale.from_still(still, depth))
     timing = {"load_s": round(t1 - t0, 3), "detect_s": round(t2 - t1, 3), "detections_ready": cached,
               "vlm_s": round(res.timing.get("vlm_s", 0.0), 3), "vlm_calls": int(res.timing.get("vlm_calls", 0)),
               "reused_regions": int(res.timing.get("reused_regions", 0))}
