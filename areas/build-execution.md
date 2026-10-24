@@ -21,7 +21,7 @@ modeling slots. Produces `suspect`, `next-action` and the `report` (B9). No Grai
 | B9 | `report` contract | B2 |
 | B10 | Phase 1 pipeline orchestrator (no Grain) | B9 |
 | B11 | Report generation: verdict in code, plain words by Claude, route and SSE | B9, B10 |
-| B12 | Import fallback: Stray Scanner first; 3D Scanner App after a terms check; Polycam only with its written consent, never for training or benchmarking | B6 |
+| B12 | Import fallback: Stray Scanner first; 3D Scanner App after a terms check| B6 |
 | B13 | Backend pose-graph refinement with Open3D and OpenCV, only if on-phone drift correction falls short | B6 |
 | B14 | CI: `make check` on every PR | B1 |
 | B15 | Licence check against the L2 allowlist | B14 |

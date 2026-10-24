@@ -31,7 +31,7 @@ text, which the pipeline turns into `finding`s: always suspects, never proof (I1
 "Done when" for each: [PLAN.md](../PLAN.md) §7. Milestones MS4 (baseline) and MS5 (classifier) are this stream's.
 
 **Rules that bite here.** No target number before MS4 measures the baseline. Held-out products never reach
-tuning or training. Polycam captures are never used for training or benchmarking. Training data and weights pass the licence allowlist (L2). The classifier is selected in
+tuning or training. Captures from closed third-party apps are never used for training or benchmarking. Training data and weights pass the licence allowlist (L2). The classifier is selected in
 `config/providers.yaml` only after it beats the baseline on held-out products (MS5).
 
 **Setup (doctor items).** `dev_tools`, `anthropic_key`, `test_products`, `iphone`; `train_compute` for M7.

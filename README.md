@@ -13,7 +13,7 @@ milestones and every task.
 
 ## Phase 1 (now)
 
-- **iOS app**: Polycam-quality LiDAR scan on our own ARKit pipeline, guided full-resolution close-ups, resumable
+- **iOS app**: guided LiDAR scan with live coverage on our own ARKit pipeline, guided full-resolution close-ups, resumable
   upload, the report screen.
 - **Detection pipeline**: OWLv2 zero-shot detector (Grounding DINO as the alternative), full-resolution crops, a
   trained defect classifier (planned), Claude VLM for explanations and unclear cases, OCR for labels, Jev

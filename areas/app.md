@@ -1,6 +1,6 @@
 # App (stream `app`)
 
-**Who.** One person (the owner assigns); Rohan also builds iOS on his Mac. **Delivers.** The iPhone app: a Polycam-quality LiDAR scan of any object, guided full-resolution close-ups, a
+**Who.** One person (the owner assigns); Rohan also builds iOS on his Mac. **Delivers.** The iPhone app: a guided LiDAR scan of any object, guided full-resolution close-ups, a
 resumable upload to our gateway, the report screen and an optional meter-reading entry.
 
 **Owns.** `ios/RepairOS/**` and `ios/RepairOSTests/**`, except the generated `ios/RepairOS/Contracts/**`
@@ -28,7 +28,7 @@ Our own ARKit pipeline, not `ObjectCaptureSession`: it exposes no depth or poses
 - Never `arkit-3dgs-scanner` (non-commercial), the `record3d` library (LGPL), or GPL or unlicensed repos.
 
 If on-phone drift correction falls short, the backend refines poses (B13). If our capture underperforms, sessions
-can come from Stray Scanner (MIT) exports (B12). Polycam's terms need its written consent first.
+can come from Stray Scanner (MIT) exports (B12).
 
 ## Tasks, in order
 
@@ -41,6 +41,7 @@ can come from Stray Scanner (MIT) exports (B12). Polycam's terms need its writte
 | A5 | Report screen | A4, B11 |
 | A6 | Optional meter reading entry | A5 |
 | A7 | First-run usability pass | A5 |
+| A8 | StandardCyborg evaluation: LiDAR depth into its fusion for live drift correction; optional TrueDepth small-object mode | A2 |
 
 "Done when" for each: [PLAN.md](../PLAN.md) §7. Milestones MS2 and MS3 are this stream's.
 **Setup (doctor items).** `dev_tools`, `xcode`, `iphone`, `apple_signing`, `test_products`; `multimeter` for A6.

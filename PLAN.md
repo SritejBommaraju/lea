@@ -5,7 +5,7 @@ status: [build/STATUS.md](build/STATUS.md); streams: [areas/](areas/README.md).
 
 ## 1. The product
 
-1. Scan **any** hardware object with an iPhone's LiDAR, with Polycam-quality guidance.
+1. Scan **any** hardware object with an iPhone's LiDAR, with live coverage guidance and coaching.
 2. The app then guides you through full-resolution close-up photos of what matters.
 3. Our models find what a 3D scanner cannot: wiring faults, chip and board issues, breakage, defects, plus labels and markings (OCR).
 4. You get a **report**: "looks good" or "potential issues", each finding with its photo evidence and a confidence in words.
@@ -18,7 +18,7 @@ status: [build/STATUS.md](build/STATUS.md); streams: [areas/](areas/README.md).
 - Backend: gateway, state, blobs, recorded sessions and replay (built), the Phase 1 pipeline, report generation, pose refinement if on-phone drift correction falls short.
 - Detection: OWLv2 zero-shot detector (Grounding DINO swap-in), full-res crops, a trained defect classifier, Claude VLM for explanations and unclear cases, OCR, Jev judgments with decisions in code.
 - Benchmark: labelled real captures with held-out products; every target comes from its measurements.
-- Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after checking its terms; Polycam only with Polycam's written consent.
+- Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after checking its terms.
 
 **Out (Phase 1)**
 - Anything that calls Grain: reference designs, design alignment, Grain cross-check, expected electrical values, replacement parts, simulation checks, repair plans, shopping (Phase 2, §9).
@@ -124,6 +124,7 @@ and Apple samples. Never `arkit-3dgs-scanner` (non-commercial), `record3d` (LGPL
 | A5 | Report screen (live via SSE) | `ios/RepairOS/Report/**` | Renders verdict, findings with crops and confidence words, `not_inspected`, `insufficient_evidence` reasons; never shows a probability number | A4, B11 |
 | A6 | Optional meter reading entry | `ios/RepairOS/Meter/**` | Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out | A5 |
 | A7 | First-run usability pass | `ios/RepairOS/**` (fixes) | People new to the app go from scan to report without help; what they hit is fixed or filed | A5 |
+| A8 | StandardCyborg evaluation ([StandardCyborgCocoa](https://github.com/StandardCyborg/StandardCyborgCocoa), MIT): (a) feed LiDAR `sceneDepth` frames into StandardCyborgFusion's real-time fusion and ICP as A2's on-phone drift correction; (b) optional close-range TrueDepth mode for small objects turned in front of the front camera | `ios/RepairOS/Capture/StandardCyborg/**` | Measured against A2 on the same real objects (drift, geometry detail); keep what wins; licence check passes (Fusion code under the README's MIT grant; Eigen and SparseICP MPL-2.0, unmodified) | A2 |
 
 ### Modeling + benchmark
 
@@ -156,7 +157,7 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 | B9 | `report` contract: verdict (`looks_good`, `potential_issues`, `insufficient_evidence`), findings with crop refs and confidence words, `not_inspected` regions, reasons | `spec/contracts/report*`, generated code | `make contracts` and `make codegen-check` pass; invalid examples show an uninspected region cannot be `ok` and `insufficient_evidence` needs a reason | B2 |
 | B10 | Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report; no Grain | `pipeline/**`, `make run-workers` | MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default | B9 |
 | B11 | Report generation: code picks the verdict, Claude writes plain words from words only (S5); `GET /v1/scans/{id}/report` and an SSE event | `report/**`, report route in `api/app.py` | The report validates; the verdict rule is a tested truth table; A5 renders it | B9, B10 |
-| B12 | Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after its terms are checked; Polycam (`polyform` code is MIT, the service terms are not) only after Polycam's written consent | `tools/import_capture.py` | A real Stray Scanner export imports into a session that passes `make sessions-check`; no Polycam capture is ever used for training or benchmarking | B6 |
+| B12 | Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after its terms are checked | `tools/import_capture.py` | A real Stray Scanner export imports into a session that passes `make sessions-check`; no closed third-party app capture is used for training or benchmarking | B6 |
 | B13 | Backend pose-graph refinement (loop closure) with Open3D and OpenCV, seeded with ARKit poses, then re-fusion; used only if on-phone drift correction (A2) measures not good enough | `recon/**` | On recorded sessions, loop-closure residual and point-to-plane error are reported per session and are lower than with raw ARKit poses | B6 |
 | B14 | CI: `make check` on every PR | `.github/workflows/**` | Every PR shows the check; red blocks merge | B1 |
 | B15 | Licence check of dependencies and weights against the L2 allowlist | `tools/licence_check.py`, `licenses/weights.json` | Part of `make check`; fails on a disallowed licence | B14 |
@@ -202,7 +203,8 @@ Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-
 | 2026-10-24 | Drift: correct on the phone in real time first; backend pose-graph loop closure (B13) is acceptable if that is not good enough. | Owner |
 | 2026-10-24 | Stills: 12 MP is the base; default to 48 MP when the device and iOS allow it in the AR session (probed at startup); ask the user only on a trade-off. | Owner |
 | 2026-10-24 | Scan time: as fast as possible; more time only where quality needs it, with the target set from measurements. | Owner |
-| 2026-10-24 | Polycam's terms (§5.2, §5.4) need written consent to collect models via our app and forbid training ML models with the service: no Polycam import before consent, and never Polycam captures for training or benchmarking. Stray Scanner and our app are the capture sources. | Coordinator |
+| 2026-10-24 | Closed scanner apps (e.g. Polycam) are not used: their terms forbid integration and ML training without written consent. Imports come only from apps whose terms allow it (Stray Scanner, MIT). | Owner, terms check |
+| 2026-10-24 | StandardCyborg (MIT): not a wholesale switch, because it scans with the front TrueDepth camera only (no rear LiDAR). It is evaluated as the on-phone fusion and drift-correction engine fed with LiDAR depth, and as a close-range small-object mode (A8). | Owner, repo check |
 | 2026-10-24 | This file replaces the old build and spec documents. | Owner |
 
 ## 11. Open questions
@@ -210,7 +212,7 @@ Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-
 | Question | Owner |
 |---|---|
 | Who runs the App and the Modeling + benchmark streams? | Owner |
-| Ask Polycam for written consent for the import path. | Owner |
+| If A8 adopts StandardCyborgFusion: allow its MPL-2.0 dependencies (Eigen, SparseICP; used unmodified) in the app? | Owner |
 | Should close-up targets come from an on-device detector in Phase 1, and for which classes (connector, chip, wire, damage, label)? | App + Modeling |
 | OCR on the phone (Apple Vision) or on backend crops? Decide by M5 numbers. | Modeling |
 | Where and on what budget does the classifier train (M7)? | Owner |
