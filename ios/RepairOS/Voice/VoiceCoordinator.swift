@@ -260,7 +260,11 @@ final class VoiceCoordinator: ObservableObject {
     private func makeInput() async throws -> SpeechInput {
         if !cartesiaUnavailable, let grant = await cartesiaGrant() {
             listenerName = "Cartesia Ink 2"
-            if state == .idle || state == .listening { output = CartesiaVoiceOutput(grant: grant, engine: engine, player: player) }
+            if state == .idle || state == .listening {
+                output = CartesiaVoiceOutput(grant: grant, engine: engine, player: player) { [weak self] why in
+                    self?.cartesiaVoiceFailed(why)
+                }
+            }
             return CartesiaSpeechInput(grant: grant)
         }
         guard await AppleSpeechInput.authorize() else {
@@ -270,6 +274,14 @@ final class VoiceCoordinator: ObservableObject {
         listenerName = apple.name
         if !(output is SystemVoiceOutput), state == .idle || state == .listening { output = SystemVoiceOutput() }
         return apple
+    }
+
+    /// Cartesia's voice failed mid-answer: say so, finish this answer in the iPhone voice, and fetch a fresh token for
+    /// the next turn (a refused token would fail the same way again).
+    private func cartesiaVoiceFailed(_ why: String) {
+        message = "Lea's voice dropped (\(why)), so the iPhone voice is finishing the answer."
+        grant = nil
+        output = SystemVoiceOutput()
     }
 
     /// One Cartesia token serves every turn until shortly before it expires, so a turn doesn't wait for a fetch.
@@ -381,7 +393,7 @@ final class VoiceCoordinator: ObservableObject {
         var answer: VoiceReply?
         var settled = false
         for n in 0..<3 {
-            if let r = await first(reply, within: TurnTaking.fillQuiet(n)) { answer = r ?? nil; settled = true; break }
+            if let r = await firstWithin(reply, seconds: TurnTaking.fillQuiet(n)) { answer = r ?? nil; settled = true; break }
             if let f = TurnTaking.filler(after: fillers, n: n) { fillers.append(f); await say(f) }
             guard mine == turn else { return }
         }
@@ -398,17 +410,6 @@ final class VoiceCoordinator: ObservableObject {
 
     private static func newID(_ prefix: String) -> String {
         "\(prefix)_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
-    }
-
-    /// `.some(value)` if the task finishes within `seconds`, else nil (the task keeps running).
-    private func first<T: Sendable>(_ task: Task<T, Never>, within seconds: Double) async -> T?? {
-        await withTaskGroup(of: T??.self) { group in
-            group.addTask { .some(await task.value) }
-            group.addTask { try? await Task.sleep(for: .seconds(seconds)); return nil }
-            let r = await group.next() ?? nil
-            group.cancelAll()
-            return r
-        }
     }
 
     // MARK: Speaking
@@ -543,5 +544,29 @@ nonisolated final class AudioPipe: @unchecked Sendable {
             if input == nil, let wake, wake.process(chunk) { onWake?() }
             input?.feed(pcm16k: chunk.withUnsafeBufferPointer { Data(buffer: $0) })
         }
+    }
+}
+
+/// `.some(value)` if the task finishes within `seconds`, else nil (the task keeps running). Returns as soon as either
+/// side wins: a task group would wait for its losing child, and a child awaiting `task.value` can't be cancelled, so a
+/// slow reply would hold back the thinking sounds.
+func firstWithin<T: Sendable>(_ task: Task<T, Never>, seconds: Double) async -> T?? {
+    await withCheckedContinuation { (continuation: CheckedContinuation<T??, Never>) in
+        let once = ResumeOnce(continuation)
+        Task { once.resume(.some(await task.value)) }
+        Task { try? await Task.sleep(for: .seconds(seconds)); once.resume(nil) }
+    }
+}
+
+/// Resumes a continuation with whichever value arrives first; later values are dropped.
+nonisolated final class ResumeOnce<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<T, Never>?
+
+    init(_ continuation: CheckedContinuation<T, Never>) { self.continuation = continuation }
+
+    func resume(_ value: T) {
+        let c: CheckedContinuation<T, Never>? = lock.withLock { defer { continuation = nil }; return continuation }
+        c?.resume(returning: value)
     }
 }

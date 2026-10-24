@@ -53,6 +53,17 @@ struct VoiceTests {
         #expect(!T.dropAsEcho("can you scan it", spoken: spoken, fromMic: false, overPlayback: true))   // typed
     }
 
+    /// The thinking sounds depend on this: a slow reply must not hold the timer back.
+    @Test func aSlowReplyLosesTheRaceAtOnce() async {
+        let slow = Task { () -> Int in try? await Task.sleep(for: .seconds(5)); return 1 }
+        let start = ContinuousClock.now
+        let r = await firstWithin(slow, seconds: 0.1)
+        #expect(r == nil)
+        #expect(ContinuousClock.now - start < .seconds(1))
+        slow.cancel()
+        #expect(await firstWithin(Task { 7 }, seconds: 2) == .some(7))
+    }
+
     @Test func gatewayRepliesDecode() throws {
         let json = #"{"id":"t1","reply":"Opening a new scan.","actions":[{"type":"scan","symptom":"stops after a minute"},{"type":"report","scan_id":"scan_1"}]}"#
         let r = try JSONDecoder().decode(VoiceReply.self, from: Data(json.utf8))
