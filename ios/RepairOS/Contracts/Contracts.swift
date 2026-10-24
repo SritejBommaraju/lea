@@ -1503,6 +1503,8 @@ public enum Action: String, Codable, Sendable {
 }
 
 /// A word: low, medium or high. Never compared with /look's numeric confidence.
+///
+/// The locator's own word (uncalibrated, I6).
 public enum ConfidenceEnum: String, Codable, Sendable {
     case high = "high"
     case low = "low"
@@ -3163,7 +3165,7 @@ public struct RepairPlan: Codable, Sendable {
 public struct Confirm: Codable, Sendable {
     /// e.g. 'J1 reads continuity on NET_A; the load comes back on'.
     public let expected: String?
-    public let method: Method
+    public let method: ConfirmMethod
     public let rerunReadingIDS: [String]?
 
     public enum CodingKeys: String, CodingKey {
@@ -3172,14 +3174,14 @@ public struct Confirm: Codable, Sendable {
         case rerunReadingIDS = "rerun_reading_ids"
     }
 
-    public init(expected: String?, method: Method, rerunReadingIDS: [String]?) {
+    public init(expected: String?, method: ConfirmMethod, rerunReadingIDS: [String]?) {
         self.expected = expected
         self.method = method
         self.rerunReadingIDS = rerunReadingIDS
     }
 }
 
-public enum Method: String, Codable, Sendable {
+public enum ConfirmMethod: String, Codable, Sendable {
     case both = "both"
     case rerunReading = "rerun_reading"
     case rescan = "rescan"
@@ -3706,30 +3708,49 @@ public enum JudgmentVerdict: String, Codable, Sendable {
 /// (repairos.locate). `not_computed` says why there is none; a location is never made up.
 // MARK: - Location
 public struct Location: Codable, Sendable {
-    /// Size of the region on the scan, axis-aligned in arkit_world, when known.
-    public let extentM: [Double]?
+    /// The locator's own word (uncalibrated, I6).
+    public let confidenceWord: ConfidenceEnum?
+    /// From the still's camera to point_m.
+    public let distanceM: Double?
     /// The scan's frame: metres, Y up.
     public let frame: LocationFrame?
-    /// Locator and version.
-    public let method: String?
+    public let method: LocationMethod?
+    /// Unit surface normal facing the camera (mesh ray cast only).
+    public let normal: [Double]?
+    /// The locator's reasons for its confidence word.
+    public let notes: [String]?
+    /// Where the box's centre lands on the scan.
     public let pointM: [Double]?
+    public let regionMaxM: [Double]?
+    /// Axis-aligned box of the region on the scan.
+    public let regionMinM: [Double]?
     public let status: LocationStatus
     public let reason: String?
 
     public enum CodingKeys: String, CodingKey {
-        case extentM = "extent_m"
+        case confidenceWord = "confidence_word"
+        case distanceM = "distance_m"
         case frame = "frame"
         case method = "method"
+        case normal = "normal"
+        case notes = "notes"
         case pointM = "point_m"
+        case regionMaxM = "region_max_m"
+        case regionMinM = "region_min_m"
         case status = "status"
         case reason = "reason"
     }
 
-    public init(extentM: [Double]?, frame: LocationFrame?, method: String?, pointM: [Double]?, status: LocationStatus, reason: String?) {
-        self.extentM = extentM
+    public init(confidenceWord: ConfidenceEnum?, distanceM: Double?, frame: LocationFrame?, method: LocationMethod?, normal: [Double]?, notes: [String]?, pointM: [Double]?, regionMaxM: [Double]?, regionMinM: [Double]?, status: LocationStatus, reason: String?) {
+        self.confidenceWord = confidenceWord
+        self.distanceM = distanceM
         self.frame = frame
         self.method = method
+        self.normal = normal
+        self.notes = notes
         self.pointM = pointM
+        self.regionMaxM = regionMaxM
+        self.regionMinM = regionMinM
         self.status = status
         self.reason = reason
     }
@@ -3737,6 +3758,12 @@ public struct Location: Codable, Sendable {
 
 public enum LocationFrame: String, Codable, Sendable {
     case arkitWorld = "arkit_world"
+}
+
+public enum LocationMethod: String, Codable, Sendable {
+    case rayCastMesh = "ray_cast_mesh"
+    case rayCastPointCloud = "ray_cast_point_cloud"
+    case triangulation = "triangulation"
 }
 
 public enum LocationStatus: String, Codable, Sendable {

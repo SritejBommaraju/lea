@@ -153,7 +153,7 @@ async def _scan(ctx: Context, scan_id: str) -> dict:
 def capture_facts(scan: dict) -> dict:
     kfs = scan.get("keyframes") or []
     return {"status": "done", "finished_at": _now(), "keyframes": len(kfs), "points": scan.get("point_count"),
-            "depth_source": "lidar" if any(k.get("depth_file") for k in kfs) else "none"}
+            "depth_source": locate_iface.depth_source(scan), "mesh": bool(scan.get("mesh_file"))}
 
 
 async def record_capture(ctx: Context, scan_id: str) -> dict:
@@ -367,7 +367,8 @@ async def run_scan(ctx: Context, scan_id: str) -> dict:
     # locate
     t0 = time.monotonic()
     try:
-        locations, locate_words = await locate_findings(ctx, scan, stills, findings)
+        regions = {fid: info for st in stages.values() for fid, info in (st.get("regions") or {}).items()}
+        locations, locate_words = await locate_findings(ctx, scan, stills, findings, regions)
     except Exception as e:
         raise await _fail(ctx, scan, "locate", e) from e
     computed = sum(1 for v in locations.values() if v["status"] == "computed")
@@ -379,7 +380,6 @@ async def run_scan(ctx: Context, scan_id: str) -> dict:
     t0 = time.monotonic()
     await _update(ctx, scan, {"stages": {"report": {"status": "running", "started_at": _now()}}})
     try:
-        regions = {fid: info for st in stages.values() for fid, info in (st.get("regions") or {}).items()}
         llm = ctx.slot("LLM")
         models = {
             "detector": _distinct([s.get("detector") for s in stages.values()], "not run (no still needed it)"),
@@ -407,14 +407,36 @@ async def run_scan(ctx: Context, scan_id: str) -> dict:
     return draft
 
 
-async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings: list[dict]
-                          ) -> tuple[dict[str, dict], str]:
-    """finding_id -> report location, for every finding with a region in a still; and the locator's words."""
+def _local_scan(ctx: Context, scan: dict) -> dict:
+    """The scan package with every file field (points, mesh, keyframes) as an absolute local path."""
+    sid = scan["scan_id"]
+    out = map_files("scan-package", scan, lambda v, _b: str(ctx.local_file(sid, v)))
+    if scan.get("mesh_file"):
+        out["mesh_file"] = str(ctx.local_file(sid, scan["mesh_file"]))
+    return out
+
+
+async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings: list[dict],
+                          regions: dict[str, dict]) -> tuple[dict[str, dict], str]:
+    """finding_id -> report location for every finding, and the locator's provenance words. A LiDAR scan
+    (depth_source lidar, also when absent) ray-casts each box with try_locate; a no-LiDAR scan triangulates across
+    stills of the same target (locate_iface.triangulation_views); otherwise the reason is recorded."""
     locator = ctx.locator
-    words = locator.version if locator else f"not available ({locate_iface.NOT_INSTALLED})"
+    lidar = locate_iface.depth_source(scan) == "lidar"
+    words = (f"{locator.version} ({'ray cast on the scan' if lidar else 'triangulation, no-LiDAR scan'})" if locator
+             else f"not available ({locate_iface.NOT_INSTALLED})")
     by_still = {s["still_id"]: s for s in stills}
     out: dict[str, dict] = {}
     scan_local = None
+    still_local: dict[str, dict] = {}
+    part_class = {fid: r["part_class"] for fid, r in regions.items()}
+
+    def local_still(sid: str) -> dict:
+        if sid not in still_local:
+            still_local[sid] = map_files("still", by_still[sid],
+                                         lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
+        return still_local[sid]
+
     for f in findings:
         refs = f.get("evidence_refs") or {}
         sid = (refs.get("still_ids") or [None])[0]
@@ -423,14 +445,14 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NOT_INSTALLED)
         elif not sid or sid not in by_still or not box:
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NO_BOX)
-        elif not locate_iface.pose_reliable(by_still[sid]):
-            out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NO_POSE)
-        else:
+        elif lidar:
             if scan_local is None:
-                scan_local = map_files("scan-package", scan,
-                                       lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
-            still_local = map_files("still", by_still[sid], lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
-            out[f["finding_id"]] = await asyncio.to_thread(locator, scan_local, still_local, tuple(box))
+                scan_local = await asyncio.to_thread(_local_scan, ctx, scan)
+            out[f["finding_id"]] = await asyncio.to_thread(locator.locate, scan_local, local_still(sid), tuple(box))
+        else:
+            views = locate_iface.triangulation_views(f, findings, by_still, part_class)
+            out[f["finding_id"]] = (await asyncio.to_thread(locator.triangulate, views) if views
+                                    else locate_iface.not_computed(locate_iface.NO_SECOND_VIEW))
     return out, words
 
 

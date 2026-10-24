@@ -81,7 +81,10 @@ def test_run_scan_live_without_photos(tmp_path, monkeypatch):
     validate("report", rep)
     assert rep["verdict"] == "insufficient_evidence" and rep["verdict_reason"]["code"] == "nothing_inspected"
     assert len(rep["not_inspected"]) == 2 and rep["findings"] == []
-    assert rep["models"]["jev"].startswith("jev-") and rep["models"]["locate"].startswith("not available")
+    assert rep["models"]["jev"].startswith("jev-")
+    assert rep["models"]["locate"].startswith(("not available", "repairos.locate"))   # before / after the merge
+    for e in rep["not_inspected"]:   # these stills have no box: never a location
+        assert e.get("location", {"status": "not_computed"})["status"] == "not_computed"
     findings = [r.data for r in asyncio.run(state.list("finding", scan_id=scan["scan_id"]))]
     assert honesty_violations(rep, findings) == []
     runrow = asyncio.run(state.get("pipeline-run", run_id_for(scan["scan_id"]))).data

@@ -160,6 +160,10 @@ class Subject(BaseModel):
     pins: list[str] | None = None
 
 
+class Vec3(RootModel[list[float]]):
+    root: list[float] = Field(..., max_length=3, min_length=3)
+
+
 class BoxPxItem(RootModel[int]):
     root: int = Field(..., ge=0)
 
@@ -198,8 +202,20 @@ class Photo(BaseModel):
     crop_ref: str | None = None
 
 
-class ExtentMItem(RootModel[float]):
-    root: float = Field(..., ge=0.0)
+class ConfidenceWord(StrEnum):
+    """
+    The locator's own word (uncalibrated, I6).
+    """
+
+    low = 'low'
+    medium = 'medium'
+    high = 'high'
+
+
+class Method(StrEnum):
+    ray_cast_mesh = 'ray_cast_mesh'
+    ray_cast_point_cloud = 'ray_cast_point_cloud'
+    triangulation = 'triangulation'
 
 
 class Location1(BaseModel):
@@ -214,14 +230,24 @@ class Location1(BaseModel):
     frame: Literal['arkit_world'] = Field(
         ..., description="The scan's frame: metres, Y up."
     )
-    point_m: list[float] = Field(..., max_length=3, min_length=3)
-    extent_m: list[ExtentMItem] | None = Field(
-        None,
-        description='Size of the region on the scan, axis-aligned in arkit_world, when known.',
-        max_length=3,
-        min_length=3,
+    point_m: Vec3 = Field(..., description="Where the box's centre lands on the scan.")
+    region_min_m: Vec3 = Field(
+        ..., description='Axis-aligned box of the region on the scan.'
     )
-    method: str = Field(..., description='Locator and version.', min_length=1)
+    region_max_m: Vec3
+    normal: Vec3 | None = Field(
+        None, description='Unit surface normal facing the camera (mesh ray cast only).'
+    )
+    distance_m: float | None = Field(
+        None, description="From the still's camera to point_m.", ge=0.0
+    )
+    confidence_word: ConfidenceWord = Field(
+        ..., description="The locator's own word (uncalibrated, I6)."
+    )
+    method: Method
+    notes: list[str] | None = Field(
+        None, description="The locator's reasons for its confidence word."
+    )
 
 
 class Location2(BaseModel):
@@ -314,7 +340,7 @@ class Issue(StrEnum):
     unexpected_wire = 'unexpected_wire'
 
 
-class ConfidenceWord(StrEnum):
+class ConfidenceWord1(StrEnum):
     low = 'low'
     medium = 'medium'
     high = 'high'
@@ -344,7 +370,7 @@ class Finding(BaseModel):
         ...,
         description='none = a model looked and saw no issue. Every other value is Finding.state: a suspect.',
     )
-    confidence_word: ConfidenceWord
+    confidence_word: ConfidenceWord1
     evidence: list[str] = Field(..., min_length=1)
     crop: Crop
     location: Location
