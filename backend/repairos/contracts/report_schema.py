@@ -66,6 +66,10 @@ class Summary(BaseModel):
     )
 
 
+class MostLikelyItem(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
 class Kind(StrEnum):
     request_closeup = 'request_closeup'
     request_other_angle = 'request_other_angle'
@@ -323,6 +327,16 @@ class Verdict7(StrEnum):
     not_inspected = 'not_inspected'
 
 
+class ExplainsSymptom(StrEnum):
+    """
+    Jev's judgment, in a word, of whether a problem with this subject would explain the reported symptom (code bands the noul: fusion.questions.band).
+    """
+
+    yes = 'yes'
+    unsure = 'unsure'
+    no = 'no'
+
+
 class Judgment(BaseModel):
     """
     Jev's judgment of this subject, ranked in code (Suspect), in words.
@@ -334,6 +348,10 @@ class Judgment(BaseModel):
     rank: int = Field(..., ge=1)
     likelihood_word: LikelihoodWord
     verdict: Verdict7
+    explains_symptom: ExplainsSymptom | None = Field(
+        None,
+        description="Jev's judgment, in a word, of whether a problem with this subject would explain the reported symptom (code bands the noul: fusion.questions.band).",
+    )
 
 
 class Issue(StrEnum):
@@ -509,7 +527,12 @@ class Report(BaseModel):
     summary: Summary
     findings: list[Finding] = Field(
         ...,
-        description='Regions a model judged: an issue, or `none` (looked at, no visible issue).',
+        description='Regions a model judged: an issue, or `none` (looked at, no visible issue). Ranked in code, most likely problem first (repairos.report.build.rank_key); cosmetic issues are in `cosmetic`.',
+    )
+    most_likely: list[MostLikelyItem] | None = Field(
+        None,
+        description='The finding_ids of the top rows of `findings` with an issue (at most three), ranked in code: safety > functional, then issues Jev judges as explaining the symptom, then confidence, then how many photos show it (repairos.report.build.rank_key). The app and exports lead with these.',
+        max_length=3,
     )
     cosmetic: list[Finding] | None = Field(
         None,

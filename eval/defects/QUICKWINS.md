@@ -154,6 +154,43 @@ Read honestly:
 - **Real photos are not in this benchmark.** The values are checked on board close-ups and capacitor macros. Recheck
   them on the labelled real set (§6a) before relying on them.
 
+## 6. Severity and part words in the prompt (report fixes, 2026-10-24)
+
+The report now splits cosmetic issues from functional/safety ones and names parts in plain words, so the crop
+prompt asks for two more fields: `severity` (none | cosmetic | functional | safety) and `part_words`. The prompt
+change was fixed before this run: no held-out answer was used to word it. Arm `sonnet_cl_unknown_sev` is the shipped
+arm `sonnet_cl_unknown` with the new prompt, on the same 300 held-out crops (paired). Cost: $1.86 for 300 crops.
+
+| Arm | Sample | Precision [CI] | Recall [CI] | cannot_tell | USD/crop |
+|---|---|---|---|---|---|
+| sonnet_cl_unknown (before) | both (300, 160 defect) | 95.1 [91-99] | 84.4 [79-90] | 53 | 0.0057 |
+| sonnet_cl_unknown_sev | both | 97.7 [95-100] | 81.2 [75-87] | 48 | 0.0062 |
+| sonnet_cl_unknown (before) | pcb4 (200, 100 defect) | 93.8 [89-98] | 91.0 [85-96] | 2 | 0.0058 |
+| sonnet_cl_unknown_sev | pcb4 | 98.9 [96-100] | 86.0 [79-92] | 1 | 0.0063 |
+| sonnet_cl_unknown (before) | wikimedia (100, 60 defect) | 97.8 [93-100] | 73.3 [62-85] | 51 | 0.0056 |
+| sonnet_cl_unknown_sev | wikimedia | 95.7 [89-100] | 73.3 [62-84] | 47 | 0.0060 |
+
+Paired change (95 % bootstrap CI): recall on both sets −3.1 points [−6.5, +0.6], precision +2.6 [−0.2, +6.0]. On pcb4,
+recall is −5.0 [−10.1, −1.0] and precision +5.1 [+1.0, +10.0]: both are outside the CI. The noise floor of one arm is 2 flag
+flips per 100 crops (§1 + 2). Seven defects were lost and two gained. Five of the lost ones are VisA pcb4 crops that
+show most of the board, now answered ok ("even colour, no scorch"); the other two are Wikimedia capacitors (one ok,
+one cannot_tell).
+
+What the verdict sees: a flag judged cosmetic goes to the report's cosmetic section and never makes the verdict.
+- Functional + safety recall: 79.4 [73-85].
+- Functional + safety precision: 98.4 [96-100].
+- Flags on true defects: 106 functional, 21 safety, 3 cosmetic.
+- Flags on ok crops: 2 functional, 1 cosmetic.
+
+So severity costs about 2 recall points through cosmetic calls, plus the prompt-level drop above.
+
+**Decision: open, for the owner.** The fields are needed for the report fixes (cosmetic section, plain-words next
+step). The cost is a measured drop in recall on board-wide pcb4 crops, against a gain in precision. Options:
+- keep it;
+- ask for severity in a second, text-only step;
+- word the instruction so severity is chosen after the state.
+No held-out tuning was done to win the points back.
+
 ## Cost and latency per scan
 
 | | M3 (Haiku ladder) | Shipped (Sonnet + checklist + merge) |

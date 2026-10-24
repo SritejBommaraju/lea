@@ -134,7 +134,7 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
     meas: dict[str, Any] = {"views": 1}
     if sharpness is not None:
         meas["sharpness"] = sharpness
-    return {
+    out = {
         "finding_id": _fid(scan_id, still_id, index, det.box, det.label),
         "scan_id": scan_id,
         "subject": _subject(still_id, index, det.label),
@@ -149,6 +149,19 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         "design_trust": "low",
         "created_at": _now(),
     }
+    if (sev := severity_of(state, getattr(crop_state, "severity", "none"))):
+        out["severity"] = sev
+    if (pw := " ".join((getattr(crop_state, "part_words", "") or "").split())[:200]):
+        out["part_words"] = pw
+    return out
+
+
+def severity_of(finding_state: str, vlm_severity: str) -> str | None:
+    """Finding.severity for a VLM-judged crop: only an issue has one; an issue the VLM gave no severity (`none`, or
+    an older answer without the field) is treated as functional, never waved through as cosmetic."""
+    if finding_state in ("ok", "insufficient_evidence"):
+        return None
+    return vlm_severity if vlm_severity in ("cosmetic", "functional", "safety") else "functional"
 
 
 def finding_from_classifier(*, scan_id: str, still_id: str, index: int, det, crop, score: DefectScore,

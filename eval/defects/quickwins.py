@@ -46,6 +46,8 @@ ARMS: dict[str, tuple[tuple[str, ...], bool, str | None]] = {
     "sonnet_cl_unknown": ((SONNET,), True, "unknown"),
     # the same requests as sonnet_cl asked again on every third crop: the run-to-run noise floor of one arm
     "sonnet_cl_repeat": ((SONNET,), True, "label"),
+    # the shipped arm (sonnet_cl_unknown) with the report-fix prompt: severity + part_words asked per crop
+    "sonnet_cl_unknown_sev": ((SONNET,), True, "unknown"),
 }
 REPEAT_EVERY = 3
 ARM_DIR = {"haiku_ladder": D.WORK / "vlm", "sonnet": D.WORK / f"vlm_{SONNET}"}
@@ -55,7 +57,8 @@ PAIRS = (("haiku_ladder", "haiku_ladder_cl", "checklist at the Haiku ladder"),
          ("haiku_ladder", "sonnet", "Sonnet instead of the ladder, no checklist"),
          ("haiku_ladder_cl", "sonnet_cl", "Sonnet instead of the ladder, with checklist"),
          ("sonnet_cl", "sonnet_cl_unknown", "unknown_part checklist for weak labels"),
-         ("haiku_ladder", "sonnet_cl_unknown", "all kept changes vs M3"))  # crops whose request is identical are copied, not re-asked
+         ("haiku_ladder", "sonnet_cl_unknown", "all kept changes vs M3"),
+         ("sonnet_cl_unknown", "sonnet_cl_unknown_sev", "severity and part words in the prompt"))  # crops whose request is identical are copied, not re-asked
 
 
 def arm_dir(arm: str, dev: bool = False) -> Path:
@@ -130,6 +133,7 @@ def cmd_vlm(a) -> None:
         (out_dir / f"{r['crop_id']}.json").write_text(json.dumps({
             "crop_id": r["crop_id"], "state": s.state, "part_class": s.part_class, "evidence": s.evidence_text,
             "confidence": s.confidence_word, "model": s.model, "escalated": s.escalated, "family": fam,
+            "severity": s.severity, "part_words": s.part_words,
             "models": [x["model"] for x in s.attempts], "latency_ms": s.latency_ms,
             "wall_s": round(time.perf_counter() - t, 2), "usage": [x.get("usage") for x in s.attempts],
             "label": "recorded real VLM answer"}))
@@ -194,6 +198,14 @@ def arm_block(rows: list[dict], ans: dict, base: dict | None) -> dict:
     if base is not None:
         bp = [R.vlm_flag(base[r["crop_id"]]) for r in rows]
         out["vs_baseline"] = paired_boot(y, bp, pred)
+    if any("severity" in x for x in v):
+        # A flag judged cosmetic goes to the report's cosmetic section and never makes the verdict: count what the
+        # verdict would still see, and how the flags split by severity.
+        fpred = [int(p and x.get("severity") != "cosmetic") for p, x in zip(pred, v)]
+        out["functional"] = M.prf(y, fpred) | {"ci": R.boot_ci(y, fpred)}
+        out["severity_of_flags"] = {
+            "defect": dict(collections.Counter(x.get("severity") for p, x, t in zip(pred, v, y) if p and t)),
+            "ok": dict(collections.Counter(x.get("severity") for p, x, t in zip(pred, v, y) if p and not t))}
     return out
 
 
@@ -547,6 +559,15 @@ def tables(res: dict) -> str:
                      f"{_d(vs.get('precision'))} | {b['cannot_tell']} ({_p(b['cannot_tell_share'])}%) | "
                      f"{b['cost_per_crop_usd']:.4f} | {b['latency_median_ms'] / 1000:.1f} / "
                      f"{b['latency_p90_ms'] / 1000:.1f} |")
+    sev = [(arm, g, b) for arm, gs in res["arms"].items() for g, b in gs.items() if "functional" in b]
+    if sev:
+        L += ["", "| Arm | Sample | Functional precision [CI] | Functional recall [CI] | Flags on defects by severity | "
+              "Flags on ok crops by severity |", "|---|---|---|---|---|---|"]
+        for arm, g, b in sev:
+            f = b["functional"]
+            L.append(f"| {arm} | {g} | {_p(f['precision'])}{_c(f['ci']['precision'])} | "
+                     f"{_p(f['recall'])}{_c(f['ci']['recall'])} | {b['severity_of_flags']['defect']} | "
+                     f"{b['severity_of_flags']['ok']} |")
     return "\n".join(L)
 
 

@@ -53,8 +53,10 @@
       "judgment": {
         "rank": 1,
         "likelihood_word": "unsure",
-        "verdict": "suspect"
-      }
+        "verdict": "suspect",
+        "explains_symptom": "yes"
+      },
+      "severity": "functional"
     },
     {
       "finding_id": "f_example_b",
@@ -112,6 +114,10 @@
       }
     }
   ],
+  "most_likely": [
+    "f_example_a"
+  ],
+  "cosmetic": [],
   "not_inspected": [
     {
       "finding_id": "f_example_c",

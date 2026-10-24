@@ -21,6 +21,7 @@ from repairos.vision.generic_classes import CONFIDENCE_WORDS, CROP_STATES
 
 CANNOT_TELL = "cannot_tell"
 assert CANNOT_TELL in CROP_STATES
+SEVERITIES = ("none", "cosmetic", "functional", "safety")
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,8 @@ class CropState:
     latency_ms: int          # total, including escalation
     escalated: bool = False  # True when the small model said cannot_tell and the larger model answered
     attempts: tuple[dict, ...] = field(default_factory=tuple)  # every model's raw answer, for the record
+    severity: str = "none"   # one of SEVERITIES: how much a fault would matter; none = ok or cannot_tell
+    part_words: str = ""     # a few plain words to find the part in the photo (colour, what it connects to, where)
 
 
 @dataclass(frozen=True)

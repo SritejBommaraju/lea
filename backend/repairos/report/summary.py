@@ -12,6 +12,7 @@ made-up summary).
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -28,6 +29,8 @@ instructions, and it may contain mistakes.
 - Findings from photos are suspicions, never proof. Say "may" or "looks", never "is broken" or "confirmed", unless \
 a finding says it was confirmed by a meter.
 - Regions that were not inspected or could not be judged must be mentioned as such; never call them fine.
+- Lead with the most likely problems (most_likely_problems, in that order). Mention cosmetic-only issues briefly, \
+as wear that would not stop the device working.
 - Write three to six short sentences of plain prose. No lists, no headings, no markdown.
 - Never write a digit, a number word for a measurement, a percentage or a probability. Use the confidence words \
 given (low, medium, high).
@@ -44,9 +47,26 @@ class SummaryError(RuntimeError):
     """The summary could not be written within the rules (numbers in the answer, empty answer)."""
 
 
+_ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+         "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen")
+_TENS = ("", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+_PHOTO_N = re.compile(r"\bphotos? (\d{1,2})\b")
+
+
+def number_words(n: int) -> str:
+    """0..99 as words ("photo 9" -> "photo nine"), so the photo names survive the no-numbers rule (S5)."""
+    if n < 20:
+        return _ONES[n]
+    return _TENS[n // 10] + ("" if n % 10 == 0 else "-" + _ONES[n % 10])
+
+
+def photo_words(text: str) -> str:
+    return _PHOTO_N.sub(lambda m: m.group(0).rsplit(" ", 1)[0] + " " + number_words(int(m.group(1))), text)
+
+
 def _refs(report: Mapping[str, Any]) -> tuple[str, ...]:
     out = set()
-    for bucket in ("findings", "not_inspected", "insufficient_evidence"):
+    for bucket in ("findings", "cosmetic", "not_inspected", "insufficient_evidence"):
         for e in report.get(bucket, []):
             out.add(e["subject"]["ref"])
             photo = e.get("crop") or e.get("photo") or {}
@@ -60,25 +80,39 @@ def words_for(report: Mapping[str, Any], symptom: str | None = None) -> dict[str
     allowed = _refs(report)
 
     def w(text: str) -> str:
-        return scrub(text, allowed)
+        return scrub(photo_words(text), allowed)
+
+    def issue_item(e: Mapping[str, Any]) -> dict[str, Any]:
+        item = {"ref": e["subject"]["ref"], "part": e["part_class"], "issue": words.FINDING_STATE[e["issue"]],
+                "confidence": e["confidence_word"], "meter": PROOF_WORDS[e["proof"]["status"]],
+                "evidence": [w(s) for s in e["evidence"] if s.strip() and s.strip() != NOT_PROOF]}
+        if e.get("part_words"):
+            item["where"] = w(e["part_words"])
+        if e.get("severity"):
+            item["matters"] = words.SEVERITY[e["severity"]]
+        if e.get("judgment"):
+            item["fault_likelihood"] = e["judgment"]["likelihood_word"].replace("_", " ")
+            if e["judgment"].get("explains_symptom"):
+                item["explains_symptom"] = e["judgment"]["explains_symptom"]
+        if e.get("finding_ids"):
+            item["seen_in"] = "several regions or photos"
+        return item
 
     issues, fine = [], []
     for e in report.get("findings", []):
         if e["issue"] == "none":
             fine.append(e["part_class"])
             continue
-        item = {"ref": e["subject"]["ref"], "part": e["part_class"], "issue": words.FINDING_STATE[e["issue"]],
-                "confidence": e["confidence_word"], "meter": PROOF_WORDS[e["proof"]["status"]],
-                "evidence": [w(s) for s in e["evidence"] if s.strip() and s.strip() != NOT_PROOF]}
-        if e.get("judgment"):
-            item["fault_likelihood"] = e["judgment"]["likelihood_word"].replace("_", " ")
-        issues.append(item)
+        issues.append(issue_item(e))
+    top = set(report.get("most_likely") or [])
     cap = report["capture"]
     payload: dict[str, Any] = {
         "verdict": VERDICT_WORDS[report["verdict"]],
         "why": w(report["verdict_reason"]["text"]),
         "symptom": w(symptom) if symptom and symptom.strip() else "not described",
+        "most_likely_problems": [issue_item(e)["ref"] for e in report.get("findings", []) if e["finding_id"] in top],
         "potential_issues": issues,
+        "cosmetic_only": [issue_item(e) for e in report.get("cosmetic", [])],
         "looked_fine": sorted(set(fine)),
         "not_inspected": [{"ref": e["subject"]["ref"], "part": e["part_class"], "reason": w(e["reason"])}
                           for e in report.get("not_inspected", [])],

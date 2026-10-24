@@ -42,6 +42,19 @@ CROP_STATES: tuple[str, ...] = (
 
 CONFIDENCE_WORDS: tuple[str, ...] = ("low", "medium", "high")
 
+# Words that mean a device runs on wall (mains) power, for the report's safety note (report/safety.py). Matched as
+# whole words in the part names, part words, evidence and reasons of rows a model looked at.
+MAINS_WORDS: tuple[str, ...] = (
+    "mains", "wall plug", "wall charger", "wall adapter", "ac plug", "ac adapter", "plug prong", "plug prongs",
+    "plug blade", "plug blades", "plug pin", "plug pins", "power cord", "mains cable", "line cable", "line cord",
+    "heating element", "thermostat", "power supply", "transformer",
+)
+# Neither alone says wall power, together they do: a spade terminal on a motor, heater, thermostat or timer.
+MAINS_PAIR: tuple[tuple[str, ...], tuple[str, ...]] = (
+    ("spade terminal", "spade connector", "quick-connect terminal"),
+    ("motor", "heating element", "heater", "thermostat", "timer"),
+)
+
 # Defect kinds the defect classifier (CLS slot, task M7) can name for one crop, given that it sees a defect. Only
 # kinds with licence-clean training data are listed (training/datasets/MANIFEST.json); a kind without data is not
 # claimed. Each maps to the crop state a finding uses.

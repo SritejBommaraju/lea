@@ -108,7 +108,17 @@
       "items": {
         "$ref": "#/$defs/finding"
       },
-      "description": "Regions a model judged: an issue, or `none` (looked at, no visible issue)."
+      "description": "Regions a model judged: an issue, or `none` (looked at, no visible issue). Ranked in code, most likely problem first (repairos.report.build.rank_key); cosmetic issues are in `cosmetic`."
+    },
+    "most_likely": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true,
+      "description": "The finding_ids of the top rows of `findings` with an issue (at most three), ranked in code: safety > functional, then issues Jev judges as explaining the symptom, then confidence, then how many photos show it (repairos.report.build.rank_key). The app and exports lead with these."
     },
     "cosmetic": {
       "type": "array",
@@ -338,7 +348,7 @@
         ]
       },
       "then": {
-        "description": "Looks good only when every region was judged and none shows an unresolved issue.",
+        "description": "Looks good only when at least one region was judged (in `findings` or `cosmetic`), every region was judged, and none shows an unresolved functional or safety issue.",
         "properties": {
           "verdict_reason": {
             "properties": {
@@ -348,7 +358,6 @@
             }
           },
           "findings": {
-            "minItems": 1,
             "items": {
               "anyOf": [
                 {
@@ -378,7 +387,26 @@
           "insufficient_evidence": {
             "maxItems": 0
           }
-        }
+        },
+        "anyOf": [
+          {
+            "properties": {
+              "findings": {
+                "minItems": 1
+              }
+            }
+          },
+          {
+            "required": [
+              "cosmetic"
+            ],
+            "properties": {
+              "cosmetic": {
+                "minItems": 1
+              }
+            }
+          }
+        ]
       }
     },
     {
@@ -652,6 +680,15 @@
             "insufficient_evidence",
             "not_inspected"
           ]
+        },
+        "explains_symptom": {
+          "type": "string",
+          "enum": [
+            "yes",
+            "unsure",
+            "no"
+          ],
+          "description": "Jev's judgment, in a word, of whether a problem with this subject would explain the reported symptom (code bands the noul: fusion.questions.band)."
         }
       }
     },

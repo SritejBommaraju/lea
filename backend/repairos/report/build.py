@@ -10,23 +10,41 @@ Numbers never become user-facing confidence: Finding.confidence becomes a word (
 A still whose not-inspected rows cover GROUP_AT or more detector regions gets one grouped row ("N regions in this
 photo were not inspected: ..."), with `finding_ids` (each finding still in exactly one row) and the exact region
 count in `regions` (a roll-up finding from vision.inspect stands for many regions: `regions[fid]["regions"]`).
+
+Judged rows that are one physical issue collapse into one row (collapse_rows): the same still and the same issue
+with crops overlapping at IoU >= MERGE_IOU, or different stills, the same part family and issue, and located regions
+on the scan that intersect. Rows the vision model judged cosmetic go to `cosmetic`; the rest stay in `findings`,
+ranked most likely problem first (rank_key), and the first MOST_LIKELY issue rows are `most_likely`.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from repairos.fusion import words
+from repairos.report.safety import limits, safety_notes
 from repairos.report.verdict import decide, facts_of
 from repairos.slots.blob import REF_PREFIX
-from repairos.report.safety import limits, safety_notes
+from repairos.vision.generic_classes import GENERIC_CLASSES
+from repairos.vision.ranking import MERGE_IOU
+from repairos.vision.tiling import iou
 
 NOT_LOOKED_AT = {"not_inspected", "not_seen_in_photo"}
 GROUP_AT = 3   # not-inspected regions in one still from which they become one row
 UNDECIDED = {"insufficient_evidence", "unsure"}
 NOT_PROOF = "vision suspect, not proof"
 JUDGES = {"vlm", "classifier", "meter"}
+MOST_LIKELY = 3   # issue rows the report and the app lead with
+
+# Ranking (owner, 2026-10-24): meter proof first, then safety > functional > cosmetic, then issues Jev judges as
+# explaining the symptom, then confidence, then how many photos show it. Absent severity = not judged = functional.
+PROOF_ORDER = {"confirmed_by_meter": 0, "not_measured": 1, "ruled_out_by_meter": 2}
+SEVERITY_ORDER = {"safety": 0, "functional": 1, "cosmetic": 2}
+EXPLAINS_ORDER = {"yes": 0, "unsure": 1, "no": 2}   # no Jev answer counts as unsure
+CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
+EXPLAINS_WORD = {"yes": "yes", "unsettled": "unsure", "no": "no"}   # fusion.questions.band -> judgment word
 
 
 class ReportError(RuntimeError):
@@ -94,12 +112,106 @@ def capture_summary(scan: Mapping[str, Any] | None, stills: list[Mapping[str, An
     return out
 
 
+def severity(e: Mapping[str, Any]) -> str:
+    return e.get("severity") or "functional"
+
+
+def photos_of(e: Mapping[str, Any]) -> set[str]:
+    return {c["still_id"] for c in [e["crop"], *(e.get("crops") or [])]}
+
+
+def rank_key(e: Mapping[str, Any]) -> tuple:
+    """Sort key for judged rows: issues before `none`, then PROOF_ORDER, SEVERITY_ORDER, EXPLAINS_ORDER,
+    CONFIDENCE_ORDER, more photos first, Jev's rank, finding id (deterministic)."""
+    j = e.get("judgment") or {}
+    return (e["issue"] == "none", PROOF_ORDER[e["proof"]["status"]], SEVERITY_ORDER[severity(e)],
+            EXPLAINS_ORDER.get(j.get("explains_symptom"), 1), CONFIDENCE_ORDER[e["confidence_word"]],
+            -len(photos_of(e)), j.get("rank", 1 << 30), e["finding_id"])
+
+
+def part_family(part_class: str) -> str:
+    """The longest generic class name (vision/generic_classes.py) inside the VLM's part name, else the name itself:
+    "black insulated wire" and "wire" are one family, "connector" and "wire" are not."""
+    name = " ".join(part_class.lower().replace("_", " ").split())
+    hits = [g for g in GENERIC_CLASSES if re.search(rf"(?<![a-z]){re.escape(g)}(?![a-z])", name)]
+    return max(hits, key=len) if hits else name
+
+
+def _boxes_meet(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    return all(a["region_min_m"][k] <= b["region_max_m"][k] and b["region_min_m"][k] <= a["region_max_m"][k]
+               for k in range(3))
+
+
+def same_issue(a: Mapping[str, Any], b: Mapping[str, Any], merge_iou: float = MERGE_IOU) -> str | None:
+    """Why two judged rows are one physical issue, or None:
+      same_photo_overlap  same still, same issue, crop boxes at IoU >= merge_iou (two distinct neighbouring parts
+                          overlap less: measured 0.42 for adjacent terminals; a merged duplicate is 1.0);
+      same_place_on_scan  different stills, same issue and part family, both located on the scan, and the located
+                          regions (each location's own extent) intersect.
+    Containment (intersection over the smaller box) is not used: it would merge a prong with its whole housing."""
+    if a["issue"] != b["issue"]:
+        return None
+    sa, sb = a["crop"]["still_id"], b["crop"]["still_id"]
+    if sa == sb:
+        return "same_photo_overlap" if iou(a["crop"]["box_px"], b["crop"]["box_px"]) >= merge_iou else None
+    la, lb = a.get("location") or {}, b.get("location") or {}
+    if la.get("status") == lb.get("status") == "computed" and part_family(a["part_class"]) == \
+            part_family(b["part_class"]) and _boxes_meet(la, lb):
+        return "same_place_on_scan"
+    return None
+
+
+def collapse_rows(rows: list[dict[str, Any]], merge_iou: float = MERGE_IOU) -> list[dict[str, Any]]:
+    """Judged rows -> one row per physical issue (same_issue, transitively). The best-ranked row of a group keeps its
+    fields; the group's `finding_ids` (that row first), `regions`, the other `crops`, the union of the evidence, the
+    worst severity and `merged_by` are added. Rows that collapse with nothing are returned unchanged."""
+    parent = list(range(len(rows)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(rows)):
+        for k in range(i + 1, len(rows)):
+            if root(i) != root(k) and same_issue(rows[i], rows[k], merge_iou):
+                parent[root(k)] = root(i)
+    groups: dict[int, list[dict[str, Any]]] = {}
+    for i, e in enumerate(rows):
+        groups.setdefault(root(i), []).append(e)
+    out = []
+    for group in groups.values():
+        if len(group) == 1:
+            out.append(group[0])
+            continue
+        group = sorted(group, key=rank_key)
+        top = dict(group[0])
+        top["finding_ids"] = [e["finding_id"] for e in group]
+        top["regions"] = len(group)
+        top["crops"] = [e["crop"] for e in group[1:]]
+        top["evidence"] = list(dict.fromkeys(s for e in group for s in e["evidence"]))
+        if any(e.get("severity") for e in group):
+            top["severity"] = min((severity(e) for e in group), key=SEVERITY_ORDER.__getitem__)
+        top["merged_by"] = "same_photo_overlap" if len({e["crop"]["still_id"] for e in group}) == 1 \
+            else "same_place_on_scan"
+        out.append(top)
+    return out
+
+
+def _is_issue(e: Mapping[str, Any]) -> bool:
+    return e["issue"] != "none" and e["proof"]["status"] != "ruled_out_by_meter"
+
+
 def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], findings: list[Mapping[str, Any]],
                  suspects: list[Mapping[str, Any]], next_action: Mapping[str, Any] | None,
                  regions: Mapping[str, Mapping[str, Any]], locations: Mapping[str, Mapping[str, Any]],
-                 models: Mapping[str, str], now: datetime | None = None) -> dict[str, Any]:
+                 models: Mapping[str, str], now: datetime | None = None,
+                 explains: Mapping[tuple[str, str], str] | None = None) -> dict[str, Any]:
     """The report without `summary` (repairos.report.summary adds it). `regions[finding_id]` gives the region's
-    `part_class` and `inspected_by` (the stages that looked); `locations[finding_id]` its report location."""
+    `part_class` and `inspected_by` (the stages that looked); `locations[finding_id]` its report location;
+    `explains[(kind, ref)]` Jev's banded "explains the symptom" judgment (yes | unsettled | no) per subject."""
+    explains = explains or {}
     by_finding: dict[str, Mapping[str, Any]] = {}
     for s in suspects:
         for fid in s.get("finding_ids", []):
@@ -141,16 +253,26 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
                  "inspected_by": list(info["inspected_by"]), "crop": _photo(f, need_box=True),
                  "location": dict(loc),
                  "proof": _proof(sus)}
+            if f.get("severity"):
+                e["severity"] = f["severity"]
+            if f.get("part_words"):
+                e["part_words"] = f["part_words"]
             if sus:
                 e["judgment"] = {"rank": sus["rank"], "likelihood_word": sus["p_fault_word"],
                                  "verdict": sus["verdict"]}
+                key = (sus["subject"]["kind"], sus["subject"]["ref"])
+                if key in explains:
+                    e["judgment"]["explains_symptom"] = EXPLAINS_WORD[explains[key]]
             judged.append(e)
             judged_stills.add(e["crop"]["still_id"])
 
     not_inspected = group_not_inspected(not_inspected, {fid: int(r.get("regions", 1)) for fid, r in regions.items()},
                                         {f["finding_id"]: f for f in findings})
-    judged.sort(key=lambda e: (e["issue"] == "none", (e.get("judgment") or {}).get("rank", 1 << 30),
-                               e["finding_id"]))
+    judged = sorted(collapse_rows(judged), key=rank_key)
+    cosmetic = [e for e in judged if e["issue"] != "none" and e.get("severity") == "cosmetic"]
+    judged = [e for e in judged if not (e["issue"] != "none" and e.get("severity") == "cosmetic")]
+    across = len({s for e in judged + cosmetic for s in photos_of(e)}) > 1 and not any(
+        (e.get("location") or {}).get("status") == "computed" for e in judged + cosmetic)
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     report: dict[str, Any] = {
         "report_id": report_id_for(scan["scan_id"]),
@@ -158,6 +280,8 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
         "session_id": scan["session_id"],
         "created_at": stamp,
         "findings": judged,
+        "most_likely": [e["finding_id"] for e in judged if _is_issue(e)][:MOST_LIKELY],
+        "cosmetic": cosmetic,
         "not_inspected": not_inspected,
         "insufficient_evidence": undecided,
         "capture": capture_summary(scan, stills, judged_stills),
@@ -167,8 +291,8 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
     v = decide(facts_of(report))
     report["verdict"] = v.verdict
     report["verdict_reason"] = v.as_reason()
-    report["safety"] = safety_notes(judged)
-    report["limits"] = limits(v.verdict, scan.get("symptom"))
+    report["safety"] = safety_notes(judged, cosmetic, undecided)
+    report["limits"] = limits(v.verdict, scan.get("symptom"), unmerged_photos=across)
     if next_action:
         step = {"action_id": next_action["action_id"], "kind": next_action["kind"],
                 "instruction": next_action["instruction"]}
@@ -220,7 +344,7 @@ def group_not_inspected(rows: list[dict[str, Any]], counts: Mapping[str, int],
 def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, Any]]) -> list[str]:
     """MS1: every stored finding in exactly one bucket; nothing shown judged that no model looked at."""
     seen: dict[str, list[str]] = {}
-    for bucket in ("findings", "not_inspected", "insufficient_evidence"):
+    for bucket in ("findings", "cosmetic", "not_inspected", "insufficient_evidence"):
         for e in report.get(bucket, []):
             for fid in e.get("finding_ids") or [e["finding_id"]]:
                 seen.setdefault(fid, []).append(bucket)
@@ -235,7 +359,21 @@ def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, An
         if ids and (ids[0] != e["finding_id"] or e.get("regions", 1) < len(ids)):
             out.append(f"grouped row {e['finding_id']}: finding_id is not its first finding, or it counts fewer "
                        "regions than it groups")
-    for e in report.get("findings", []):
+    for e in report.get("findings", []) + report.get("cosmetic", []):
         if not JUDGES & set(e["inspected_by"]):
             out.append(f"finding {e['finding_id']} shown as judged but no model looked at it")
+        ids = e.get("finding_ids")
+        if ids and (ids[0] != e["finding_id"] or e.get("regions") != len(ids)
+                    or len(e.get("crops", [])) != len(ids) - 1):
+            out.append(f"collapsed row {e['finding_id']}: finding_id is not its first finding, or its regions or "
+                       "crops do not match the findings it stands for")
+    for e in report.get("cosmetic", []):
+        if e.get("severity") != "cosmetic" or e["issue"] == "none":
+            out.append(f"row {e['finding_id']} is listed as cosmetic but is not a cosmetic issue")
+    for e in report.get("findings", []):
+        if e["issue"] != "none" and e.get("severity") == "cosmetic":
+            out.append(f"row {e['finding_id']} is a cosmetic issue listed among the findings")
+    issues = [e["finding_id"] for e in report.get("findings", []) if _is_issue(e)]
+    if "most_likely" in report and report["most_likely"] != issues[:MOST_LIKELY]:
+        out.append("most_likely is not the first issue rows of the findings")
     return out

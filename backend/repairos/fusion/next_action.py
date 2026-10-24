@@ -127,7 +127,7 @@ def decide(fs: FusionState, suspects: list[dict[str, Any]], judgments: dict[tupl
         if mk and s.on_path:
             return _build(fs, mk, s, judgments.get(s.key), by_key[s.key], expectations, now,
                           why=f"Nothing in the photos explains the symptom; photos cannot show a break inside the "
-                              f"{s.name}, a meter check can.")
+                              f"{s.display}, a meter check can.")
     return _build(fs, "report_insufficient_evidence", None, None, None, expectations, now, limit="other",
                   why="Nothing inspected so far explains the symptom.")
 
@@ -162,7 +162,7 @@ def _build(fs: FusionState, kind: str, s: Subject | None, j: Judgment | None, su
         act["target"] = target
     if j is not None:
         act["probabilities"] = {"problem_shown": j.problem, "evidence_clear": j.clear, "explains_symptom": j.explains}
-    name = s.name if s else "product"
+    name = s.display if s else "product"   # plain words for the person; target and AR labels keep the refs
     labels = target.get("ar_labels") or [name]
     exp = (expectations.get(s.key) if s else None) or {}
     kind_words = ((suspect or {}).get("fault_kind") or {}).get("choice", "").replace("_", " ")

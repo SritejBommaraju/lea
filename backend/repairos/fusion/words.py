@@ -95,6 +95,14 @@ VLM_ANSWER = {
     "cannot_tell": "the photo check could not tell",
 }
 
+# Finding.severity -> words (every value of finding.schema.json severity.enum): the vision model's word for how
+# much an issue matters
+SEVERITY = {
+    "cosmetic": "cosmetic: looks worn but would not stop the device working",
+    "functional": "could stop the device working or working right",
+    "safety": "could be a safety hazard",
+}
+
 DESIGN_TRUST = {
     "high": "high: the reference design is trusted",
     "low": "low: the reference design may be wrong; what the photos show takes precedence",

@@ -3513,7 +3513,9 @@ public struct Report: Codable, Sendable {
     /// working). Listed apart; they never make the verdict potential_issues on their own.
     public let cosmetic: [CosmeticElement]?
     public let createdAt: Date
-    /// Regions a model judged: an issue, or `none` (looked at, no visible issue).
+    /// Regions a model judged: an issue, or `none` (looked at, no visible issue). Ranked in
+    /// code, most likely problem first (repairos.report.build.rank_key); cosmetic issues are in
+    /// `cosmetic`.
     public let findings: [CosmeticElement]
     /// Phase 1 makes no Grain calls.
     public let grain: GrainEnum
@@ -3524,6 +3526,11 @@ public struct Report: Codable, Sendable {
     public let limits: [String]?
     /// Provenance: which model (and version) did each step, or why a step did not run.
     public let models: Models
+    /// The finding_ids of the top rows of `findings` with an issue (at most three), ranked in
+    /// code: safety > functional, then issues Jev judges as explaining the symptom, then
+    /// confidence, then how many photos show it (repairos.report.build.rank_key). The app and
+    /// exports lead with these.
+    public let mostLikely: [String]?
     /// The one next action code chose from Jev's judgments (repairos.fusion), when there is one.
     public let nextStep: NextStep?
     /// Regions nobody looked at (I3), each with the reason. Never shown as ok.
@@ -3548,6 +3555,7 @@ public struct Report: Codable, Sendable {
         case insufficientEvidence = "insufficient_evidence"
         case limits = "limits"
         case models = "models"
+        case mostLikely = "most_likely"
         case nextStep = "next_step"
         case notInspected = "not_inspected"
         case reportID = "report_id"
@@ -3559,7 +3567,7 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, models: Models, nextStep: NextStep?, notInspected: [NotInspectedElement], reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt
@@ -3568,6 +3576,7 @@ public struct Report: Codable, Sendable {
         self.insufficientEvidence = insufficientEvidence
         self.limits = limits
         self.models = models
+        self.mostLikely = mostLikely
         self.nextStep = nextStep
         self.notInspected = notInspected
         self.reportID = reportID
@@ -3751,21 +3760,34 @@ public enum Issue: String, Codable, Sendable {
 /// Jev's judgment of this subject, ranked in code (Suspect), in words.
 // MARK: - Judgment
 public struct Judgment: Codable, Sendable {
+    /// Jev's judgment, in a word, of whether a problem with this subject would explain the
+    /// reported symptom (code bands the noul: fusion.questions.band).
+    public let explainsSymptom: ExplainsSymptom?
     public let likelihoodWord: Word
     public let rank: Int
     public let verdict: JudgmentVerdict
 
     public enum CodingKeys: String, CodingKey {
+        case explainsSymptom = "explains_symptom"
         case likelihoodWord = "likelihood_word"
         case rank = "rank"
         case verdict = "verdict"
     }
 
-    public init(likelihoodWord: Word, rank: Int, verdict: JudgmentVerdict) {
+    public init(explainsSymptom: ExplainsSymptom?, likelihoodWord: Word, rank: Int, verdict: JudgmentVerdict) {
+        self.explainsSymptom = explainsSymptom
         self.likelihoodWord = likelihoodWord
         self.rank = rank
         self.verdict = verdict
     }
+}
+
+/// Jev's judgment, in a word, of whether a problem with this subject would explain the
+/// reported symptom (code bands the noul: fusion.questions.band).
+public enum ExplainsSymptom: String, Codable, Sendable {
+    case no = "no"
+    case unsure = "unsure"
+    case yes = "yes"
 }
 
 /// confirmed and cleared require a meter reading for electrical subjects (I2).

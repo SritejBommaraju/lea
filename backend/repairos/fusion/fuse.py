@@ -37,8 +37,10 @@ def fuse(scan_id: str, findings: list[Any], readings: list[Any] = (), symptom: s
          engine: FusionEngine | None = None, actions: dict[str, dict[str, Any]] | None = None,
          expectations: dict[tuple[str, str], dict[str, Any]] | None = None, photos_requested: int = 0,
          seed: int | None = None, now: datetime | None = None,
-         request_tokens: int | None = TARGET_REQUEST_TOKENS) -> FusionResult:
-    fs = build_state(scan_id, findings, readings, symptom, actions)
+         request_tokens: int | None = TARGET_REQUEST_TOKENS, still_words: dict[str, str] | None = None
+         ) -> FusionResult:
+    """`still_words` ({still_id: "photo 3"}) names subjects in plain words in the next step (state.subject_words)."""
+    fs = build_state(scan_id, findings, readings, symptom, actions, still_words)
     groups, base = question_groups(fs, seed)
     questions = [q for _, qs in groups for q in qs]
     answers: Answers | None = None

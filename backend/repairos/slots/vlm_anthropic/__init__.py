@@ -21,7 +21,8 @@ from typing import Any
 
 from repairos.config import ROOT, get_settings
 from repairos.registry import register
-from repairos.slots.vlm import CANNOT_TELL, CropState, Judgement, check_confidence_word, escalate, with_cannot_tell
+from repairos.slots.vlm import (CANNOT_TELL, SEVERITIES, CropState, Judgement, check_confidence_word, escalate,
+                                with_cannot_tell)
 from repairos.vision import checklists as CL
 from repairos.vision.generic_classes import CONFIDENCE_WORDS, CROP_STATES
 
@@ -72,6 +73,12 @@ unplugged = a connector or wire end that is clearly disconnected. missing = an e
 part in the crop.
 - Prefer cannot_tell over a guess. Say ok only when the part is sharp enough to see a fault if there were one.
 - evidence_text: one or two short sentences naming what you see that supports the state. No numbers you cannot see.
+- severity: how much the fault would matter. none = state ok or cannot_tell. cosmetic = looks worn but would not \
+stop the device working (scuffs, scratches, dirt, a chipped or slightly bent housing that still holds). functional = \
+could stop the device working or working right. safety = could hurt someone (exposed live parts, a damaged \
+battery, heat damage, a damaged plug or cord).
+- part_words: a few plain words that let a person find the part in the photo (colour, what it connects to, where it \
+sits), for example "black wire to the motor" or "left prong of the plug". No numbers, no reference designators.
 - confidence: low, medium or high."""
 
 # The checklist prompt (config `checklists: true`): the rules above plus how to look and every family's failure
@@ -86,6 +93,9 @@ different kind, use the checks for the kind it is. When you cannot identify it, 
 and use the general checks.
 - A bulging, swollen or leaking part is damaged; a scorched or melted one is burnt.
 - Say ok only when every check point is visible and looks like the ok description.
+- cosmetic = looks worn but would not stop the device working (a scuff on a housing, dirt, a chipped cover that \
+still holds). A fault on a contact, prong, connector, wire end or component that carries power or signal is \
+functional, or safety when it could hurt someone.
 
 Failure signs per part family:
 """ + CL.table_text()
@@ -96,9 +106,11 @@ CROP_SCHEMA: dict[str, Any] = {
         "part_class": {"type": "string"},
         "state": {"type": "string", "enum": list(CROP_STATES)},
         "evidence_text": {"type": "string"},
+        "severity": {"type": "string", "enum": list(SEVERITIES)},
+        "part_words": {"type": "string"},
         "confidence": {"type": "string", "enum": list(CONFIDENCE_WORDS)},
     },
-    "required": ["part_class", "state", "evidence_text", "confidence"],
+    "required": ["part_class", "state", "evidence_text", "severity", "part_words", "confidence"],
     "additionalProperties": False,
 }
 
@@ -234,7 +246,8 @@ class AnthropicVisionJudge:
                          evidence_text=ans["evidence_text"].strip(),
                          confidence_word=check_confidence_word(ans["confidence"]), model=final["model"],
                          latency_ms=sum(a["latency_ms"] for a in attempts), escalated=idx > 0,
-                         attempts=tuple(attempts))
+                         attempts=tuple(attempts), severity=ans.get("severity", "none"),
+                         part_words=(ans.get("part_words") or "").strip())
 
     def judge_crop(self, crop: Any, render_crop: Any | None, expectation: str, options: Sequence[str]) -> Judgement:
         opts = with_cannot_tell(options)

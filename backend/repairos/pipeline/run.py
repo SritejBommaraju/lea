@@ -19,7 +19,6 @@ import asyncio
 import hashlib
 import logging
 import os
-import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -28,6 +27,7 @@ from typing import Any
 
 from repairos.config import ROOT
 from repairos.contracts import validate
+from repairos.fusion.state import vlm_part_class
 from repairos.pipeline import locate_iface
 from repairos.report import build_report, honesty_violations, report_id_for, write_summary
 from repairos.sessions.layout import EXT_BY_TYPE, ext_for, map_files
@@ -181,11 +181,10 @@ def _det_index(ref: str) -> int | None:
     return int(tail[3:]) if tail.startswith("det") and tail[3:].isdigit() else None
 
 
-# The VLM's own generic part name, from the lead sentence vision.inspect.finding_from_crop writes.
-def vlm_part_class(f: dict) -> str | None:
-    lead = (f.get("evidence") or [""])[0].strip()
-    m = re.match(r"^could not judge the (.+?) in still \S+$", lead) or re.match(r"^(.+?) in still \S+ looks .+$", lead)
-    return m.group(1).strip() if m else None
+def still_words(stills: list[dict]) -> dict[str, str]:
+    """{still_id: "photo N"}: stills numbered from one by capture time, then id (the order the user took them)."""
+    order = sorted(stills, key=lambda s: (s.get("captured_at") or "", s["still_id"]))
+    return {s["still_id"]: f"photo {i}" for i, s in enumerate(order, 1)}
 
 
 def regions_for(findings: list[dict], detections: list[dict], whole: str,
@@ -362,7 +361,8 @@ async def run_scan(ctx: Context, scan_id: str) -> dict:
         findings = [r.data for r in await ctx.state.list("finding", scan_id=scan_id)]
         readings = [r.data for r in await ctx.state.list("meter-reading", scan_id=scan_id)]
         engine = ctx.slot("FUSION") if findings or readings else None
-        result = await asyncio.to_thread(fuse, scan_id, findings, readings, scan.get("symptom"), engine=engine)
+        result = await asyncio.to_thread(fuse, scan_id, findings, readings, scan.get("symptom"), engine=engine,
+                                         still_words=still_words(stills))
         for s in result.suspects:
             await ctx.state.transition("suspect", s["suspect_id"], "suspect.update_from_fusion", s)
         await ctx.state.transition("next-action", result.next_action["action_id"], "next_action.issue",
@@ -408,8 +408,11 @@ async def run_scan(ctx: Context, scan_id: str) -> dict:
             "jev": jev,
             "locate": locate_words,
         }
+        from repairos.fusion.questions import band
+
         draft = build_report(scan=scan, stills=stills, findings=findings, suspects=suspects,
-                             next_action=result.next_action, regions=regions, locations=locations, models=models)
+                             next_action=result.next_action, regions=regions, locations=locations, models=models,
+                             explains={k: band(j.explains) for k, j in result.judgments.items()})
         draft["summary"] = await asyncio.to_thread(write_summary, draft, llm, symptom=scan.get("symptom"))
         validate("report", draft)
         problems = honesty_violations(draft, findings)
