@@ -18,6 +18,15 @@ nonisolated enum TurnTaking {
 
     // MARK: Turn helpers
 
+    /// People open with "Hey Lea" after swiping up, as if it were a wake word. Returns what follows the greeting
+    /// ("" when it was only the greeting), or nil when the turn doesn't start with one. Spellings the recognizers
+    /// produce for the name count ("Leah", "Lia", "Lee").
+    static func afterGreeting(_ text: String) -> String? {
+        let pattern = "^\\s*(hey|hi|hello|ok|okay)[\\s,.!]+(lea|leah|lia|leia|lee|leigh)\\b[\\s,.!?:-]*"
+        guard let r = text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { return nil }
+        return String(text[r.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// "ok go on", "continue", "got it"; a bare "yes" only when Lea offered to carry on.
     static func isBack(_ text: String, offered: Bool = false) -> Bool {
         let t = norm(text)

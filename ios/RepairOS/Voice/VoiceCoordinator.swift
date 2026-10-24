@@ -373,7 +373,7 @@ final class VoiceCoordinator: ObservableObject {
     private var leaAudible: Bool { state == .speaking || Date().timeIntervalSince(playbackEnded) < 1.5 }
 
     private func take(_ heard: String, fromMic: Bool = true) async {
-        let text = heard.trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = heard.trimmingCharacters(in: .whitespacesAndNewlines)
         // Echo is only possible for microphone words heard over Lea's own voice; typed words are never echo, and a
         // person repeating Lea's words after she stopped ("scan it") means them.
         let maybeEcho = heardOverPlayback || leaAudible
@@ -388,6 +388,11 @@ final class VoiceCoordinator: ObservableObject {
             return speakAll([line.text] + stopped.rest)
         }
         guard TurnTaking.takesTurn(text, whileLeaTalks: state == .speaking || state == .thinking) else { return }   // "go on" still resumes
+        // "Hey Lea" alone is answered here, as a wake word would be; "Hey Lea, it won't turn on" asks the rest.
+        if let rest = TurnTaking.afterGreeting(text) {
+            guard !rest.isEmpty else { return speakAll(["Hey, what's up?"]) }
+            text = rest
+        }
         interrupted = nil
         turn += 1
         let mine = turn

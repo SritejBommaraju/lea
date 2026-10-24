@@ -38,6 +38,10 @@ struct LiveVoiceBar: View {
         .background(.black.opacity(0.55), in: Capsule())
         .environment(\.colorScheme, .dark)
         .onAppear { voice.warmUp() }
+        .contentShape(Capsule())
+        .gesture(DragGesture(minimumDistance: 20).onEnded { drag in   // swipe up: Lea listens hands-free
+            if drag.translation.height < -30, !voice.handsFree { voice.setHandsFree(true) }
+        })
     }
 
     private var caption: String {
@@ -48,7 +52,7 @@ struct LiveVoiceBar: View {
         case .speaking: return voice.lastReply ?? "Lea"
         default:
             if let reply = voice.lastReply { return reply }
-            return voice.handsFree ? "Lea is listening. Ask anything while you scan." : "Hold the mic to ask Lea while you scan."
+            return voice.handsFree ? "Lea is listening. Ask anything while you scan." : "Swipe up and talk, or hold the mic."
         }
     }
 }

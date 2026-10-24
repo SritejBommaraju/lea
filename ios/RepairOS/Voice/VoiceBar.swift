@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Hold the mic to talk, or turn on hands-free and just talk (you can interrupt); "Hey Leah" appears once its model
-/// is installed. Partial words show while you speak; Lea's last reply shows after.
+/// Swipe up to talk to Lea (voice mode opens, already listening), hold the mic to talk, or turn on hands-free and just
+/// talk (you can interrupt); "Hey Leah" appears once its model is installed. Partial words show while you speak; Lea's
+/// last reply shows after.
 struct VoiceBar: View {
     @ObservedObject var voice: VoiceCoordinator
     var expand: (() -> Void)?
@@ -35,6 +36,11 @@ struct VoiceBar: View {
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .gesture(DragGesture(minimumDistance: 20).onEnded { drag in
+            if drag.translation.height < -30, let expand { expand() }
+        })
+        .accessibilityAction(named: "Talk to Lea") { expand?() }
     }
 
     private var title: String {
@@ -47,6 +53,6 @@ struct VoiceBar: View {
     }
 
     private var subtitle: String {
-        "\(voice.handsFree ? "Just talk; you can interrupt" : "Hold the mic to talk") · \(voice.listenerName)"
+        "\(voice.handsFree ? "Just talk; you can interrupt" : "Swipe up to talk, or hold the mic") · \(voice.listenerName)"
     }
 }

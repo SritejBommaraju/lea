@@ -64,6 +64,14 @@ struct VoiceTests {
         #expect(await firstWithin(Task { 7 }, seconds: 2) == .some(7))
     }
 
+    @Test func heyLeaIsAGreetingNotATurn() {
+        #expect(T.afterGreeting("Hey Lea.") == "")
+        #expect(T.afterGreeting("hey leah, it stopped spinning") == "it stopped spinning")
+        #expect(T.afterGreeting("Hi Lia what's wrong with it?") == "what's wrong with it?")
+        #expect(T.afterGreeting("hey, leaving it on overnight is fine?") == nil)
+        #expect(T.afterGreeting("it stopped, hey Lea") == nil)
+    }
+
     @Test func gatewayRepliesDecode() throws {
         let json = #"{"id":"t1","reply":"Opening a new scan.","actions":[{"type":"scan","symptom":"stops after a minute"},{"type":"report","scan_id":"scan_1"}]}"#
         let r = try JSONDecoder().decode(VoiceReply.self, from: Data(json.utf8))
