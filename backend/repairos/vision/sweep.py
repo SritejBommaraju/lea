@@ -155,18 +155,33 @@ def strip_cell_box(box: Sequence[float], width: int, height: int) -> Box:
     return (x0, y0, x0 + side, y0 + side)
 
 
-def strip_image(still: Any, boxes: Sequence[Sequence[float]]) -> tuple[Any, float]:
-    """(one image with each member's region in a numbered cell, cell pixels per still pixel). All cells have one size:
-    the smallest member region's own pixel size within [STRIP_CELL_MIN, STRIP_CELL_MAX] (cells are downsized to it;
-    upscaled only up to STRIP_CELL_MIN), so the members are compared at the same scale."""
+def strip_cell_side(regions: Sequence[Sequence[float]]) -> int:
+    """The one cell side of a strip: the smallest member region's own pixel size within [STRIP_CELL_MIN,
+    STRIP_CELL_MAX]."""
+    native = min(r[2] - r[0] for r in regions)
+    return int(max(STRIP_CELL_MIN, min(STRIP_CELL_MAX, native)))
+
+
+def strip_cell_scales(boxes: Sequence[Sequence[float]], width: int, height: int) -> list[float]:
+    """Per member: cell pixels per still pixel, at most 1. Every member's region is resized to the same cell, so a
+    larger region is shrunk more and shows fewer pixels per millimetre than a smaller one; an upscaled cell shows no
+    more detail than the still, so the factor never exceeds 1."""
+    regions = [strip_cell_box(b, width, height) for b in boxes]
+    cell = strip_cell_side(regions)
+    return [min(1.0, cell / max(1.0, r[2] - r[0])) for r in regions]
+
+
+def strip_image(still: Any, boxes: Sequence[Sequence[float]]) -> tuple[Any, list[float]]:
+    """(one image with each member's region in a numbered cell, per member cell pixels per still pixel as
+    strip_cell_scales). All cells have one size (strip_cell_side; cells are downsized to it, upscaled only up to
+    STRIP_CELL_MIN), so the members are compared side by side at one cell size."""
     from PIL import Image, ImageDraw, ImageFont
 
     from repairos.vision.crops import as_pil
 
     im = as_pil(still)
     regions = [strip_cell_box(b, im.width, im.height) for b in boxes]
-    native = min(r[2] - r[0] for r in regions)
-    cell = int(max(STRIP_CELL_MIN, min(STRIP_CELL_MAX, native)))
+    cell = strip_cell_side(regions)
     label_h = max(18, cell // 8)
     cols = min(STRIP_COLS, len(boxes))
     rows = math.ceil(len(boxes) / cols)
@@ -182,5 +197,4 @@ def strip_image(still: Any, boxes: Sequence[Sequence[float]]) -> tuple[Any, floa
         cx, cy = (k % cols) * (cell + gap), (k // cols) * (cell + label_h + gap)
         out.paste(piece, (cx, cy))
         d.text((cx + cell // 2, cy + cell + label_h // 2), str(k + 1), fill=(0, 0, 0), font=font, anchor="mm")
-    scale = cell / max(1.0, native)
-    return out, scale
+    return out, strip_cell_scales(boxes, im.width, im.height)

@@ -54,8 +54,8 @@ from repairos.vision.crops import context_view, crop_region, cut, load_still, ou
 from repairos.vision.generic_classes import DEFECT_TO_CROP_STATE, WIRE_CLASSES
 from repairos.vision.ranking import MERGE_IOU, RANK_BY, rank_regions
 from repairos.vision.scale import PixelScale
-from repairos.vision.sweep import (MAX_TILES, largest_large_box, lookalike_groups, strip_cell_box, strip_image,
-                                   tile_boxes)
+from repairos.vision.sweep import (MAX_TILES, largest_large_box, lookalike_groups, strip_cell_box,
+                                   strip_cell_scales, strip_image, tile_boxes)
 from repairos.vision.tiling import iou
 
 VLM_MAX_SIDE = 1568      # crops are downsized only past this (the VLM's own input limit), never upscaled
@@ -664,16 +664,13 @@ def plan_tiles(dets: Sequence[Any], sel: RegionSelection, width: int, height: in
 
 def pick_strip(dets: Sequence[Any], indices: Sequence[int], width: int, height: int, coarse=None) -> tuple[int, ...]:
     """The look-alike group compared in this still's strip: the largest group (vision/sweep.lookalike_groups) whose
-    every cell is fine enough to judge (`coarse(region, box, scale_on_crop)` False), or ()."""
-    from repairos.vision.sweep import STRIP_CELL_MAX, STRIP_CELL_MIN
-
+    every cell is fine enough to judge (`coarse(region, box, scale_on_crop)` False), or (). Each member is gated at
+    its own resize factor (sweep.strip_cell_scales): one cell size for all means a larger member is shrunk more."""
     for g in lookalike_groups(dets, indices):
-        cells = [strip_cell_box(dets[i].box, width, height) for i in g.members]
-        native = min(c[2] - c[0] for c in cells)
-        cell_scale = max(STRIP_CELL_MIN, min(STRIP_CELL_MAX, native)) / max(1.0, native)
-        # an upscaled cell shows no more detail than the still: the gate uses the still's own pixels at most
-        if coarse is not None and any(coarse(cells[k], dets[i].box, min(1.0, cell_scale))
-                                      for k, i in enumerate(g.members)):
+        boxes = [dets[i].box for i in g.members]
+        cells = [strip_cell_box(b, width, height) for b in boxes]
+        scales = strip_cell_scales(boxes, width, height)
+        if coarse is not None and any(coarse(cells[k], dets[i].box, scales[k]) for k, i in enumerate(g.members)):
             continue
         return g.members
     return ()
@@ -768,6 +765,17 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
             tile_calls.append(k)
     calls_left -= len(tile_calls)
     out.tiles = [tuple(c.region_px) for c in tile_crops]
+    # a region whose tile is too coarse to judge is not looked at through it: it goes back to the part-crop path (its
+    # own crop may be fine enough), unless another judged tile also covers it
+    judged = set(tile_calls)
+    for i, k in list(covered.items()):
+        if k in judged:
+            continue
+        alt = [t for t in tile_calls if inside_share(dets[i].box, tile_crops[t].region_px) >= COVERED_INSIDE]
+        if alt:
+            covered[i] = max(alt, key=lambda t: inside_share(dets[i].box, tile_crops[t].region_px))
+        else:
+            del covered[i]
 
     # one look-alike strip
     strip_members: tuple[int, ...] = ()
@@ -781,21 +789,31 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     reused: dict[int, Any] = {}     # index -> the share entry of another still that judges the same place
     owned: dict[int, Any] = {}      # index -> this still's share entry (its answer is set when it arrives)
     candidates: list[int] = []
+
+    def too_coarse_part(i: int) -> bool:
+        """The resolution gate for a part crop, on both paths (classifier or not): a retake, never a judgment."""
+        if not coarse(regions[i], dets[i].box):
+            return False
+        raw[i] = finding_too_coarse(scan_id=scan_id, still_id=still_id, subject=_subject(still_id, i, dets[i].label),
+                                    what=f"region labelled '{dets[i].label}'",
+                                    fid_parts=(i, dets[i].box, dets[i].label), region=regions[i])
+        out.coarse.append(i)
+        return True
+
     if classifier is not None:
-        candidates = ordered[:budget]
-        for i in ordered[budget:]:
-            raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
-                                           reason="over this still's crop budget")
+        for i in ordered:
+            if too_coarse_part(i):
+                continue
+            if len(candidates) < budget:
+                candidates.append(i)
+            else:
+                raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
+                                               reason="over this still's crop budget")
     else:
         for i in ordered:
             if i == big or i in covered:
                 continue
-            if coarse(regions[i], dets[i].box):
-                raw[i] = finding_too_coarse(scan_id=scan_id, still_id=still_id,
-                                            subject=_subject(still_id, i, dets[i].label),
-                                            what=f"region labelled '{dets[i].label}'",
-                                            fid_parts=(i, dets[i].box, dets[i].label), region=regions[i])
-                out.coarse.append(i)
+            if too_coarse_part(i):
                 continue
             entry, mine = (share.claim(still_id, i, dets[i].box, register=len(candidates) < calls_left)
                            if share is not None else (None, False))
@@ -899,11 +917,12 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
 
         stop_check()
         boxes = [dets[i].box for i in strip_members]
-        img, sc = strip_image(im, boxes)
+        img, cell_scales = strip_image(im, boxes)
         ux0, uy0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
         ux1, uy1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
         ctx = outline(context_base, (ux0, uy0, ux1, uy1), cscale) if context_base is not None else None
-        res_px = [px_of(dets[i].box) * min(1.0, sc) for i in strip_members if px_of and px_of(dets[i].box)]
+        res_px = [px_of(dets[i].box) * cell_scales[k] for k, i in enumerate(strip_members)
+                  if px_of and px_of(dets[i].box)]
         comp = judge.compare_parts(img, ctx, len(strip_members), part_hint=strip_label,
                                    **({"px_per_mm": round(min(res_px), 1)} if res_px else {}))
         out.comparison = comp
@@ -917,7 +936,8 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         res = {}
         for i, cs in comparison_states(comp, strip_members).items():
             cell = tuple(int(round(v)) for v in strip_cell_box(dets[i].box, W, H))
-            c = Crop(image=None, region_px=cell, scale=sc, box_px=tuple(dets[i].box), still_id=still_id)
+            c = Crop(image=None, region_px=cell, scale=cell_scales[strip_members.index(i)], box_px=tuple(dets[i].box),
+                     still_id=still_id)
             res[i] = finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=dets[i], crop=c,
                                        crop_state=cs, crop_file=path, sharpness=sharpness)
         return res

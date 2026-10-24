@@ -144,8 +144,8 @@ def test_the_strip_shows_every_member_at_one_scale():
     from PIL import Image
 
     still = Image.new("RGB", (400, 300), (40, 90, 160))
-    img, scale = sw.strip_image(still, [(100, 100, 120, 160), (140, 100, 160, 158), (180, 101, 200, 161)])
-    assert img.width > img.height and 0 < scale
+    img, scales = sw.strip_image(still, [(100, 100, 120, 160), (140, 100, 160, 158), (180, 101, 200, 161)])
+    assert img.width > img.height and len(scales) == 3 and all(0 < x for x in scales)
 
 
 def test_a_lookalike_that_differs_gets_the_fault_and_the_others_are_ok():
@@ -258,3 +258,65 @@ def test_a_stopping_worker_starts_no_tile_or_strip_call_and_releases_not_fails()
     with pytest.raises(WorkerStopping):
         insp.inspect_still(Image.new("RGB", (400, 300)), still_id="s1", scan_id="sc", detector=object(),
                            judge=Unreached(), classifier=False, detections=pins, stop=stop)
+
+
+# ------------------------------------------------------------------------- resolution gate edges (PR #10 review)
+class Recorder:
+    """Test judge for routing only: records which calls start and answers ok (its words are never asserted)."""
+
+    def __init__(self):
+        self.calls = []
+
+    def inspect_crop(self, crop, context=None, part_hint=None, family=None, view="part", px_per_mm=None):
+        self.calls.append((view, px_per_mm))
+        return CropState(part_class="part", state="ok", evidence_text="looks intact", confidence_word="medium",
+                         model="m", latency_ms=1, visibility="clear")
+
+
+def test_every_strip_member_is_gated_at_its_own_resize_not_the_smallest_cells():
+    # regions 170 px and 221 px both become 170 px cells: the larger member is shown at 170/221 of the still's scale
+    dets = [det((100, 100, 200, 200), "pin"), det((300, 100, 430, 230), "pin")]
+    at_6 = lambda region, box, s: 6.0 * s < 5.0       # noqa: E731  6 px/mm still, floor 5
+    assert insp.pick_strip(dets, [0, 1], 1400, 1000, coarse=at_6) == ()   # 6 * 0.77 = 4.6 px/mm: not judged
+    at_8 = lambda region, box, s: 8.0 * s < 5.0       # noqa: E731
+    assert insp.pick_strip(dets, [0, 1], 1400, 1000, coarse=at_8) == (0, 1)
+    assert sw.strip_cell_scales([d.box for d in dets], 1400, 1000) == pytest.approx([1.0, 170 / 221], rel=0.01)
+
+
+def test_parts_under_a_tile_too_coarse_to_judge_get_their_own_crops():
+    from PIL import Image
+
+    # a 12 MP still at 6 px/mm: four tiles over the large box are downsized under the floor, a small part is not
+    board = det((100, 100, 3900, 2900), "circuit board", 0.6)
+    part = det((500, 500, 560, 560), "resistor", 0.5)
+    judge = Recorder()
+    res = insp.inspect_still(Image.new("RGB", (4032, 3024)), still_id="still_a", scan_id="sc", detector=object(),
+                             judge=judge, classifier=False, detections=[board, part], max_crops=6,
+                             scale=PixelScale.constant(6.0, 4032, 3024))
+    assert res.tiles and res.timing["tiles"] == 0                      # every tile was too coarse: no tile call
+    assert [v for v, _ in judge.calls] == ["part"]                     # the part itself was judged
+    f = next(x for x in res.findings if x.subject.ref == "still_a/det1")
+    assert f.state.value == "ok"
+
+
+def test_the_classifier_path_applies_the_same_resolution_gate():
+    from PIL import Image
+
+    class Classifier:
+        ok_below, flag_at = 0.1, 0.5
+
+        def __init__(self):
+            self.seen = []
+
+        def classify(self, crops):
+            self.seen.extend(crops)
+            return []
+
+    cls = Classifier()
+    part = det((500, 500, 560, 560), "resistor", 0.5)
+    res = insp.inspect_still(Image.new("RGB", (4032, 3024)), still_id="still_a", scan_id="sc", detector=object(),
+                             judge=object(), classifier=cls, detections=[part],
+                             scale=PixelScale.constant(3.0, 4032, 3024))       # under the floor everywhere
+    assert cls.seen == []                                              # nothing scored on pixels this coarse
+    f = next(x for x in res.findings if x.subject.ref == "still_a/det0")
+    assert f.state.value == "insufficient_evidence" and "too few pixels per millimetre" in f.evidence[0]
