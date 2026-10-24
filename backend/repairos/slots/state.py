@@ -23,9 +23,11 @@ ID_FIELDS: dict[str, str] = {
     "repair-plan": "plan_id",
     "reference-design": "product_id",
     "shopping-quote": "quote_id",
+    "report": "report_id",
 }
 # internal kinds (no contract schema): id field
-INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha256"}
+# pipeline-run: one per scan, the Phase 1 pipeline's stage results and error state (task B10, repairos.pipeline)
+INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha256", "pipeline-run": "run_id"}
 
 TRANSITIONS = (
     "session.create", "device.pair",
@@ -37,10 +39,12 @@ TRANSITIONS = (
     "reading.record",
     "part.add",
     "plan.create", "plan.confirm", "plan.reopen",
+    "pipeline.update", "pipeline.claim_still",
+    "report.publish",
 )
 
 JOB_KINDS = ("align", "render", "detect", "segment", "ocr", "wire_check", "compare", "fuse", "crosscheck", "plan",
-             "sim_check", "shopping")
+             "sim_check", "shopping", "pipeline")
 
 
 class StateError(Exception):
@@ -55,6 +59,14 @@ class RevConflict(StateError):
     def __init__(self, kind: str, id: str, expected: int | None, actual: int | None):
         self.kind, self.id, self.expected, self.actual = kind, id, expected, actual
         super().__init__(f"{kind} {id}: expected rev {expected}, store has {actual}")
+
+
+class AlreadyClaimed(StateError):
+    """pipeline.claim_still on a still another worker is inspecting (or has inspected). `status` is its stage."""
+
+    def __init__(self, still_id: str, status: str, worker: str | None):
+        self.still_id, self.status, self.worker = still_id, status, worker
+        super().__init__(f"still {still_id} is {status} (worker {worker})")
 
 
 class InvariantViolation(StateError, ValueError):

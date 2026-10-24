@@ -91,10 +91,15 @@ def test_replay_runs_offline(format_session, tmp_path):
     out = tmp_path / "replay"
     r = subprocess.run([sys.executable, str(ROOT / "tools" / "replay.py"), "--session", str(format_session),
                         "--out", str(out)], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stdout + r.stderr
+    # The fixture's files are format-only (a JPEG header, no picture): the pipeline (B10) cannot inspect the still,
+    # so the run fails at that stage, clearly, and no report is made up in its place.
+    assert r.returncode == 1, r.stdout + r.stderr
     summary = json.loads((out / format_session.name / "summary.json").read_text())
     assert summary["counts"] == {"scans": 1, "stills": 1, "readings": 1, "parts": 0}
-    assert [s["stage"] for s in summary["stages"]][:2] == ["validate", "ingest"]
+    assert [s["stage"] for s in summary["stages"]] == ["validate", "ingest", "pipeline"]
+    pipe = summary["stages"][2]
+    assert pipe["status"] == "failed" and "stage inspect (still s7)" in pipe["error"]
+    assert summary["reports"] == [] and summary["grain"] == "not called (Phase 1)"
     assert summary["outcome"]["missed"]  # nothing has looked at it yet: the induced fault is missed, not invented
     check = subprocess.run([sys.executable, str(ROOT / "tools" / "replay.py"), "--check", "--session",
                             str(format_session)], capture_output=True, text=True, timeout=60)

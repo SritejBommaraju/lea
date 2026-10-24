@@ -30,7 +30,10 @@ def map_files(kind: str, data: dict[str, Any], fn: FileFn) -> dict[str, Any]:
     d = copy.deepcopy(data)
     if kind == "scan-package":
         root = f"scans/{d['scan_id']}"
-        d["points_file"] = fn(d["points_file"], f"{root}/points_arkit_world")
+        if d.get("points_file"):  # absent when depth_source is none (no-LiDAR capture, A8)
+            d["points_file"] = fn(d["points_file"], f"{root}/points_arkit_world")
+        if d.get("mesh_file"):
+            d["mesh_file"] = fn(d["mesh_file"], f"{root}/mesh_arkit_world")
         for kf in d.get("keyframes", []):
             k = kf["keyframe_id"]
             kf["image_file"] = fn(kf["image_file"], f"{root}/{k}")

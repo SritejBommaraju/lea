@@ -45,6 +45,14 @@ train = [
     "pyarrow==21.0.0",
 ]
 
+# Capture geometry (B12 fusion, locate ray casting, B13 later): `uv pip install -e 'backend[geometry]'`. Not in
+# requirements.lock yet. open3d MIT (wheel bundles its MIT/BSD/Apache 3rd-party code); its pip deps (dash, flask,
+# werkzeug, nbformat, ipywidgets, configargparse and their tree) are MIT, BSD, Apache-2.0 or ISC, except transitive
+# certifi, MPL-2.0: flag for the licence check (B15). Without it the importer and locate fall back to numpy.
+geometry = [
+    "open3d==0.20.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["repairos"]
 

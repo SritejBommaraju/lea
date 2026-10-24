@@ -113,5 +113,83 @@ def _plan(d, prev, lookup):
                                            "is confirmed without a proof reading (mark it suspect: unproven)")
 
 
+# Report buckets (task B9) against the stored Finding.state they summarise.
+NOT_LOOKED_AT = {"not_inspected", "not_seen_in_photo"}
+UNDECIDED = {"insufficient_evidence", "unsure"}
+RUN_STATUSES = {"inspecting", "running", "done", "failed"}
+
+
+def _stored_finding(lookup: Lookup, report: Mapping[str, Any], entry: Mapping[str, Any], where: str):
+    f = _need(lookup, "finding", entry["finding_id"], f"report {where}.finding_id")
+    if f["scan_id"] != report["scan_id"]:
+        raise InvariantViolation("REF", f"report {report['report_id']}: finding {entry['finding_id']} is from "
+                                        f"scan {f['scan_id']}")
+    return f
+
+
+def _report(d, prev, lookup):
+    _scan(lookup, d, "report")
+    rid = d["report_id"]
+    for e in d.get("findings", []):
+        f = _stored_finding(lookup, d, e, "findings[]")
+        if f["state"] in NOT_LOOKED_AT:
+            raise InvariantViolation("I3", f"report {rid}: finding {f['finding_id']} was not inspected; it cannot be "
+                                           "listed as judged")
+        if f["state"] in UNDECIDED:
+            raise InvariantViolation("I4", f"report {rid}: finding {f['finding_id']} could not be judged; it belongs "
+                                           "in insufficient_evidence with its reason")
+        want = "none" if f["state"] == "ok" else f["state"]
+        if e["issue"] != want:
+            raise InvariantViolation("I3" if e["issue"] == "none" else "REF",
+                                     f"report {rid}: finding {f['finding_id']} is {f['state']!r}, the report says "
+                                     f"issue {e['issue']!r}")
+        proof = e.get("proof") or {}
+        if proof.get("status", "not_measured") != "not_measured":
+            _need(lookup, "meter-reading", proof.get("reading_id"), f"report finding {f['finding_id']} proof")
+    for e in d.get("not_inspected", []):
+        f = _stored_finding(lookup, d, e, "not_inspected[]")
+        if f["state"] not in NOT_LOOKED_AT:
+            raise InvariantViolation("I3", f"report {rid}: finding {f['finding_id']} is {f['state']!r}, not "
+                                           "not_inspected")
+    for e in d.get("insufficient_evidence", []):
+        f = _stored_finding(lookup, d, e, "insufficient_evidence[]")
+        if f["state"] not in UNDECIDED:
+            raise InvariantViolation("I4", f"report {rid}: finding {f['finding_id']} is {f['state']!r}, not "
+                                           "insufficient_evidence")
+        if not e["reason"].strip():
+            raise InvariantViolation("I4", f"report {rid}: finding {f['finding_id']} needs its reason")
+    if d["verdict"] == "insufficient_evidence" and not d["verdict_reason"]["text"].strip():
+        raise InvariantViolation("I4", f"report {rid}: insufficient_evidence needs a reason")
+    if d["verdict"] == "looks_good" and (d.get("not_inspected") or d.get("insufficient_evidence")):
+        raise InvariantViolation("I3", f"report {rid}: looks_good while regions were not inspected or not judged")
+
+
+def _pipeline_run(d, prev, lookup):
+    _scan(lookup, d, "pipeline-run")
+    rid, status = d["run_id"], d.get("status")
+    if status not in RUN_STATUSES:
+        raise InvariantViolation("SCHEMA", f"pipeline-run {rid}: status {status!r} not in {sorted(RUN_STATUSES)}")
+    err = d.get("error") or {}
+    if status == "failed" and not (str(err.get("message") or "").strip() and err.get("stage")):
+        raise InvariantViolation("I4", f"pipeline-run {rid}: a failed run names its stage and the error")
+    for sid, st in (d.get("stills") or {}).items():
+        if st.get("status") == "done":
+            ids = st.get("finding_ids") or []
+            if not ids:   # I3: a still that was handled ends in findings (not_inspected at least), never in silence
+                raise InvariantViolation("I3", f"pipeline-run {rid}: still {sid} is done with no findings")
+            for fid in ids:
+                _need(lookup, "finding", fid, f"pipeline-run {rid} still {sid} finding")
+        if st.get("status") == "failed" and not str(st.get("error") or "").strip():
+            raise InvariantViolation("I4", f"pipeline-run {rid}: still {sid} failed without the error")
+    if status == "done":
+        rep = _need(lookup, "report", d.get("report_id"), f"pipeline-run {rid} report_id")
+        if rep["scan_id"] != d["scan_id"]:
+            raise InvariantViolation("REF", f"pipeline-run {rid}: report {d['report_id']} is for another scan")
+        open_ = [sid for sid, st in (d.get("stills") or {}).items() if st.get("status") != "done"]
+        if open_:
+            raise InvariantViolation("I3", f"pipeline-run {rid}: done while stills {open_} are not")
+
+
 _CHECKS = {"scan-package": _scan_package, "still": _still, "finding": _finding, "suspect": _suspect,
-           "next-action": _next_action, "meter-reading": _reading, "repair-plan": _plan}
+           "next-action": _next_action, "meter-reading": _reading, "repair-plan": _plan, "report": _report,
+           "pipeline-run": _pipeline_run}

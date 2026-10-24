@@ -1,0 +1,2 @@
+{ "schema": "scan-package", "why": "a LiDAR scan (depth_source lidar or absent) needs points_file, point_count and voxel_mm",
+  "base": "scan-package.json", "patch": { "points_file": null, "point_count": null, "alignment": null } }

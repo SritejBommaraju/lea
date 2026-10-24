@@ -25,8 +25,8 @@ import jsonschema
 from repairos import contracts
 from repairos.config import ROOT
 from repairos.registry import register
-from repairos.slots.state import (ID_FIELDS, INTERNAL_KINDS, TRANSITIONS, InvariantViolation, Job, NotFound,
-                                  RevConflict, Row, RowEvent, StateError)
+from repairos.slots.state import (ID_FIELDS, INTERNAL_KINDS, TRANSITIONS, AlreadyClaimed, InvariantViolation, Job,
+                                  NotFound, RevConflict, Row, RowEvent, StateError)
 from repairos.slots.state_sqlite import rules
 
 T = TypeVar("T")
@@ -65,6 +65,19 @@ def id_field(kind: str) -> str:
         return ID_FIELDS.get(kind) or INTERNAL_KINDS[kind]
     except KeyError:
         raise StateError(f"unknown kind {kind!r}") from None
+
+
+def _merge(target: Any, patch: Any) -> Any:
+    """RFC 7386 JSON merge patch."""
+    if not isinstance(patch, dict):
+        return patch
+    out = dict(target) if isinstance(target, dict) else {}
+    for k, v in patch.items():
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = _merge(out.get(k), v)
+    return out
 
 
 def _row(r: sqlite3.Row) -> Row:
@@ -201,7 +214,8 @@ class SqliteState:
     def _transition(self, c, kind: str, id: str, action: str, p: dict) -> Row:
         expect = {"session": "session", "device": "device", "scan": "scan-package", "still": "still",
                   "finding": "finding", "suspect": "suspect", "next_action": "next-action",
-                  "reading": "meter-reading", "part": "part-on-hand", "plan": "repair-plan"}[action.split(".")[0]]
+                  "reading": "meter-reading", "part": "part-on-hand", "plan": "repair-plan",
+                  "pipeline": "pipeline-run", "report": "report"}[action.split(".")[0]]
         if kind != expect:
             raise StateError(f"transition {action} applies to {expect}, not {kind}")
         if action in ("session.create", "device.pair", "scan.create", "still.create", "finding.create",
@@ -209,6 +223,12 @@ class SqliteState:
             return self._create(c, kind, id, p)
         if action == "plan.create":
             return self._create(c, kind, id, p, status="open")
+        if action in ("pipeline.update", "pipeline.claim_still"):
+            return self._pipeline(c, id, action, p)
+        if action == "report.publish":   # a re-run replaces the scan's report (new rev, one event)
+            prev = self._get(c, kind, id)
+            p.setdefault("report_id", id)
+            return self._write(c, kind, p, prev.rev if prev else 0)
         row = self._existing(c, kind, id) if action != "suspect.update_from_fusion" else self._get(c, kind, id)
         if action == "scan.set_alignment":
             return self._write(c, kind, {**row.data, "alignment": p["alignment"]}, row.rev)
@@ -239,6 +259,27 @@ class SqliteState:
                     "updated_at": p.get("updated_at") or now()}
             return self._write(c, kind, data, row.rev)
         raise StateError(f"transition {action} not implemented")  # unreachable: TRANSITIONS is checked
+
+    def _pipeline(self, c, id: str, action: str, p: dict) -> Row:
+        """pipeline.update: an RFC 7386 merge patch on the run row (created on first use; None deletes a key).
+        pipeline.claim_still: {still_id, worker, at[, force]} marks one still `running` for one worker, atomically;
+        AlreadyClaimed when it is running or done (unless force)."""
+        prev = self._get(c, "pipeline-run", id)
+        base = prev.data if prev else {"run_id": id, "scan_id": p.get("scan_id"), "session_id": p.get("session_id"),
+                                       "status": "inspecting", "attempt": 0, "stages": {}, "stills": {}}
+        if action == "pipeline.update":
+            data = _merge(base, p)
+        else:
+            sid = p["still_id"]
+            cur = (base.get("stills") or {}).get(sid) or {}
+            if cur.get("status") in ("running", "done") and not p.get("force"):
+                raise AlreadyClaimed(sid, cur["status"], cur.get("worker"))
+            data = _merge(base, {"stills": {sid: {"status": "running", "worker": p.get("worker"),
+                                                  "started_at": p.get("at") or now(), "error": None}}})
+            if data.get("status") in ("done", "failed"):   # a new still after a report: the report is out of date
+                data["status"] = "inspecting"
+        data["run_id"] = id
+        return self._write(c, "pipeline-run", data, prev.rev if prev else 0, status=data.get("status"))
 
     # ------------------------------------------------------------------ jobs
     async def enqueue(self, job: Job) -> str:

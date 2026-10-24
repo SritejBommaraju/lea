@@ -7,7 +7,9 @@
 Steps: validate the folder; load it into a fresh STATE + BLOB (the configured slots, data dir
 data/replay/<session_id>/) through the gateway's transitions; run `repairos.pipeline.run_session` when the pipeline
 exists (task B10; until then the run says `not_built` and nothing stands in for it); score the findings against
-truth.json; write data/replay/<session_id>/summary.json. Phase 1 makes no Grain calls.
+truth.json; write data/replay/<session_id>/summary.json and each scan's report (report_<scan_id>.json, .md, .html,
+validated against spec/contracts/report.schema.json). A failed pipeline stage is a failed run. Phase 1 makes no
+Grain calls.
 """
 from __future__ import annotations
 
@@ -81,10 +83,16 @@ async def _replay(path: Path, out_root: Path, allow_heldout: bool) -> dict:
     if pipeline is None or not hasattr(pipeline, "run_session"):
         stage("pipeline", t0, "not_built", task="B10")
     else:
-        result = pipeline.run_session(session_id=session.session_id, state=state, blobs=blobs)
-        if inspect.isawaitable(result):
-            await result
-        stage("pipeline", t0, "ok")
+        try:
+            result = pipeline.run_session(session_id=session.session_id, state=state, blobs=blobs, registry=registry)
+            if inspect.isawaitable(result):
+                result = await result
+        except (pipeline.PipelineFailed, pipeline.PipelineError) as e:
+            stage("pipeline", t0, "failed", error=str(e))
+            result = []
+        else:
+            stage("pipeline", t0, "ok")
+        _write_reports(result, out, blobs, summary)
 
     findings = [r.data for r in await state.list("finding", session_id=session.session_id)]
     summary["findings"] = [{"finding_id": f["finding_id"], "subject": f["subject"], "state": f["state"],
@@ -93,6 +101,27 @@ async def _replay(path: Path, out_root: Path, allow_heldout: bool) -> dict:
     if session.truth is None:
         summary["outcome_note"] = "no truth.json: nothing to score against"
     return summary
+
+
+def _write_reports(reports: list[dict], out: Path, blobs, summary: dict) -> None:
+    """report_<scan_id>.json / .md / .html next to summary.json; MS1 facts in the summary."""
+    from repairos.contracts import validate
+    from repairos.report.export import crop_thumbnail, to_html, to_markdown
+
+    out.mkdir(parents=True, exist_ok=True)
+    summary["reports"] = []
+    for rep in reports or []:
+        validate("report", rep)
+        base = out / f"report_{rep['scan_id']}"
+        base.with_suffix(".json").write_text(json.dumps(rep, indent=2) + "\n", encoding="utf-8")
+        base.with_suffix(".md").write_text(to_markdown(rep), encoding="utf-8")
+        base.with_suffix(".html").write_text(to_html(rep, lambda ref: crop_thumbnail(blobs.get(ref))),
+                                             encoding="utf-8")
+        summary["reports"].append({
+            "scan_id": rep["scan_id"], "verdict": rep["verdict"], "rule": rep["verdict_reason"]["rule"],
+            "file": str(base.with_suffix(".json")), "findings": len(rep["findings"]),
+            "not_inspected": len(rep["not_inspected"]), "insufficient_evidence": len(rep["insufficient_evidence"]),
+            "grain": rep["grain"]})
 
 
 def main(argv: list[str] | None = None) -> int:

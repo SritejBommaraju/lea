@@ -8,9 +8,11 @@ make replay SESSION=<session_id | folder path>   # validate, load into a fresh S
 make sessions-check                              # validate every non-held-out session (CI)
 ```
 
-Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store) and `summary.json` with per-stage
-timing, the findings, and the score against `truth.json`. Until the pipeline exists (task B10) the `pipeline`
-stage reports `not_built`; nothing stands in for it. Phase 1 replay makes no Grain calls.
+Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store), `summary.json` with per-stage
+timing, the findings, the score against `truth.json` and each scan's report, and `report_<scan_id>.json` (validated
+against `spec/contracts/report.schema.json`), `.md` and `.html`. The pipeline (B10, `repairos.pipeline.run_session`)
+calls the configured detector, Claude and Jev; a stage that fails fails the replay with the stage and the error.
+Phase 1 replay makes no Grain calls.
 
 ## Where sessions come from
 
@@ -20,6 +22,14 @@ stage reports `not_built`; nothing stands in for it. Phase 1 replay makes no Gra
   run `make sessions-check`.
 - The app upload (A4) and the importers (B12) write the same layout with
   `repairos.sessions.writer.SessionWriter`.
+- **Importers** (B12): `backend/.venv/bin/python tools/import_capture.py <export> [--device-model iPhone15,2 --ios
+  18.1 --symptom "..."]` converts a **Stray Scanner** export folder (MIT app, LiDAR: fused PLY in metres, a mesh when
+  Open3D is installed, keyframes from the video as `unguided` stills) or a **NeRFCapture** offline export, folder
+  or zip (MIT app, any ARKit iPhone: posed stills, `depth_source: none`, no PLY) into `samples/sessions/<id>/`
+  (`source: converter`) and validates it. Needs `ffmpeg` for Stray videos; `backend[geometry]` (Open3D) for TSDF
+  fusion and the mesh, else a numpy voxel fusion runs. `import.json` records the source, the fusion method and
+  measured spacing, and every assumption (tracking state not recorded, distortion not applied, etc.). Real exports
+  for the importer tests go in `samples/imports/<name>/` (backend/tests/replay/test_imports.py).
 
 ## Layout
 
@@ -28,12 +38,14 @@ samples/sessions/<session_id>/
   session.json                         samples/session.schema.json
   truth.json                           expected outcomes: samples/session.schema.json#/$defs/truth
   scans/<scan_id>/scan_package.json    ScanPackage (spec/contracts/scan-package.schema.json)
-  scans/<scan_id>/points_arkit_world.ply
+  scans/<scan_id>/points_arkit_world.ply  absent when depth_source is none (no-LiDAR capture, A8)
+  scans/<scan_id>/mesh_arkit_world.ply    optional triangle mesh (mesh_file)
   scans/<scan_id>/<keyframe_id>.jpg, <keyframe_id>_depth.png, <keyframe_id>_conf.png
   stills/<still_id>.json               Still (spec/contracts/still.schema.json)
   stills/<still_id>.jpg, <still_id>_depth.png, <still_id>_conf.png
   readings/<reading_id>.json           MeterReading, typed by the operator from the real meter
   parts/<item_id>.json                 PartOnHand, as the user described it
+  import.json                          importers only: where the session came from and what was assumed
 ```
 
 Every file path inside a JSON object is **relative to the session folder** (for example
@@ -47,6 +59,7 @@ Phase 2 adds `grain/` (recorded real Grain responses; gitignored, never committe
 | File | Format | Checked by the validator |
 |---|---|---|
 | `points_arkit_world.ply` | binary little-endian PLY, ARKit world frame, **metres**, Y up; `float x, y, z` + `uchar red, green, blue`, optional `uchar confidence, views` | `format binary_little_endian 1.0`, float x/y/z, vertex count = `point_count`, body size |
+| `mesh_arkit_world.ply` | binary little-endian PLY triangle mesh, arkit_world metres; `float x, y, z` (+ `uchar red, green, blue`) vertices, `uchar int vertex_indices` faces | header (binary LE, float x/y/z) and body size |
 | keyframe `.jpg` | JPEG q85, 1920x1440 | JPEG, size = keyframe `intrinsics.width_px/height_px` |
 | still `.jpg` | full-resolution JPEG (q >= 85; HEIC converted on the phone) | JPEG, size = `width_px x height_px` |
 | `*_depth.png`, `*_conf.png` | 256x192 ARKit depth (uint16 mm) / confidence (uint8 0-2) | present when named |
@@ -101,6 +114,12 @@ Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, 
 4. `POST /v1/scans` with the ScanPackage whose file fields are those refs; then `POST /v1/stills`, `POST
    /v1/readings`. Bodies are validated against the contracts and the files against the table above (422 with the
    schema path or the list of problems). Posting the same object again is a no-op.
-5. `GET /v1/sessions/<id>/events` (SSE; reconnect with `Last-Event-ID`) streams every row change: findings,
-   suspects, next actions. `GET /v1/sessions/<id>`, `/v1/scans/<id>`, `/v1/findings/<id>`, `/v1/suspects/<id>`
+5. `POST /v1/scans/<scan_id>/complete` once the scan and every still are posted: queues the pipeline run (stills
+   are already being inspected as they arrive; `make run-workers` runs the worker). `GET /v1/scans/<id>/pipeline`
+   gives the stage statuses and, after a failure, the stage and the error. `GET /v1/scans/<id>/report` is the
+   report (404 while it is made, 409 when the pipeline failed); `GET /v1/scans/<id>/report/export?format=html|md`
+   a printable copy.
+6. `GET /v1/sessions/<id>/events` (SSE; reconnect with `Last-Event-ID`) streams every row change: findings,
+   suspects, next actions, the pipeline run, the report; plus `event: report_ready` when a report is published and
+   `event: pipeline_failed` when a run fails. `GET /v1/sessions/<id>`, `/v1/scans/<id>`, `/v1/findings/<id>`, `/v1/suspects/<id>`
    read state. OpenAPI at `/openapi.json`.

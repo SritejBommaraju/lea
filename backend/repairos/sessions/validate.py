@@ -91,7 +91,7 @@ def validate_session(path: Path) -> list[str]:
             problems.append(f"{where}: session_id {pkg['session_id']!r} != {s.session_id!r}")
         if p.parent.name != pkg["scan_id"]:
             problems.append(f"{where}: folder {p.parent.name!r} != scan_id {pkg['scan_id']!r}")
-        ply = exists(pkg["points_file"], where)
+        ply = exists(pkg["points_file"], where) if pkg.get("points_file") else None  # none: no-LiDAR (A8)
         if ply is not None:
             try:
                 with ply.open("rb") as f:
@@ -101,6 +101,13 @@ def validate_session(path: Path) -> list[str]:
                                     f"{pkg['point_count']}")
             except files.CaptureFileError as e:
                 problems.append(f"{where}: {pkg['points_file']}: {e}")
+        mesh = exists(pkg["mesh_file"], where) if pkg.get("mesh_file") else None
+        if mesh is not None:
+            try:
+                with mesh.open("rb") as f:
+                    files.ply_header(f, mesh.stat().st_size)
+            except files.CaptureFileError as e:
+                problems.append(f"{where}: {pkg['mesh_file']}: {e}")
         for kf in pkg["keyframes"]:
             jpeg(kf["image_file"], f"{where} keyframe {kf['keyframe_id']}",
                  (kf["intrinsics"]["width_px"], kf["intrinsics"]["height_px"]))
