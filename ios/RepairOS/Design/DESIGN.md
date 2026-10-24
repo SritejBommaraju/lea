@@ -7,7 +7,7 @@ and the next `Theme.swift` change can be built from it without guessing. Referen
 
 Status: direction agreed → Figma framework built ([file](https://www.figma.com/design/acZpRbLDyuavWtoJIqyj1u)): tokens,
 components and screens 01-08 in both modes → **team review** → `Theme.swift` PR → screens. No code changes until the
-review settles the design. In that file Inter stands in for SF Pro,
+review settles the design. Snapshots of every page: [ios/figma](../../figma/README.md). In that file Inter stands in for SF Pro,
 JetBrains Mono for SF Mono and drawn icons for SF Symbols, because the system fonts do not render there.
 
 ## 1. The idea
