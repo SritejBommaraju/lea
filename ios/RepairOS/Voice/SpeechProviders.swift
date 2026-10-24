@@ -236,8 +236,11 @@ final class CartesiaVoiceOutput: SpeechOutput {
     private var current: Task<Void, Never>?
     private var scheduled = 0
     private var played = 0
-    /// A sentence Cartesia couldn't say (socket dropped, token refused) is said by the iPhone voice instead.
-    private var fallback: SystemVoiceOutput?
+    /// After Cartesia fails (socket dropped, token refused), this sentence and the rest of the answer are said by the
+    /// iPhone voice, owned here so `stop()` silences whichever voice is talking.
+    private lazy var backup = SystemVoiceOutput()
+    private var failedOver = false
+    private var onBackup = false
     private var stopped = false
     /// Told why Cartesia failed, so the person knows and later sentences can use the iPhone voice.
     private let onFailure: (String) -> Void
@@ -247,12 +250,13 @@ final class CartesiaVoiceOutput: SpeechOutput {
     }
 
     func speak(_ sentence: String) async {
+        stopped = false
+        if failedOver { return await sayWithBackup(sentence) }
         let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
         engine.connect(player, to: engine.mainMixerNode, format: format)
         if !engine.isRunning { try? engine.start() }
         player.play()
         scheduled = 0; played = 0
-        stopped = false
         var failure: Error?
         let task = Task {
             do {
@@ -273,16 +277,21 @@ final class CartesiaVoiceOutput: SpeechOutput {
         // Interrupted on purpose (barge-in, a newer turn): stay quiet. Otherwise say the sentence another way.
         guard let failure, !stopped, !Task.isCancelled, !(failure is CancellationError),
               (failure as? URLError)?.code != .cancelled else { return }
+        failedOver = true
         onFailure(failure.localizedDescription)
-        let voice = SystemVoiceOutput()
-        fallback = voice
-        await voice.speak(sentence)
-        fallback = nil
+        await sayWithBackup(sentence)
+    }
+
+    private func sayWithBackup(_ sentence: String) async {
+        guard !stopped else { return }
+        onBackup = true
+        await backup.speak(sentence)
+        onBackup = false
     }
 
     func stop() -> Double {
         stopped = true
-        if let fallback { return fallback.stop() }
+        if onBackup { return backup.stop() }
         current?.cancel()
         player.stop()
         return scheduled > 0 ? Double(played) / Double(scheduled) : 0

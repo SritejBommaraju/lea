@@ -279,12 +279,12 @@ final class VoiceCoordinator: ObservableObject {
         return apple
     }
 
-    /// Cartesia's voice failed mid-answer: say so, finish this answer in the iPhone voice, and fetch a fresh token for
-    /// the next turn (a refused token would fail the same way again).
+    /// Cartesia's voice failed mid-answer: say so and fetch a fresh token for the next turn (a refused token would fail
+    /// the same way again). The output itself finishes the answer in the iPhone voice and still answers to `stop()`;
+    /// swapping `output` here would leave that voice talking through an interruption.
     private func cartesiaVoiceFailed(_ why: String) {
         message = "Lea's voice dropped (\(why)), so the iPhone voice is finishing the answer."
         grant = nil
-        output = SystemVoiceOutput()
     }
 
     /// Fetches the speech token ahead of the first turn (voice mode or a scan opening), so pressing the mic doesn't
@@ -390,7 +390,11 @@ final class VoiceCoordinator: ObservableObject {
         guard TurnTaking.takesTurn(text, whileLeaTalks: state == .speaking || state == .thinking) else { return }   // "go on" still resumes
         // "Hey Lea" alone is answered here, as a wake word would be; "Hey Lea, it won't turn on" asks the rest.
         if let rest = TurnTaking.afterGreeting(text) {
-            guard !rest.isEmpty else { return speakAll(["Hey, what's up?"]) }
+            guard !rest.isEmpty else {
+                turn += 1   // a reply still on its way is superseded: it must not talk over or act after the greeting
+                interrupted = nil
+                return speakAll(["Hey, what's up?"])
+            }
             text = rest
         }
         interrupted = nil
@@ -424,6 +428,7 @@ final class VoiceCoordinator: ObservableObject {
         var settled = false
         for n in 0..<3 {
             if let r = await firstWithin(reply, seconds: TurnTaking.fillQuiet(n)) { answer = r ?? nil; settled = true; break }
+            guard mine == turn else { return }   // a newer turn started during the wait: no thinking sound for this one
             if let f = TurnTaking.filler(after: fillers, n: n) { fillers.append(f); await say(f) }
             guard mine == turn else { return }
         }
@@ -456,7 +461,9 @@ final class VoiceCoordinator: ObservableObject {
     }
 
     private func speakAll(_ lines: [String]) {
+        // Cancelling the task doesn't silence the voice mid-sentence: stop it too, so two answers never overlap.
         speaking?.cancel()
+        if state == .speaking { _ = output.stop() }
         queue = lines
         speaking = Task {
             state = .speaking
