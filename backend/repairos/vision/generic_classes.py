@@ -41,3 +41,15 @@ CROP_STATES: tuple[str, ...] = (
 )
 
 CONFIDENCE_WORDS: tuple[str, ...] = ("low", "medium", "high")
+
+# Defect kinds the defect classifier (CLS slot, task M7) can name for one crop, given that it sees a defect. Only
+# kinds with licence-clean training data are listed (training/datasets/MANIFEST.json); a kind without data is not
+# claimed. Each maps to the crop state a finding uses.
+DEFECT_CLASSES: tuple[str, ...] = (
+    "burnt or melted", "bent or deformed", "missing part", "scratch or surface damage", "solder fault",
+    "misplaced or extra part",
+)
+DEFECT_TO_CROP_STATE: dict[str, str] = {
+    "burnt or melted": "burnt", "bent or deformed": "damaged", "missing part": "missing",
+    "scratch or surface damage": "damaged", "solder fault": "damaged", "misplaced or extra part": "damaged",
+}

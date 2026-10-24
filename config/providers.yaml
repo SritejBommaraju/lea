@@ -16,7 +16,8 @@ profiles:
     VLM: anthropic   # Claude Haiku per crop, Sonnet on cannot_tell (built)
     LLM: anthropic   # Claude Sonnet for plain-word report text (built)
     FUSION: jev      # Jev judgments, decisions in code (built). No fallback: Jev down is a blocker
-    CLS: none        # defect classifier, planned (M7); selected only after MS5
+    CLS: none        # dinov2 = DINOv2 defect classifier (built, M7). Not selected: it did not beat VLM-only on
+                     # held-out data (eval/defects/REPORT.md). Opt in: REPAIROS_SLOT_CLS=dinov2. MS5 re-decides
     OCRB: none       # label and marking OCR on crops, planned (M8)
     STATE: sqlite    # one SQLite file under data/ (built)
     BLOB: local      # content-addressed files under data/blobs/ (built)
