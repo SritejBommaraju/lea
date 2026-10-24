@@ -36,9 +36,21 @@ struct ReportView: View {
     /// The parts search hit the spend cap (pipeline `fix_status` or live `fix_ready`): "not available right now".
     @State private var fixLimited = false
     @Environment(\.continueScan) private var continueScan
+    @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
 
     private var gateway: GatewayClient? { offline ? nil : app.gateway }
+
+    /// The photo-real recreation (Report/Recreation) when this scan has one (the phone's shell, else the server's);
+    /// otherwise the stage picks the 3D view or the photo hero itself.
+    private var stageHero: StageHero {
+        let dir = RecreationCenter.scanDir(sessionDir: app.storage.dir(record), scanID: record.scanID)
+        guard RecreationCenter.shared.available(dir) else { return .automatic }
+        return .custom { ctx in
+            AnyView(RecreationView(source: .scan(dir), markers: ctx.markers, focus: ctx.focus,
+                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe))
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -50,7 +62,7 @@ struct ReportView: View {
                                     fix: live?.fix ?? report.fix,
                                     fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
                                     fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil,
-                                    fresh: landedFresh, voiceStarted: voiceStarted)
+                                    fresh: landedFresh, voiceStarted: voiceStarted, hero: stageHero)
                         .transition(.opacity)
                         .overlay(alignment: .top) {
                             if updating {
@@ -110,6 +122,9 @@ struct ReportView: View {
                         if report != nil, let continueScan {
                             Button("Continue scanning", systemImage: Symbol.scan) { continueScan() }
                         }
+                        if report != nil, let scanBottom {
+                            Button("Scan the bottom", systemImage: "arrow.up.arrow.down") { scanBottom() }
+                        }
                         if report != nil, gateway != nil {
                             Button("Full report with photos", systemImage: "doc.richtext") { showFull = true }
                         }
@@ -131,6 +146,15 @@ struct ReportView: View {
                 }
             }
             .task { await run() }
+            // A shell for older scans that have none (built off the main actor, once), and the server's better
+            // recreation whenever it announces a new revision.
+            .task { RecreationCenter.shared.buildShell(sessionDir: app.storage.dir(record), scanID: record.scanID) }
+            .task(id: live?.recreationRev) {
+                if let gateway {
+                    await RecreationCenter.shared.fetchGateway(gateway, sessionDir: app.storage.dir(record), scanID: record.scanID,
+                                                               rev: live?.recreationRev)
+                }
+            }
             .task(id: report == nil) { await fetchMesh(rev: nil) }
             .task(id: live?.meshRev) { if let rev = live?.meshRev { await fetchMesh(rev: rev) } }
             .task(id: heroChoice) { await fetchMesh(rev: nil) }
@@ -470,6 +494,7 @@ struct ReportContent: View {
     var fixSearching = false
     var fixUnavailable = false
     @Environment(\.continueScan) private var continueScan
+    @Environment(\.scanBottom) private var scanBottom
     @Environment(\.cropSource) private var cropSource
     @State var focus: String?
     @State private var sheet: ReportModel.Problem?
@@ -596,6 +621,10 @@ struct ReportContent: View {
                 if !report.limits.isEmpty { LimitsCard(limits: report.limits) }
                 if let continueScan {
                     Button { continueScan() } label: { Label("Continue scanning", systemImage: Symbol.scan) }
+                        .buttonStyle(.primary(.accent))
+                }
+                if let scanBottom {
+                    Button { scanBottom() } label: { Label("Scan the bottom", systemImage: "arrow.up.arrow.down") }
                         .buttonStyle(.primary(.accent))
                 }
                 if let openFull {

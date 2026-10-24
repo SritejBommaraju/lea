@@ -30,11 +30,20 @@ class DepthSource(StrEnum):
 
 class Reason(StrEnum):
     """
-    flipped: the object was turned over for its underside (it moved: not in segment 0's object frame). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id).
+    flipped: the object was turned over for its underside ("Scan the bottom"; it moved: object_moved true, not in segment 0's frame unless transform_to_segment0 is applied). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id).
     """
 
     flipped = 'flipped'
     continued = 'continued'
+
+
+class PoseSource(StrEnum):
+    """
+    Where this segment's own poses come from (absent = arkit).
+    """
+
+    arkit = 'arkit'
+    object_tracked = 'object_tracked'
 
 
 class ExtentMItem(RootModel[float]):
@@ -63,7 +72,7 @@ class SupportPlane(BaseModel):
     )
 
 
-class PoseSource(StrEnum):
+class PoseSource1(StrEnum):
     """
     Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked: the app's hand-held mode (the person turns or flips the object while the phone stays roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the OBJECT frame, which is the ARKit world frame at the moment the object was locked (it rested on the support plane then; crop_box, support_plane and gravity_arkit_world describe that moment). Camera poses are the camera relative to the object, so they may lie below the support plane (the underside, seen after a flip) and the cloud includes the underside: never cut the cloud or the depth at the support plane for such a scan. Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does not apply (the object moved), object-shape alignment does. photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.
     """
@@ -129,7 +138,7 @@ class TrackingState(StrEnum):
     unknown = 'unknown'
 
 
-class PoseSource1(StrEnum):
+class PoseSource2(StrEnum):
     """
     Where this keyframe's camera pose comes from (absent = the package's pose_source). object_tracked: the camera relative to the tracked, moving object, in the object frame (see the package's pose_source).
     """
@@ -168,7 +177,7 @@ class Keyframe(BaseModel):
         None, description='Laplacian variance; higher is sharper.', ge=0.0
     )
     exposure_s: float | None = Field(None, gt=0.0)
-    pose_source: PoseSource1 | None = Field(
+    pose_source: PoseSource2 | None = Field(
         None,
         description="Where this keyframe's camera pose comes from (absent = the package's pose_source). object_tracked: the camera relative to the tracked, moving object, in the object frame (see the package's pose_source).",
     )
@@ -229,11 +238,30 @@ class Segment(BaseModel):
     segment: int = Field(..., ge=1)
     reason: Reason = Field(
         ...,
-        description="flipped: the object was turned over for its underside (it moved: not in segment 0's object frame). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id).",
+        description='flipped: the object was turned over for its underside ("Scan the bottom"; it moved: object_moved true, not in segment 0\'s frame unless transform_to_segment0 is applied). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id).',
     )
     aligned: bool | None = Field(
         None,
-        description="False when ARKit could not relocalise this segment into the scan's world frame: its stills' poses are not comparable with the scan, and the backend does not place their findings on it. Absent = aligned.",
+        description="False when this segment's poses are not comparable with segment 0: ARKit could not relocalise it into the scan's world frame, or (object_moved) no transform_to_segment0 was found yet; the backend does not place its findings on the model until it registers the segment. Absent = aligned. For an object_moved segment, true means transform_to_segment0 is set and must be applied to its poses and points.",
+    )
+    object_moved: bool | None = Field(
+        None,
+        description="True when the object was moved for this segment (a flip): its keyframes, stills, crop_box and points_file are in this segment's own ARKit world frame, which says nothing about segment 0's object frame; only transform_to_segment0 relates them. Absent = false.",
+    )
+    transform_to_segment0: list[float] | None = Field(
+        None,
+        description="Row-major 4x4 rigid transform, metres: [p_segment0, 1] = T * [p_this_segment, 1] for points and camera poses of this segment (object_moved segments). From the phone's live 6-DoF registration of this segment's in-box cloud to segment 0's (pose_source arkit, transform_quality) or from the backend's.",
+        max_length=16,
+        min_length=16,
+    )
+    transform_quality: float | None = Field(
+        None,
+        description='Confidence in transform_to_segment0, 0-1 (fit overlap, RMS and how clearly it beat the next best pose; a symmetric object without telling colour scores low).',
+        ge=0.0,
+        le=1.0,
+    )
+    pose_source: PoseSource | None = Field(
+        None, description="Where this segment's own poses come from (absent = arkit)."
     )
     crop_box: Box | None = None
     points_file: str | None = Field(
@@ -275,13 +303,13 @@ class ScanPackage(BaseModel):
     )
     segments: list[Segment] | None = Field(
         None,
-        description='Later capture segments of the same session: the object flipped for its underside (reason flipped: it moved, so registering the segment is a separate step on the Mac), or more photos of the same, unmoved object continued from the report (reason continued). Each has its own locked box and LiDAR cloud in the same ARKit world frame unless aligned is false. points_file/crop_box above are segment 0.',
+        description="Later capture segments of the same session: the object flipped for its underside (reason flipped, object_moved true: a quick mini-scan of the bottom in its own ARKit session; transform_to_segment0, from the phone's live alignment or the backend's registration, puts it on segment 0), or more photos of the same, unmoved object continued from the report (reason continued). Each has its own locked box and LiDAR cloud, in the same ARKit world frame as segment 0 unless aligned is false or object_moved is true. points_file/crop_box above are segment 0.",
     )
     support_plane: SupportPlane | None = Field(
         None,
         description='The table the object stood on (segment 0), as ARKit detected it: a horizontal plane anchor.',
     )
-    pose_source: PoseSource | None = Field(
+    pose_source: PoseSource1 | None = Field(
         None,
         description="Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked: the app's hand-held mode (the person turns or flips the object while the phone stays roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the OBJECT frame, which is the ARKit world frame at the moment the object was locked (it rested on the support plane then; crop_box, support_plane and gravity_arkit_world describe that moment). Camera poses are the camera relative to the object, so they may lie below the support plane (the underside, seen after a flip) and the cloud includes the underside: never cut the cloud or the depth at the support plane for such a scan. Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does not apply (the object moved), object-shape alignment does. photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.",
     )

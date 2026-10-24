@@ -70,6 +70,7 @@ final class LeaVoice: NSObject {
                                  sampleRate: 24000, voiceID: saved["voice"] as? String)
         }
         Task { await refresh() }
+        WakeListener.shared.gateway = { [weak app] in app?.isPaired == true ? app?.gateway : nil }
         WakeListener.shared.refresh()
     }
 
@@ -169,6 +170,13 @@ final class LeaVoice: NSObject {
         guard id == utterance, !muted else { return }
         lastSource = "cartesia"
         player.append(pcm, id: id, started: started)
+    }
+
+    /// PCM straight into this answer's playback from any thread (Sonic's socket callbacks), in arrival order.
+    func appender(stream id: Int) -> @Sendable (Data, (@Sendable () -> Void)?) -> Void {
+        let player = self.player
+        lastSource = "cartesia"
+        return { data, started in player.append(data, id: id, started: started) }
     }
 
     /// A sentence the gateway sent without audio: the phone's voice says it (queued after the others).

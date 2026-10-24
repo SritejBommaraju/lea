@@ -56,3 +56,16 @@ def test_locate_caps_low_quality_tracked_poses_at_medium():
     assert word == "medium" and "turned in the hand" in why
     # World-tracked stills are unaffected by the field.
     assert _pose_cap({"pose_reliable": True, "tracking_state": "normal", "pose_quality": 0.1}) == ("high", None)
+
+
+def test_flipped_bottom_segments_are_not_placed_until_their_transform_is_applied():
+    from repairos.pipeline.run import unaligned_segments
+
+    scan = {"segments": [
+        {"segment": 1, "reason": "continued"},
+        {"segment": 2, "reason": "continued", "aligned": False},
+        {"segment": 3, "reason": "flipped", "object_moved": True, "aligned": False},
+        {"segment": 4, "reason": "flipped", "object_moved": True, "aligned": True,
+         "transform_to_segment0": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], "transform_quality": 0.8},
+    ]}
+    assert unaligned_segments(scan) == {2, 3, 4}

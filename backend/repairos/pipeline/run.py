@@ -37,7 +37,7 @@ from typing import Any
 from repairos.config import ROOT
 from repairos.contracts import validate
 from repairos.fusion.state import vlm_part_class
-from repairos.pipeline import locate_iface
+from repairos.pipeline import locate_iface, segments
 from repairos.pipeline.config import load_pipeline_config
 from repairos.report import build_report, honesty_violations, report_id_for, write_summary
 from repairos.sessions.layout import EXT_BY_TYPE, ext_for, map_files
@@ -300,6 +300,10 @@ async def record_capture(ctx: Context, scan_id: str) -> dict:
 
 
 async def _mesh_quietly(ctx: Context, scan_id: str) -> None:
+    try:
+        await ensure_segment_alignment(ctx, scan_id)   # a flipped bottom segment joins the mesh once registered
+    except Exception as e:  # noqa: BLE001 - recorded on the row by ensure_segment_alignment; never blocks the mesh
+        log.warning("segment alignment for scan %s: %s", scan_id, e)
     try:
         await ensure_mesh(ctx, scan_id)
     except Exception as e:  # noqa: BLE001 - ensure_mesh records its own failures; this only guards the task
@@ -747,7 +751,9 @@ async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
     t0 = time.monotonic()
     try:
         local = await asyncio.to_thread(_local_scan, ctx, scan)
-        m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"])
+        seg_rec = await _segment_record(ctx, scan_id, rev)
+        m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"],
+                                    segment_transforms=segments.aligned_transforms(seg_rec))
     except Exception as e:  # noqa: BLE001 - the 3D view never fails the capture or the report; the row says why
         unavailable = isinstance(e, MeshUnavailable)
         if not unavailable:
@@ -768,6 +774,47 @@ async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
            "seconds": {**m.seconds, "with_io_s": round(time.monotonic() - t0, 3)}, "built_at": _now()}
     await _update(ctx, scan, {"mesh": rec, "announce": "mesh_ready"})
     return rec
+
+
+async def _segment_record(ctx: Context, scan_id: str, rev: int) -> dict | None:
+    """The run row's `segments` record for this scan-package revision (None when not computed for it)."""
+    rec = (await _run_row(ctx, scan_id) or {}).get("segments") or {}
+    return rec if rec.get("scan_rev") == rev else None
+
+
+async def ensure_segment_alignment(ctx: Context, scan_id: str) -> dict:
+    """Register every object-moved segment (the flipped bottom) to segment 0 (pipeline/segments.py), once per
+    scan-package revision: the run row's `segments` record (per segment: aligned, fitness, rmse_mm, transform),
+    and a merged cloud blob (`cloud_ref`) that locate ray-casts. A scan with no moved segment records
+    status none. Runs before the mesh and before locate; bounded by segments.TIME_BUDGET_S."""
+    async with ctx.scan_lock(f"segments:{scan_id}"):
+        row = await ctx.state.get("scan-package", scan_id)
+        if row is None:
+            raise PipelineError(f"no scan-package {scan_id}")
+        scan, rev = row.data, row.rev
+        have = await _segment_record(ctx, scan_id, rev)
+        if have is not None:
+            return have
+        if not segments.moved_segments(scan):
+            rec = {"status": "none", "scan_rev": rev, "segments": []}
+            await _update(ctx, scan, {"segments": rec})
+            return rec
+        t0 = time.monotonic()
+        try:
+            local = await asyncio.to_thread(_local_scan, ctx, scan)
+            rec, clouds = await asyncio.to_thread(segments.align_scan_segments, local)
+            merged = await asyncio.to_thread(segments.merged_cloud_ply, local.get("points_file"), clouds)
+            if merged:
+                rec["cloud_ref"] = await asyncio.to_thread(ctx.blobs.put, merged, "application/x-ply")
+        except Exception as e:  # noqa: BLE001 - never fails the scan: its findings stay unplaced, the row says why
+            log.warning("segment alignment for scan %s failed: %s", scan_id, e)
+            reason = f"aligning the flipped segment failed ({type(e).__name__}: {e})"[:500]
+            rec = {"status": "failed", "segments": [
+                {"segment": int(sg["segment"]), "reason": sg.get("reason"), "object_moved": True, "aligned": False,
+                 "fitness": None, "rmse_mm": None, "why_not": reason} for sg in segments.moved_segments(scan)]}
+        rec.update(scan_rev=rev, with_io_s=round(time.monotonic() - t0, 3), finished_at=_now())
+        await _update(ctx, scan, {"segments": rec})
+        return rec
 
 
 async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
@@ -904,11 +951,12 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
                                                   "next_action_id": result.next_action["action_id"],
                                                   "seconds": round(time.monotonic() - t0, 3)}}})
 
-    # locate
+    # locate (after the flipped segments are registered: their stills are restated in segment 0's frame)
     t0 = time.monotonic()
     try:
         regions = {fid: info for st in stages.values() for fid, info in (st.get("regions") or {}).items()}
-        locations, locate_words = await locate_findings(ctx, scan, stills, findings, regions)
+        seg_rec = await ensure_segment_alignment(ctx, scan_id)
+        locations, locate_words = await locate_findings(ctx, scan, stills, findings, regions, seg_rec)
     except Exception as e:
         raise await _fail(ctx, scan, "locate", e) from e
     computed = sum(1 for v in locations.values() if v["status"] == "computed")
@@ -938,7 +986,9 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
                              next_action=result.next_action, regions=regions, locations=locations, models=models,
                              explains={k: band(j.explains) for k, j in result.judgments.items()},
                              previous=before.data if before else None,
-                             identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"))
+                             identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"),
+                             segments=segments.report_segments(scan, seg_rec,
+                                                               findings_by_segment(stills, findings, locations)))
         from repairos.pipeline.story import STORY_KIND
         from repairos.references.leads import user_lead
 
@@ -1028,13 +1078,38 @@ async def attach_fix(ctx: Context, scan: dict, published: Any, task: asyncio.Tas
     return parts.payload(scan["scan_id"], fix)
 
 
-NOT_ALIGNED = ("this photo's capture segment could not be aligned with the scan (ARKit relocalisation failed), so it "
-               "is not placed on the scan")
+NOT_ALIGNED = ("this photo's capture segment is not lined up with the scan (the object was flipped for its underside, "
+               "or ARKit relocalisation failed), so it is not placed on the scan")
 
 
-def unaligned_segments(scan: dict) -> set[int]:
-    """Capture segments the scan package marks `aligned: false`: their photos' poses are not in the scan's frame."""
-    return {int(sg["segment"]) for sg in scan.get("segments") or [] if sg.get("aligned") is False}
+def unaligned_segments(scan: dict, seg_rec: dict | None = None) -> set[int]:
+    """Capture segments whose photos' poses are not in the scan's frame: marked `aligned: false`, or `object_moved`
+    (a flipped mini-scan of the bottom, in its own frame) and not registered by the server (`seg_rec`, the run row's
+    `segments` record: pipeline/segments.py). Their findings are inspected and listed but not placed on the model.
+    The phone's own `transform_to_segment0` is never used unverified."""
+    return segments.unplaced_segments(scan, seg_rec)
+
+
+def not_aligned_reason(scan: dict, seg_rec: dict | None, segment: int) -> str:
+    seg = next((s for s in scan.get("segments") or [] if int(s["segment"]) == segment), {})
+    if not segments.is_moved(seg):
+        return NOT_ALIGNED
+    r = next((x for x in (seg_rec or {}).get("segments") or [] if int(x["segment"]) == segment), {})
+    why = r.get("why_not") or "it has not been registered to the main scan yet"
+    return (f"this photo is from the flipped scan of the bottom, which could not be lined up with the main scan "
+            f"({why}), so it is not placed on the model")
+
+
+def findings_by_segment(stills: list[dict], findings: list[dict], locations: dict[str, dict]) -> dict[int, list[str]]:
+    """{segment >= 1: finding ids from its photos that got no 3D point}, for the report's capture.segments."""
+    seg_of = {s["still_id"]: int(s.get("segment") or 0) for s in stills}
+    out: dict[int, list[str]] = {}
+    for f in findings:
+        sid = ((f.get("evidence_refs") or {}).get("still_ids") or [None])[0]
+        k = seg_of.get(sid, 0)
+        if k and (locations.get(f["finding_id"]) or {}).get("status") != "computed":
+            out.setdefault(k, []).append(f["finding_id"])
+    return out
 
 
 def _local_scan(ctx: Context, scan: dict) -> dict:
@@ -1047,7 +1122,7 @@ def _local_scan(ctx: Context, scan: dict) -> dict:
 
 
 async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings: list[dict],
-                          regions: dict[str, dict]) -> tuple[dict[str, dict], str]:
+                          regions: dict[str, dict], seg_rec: dict | None = None) -> tuple[dict[str, dict], str]:
     """finding_id -> report location for every finding, and the locator's provenance words. A LiDAR scan
     (depth_source lidar, also when absent) ray-casts each box with try_locate; a no-LiDAR scan triangulates across
     stills of the same target (locate_iface.triangulation_views); otherwise the reason is recorded."""
@@ -1061,13 +1136,16 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
     still_local: dict[str, dict] = {}
     part_class = {fid: r["part_class"] for fid, r in regions.items()}
 
+    moved_to0 = segments.aligned_transforms(seg_rec)   # flipped segments the server registered
+
     def local_still(sid: str) -> dict:
         if sid not in still_local:
-            still_local[sid] = map_files("still", by_still[sid],
-                                         lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
+            st = map_files("still", by_still[sid], lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
+            k = int(st.get("segment") or 0)
+            still_local[sid] = segments.restate_still(st, moved_to0[k]) if k in moved_to0 else st
         return still_local[sid]
 
-    unaligned = unaligned_segments(scan)
+    unaligned = unaligned_segments(scan, seg_rec)
     for f in findings:
         refs = f.get("evidence_refs") or {}
         sid = (refs.get("still_ids") or [None])[0]
@@ -1075,7 +1153,8 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
         if locator is None:
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NOT_INSTALLED)
         elif sid in by_still and int(by_still[sid].get("segment") or 0) in unaligned:
-            out[f["finding_id"]] = locate_iface.not_computed(NOT_ALIGNED)
+            out[f["finding_id"]] = locate_iface.not_computed(
+                not_aligned_reason(scan, seg_rec, int(by_still[sid].get("segment") or 0)))
         elif not sid or sid not in by_still or not box:
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NO_BOX)
         elif "camera" not in by_still[sid]:
@@ -1083,6 +1162,8 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
         elif lidar:
             if scan_local is None:
                 scan_local = await asyncio.to_thread(_local_scan, ctx, scan)
+                if (seg_rec or {}).get("cloud_ref"):   # segment 0's cloud plus the registered bottom's
+                    scan_local["points_file"] = str(ctx.local_file(scan["scan_id"], seg_rec["cloud_ref"]))
             out[f["finding_id"]] = await asyncio.to_thread(locator.locate, scan_local, local_still(sid), tuple(box))
         else:
             views = locate_iface.triangulation_views(f, findings, by_still, part_class)

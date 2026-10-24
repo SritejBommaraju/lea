@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Testing
 @testable import RepairOS
@@ -140,4 +141,42 @@ struct WakePhraseTests {
         #expect(WakeListener.afterWake("hello there") == nil)
         #expect(WakeListener.afterWake("") == nil)
     }
+}
+
+@MainActor
+struct RealtimeTests {
+    @Test func wakePhraseIsDroppedFromInk2Transcripts() {
+        #expect(WakeListener.dropWake("Hey Leah, is it safe to open my charger?") == "is it safe to open my charger?")
+        #expect(WakeListener.dropWake("It stopped after I dropped it.") == "It stopped after I dropped it.")
+        #expect(WakeListener.dropWake("Hey Lea") == "")
+    }
+
+    @Test func eagerAndFinalWordsMatchLoosely() {
+        #expect(LeaConversation.same("Is it safe to open?", "is it safe to open"))
+        #expect(!LeaConversation.same("Is it safe to open", "Is it safe to open it up"))
+    }
+
+    @Test func micAudioBecomes16kHzChunksWithBackfill() {
+        let feed = PCM16Feed()
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48000, channels: 1, interleaved: false)!
+        for _ in 0..<10 {   // 10 × 4800 frames = 1 s at 48 kHz
+            let b = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 4800)!
+            b.frameLength = 4800
+            for i in 0..<4800 { b.floatChannelData![0][i] = sin(Float(i) * 0.05) * 0.5 }
+            feed.feed(b)
+        }
+        let got = Locked2()
+        feed.open(backfill: 0.5) { got.add($0.count) }
+        // 0.5 s of 16 kHz s16 = 16000 bytes, sent in 100 ms (3200-byte) pieces.
+        #expect(abs(got.total - 16000) <= 64)
+        #expect(got.sizes.dropLast().allSatisfy { $0 == 3200 })
+        feed.close()
+    }
+}
+
+private final class Locked2: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var sizes: [Int] = []
+    var total: Int { lock.withLock { sizes.reduce(0, +) } }
+    func add(_ n: Int) { lock.withLock { sizes.append(n) } }
 }

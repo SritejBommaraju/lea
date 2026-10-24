@@ -33,6 +33,8 @@ the simulator; shut it down after (`xcrun simctl shutdown all`).
 
 ## The report
 
+**Report stage** (`Report/Stage/`, on by default; `--old-report` shows the previous layout): the scan sits on a dark stage with the report sheet over it. The hero is the photo-real recreation (`Report/Recreation/`: the phone's shell, built when a report opens, or the gateway's on `recreation_ready`) when the scan has one, else the hero below. Markers are kept apart on screen; the lasso button circles a spot to look closer at (saved in `<session>/inspect_targets.json`; Continue scanning aims its "Move closer here" marker there). Gallery: `--ui-screen stage|stage-landing|stage-wait|stage-old --ui-session <dir>` (`--ui-build-shell`, `--ui-blobs <dir>`).
+
 The hero at the top follows the backend's choice (`hero` in `mesh_ready`, `/pipeline`, the report's `mesh`):
 `points` = its cleaned cloud (`GET /v1/scans/{id}/cloud`), `mesh` = its mesh (`GET /v1/scans/{id}/mesh`, cropped to the
 locked box), `photos` = the best still with the numbered crop boxes and a strip of the others; until it chooses, the
@@ -66,7 +68,19 @@ the screen centre is locked automatically (the cloud brightens on it and dims el
 Photos, torch and upload are automatic. Code: `RepairOS/Capture/` (`ScanSession`, `PointCloudRenderer` +
 `PointCloud.metal`, `BoxFitter`, `QualityGate`/`TorchRule`), stills in `RepairOS/Closeups/`.
 
-**Turn it** (`RepairOS/Capture/Handheld/`): for a small object, the person sets it down, taps "Turn it in your hand",
+**Scan the bottom** (`RepairOS/Capture/Handheld/FlipSegment.swift`, `FlipAligner.swift`): after the main scan (a chip
+on the scanner once a few sides are covered, or the report next to Continue scanning) Lea says "Now flip it over and
+give me a quick look at the bottom": a 10–20 s continuation in its own ARKit session (no room map: the object moved),
+segment `reason: flipped`, `object_moved: true`. Every ~2 s its in-box cloud is registered to the main scan's saved
+cloud in 6 DoF (24 cube orientations × 8 turns, short ICP each, the best refined; it must have been flipped, nothing
+inside the table, the underside on the table's footprint; colour picks between poses the shape cannot tell apart,
+else refused as ambiguous). Two agreeing attempts line it up: the main cloud appears around the flipped object, Lea
+says "Lined up with the first scan", and the segment records `aligned: true`, `transform_to_segment0` (row-major,
+this segment → segment 0, metres) and `transform_quality`. Unsure: the backend registers it; until it applies the
+transform, findings of moved segments are listed but not placed. diag: `flip_start`, `flip_align` (each attempt),
+`flip_aligned`. Synthetic: `tools/handheld/run.sh flip box|board|plain [trials]`.
+
+**Turn it** (developer flag `--turn-it`, off by default): for a small object, the person sets it down, taps "Turn it in your hand",
 taps Scan, then holds it up and turns it (or flips it for the underside) while the phone stays roughly still; the
 scanner also suggests it when a small object (< 25 cm) is scanned from one spot. `ObjectTracker` follows the object's
 6-DoF pose at 15 Hz on a background queue: LiDAR depth masked to the box (+3 cm), minus the person (ARKit

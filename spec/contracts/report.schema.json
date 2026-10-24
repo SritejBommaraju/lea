@@ -223,6 +223,25 @@
         "minLength": 1
       }
     },
+    "bottom_not_placed": {
+      "type": "array",
+      "title": "Bottom (not placed on the model)",
+      "description": "Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the backend could not line up with the main scan: they are real findings, listed in their buckets as usual, but have no 3D point on the model. Each comes with its crop so the app can show it as a photo. Absent when every such segment was aligned or the scan has none. Why a segment was not aligned: capture.segments[].why_not.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "segment", "photo", "reason"],
+        "properties": {
+          "finding_id": { "type": "string", "minLength": 1, "description": "The report row (in findings, cosmetic or insufficient_evidence)." },
+          "segment": { "type": "integer", "minimum": 1 },
+          "subject": { "$ref": "#/$defs/subject" },
+          "part_class": { "type": "string" },
+          "issue": { "type": "string", "description": "The row's issue (findings and cosmetic rows); absent for insufficient_evidence rows." },
+          "photo": { "$ref": "#/$defs/photo", "description": "The still and crop box the finding was seen in." },
+          "reason": { "type": "string", "minLength": 1, "description": "Why it has no 3D point." }
+        }
+      }
+    },
     "capture": {
       "type": "object",
       "additionalProperties": false,
@@ -276,6 +295,26 @@
             "sectors": { "type": "integer", "minimum": 0 },
             "sectors_total": { "type": "integer", "minimum": 1 },
             "share": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "segments": {
+          "type": "array",
+          "description": "Capture segments where the object was moved (the flipped mini-scan of the bottom) and how the backend registered each to the main scan by shape (repairos.recon.segment_align). An aligned segment's findings are placed on the same model; an unaligned one's are listed in findings_not_placed with no 3D point. Absent when the scan has no such segment.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["segment", "reason", "object_moved", "aligned", "findings_not_placed"],
+            "properties": {
+              "segment": { "type": "integer", "minimum": 1 },
+              "reason": { "type": "string", "minLength": 1, "description": "The scan package's segment reason (flipped)." },
+              "object_moved": { "type": "boolean" },
+              "aligned": { "type": "boolean", "description": "True when the backend registered the segment to segment 0 and placed its photos in segment 0's frame." },
+              "fitness": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the segment's object points within 1.5 voxels of segment 0's after registration." },
+              "rmse_mm": { "type": "number", "minimum": 0, "description": "RMS distance of those matched points, millimetres." },
+              "method": { "type": "string", "minLength": 1 },
+              "why_not": { "type": "string", "minLength": 1, "description": "Why the segment was not registered (aligned false)." },
+              "findings_not_placed": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Findings from this segment's photos that have no 3D point because the segment is not aligned (empty when aligned)." }
+            }
           }
         }
       }

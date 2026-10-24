@@ -149,6 +149,44 @@ class Views(BaseModel):
     share: float = Field(..., ge=0.0, le=1.0)
 
 
+class FindingsNotPlacedItem(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class Segment(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    segment: int = Field(..., ge=1)
+    reason: str = Field(
+        ..., description="The scan package's segment reason (flipped).", min_length=1
+    )
+    object_moved: bool
+    aligned: bool = Field(
+        ...,
+        description="True when the backend registered the segment to segment 0 and placed its photos in segment 0's frame.",
+    )
+    fitness: float | None = Field(
+        None,
+        description="Share of the segment's object points within 1.5 voxels of segment 0's after registration.",
+        ge=0.0,
+        le=1.0,
+    )
+    rmse_mm: float | None = Field(
+        None, description='RMS distance of those matched points, millimetres.', ge=0.0
+    )
+    method: str | None = Field(None, min_length=1)
+    why_not: str | None = Field(
+        None,
+        description='Why the segment was not registered (aligned false).',
+        min_length=1,
+    )
+    findings_not_placed: list[FindingsNotPlacedItem] = Field(
+        ...,
+        description="Findings from this segment's photos that have no 3D point because the segment is not aligned (empty when aligned).",
+    )
+
+
 class Capture(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -171,6 +209,10 @@ class Capture(BaseModel):
     views: Views | None = Field(
         None,
         description='Where the camera was (keyframes and stills) on the view dome around the object box (repairos.report.coverage): cells of 3 rings x 12 sectors seen, distinct sectors, and the share of cells. Absent when no box or pose is known.',
+    )
+    segments: list[Segment] | None = Field(
+        None,
+        description="Capture segments where the object was moved (the flipped mini-scan of the bottom) and how the backend registered each to the main scan by shape (repairos.recon.segment_align). An aligned segment's findings are placed on the same model; an unaligned one's are listed in findings_not_placed with no 3D point. Absent when the scan has no such segment.",
     )
 
 
@@ -744,6 +786,28 @@ class Insufficient(BaseModel):
     )
 
 
+class BottomNotPlacedItem(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    finding_id: str = Field(
+        ...,
+        description='The report row (in findings, cosmetic or insufficient_evidence).',
+        min_length=1,
+    )
+    segment: int = Field(..., ge=1)
+    subject: Subject | None = None
+    part_class: str | None = None
+    issue: str | None = Field(
+        None,
+        description="The row's issue (findings and cosmetic rows); absent for insufficient_evidence rows.",
+    )
+    photo: Photo = Field(
+        ..., description='The still and crop box the finding was seen in.'
+    )
+    reason: str = Field(..., description='Why it has no 3D point.', min_length=1)
+
+
 class Report(BaseModel):
     """
     The Phase 1 inspection report for one scan (task B9), written by the pipeline (B10) and the report builder (B11). Code picks the verdict from a truth table; Claude writes `summary.text` from words only (S5). Every stored finding of the scan appears exactly once: in `findings` (a model judged its state), `not_inspected` (nobody looked at it, I3) or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No probability number appears anywhere: confidence is a word (I6). A vision finding is a suspect; only a meter reading proves or rules out (I1, I2). Phase 1 makes no Grain calls.
@@ -794,6 +858,11 @@ class Report(BaseModel):
     limits: list[Limit] | None = Field(
         None,
         description='What photos cannot tell (always shown), plus a meter suggestion when a reported symptom is not explained.',
+    )
+    bottom_not_placed: list[BottomNotPlacedItem] | None = Field(
+        None,
+        description='Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the backend could not line up with the main scan: they are real findings, listed in their buckets as usual, but have no 3D point on the model. Each comes with its crop so the app can show it as a photo. Absent when every such segment was aligned or the scan has none. Why a segment was not aligned: capture.segments[].why_not.',
+        title='Bottom (not placed on the model)',
     )
     capture: Capture
     models: Models = Field(

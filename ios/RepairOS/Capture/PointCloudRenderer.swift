@@ -146,7 +146,8 @@ final class PointCloudRenderer: NSObject, MTKViewDelegate {
 
     /// Puts earlier points (a continued scan's cloud, already in this world frame) into the hash as fine voxels with
     /// the lowest quality, so any new observation of the same spot replaces them. Call after `box` is set.
-    func seed(_ pts: [(SIMD3<Float>, SIMD3<UInt8>)]) -> Int {
+    /// `confidence` < 1: drawn but not exported ("Scan the bottom" shows the main scan's cloud lined up with it).
+    func seed(_ pts: [(SIMD3<Float>, SIMD3<UInt8>)], confidence: Float = 2) -> Int {
         guard fineSet else { return 0 }
         let keyBuf = keys.contents().bindMemory(to: UInt32.self, capacity: Self.maxPoints)
         let scoreBuf = scores.contents().bindMemory(to: UInt32.self, capacity: Self.maxPoints)
@@ -162,7 +163,7 @@ final class PointCloudRenderer: NSObject, MTKViewDelegate {
                 if keyBuf[Int(slot)] == 0xFFFF_FFFF {
                     keyBuf[Int(slot)] = key
                     scoreBuf[Int(slot)] = (2 << 24) | 1
-                    part[Int(slot)] = Particle(positionConf: SIMD4(p, 2), color: SIMD4(SIMD3<Float>(c) / 255, 1))
+                    part[Int(slot)] = Particle(positionConf: SIMD4(p, confidence), color: SIMD4(SIMD3<Float>(c) / 255, 1))
                     added += 1
                     break
                 }

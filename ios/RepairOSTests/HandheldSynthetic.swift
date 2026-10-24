@@ -291,13 +291,13 @@ struct SyntheticRun {
 /// over (bottom and sides) in a different ARKit session, with 2 mm noise and patchy coverage, and the true
 /// mini-scan → main-scan transform.
 enum SyntheticFlip {
-    enum Shape { case texturedBox, flatBoard }
+    enum Shape { case texturedBox, flatBoard, plainBox }
 
     struct Case { var target: FlipCloud; var source: FlipCloud; var truth: simd_float4x4 }
 
     static func make(_ shape: Shape, seed: UInt64, flipAboutZ: Bool = false, noise: Float = 0.002) -> Case {
         var rng = SplitMix64(seed: seed)
-        let half: SIMD3<Float> = shape == .texturedBox ? SIMD3(0.045, 0.03, 0.03) : SIMD3(0.07, 0.008, 0.045)
+        let half: SIMD3<Float> = shape == .flatBoard ? SIMD3(0.07, 0.008, 0.045) : SIMD3(0.045, 0.03, 0.03)
         // Surface samples every 2.5 mm, object frame (centred), with outward normals and colours.
         var surf: [(p: SIMD3<Float>, n: SIMD3<Float>, c: SIMD3<Float>)] = []
         let step: Float = 0.0025
@@ -362,6 +362,8 @@ enum SyntheticFlip {
             // that tells its flips apart.
             if p.x > half.x - 0.001, p.z > 0.005, p.z < 0.03 { return SIMD3(0.9, 0.15, 0.1) }
             return SIMD3(0.15, 0.45, 0.2)
+        case .plainBox:
+            return SIMD3(0.5, 0.5, 0.52)
         }
     }
 

@@ -73,7 +73,8 @@ struct ReportStageView: View {
     private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.cosmetic }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
     private var canShowOnObject: Bool { space != nil && !findingPins.isEmpty }
-    private var canCircle: Bool { !isPhotoHero && !model.isNone && sessionDir != nil }
+    private var isCustomHero: Bool { if case .custom = hero { true } else { false } }
+    private var canCircle: Bool { (isCustomHero || (!isPhotoHero && !model.isNone)) && sessionDir != nil }
     private var landingKey: String { "\(report.verdict)|\(report.mostLikely.map(\.id))" }
 
     // MARK: Body
@@ -217,15 +218,14 @@ struct ReportStageView: View {
     }
 
     @ViewBuilder private var heroView: some View {
-        let context = StageHeroContext(markers: pins, focus: focus) { id in
+        let context = StageHeroContext(markers: pins, focus: focus, select: { id in
             focus = id
             sheet = all.first { $0.id == id }
-        }
+        }, ready: { modelReady = true }, probe: probe)
         Group {
             switch hero {
             case .custom(let make):
                 make(context).padding(.top, Self.topClear)
-                    .task { modelReady = true }
             case .automatic:
                 if isPhotoHero, let sessionDir {
                     PhotoHero(stillsDir: sessionDir.appending(path: "stills"), numbered: numberedPhotos, focus: focus,
@@ -301,7 +301,8 @@ struct ReportStageView: View {
                 if fix != nil || fixSearching || fixUnavailable {
                     FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable).id("fix")
                 }
-                if let next = report.nextStep { StageNextStep(step: next) }
+                // Not enough to call it: the next step is already the headline, so no card repeats it.
+                if let next = report.nextStep, report.verdict != .insufficientEvidence { StageNextStep(step: next) }
                 if let summary = report.summary?.trimmedOrNil { StagePlainWords(text: ReportWords.sanitize(summary)) }
                 if !others.isEmpty { alsoWorthALook }
                 CouldNotCheckCard(notInspected: report.notInspected, unclear: report.insufficient,
@@ -387,7 +388,7 @@ struct ReportStageView: View {
         phase = 0
         // Wait for the scan to be on the stage (the cloud can take a moment to read), then land on it.
         let start = Date()
-        while !modelReady, !isPhotoHero, !model.isNone, Date().timeIntervalSince(start) < Self.maxWait {
+        while !modelReady, !isPhotoHero, isCustomHero || !model.isNone, Date().timeIntervalSince(start) < Self.maxWait {
             try? await Task.sleep(for: .milliseconds(50))
         }
         withAnimation(Motion.reveal) { phase = 1 }
