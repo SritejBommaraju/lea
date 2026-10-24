@@ -27,6 +27,9 @@ MODEL_CANNOT_EXPRESS = {
     "meter-reading-voltage-with-continuity-value.json",
     "repair-plan-power-on-step-without-gate.json",
     "repair-plan-power-path-step-without-gate.json",
+    "scan-package-lidar-without-points.json",       # depth_source if/then/else (no-LiDAR, A8)
+    "scan-package-no-depth-with-mesh.json",
+    "scan-package-no-depth-with-points.json",
 }
 
 

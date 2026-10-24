@@ -3484,6 +3484,11 @@ public struct ScanPackage: Codable, Sendable {
     /// The AR box the user dragged; points outside were dropped. Points on or below the
     /// supporting plane + 5 mm were dropped too.
     public let cropBox: CropBox?
+    /// Where the scan's geometry comes from. lidar (also when absent, as in every package before
+    /// this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8):
+    /// ARKit world-tracking poses and images only, so there is no points_file or point_count and
+    /// nothing metric can be read off the scan itself.
+    public let depthSource: DepthSource?
     public let device: Device
     /// Points and poses are in ARKit's world frame (metres, Y up). The design frame (mm, Z up)
     /// is reached via alignment.transform_arkit_world_to_design.
@@ -3493,9 +3498,14 @@ public struct ScanPackage: Codable, Sendable {
     /// Kept frames only: tracking normal, sharp, no smudge. Selected every ~10 cm of travel or
     /// 15 deg of rotation.
     public let keyframes: [ScanPackageSchema]
-    public let pointCount: Int
+    /// Optional triangle mesh of the same scene, binary little-endian PLY, arkit_world metres:
+    /// float x, y, z (+ uchar red, green, blue) vertices and a face list. From backend TSDF
+    /// fusion (an import, B12) or ARKit scene reconstruction (A2). Used to ray-cast close-up
+    /// boxes onto the scan (repairos.locate).
+    public let meshFile: String?
+    public let pointCount: Int?
     /// Binary little-endian PLY, xyz float32 + rgb uint8, optional confidence/views uint8.
-    public let pointsFile: String
+    public let pointsFile: String?
     public let productID: String
     public let scanID: String
     /// One repair session; groups scans, stills and readings.
@@ -3505,17 +3515,19 @@ public struct ScanPackage: Codable, Sendable {
     public let symptom: String?
     public let units: ScanPackageUnits
     /// Voxel pitch of the fused cloud in millimetres (3 default; 1-2 with PromptDA TSDF).
-    public let voxelMm: Double
+    public let voxelMm: Double?
 
     public enum CodingKeys: String, CodingKey {
         case alignment = "alignment"
         case capturedAt = "captured_at"
         case coverageHint = "coverage_hint"
         case cropBox = "crop_box"
+        case depthSource = "depth_source"
         case device = "device"
         case frame = "frame"
         case gravityArkitWorld = "gravity_arkit_world"
         case keyframes = "keyframes"
+        case meshFile = "mesh_file"
         case pointCount = "point_count"
         case pointsFile = "points_file"
         case productID = "product_id"
@@ -3527,15 +3539,17 @@ public struct ScanPackage: Codable, Sendable {
         case voxelMm = "voxel_mm"
     }
 
-    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, device: Device, frame: CropBoxFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], pointCount: Int, pointsFile: String, productID: String, scanID: String, sessionID: String, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double) {
+    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: CropBoxFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, productID: String, scanID: String, sessionID: String, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
         self.alignment = alignment
         self.capturedAt = capturedAt
         self.coverageHint = coverageHint
         self.cropBox = cropBox
+        self.depthSource = depthSource
         self.device = device
         self.frame = frame
         self.gravityArkitWorld = gravityArkitWorld
         self.keyframes = keyframes
+        self.meshFile = meshFile
         self.pointCount = pointCount
         self.pointsFile = pointsFile
         self.productID = productID
@@ -3638,6 +3652,15 @@ public enum CropBoxFrame: String, Codable, Sendable {
     case arkitWorld = "arkit_world"
 }
 
+/// Where the scan's geometry comes from. lidar (also when absent, as in every package before
+/// this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8):
+/// ARKit world-tracking poses and images only, so there is no points_file or point_count and
+/// nothing metric can be read off the scan itself.
+public enum DepthSource: String, Codable, Sendable {
+    case lidar = "lidar"
+    case none = "none"
+}
+
 // MARK: - Device
 public struct Device: Codable, Sendable {
     public let appVersion: String?
@@ -3675,6 +3698,7 @@ public struct ScanPackageSchema: Codable, Sendable {
     public let sharpness: Double?
     /// Seconds since scan start.
     public let timestampS: Double
+    /// ARKit tracking state of the frame. unknown: the capture app did not record it (an import).
     public let trackingState: TrackingState
 
     public enum CodingKeys: String, CodingKey {
@@ -3759,9 +3783,14 @@ public struct KeyframeIntrinsics: Codable, Sendable {
     }
 }
 
+/// ARKit tracking state of the frame. unknown: the capture app did not record it (an
+/// import).
+///
+/// unknown: the capture app did not record it (an import); pose_reliable is then absent.
 public enum TrackingState: String, Codable, Sendable {
     case limited = "limited"
     case normal = "normal"
+    case unknown = "unknown"
 }
 
 public enum ScanPackageUnits: String, Codable, Sendable {
@@ -4032,7 +4061,9 @@ public struct Still: Codable, Sendable {
     public let imageFile: String
     public let intrinsics: StillIntrinsics
     /// guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session,
-    /// no reliable pose, evidence-only. label: product label for identification.
+    /// no reliable pose, evidence-only. label: product label for identification. unguided: a
+    /// posed still taken without a target ring, e.g. a frame of an imported capture (B12);
+    /// targets is empty.
     public let kind: StillKind
     /// False for macro_detail or when tracking was limited.
     public let poseReliable: Bool?
@@ -4045,6 +4076,7 @@ public struct Still: Codable, Sendable {
     /// What the backend asked this still to cover. Empty for a label still.
     public let targets: [TargetElement]
     public let torchOn: Bool?
+    /// unknown: the capture app did not record it (an import); pose_reliable is then absent.
     public let trackingState: TrackingState
     /// True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected.
     public let userSkipped: Bool?
@@ -4174,11 +4206,14 @@ public struct StillIntrinsics: Codable, Sendable {
 }
 
 /// guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session,
-/// no reliable pose, evidence-only. label: product label for identification.
+/// no reliable pose, evidence-only. label: product label for identification. unguided: a
+/// posed still taken without a target ring, e.g. a frame of an imported capture (B12);
+/// targets is empty.
 public enum StillKind: String, Codable, Sendable {
     case guided = "guided"
     case label = "label"
     case macroDetail = "macro_detail"
+    case unguided = "unguided"
 }
 
 // MARK: - TargetElement

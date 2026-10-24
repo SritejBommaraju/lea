@@ -12,8 +12,8 @@
     "session_id": { "type": "string", "minLength": 1 },
     "kind": {
       "type": "string",
-      "enum": ["guided", "macro_detail", "label"],
-      "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification."
+      "enum": ["guided", "macro_detail", "label", "unguided"],
+      "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a posed still taken without a target ring, e.g. a frame of an imported capture (B12); targets is empty."
     },
     "captured_at": { "type": "string", "format": "date-time" },
     "image_file": { "type": "string", "description": "JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it." },
@@ -56,7 +56,7 @@
       }
     },
     "attached_to_target_id": { "type": "string", "description": "For macro_detail: the guided target this detail belongs to." },
-    "tracking_state": { "type": "string", "enum": ["normal", "limited"] },
+    "tracking_state": { "type": "string", "enum": ["normal", "limited", "unknown"], "description": "unknown: the capture app did not record it (an import); pose_reliable is then absent." },
     "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance." },
     "torch_on": { "type": "boolean" },
     "auto_fired": { "type": "boolean", "description": "True when the app took the shot because the ring filled, tracking was normal and sharpness was high." },

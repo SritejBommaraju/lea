@@ -262,10 +262,12 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         if problems:
             return problems
         try:
-            with b.open(pkg["points_file"]) as f:
-                h = files.ply_header(f, b.size(pkg["points_file"]))
-            if h["vertex_count"] != pkg["point_count"]:
-                problems.append(f"points_file has {h['vertex_count']} vertices, point_count says {pkg['point_count']}")
+            if pkg.get("points_file"):  # absent when depth_source is none (no-LiDAR capture, A8)
+                with b.open(pkg["points_file"]) as f:
+                    h = files.ply_header(f, b.size(pkg["points_file"]))
+                if h["vertex_count"] != pkg["point_count"]:
+                    problems.append(f"points_file has {h['vertex_count']} vertices, point_count says "
+                                    f"{pkg['point_count']}")
         except files.CaptureFileError as e:
             problems.append(f"points_file: {e}")
         for kf in pkg["keyframes"]:

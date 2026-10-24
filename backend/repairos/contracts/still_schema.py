@@ -12,12 +12,13 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 class Kind(StrEnum):
     """
-    guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification.
+    guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a posed still taken without a target ring, e.g. a frame of an imported capture (B12); targets is empty.
     """
 
     guided = 'guided'
     macro_detail = 'macro_detail'
     label = 'label'
+    unguided = 'unguided'
 
 
 class Intrinsics(BaseModel):
@@ -70,8 +71,13 @@ class Target(BaseModel):
 
 
 class TrackingState(StrEnum):
+    """
+    unknown: the capture app did not record it (an import); pose_reliable is then absent.
+    """
+
     normal = 'normal'
     limited = 'limited'
+    unknown = 'unknown'
 
 
 class PoseArkit(BaseModel):
@@ -115,7 +121,7 @@ class Still(BaseModel):
     session_id: str = Field(..., min_length=1)
     kind: Kind = Field(
         ...,
-        description='guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification.',
+        description='guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a posed still taken without a target ring, e.g. a frame of an imported capture (B12); targets is empty.',
     )
     captured_at: AwareDatetime
     image_file: str = Field(
@@ -147,7 +153,10 @@ class Still(BaseModel):
     attached_to_target_id: str | None = Field(
         None, description='For macro_detail: the guided target this detail belongs to.'
     )
-    tracking_state: TrackingState
+    tracking_state: TrackingState = Field(
+        ...,
+        description='unknown: the capture app did not record it (an import); pose_reliable is then absent.',
+    )
     sharpness: float | None = Field(None, description='Laplacian variance.', ge=0.0)
     torch_on: bool | None = None
     auto_fired: bool | None = Field(

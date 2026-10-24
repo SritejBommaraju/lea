@@ -1,0 +1,81 @@
+{
+  "scan_id": "scan_9c41",
+  "product_id": "prod_example_0001",
+  "session_id": "sess_2026-10-23_01",
+  "symptom": "no output when switched on",
+  "captured_at": "2026-10-23T18:10:02Z",
+  "device": {
+    "model": "iPhone17,1",
+    "ios": "26.1",
+    "app_version": "repairos/0.1"
+  },
+  "frame": "arkit_world",
+  "units": "m",
+  "gravity_arkit_world": [
+    0,
+    -1,
+    0
+  ],
+  "keyframes": [
+    {
+      "keyframe_id": "kf_000",
+      "timestamp_s": 0.0,
+      "image_file": "scans/scan_9c41/kf_000.jpg",
+      "camera": {
+        "frame": "arkit_world",
+        "position_m": [
+          0.31,
+          0.26,
+          -0.02
+        ],
+        "quaternion_xyzw": [
+          0.08,
+          0.71,
+          -0.09,
+          0.69
+        ]
+      },
+      "intrinsics": {
+        "fx": 1458.2,
+        "fy": 1458.2,
+        "cx": 960.0,
+        "cy": 720.0,
+        "width_px": 1920,
+        "height_px": 1440
+      },
+      "tracking_state": "normal",
+      "sharpness": 412.5,
+      "exposure_s": 0.0083
+    },
+    {
+      "keyframe_id": "kf_006",
+      "timestamp_s": 7.4,
+      "image_file": "scans/scan_9c41/kf_006.jpg",
+      "camera": {
+        "frame": "arkit_world",
+        "position_m": [
+          -0.22,
+          0.28,
+          -0.14
+        ],
+        "quaternion_xyzw": [
+          0.06,
+          -0.62,
+          0.07,
+          0.78
+        ]
+      },
+      "intrinsics": {
+        "fx": 1458.2,
+        "fy": 1458.2,
+        "cx": 960.0,
+        "cy": 720.0,
+        "width_px": 1920,
+        "height_px": 1440
+      },
+      "tracking_state": "unknown",
+      "sharpness": 388.0
+    }
+  ],
+  "depth_source": "none"
+}
