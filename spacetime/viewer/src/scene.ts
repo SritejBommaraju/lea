@@ -71,9 +71,11 @@ export class ScanScene {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Load a PLY (once per URL). `points` draws it as a coloured cloud, else as a vertex-coloured mesh. */
+  /** Load a PLY (once per URL and rev). `points` draws it as a coloured cloud, else as a vertex-coloured mesh. The
+   *  signing parameters change with every refresh and are ignored; `rev` changes when more photos rebuild the scan. */
   load(url: string, points: boolean): Promise<boolean> {
-    const key = url.split('?')[0] + '|' + points;
+    const parsed = new URL(url, window.location.href);
+    const key = parsed.origin + parsed.pathname + '|rev=' + (parsed.searchParams.get('rev') ?? '') + '|' + points;
     if (key === this.loadedUrl) return this.loading ?? Promise.resolve(true);
     this.loadedUrl = key;
     this.loading = new PLYLoader().loadAsync(url).then((geo) => {

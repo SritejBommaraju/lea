@@ -141,6 +141,14 @@ final class ScanSession: NSObject {
 
     // "Continue scanning": the same scan, a new segment, relocalised into the saved world map when possible.
     let continuing: Bool
+
+    /// The package's pose source. A continuation runs with hand-held mode off, but the keyframes and cloud it keeps
+    /// from the original capture are still object-tracked, so the original's source stands (the backend must not cut
+    /// a hand-held scan's underside at the support plane).
+    private func poseSource(previous: ScanPackage?) -> ScanPackagePoseSource {
+        if continuing, let original = previous?.poseSource { return original }
+        return handheld == nil ? .arkit : .objectTracked
+    }
     private var previous: ScanPackage?
     private var stillOffset = 0
     /// Relocalising against the saved map (continuation only); `aligned` once it matched.
@@ -432,7 +440,7 @@ final class ScanSession: NSObject {
                 alignment: nil, capturedAt: previous?.capturedAt ?? started, coverageHint: nil, cropBox: cropBox,
                 depthSource: pointsFile == nil ? DepthSource.none : .lidar, device: DeviceCapabilities.current().contract,
                 frame: .arkitWorld, gravityArkitWorld: [0, -1, 0], keyframes: keyframes, meshFile: nil, pointCount: count,
-                pointsFile: pointsFile, poseSource: handheld == nil ? .arkit : .objectTracked, productID: record.productID,
+                pointsFile: pointsFile, poseSource: poseSource(previous: previous), productID: record.productID,
                 scanID: record.scanID, segments: segments.isEmpty ? nil : segments, sessionID: record.id, supportPlane: plane,
                 supportingPlaneRemoved: box != nil ? true : nil, symptom: record.symptom, units: .m,
                 voxelMm: nil)

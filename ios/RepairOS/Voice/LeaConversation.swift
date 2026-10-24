@@ -158,6 +158,7 @@ final class LeaConversation {
         task = Task {
             var answer = Turn(mine: false, text: "")
             var answerIndex: Int?
+            var unvoiced: String?   // marked for Cartesia, no audio yet: the phone says it if Cartesia gives up
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
@@ -170,13 +171,17 @@ final class LeaConversation {
                         if let i = answerIndex { turns[i] = answer } else { turns.append(answer); answerIndex = turns.count - 1 }
                         phase = .speaking
                         if !withAudio { voice.queueOnDevice(s, stream: id) }
+                        unvoiced = withAudio ? s : nil
                     case .audio(let pcm):
+                        unvoiced = nil
                         voice.appendStream(pcm, stream: id) { [weak self] in
                             let ms = Self.ms(since: start)
                             Task { @MainActor in if self?.firstAudioMs == nil { self?.firstAudioMs = ms } }
                         }
                     case .audioOff:
-                        break
+                        // Cartesia refused this sentence before any audio; the rest come with audio: false.
+                        if let s = unvoiced { voice.queueOnDevice(s, stream: id) }
+                        unvoiced = nil
                     case .action(let kind, let label):
                         action = (kind, label)
                     case .done(_, let timings):

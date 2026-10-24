@@ -384,6 +384,13 @@ function render3d(id: string): void {
     note.textContent = m?.unavailable ? 'No 3D for this scan' : m ? '' : 'The 3D view appears when the scan is built';
     return;
   }
+  if (m.hero === 'photos') {
+    // The backend chose photos: the object is too small or too little surface was captured for a useful 3D view.
+    if (viewport.dataset.mode === '3d') scene?.clear();
+    viewport.dataset.mode = 'photos';
+    note.textContent = '';
+    return;
+  }
   const points = m.hero === 'points' && !!m.cloudUrl;
   const url = points ? m.cloudUrl : m.url || m.cloudUrl;
   void getScene().then((s) => s.load(url, points || !m.url)).then((ok) => {
