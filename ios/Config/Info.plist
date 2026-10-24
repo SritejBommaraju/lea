@@ -4,10 +4,6 @@
 <dict>
 	<key>CFBundleDisplayName</key>
 	<string>lea</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Lea listens when you hold the mic, turn on hands-free or say Hey Leah, so you can talk through the repair.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Lea turns what you say into text on this iPhone so it can answer you.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>RepairOS uses the camera (and LiDAR when the phone has it) to scan the object and take close-up photos for the report.</string>
 	<key>NSLocalNetworkUsageDescription</key>

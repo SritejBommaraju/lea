@@ -27,22 +27,6 @@ scan at launch), `--auto-scan` (press Scan after 3 s), `--run-still-probe`, `--o
 `--no-object-capture` (Apple Object Capture engine, off by default). Unit tests run on the simulator; shut it down
 after (`xcrun simctl shutdown all`).
 
-## Voice
-
-**Swipe up** on the Lea bar above **Start scan** and talk: voice mode opens already listening, hands-free, and stays a
-conversation (Lea listens again after each answer; you can interrupt her or type). Starting with "Hey Lea" works as a
-greeting: "Hey Lea" alone gets "Hey, what's up?", and "Hey Lea, it won't turn on" is answered as "it won't turn on". During
-a scan, swipe up on the Lea bar over the camera to talk while scanning. You can also hold the mic. Speech is
-recognised on the iPhone (Apple, on-device where supported); spoken replies use the system voice, or Cartesia when the
-backend has `CARTESIA_API_KEY` (and optionally `CARTESIA_VOICE_ID`; the phone gets a short-lived token from `POST /v1/voice/token`).
-Each final turn goes to `POST /v1/voice/turns`, where Claude (the backend's `ANTHROPIC_API_KEY`) answers over the
-session's scans, findings and suspects. Lea can start a scan or open a report when asked.
-From anywhere, say **"Hey Siri, hey lea"** (or "Siri, talk to lea"): Siri opens the app, Lea says "Hey, what's up?"
-and keeps listening hands-free, no button needed. The phrases are an App Shortcut (`RepairOS/Voice/HeyLeaShortcut.swift`),
-registered when the app is installed; only Siri's own wake word works outside an app, so "Hey Siri" comes first.
-Inside the app, "Hey Leah" appears once a `HeyLeah.mlmodel` (Create ML sound classifier) is added to the app. Code: `RepairOS/Voice/`,
-backend `repairos/voice/`.
-
 ## The scan
 
 Point at the object → **Scan** → walk around while the live LiDAR point cloud fills in → **Done**. The object under

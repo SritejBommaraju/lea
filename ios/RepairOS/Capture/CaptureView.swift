@@ -18,7 +18,6 @@ extension EnvironmentValues {
 struct SessionFlowView: View {
     @Environment(AppState.self) private var app
     @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var voice: VoiceCoordinator
     let record: SessionRecord
     @State private var scan: ScanSession?
     @State private var flow: ObjectCaptureFlow?
@@ -62,54 +61,6 @@ struct SessionFlowView: View {
             } else {
                 scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
             }
-        }
-        .safeAreaInset(edge: .top) { LiveVoiceBar(voice: voice).padding(.horizontal, Spacing.m) }
-        .onAppear { voice.scene = { liveScene } }
-        .onDisappear { voice.scene = nil }
-    }
-
-    /// What Lea is told at each turn while this flow is open: which screen, the scan's stage and cue, progress and
-    /// close-ups, so the conversation can follow the scan as it happens.
-    private var liveScene: VoiceScene {
-        var live: [String: String]
-        if let scan, finished == nil || scan.continuing {
-            live = ["screen": "scan", "stage": Self.describe(scan.stage), "progress": "\(Int(scan.progress * 100))%",
-                    "close-ups taken": "\(scan.stills.count)"]
-            if let cue = scan.cue { live["on-screen cue"] = cue }
-            if scan.relocalizing { live["tracking"] = "lost; finding its place again" }
-        } else if let flow, finished == nil, record.status == .capturing {
-            live = ["screen": "scan", "stage": Self.describe(flow.step), "photos": "\(flow.shots)",
-                    "close-ups taken": "\(flow.closeupShots)"]
-            if let cue = flow.cue { live["on-screen cue"] = cue }
-            if flow.lightBlocked { live["light"] = "too dark to continue" }
-        } else {
-            live = ["screen": "report"]
-        }
-        return VoiceScene(sessionID: upload?.state.gatewaySessionID ?? UploadQueue.gatewaySessionID(of: current, in: app.storage),
-                          live: live)
-    }
-
-    private static func describe(_ stage: ScanSession.Stage) -> String {
-        switch stage {
-        case .ready: "ready: they point at the object and tap it to lock on"
-        case .locking: "locking on"
-        case .scanning: "scanning: walking around it; photos and close-ups take themselves"
-        case .finishing: "saving"
-        case .failed(let why): "stopped: \(why)"
-        }
-    }
-
-    private static func describe(_ step: ObjectCaptureFlow.Step) -> String {
-        switch step {
-        case .starting: "starting the camera"
-        case .ready, .detecting: "framing the object"
-        case .capturing: "capturing: walking around it"
-        case .closeups: "close-ups: they tap anything that looks damaged or important"
-        case .finishing: "saving"
-        case .photosOnly: "photos only"
-        case .reconstructing(let s): "building the model: \(s)"
-        case .done: "done"
-        case .failed(let why): "stopped: \(why)"
         }
     }
 
