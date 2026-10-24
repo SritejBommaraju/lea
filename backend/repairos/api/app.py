@@ -25,7 +25,7 @@ from typing import Annotated, Any
 import jsonschema
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from repairos import contracts
 from repairos.config import ROOT, get_settings
@@ -81,6 +81,7 @@ class VoiceTurn(BaseModel):
     mode: str = "ptt"
     session_id: str | None = None
     conversation_id: str | None = None   # one voice-mode conversation; its history follows it into the scan
+    live: dict[str, str] | None = Field(None, max_length=12)   # what the phone shows now (screen, stage, cue, progress)
 
 
 class Pair(BaseModel):
@@ -433,7 +434,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                     (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
         history = request.app.state.voice_history.setdefault(body.conversation_id or body.session_id or "", [])
         try:
-            reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history)
+            reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history, live=body.live)
         except MissingSettingError as e:
             raise HTTPException(503, str(e)) from None
         except Exception as e:  # not cached: the phone can ask again

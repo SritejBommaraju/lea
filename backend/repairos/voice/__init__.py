@@ -35,7 +35,10 @@ happened, when it started, what they already tried) and stop asking once you kno
 Use tools to read what the scan found and to act on the phone.
 When the person describes a problem and there is no scan yet, ask them to scan the object and call offer_scan (it shows
 a scan button they can accept). Call start_scan only when they ask for a scan or say yes to one you offered.
-Pass both a symptom that sums up, in their words, what is wrong and what they suspect, so the scan starts with it."""
+Pass both a symptom that sums up, in their words, what is wrong and what they suspect, so the scan starts with it.
+Each turn may begin with what the phone shows right now (the screen, the scan's stage, the on-screen cue, progress,
+close-ups taken). While they scan, keep talking with them: answer, coach from the cue in your own words, suggest close-ups
+of what they are worried about, and keep replies to a sentence or two. While a scan is open, never offer or start one."""
 
 _SYMPTOM = {"type": "object", "additionalProperties": False, "properties": {"symptom": {
     "type": "string", "description": "One sentence, in their words: what is wrong and what they think the cause is."}}}
@@ -81,14 +84,25 @@ def _symptom(given: Any) -> dict:
     return {"symptom": s.strip()[:300]} if isinstance(s, str) and s.strip() else {}
 
 
-def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], client=None) -> tuple[str, list[dict]]:
+def _live_note(live: dict[str, str] | None) -> str | None:
+    """What the phone shows right now, as one line ahead of the transcript (not kept in the history)."""
+    if not live:
+        return None
+    return "On the phone right now: " + "; ".join(f"{k}: {v}" for k, v in list(live.items())[:12])
+
+
+def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], client=None,
+               live: dict[str, str] | None = None) -> tuple[str, list[dict]]:
     """One spoken turn through Claude with tools. Raises MissingSettingError without a key, and on API errors."""
     client = client or _anthropic()
     actions: list[dict] = []
     messages: list[dict] = []
     for said, replied in history[-12:]:
         messages += [{"role": "user", "content": said}, {"role": "assistant", "content": replied or "(no reply)"}]
-    messages.append({"role": "user", "content": transcript})
+    note = _live_note(live)
+    scanning = bool(live) and live.get("screen") == "scan"
+    messages.append({"role": "user", "content": [{"type": "text", "text": note}, {"type": "text", "text": transcript}]
+                     if note else transcript})
     for _ in range(MAX_TOOL_ROUNDS):
         resp = client.beta.messages.create(
             model=MODEL, max_tokens=4000, system=SYSTEM, tools=TOOLS, messages=messages,
@@ -106,6 +120,8 @@ def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], clie
         for u in uses:
             if u.name == "session_state":
                 out = json.dumps(_brief(snap))
+            elif u.name in ("offer_scan", "start_scan") and scanning:
+                out = "A scan is already open on the phone; help them with it."
             elif u.name == "offer_scan":
                 actions.append({"type": "offer_scan", **_symptom(u.input)})
                 out = "The scan button is showing; it opens the scan when they tap it or say yes."

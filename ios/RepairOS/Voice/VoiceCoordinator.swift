@@ -49,6 +49,8 @@ final class VoiceCoordinator: ObservableObject {
     var link: VoiceLink?
     /// What the gateway asked the phone to do (start a scan, open a report).
     var onActions: (([VoiceAction]) -> Void)?
+    /// Read at each turn: what the open screen shows (a scan in progress, a report). Nil on the home screen.
+    var scene: (() -> VoiceScene)?
     private var cartesiaUnavailable = false
 
     private var recentReactions: [String] = []
@@ -312,11 +314,12 @@ final class VoiceCoordinator: ObservableObject {
         exchanges.append(Exchange(id: id, said: text))
 
         // Ask the bridge now; react at once; hold the turn with a thinking sound if the answer is slow.
-        let mode = turnMode
-        let conversation = conversationID
+        let scene = scene?()
+        let request = VoiceTurnRequest(id: id, mode: turnMode, transcript: text, conversationID: conversationID,
+                                       sessionID: scene?.sessionID, live: scene?.live ?? [:])
         guard let link else { message = "Pair with the gateway in Settings to talk to Lea."; state = handsFree ? .listening : .idle; return }
         let reply = Task { () -> VoiceReply? in
-            do { return try await link.turn(id, mode, text, conversation) } catch {
+            do { return try await link.turn(request) } catch {
                 await MainActor.run { self.message = "Lea couldn't reach the gateway: \(error.localizedDescription)" }
                 return nil
             }

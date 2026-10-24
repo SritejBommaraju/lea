@@ -41,6 +41,15 @@ def test_turns_carry_their_conversation(gw):
     assert gw.req("POST", "/v1/voice/turns", turn)[0] == 503   # accepted; only the missing key stops it
 
 
+def test_live_scan_state_rides_along(gw):
+    live = {"screen": "scan", "stage": "scanning", "cue": "Walk slowly around it", "progress": "40%"}
+    assert gw.req("POST", "/v1/voice/turns", {"id": "t6", "transcript": "is this enough?", "live": live})[0] == 503
+    assert voice._live_note(live) == "On the phone right now: screen: scan; stage: scanning; cue: Walk slowly around it; progress: 40%"
+    assert voice._live_note(None) is None and voice._live_note({}) is None
+    too_much = {f"k{i}": "v" for i in range(13)}
+    assert gw.req("POST", "/v1/voice/turns", {"id": "t8", "transcript": "hi", "live": too_much})[0] == 422
+
+
 def test_scan_symptoms_are_trimmed_and_optional():
     assert voice._symptom({"symptom": "  won't turn on, maybe the switch  "}) == {"symptom": "won't turn on, maybe the switch"}
     assert voice._symptom({}) == {} and voice._symptom({"symptom": " "}) == {} and voice._symptom(None) == {}

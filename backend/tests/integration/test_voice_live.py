@@ -4,7 +4,8 @@
 
 The person explains a fault and their theory over several turns, as in voice mode. Lea must keep the theory in
 context, ask at most one question per turn, offer a scan with a symptom in their words, start it on a plain "Yes.",
-never call the theory proven, and keep one conversation's history out of another. `-s` prints the conversation.
+keep talking while the scan runs (seeing its stage and cue) without opening another, never call the theory
+proven, and keep one conversation's history out of another. `-s` prints the conversation.
 A missing key skips with HUMAN ACTION NEEDED. Nothing is faked.
 """
 from __future__ import annotations
@@ -31,9 +32,11 @@ def need(key: str) -> None:
         pytest.skip(f"HUMAN ACTION NEEDED: {key} in backend/.env")
 
 
-def say(gw, conversation: str, n: int, text: str) -> dict:
-    status, out, _ = gw.req("POST", "/v1/voice/turns", {"id": f"{conversation}-{n}", "transcript": text,
-                                                        "mode": "wake", "conversation_id": conversation})
+def say(gw, conversation: str, n: int, text: str, live: dict | None = None) -> dict:
+    turn = {"id": f"{conversation}-{n}", "transcript": text, "mode": "wake", "conversation_id": conversation}
+    if live:
+        turn["live"] = live
+    status, out, _ = gw.req("POST", "/v1/voice/turns", turn)
     assert status == 200, out
     print(f"\n  you: {text}\n  lea: {out['reply']}\n       {out['actions']}")
     reply = out["reply"]
@@ -67,6 +70,12 @@ def test_conversation_keeps_the_theory_and_leads_into_a_scan(gw):
         scan = next((a for a in accepted["actions"] if a["type"] == "scan"), None)
         assert scan, "a plain yes to the offer starts the scan"
         assert scan.get("symptom")
+
+    # The conversation carries on while the scan runs: Lea sees the screen and coaches, and never opens another scan.
+    live = {"screen": "scan", "stage": "scanning: walking around it", "progress": "35%", "close-ups taken": "1",
+            "on-screen cue": "Move closer"}
+    during = say(gw, c, 12, "Should I get the back where the cord goes in?", live)
+    assert not [a for a in during["actions"] if a["type"] in ("offer_scan", "scan")], "no second scan mid-scan"
 
     other = say(gw, "vc_live_2", 0, "What did I tell you is wrong with it?")["reply"].lower()
     assert "wire" not in other and "table" not in other, "a new conversation starts without the old one"

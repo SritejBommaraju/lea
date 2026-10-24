@@ -80,7 +80,7 @@ struct RootView: View {
                 }
             }
             .fullScreenCover(item: $active, onDismiss: app.reloadSessions) { record in
-                SessionFlowView(record: record)
+                SessionFlowView(record: record).environmentObject(voice)
             }
             .fullScreenCover(isPresented: $showVoiceMode, onDismiss: afterVoiceMode) {
                 VoiceModeView(voice: voice, scanOffered: scanOffered, startScan: { scanFromVoice() }, close: { showVoiceMode = false })
@@ -164,13 +164,16 @@ struct RootView: View {
                 guard let gateway = await app.gateway else { throw GatewayError.message("Not paired.") }
                 return try await gateway.voiceToken()
             },
-            turn: { id, mode, transcript, conversation in
-                let (gateway, session) = await MainActor.run { (app.gateway, app.sessions.first?.gatewaySessionID) }
+            turn: { request in
+                let (gateway, latest) = await MainActor.run { (app.gateway, app.sessions.first?.gatewaySessionID) }
                 guard let gateway else { throw GatewayError.message("Pair with the gateway in Settings to talk to Lea.") }
-                return try await gateway.voiceTurn(id: id, mode: mode, transcript: transcript, conversationID: conversation, sessionID: session)
+                var request = request
+                if request.sessionID == nil && request.live.isEmpty { request.sessionID = latest }   // home: the latest scan
+                return try await gateway.voiceTurn(request)
             })
         voice.onActions = { actions in
-            for action in actions {
+            // A scan or report already open keeps the screen; Lea talks about it instead.
+            for action in actions where active == nil {
                 switch action.type {
                 case "offer_scan":
                     scanOffered = true
@@ -212,9 +215,10 @@ struct RootView: View {
         }
     }
 
+    /// A scan started from voice mode keeps the conversation hands-free, so Lea talks you through it.
     private func afterVoiceMode() {
         scanOffered = false
-        if !handsFreeBeforeVoiceMode && voice.handsFree { voice.setHandsFree(false) }
+        if !scanAfterVoiceMode && !handsFreeBeforeVoiceMode && voice.handsFree { voice.setHandsFree(false) }
         if scanAfterVoiceMode {
             scanAfterVoiceMode = false
             newScan()

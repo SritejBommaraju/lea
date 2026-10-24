@@ -3,7 +3,24 @@ import Foundation
 /// The gateway's side of a conversation: a short-lived Cartesia grant, and the reply to one final spoken turn.
 struct VoiceLink: Sendable {
     var token: @Sendable () async throws -> CartesiaGrant
-    var turn: @Sendable (_ id: String, _ mode: String, _ transcript: String, _ conversationID: String) async throws -> VoiceReply
+    var turn: @Sendable (VoiceTurnRequest) async throws -> VoiceReply
+}
+
+/// One final turn: what was said, which conversation it belongs to, and what the phone showed at that moment.
+struct VoiceTurnRequest: Sendable {
+    let id: String
+    let mode: String
+    let transcript: String
+    let conversationID: String
+    var sessionID: String?
+    var live: [String: String] = [:]
+}
+
+/// What the open screen shows Lea right now: its gateway session (nil until it has one) and a few facts, such as the
+/// scan's stage, the on-screen cue and progress, so Lea can talk someone through a scan while it runs.
+struct VoiceScene: Sendable {
+    var sessionID: String?
+    var live: [String: String]
 }
 
 struct VoiceReply: Decodable, Sendable {

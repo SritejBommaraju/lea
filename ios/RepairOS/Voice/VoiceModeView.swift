@@ -23,12 +23,12 @@ struct VoiceModeView: View {
             }
             if voice.exchanges.isEmpty {
                 Spacer()
-                Orb(state: voice.state).frame(width: 220, height: 220).accessibilityHidden(true)
+                VoiceOrb(state: voice.state).frame(width: 220, height: 220).accessibilityHidden(true)
                 Text(voice.partial.isEmpty ? "Tell Lea what's going on and what you think is wrong." : voice.partial)
                     .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Spacer()
             } else {
-                Orb(state: voice.state).frame(width: 72, height: 72).accessibilityHidden(true)
+                VoiceOrb(state: voice.state).frame(width: 72, height: 72).accessibilityHidden(true)
                 conversation
             }
             if scanOffered {
@@ -130,7 +130,7 @@ private struct Bubble: View {
 }
 
 /// Breathes while listening, pulses while speaking, turns while thinking, rests when idle.
-private struct Orb: View {
+struct VoiceOrb: View {
     let state: VoiceCoordinator.State
 
     var body: some View {
