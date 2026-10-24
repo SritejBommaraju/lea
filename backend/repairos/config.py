@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     typesafe_key: SecretStr | None = None
     # LLM / VLM slots
     anthropic_api_key: SecretStr | None = None
+    # Voice (the phone streams speech with a short-lived token the gateway mints)
+    cartesia_api_key: SecretStr | None = None
+    cartesia_voice_id: str | None = None
+    cartesia_version: str = "2026-08-14"
     # RepairOS runtime
     repairos_pairing_code: SecretStr | None = None  # the phone pairs with this code (gateway, B5)
     repairos_release: bool = False

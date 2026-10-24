@@ -27,6 +27,16 @@ scan at launch), `--auto-scan` (press Scan after 3 s), `--run-still-probe`, `--o
 `--no-object-capture` (Apple Object Capture engine, off by default). Unit tests run on the simulator; shut it down
 after (`xcrun simctl shutdown all`).
 
+## Voice
+
+Hold the mic in the bar above **Start scan**, or turn on **Hands-free** and just talk (you can interrupt Lea). Speech is
+recognised on the iPhone (Apple, on-device where supported); spoken replies use the system voice, or Cartesia when the
+backend has `CARTESIA_API_KEY` and `CARTESIA_VOICE_ID` (the phone gets a short-lived token from `POST /v1/voice/token`).
+Each final turn goes to `POST /v1/voice/turns`; with `ANTHROPIC_API_KEY` the backend answers with Claude over the
+session's scans, findings and suspects, otherwise with plain rules. Lea can start a scan or open a report when asked.
+"Hey Leah" appears once a `HeyLeah.mlmodel` (Create ML sound classifier) is added to the app. Code: `RepairOS/Voice/`,
+backend `repairos/voice/`.
+
 ## The scan
 
 Point at the object → **Scan** → walk around while the live LiDAR point cloud fills in → **Done**. The object under

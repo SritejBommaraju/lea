@@ -188,3 +188,22 @@ struct GatewayClient: Sendable {
         return (data, http)
     }
 }
+
+// MARK: - Voice
+
+extension GatewayClient {
+    /// One final spoken turn; `sessionID` gives Lea the session's scans, findings and suspects.
+    func voiceTurn(id: String, mode: String, transcript: String, sessionID: String?) async throws -> VoiceReply {
+        var body: [String: Any] = ["id": id, "mode": mode, "transcript": transcript]
+        if let sessionID { body["session_id"] = sessionID }
+        let (data, _) = try await send("POST", "v1/voice/turns", json: body, expect: [200])
+        return try JSONDecoder().decode(VoiceReply.self, from: data)
+    }
+
+    /// A short-lived Cartesia grant (the backend holds the key); 503 when speech isn't set up there.
+    func voiceToken() async throws -> CartesiaGrant {
+        let (data, _) = try await send("POST", "v1/voice/token", json: [:], expect: [200])
+        return try JSONDecoder().decode(CartesiaGrant.self, from: data)
+    }
+}
+

@@ -74,6 +74,14 @@ class NewSession(BaseModel):
     symptom: str | None = None
 
 
+class VoiceTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    transcript: str
+    mode: str = "ptt"
+    session_id: str | None = None
+
+
 class Pair(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str
@@ -401,6 +409,51 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                 "suspects": await _list(request, "suspect", **by),
                 "next_actions": await _list(request, "next-action", **by),
                 "readings": await _list(request, "meter-reading", **by)}
+
+    # ------------------------------------------------------------ voice: spoken turns and speech tokens
+    app.state.voice_turns, app.state.voice_history = {}, {}
+
+    @app.post("/v1/voice/turns")
+    async def voice_turn(body: VoiceTurn, request: Request, _d: Device):
+        """A final spoken turn: the reply to speak and what the phone should do (start a scan, open a report).
+        Idempotent by turn id, so a retry after a dropped connection never answers twice."""
+        from repairos import voice
+
+        if not body.transcript.strip():
+            raise HTTPException(422, "only final, non-empty transcripts")
+        if body.id in request.app.state.voice_turns:
+            return request.app.state.voice_turns[body.id]
+        snap: dict = {}
+        if body.session_id:
+            await _session(request, body.session_id)
+            by = {"session_id": body.session_id}
+            snap = {k: await _list(request, kind, **by) for k, kind in
+                    (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
+        history = request.app.state.voice_history.setdefault(body.session_id or "", [])
+        reply, actions, by_ = "", [], "rules"
+        if get_settings().anthropic_api_key is not None:
+            try:
+                reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history)
+                by_ = "claude"
+            except Exception as e:  # the rules below still answer
+                print(f"[voice] assistant failed, answering by rules: {type(e).__name__}: {e}")
+        if not reply:
+            reply, actions = voice.route(body.transcript, snap)
+        history.append((body.transcript, reply))
+        out = {"id": body.id, "reply": reply, "actions": actions, "by": by_}
+        request.app.state.voice_turns[body.id] = out
+        return out
+
+    @app.post("/v1/voice/token")
+    async def voice_token(_d: Device):
+        """A short-lived Cartesia grant; 503 naming the missing setting when speech is not set up on the backend."""
+        from repairos import voice
+        from repairos.config import MissingSettingError
+
+        try:
+            return await asyncio.to_thread(voice.cartesia_token)
+        except MissingSettingError as e:
+            raise HTTPException(503, str(e)) from None
 
     @app.get("/v1/scans/{scan_id}")
     async def get_scan(scan_id: str, request: Request, _d: Device):

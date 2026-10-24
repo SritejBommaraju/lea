@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import SwiftUI
 
 /// Home: what lea does, the optional symptom line and one Start button within thumb reach (launch → scanning in
@@ -17,6 +18,7 @@ struct RootView: View {
     @State private var starts = 0
     @State private var showAll = false
     @State private var pendingDelete: SessionRecord?
+    @StateObject private var voice = VoiceCoordinator()
     private static let recentCount = 3
     @FocusState private var symptomFocused: Bool
 
@@ -47,7 +49,12 @@ struct RootView: View {
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .background(Palette.canvas.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) { startBar }
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: Spacing.s) {
+                    VoiceBar(voice: voice).padding(.horizontal, Spacing.m)
+                    startBar
+                }
+            }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $showAll) {
                 ScansView(open: { active = $0 }).toolbar(.visible, for: .navigationBar)
@@ -70,6 +77,9 @@ struct RootView: View {
             .fullScreenCover(item: $active, onDismiss: app.reloadSessions) { record in
                 SessionFlowView(record: record)
             }
+            .alert("Lea", isPresented: Binding(get: { voice.message != nil }, set: { if !$0 { voice.message = nil } })) {
+                Button("OK") { voice.message = nil }
+            } message: { Text(voice.message ?? "") }
             .alert("Can't start", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
             } message: { Text(error ?? "") }
@@ -78,6 +88,7 @@ struct RootView: View {
                 if app.autostart, active == nil { newScan() }
             }
             .onAppear {
+                connectVoice()
                 if !Consent.accepted && !devAutostart {
                     showConsent = true
                 } else {
@@ -128,6 +139,32 @@ struct RootView: View {
         if !app.isPaired && !UserDefaults.standard.bool(forKey: "pairingOffered") {
             UserDefaults.standard.set(true, forKey: "pairingOffered")
             showPairing = true
+        }
+    }
+
+    /// Voice talks to the gateway the app is paired with now (read at each turn), about the most recent session.
+    private func connectVoice() {
+        voice.attach()
+        voice.wakeDetector = voice.wakeDetector ?? SoundWakeDetector()
+        let app = app
+        voice.link = VoiceLink(
+            token: {
+                guard let gateway = await app.gateway else { throw GatewayError.message("Not paired.") }
+                return try await gateway.voiceToken()
+            },
+            turn: { id, mode, transcript in
+                let (gateway, session) = await MainActor.run { (app.gateway, app.sessions.first?.gatewaySessionID) }
+                guard let gateway else { throw GatewayError.message("Pair with the gateway in Settings to talk to Lea.") }
+                return try await gateway.voiceTurn(id: id, mode: mode, transcript: transcript, sessionID: session)
+            })
+        voice.onActions = { actions in
+            for action in actions {
+                switch action.type {
+                case "scan": newScan()
+                case "report": active = app.sessions.first { $0.scanID == action.scanID } ?? app.sessions.first
+                default: break
+                }
+            }
         }
     }
 
