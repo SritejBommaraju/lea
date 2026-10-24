@@ -85,7 +85,8 @@ struct SessionFlowView: View {
         } else {
             live = ["screen": "report"]
         }
-        return VoiceScene(sessionID: upload?.state.gatewaySessionID ?? current.gatewaySessionID, live: live)
+        return VoiceScene(sessionID: upload?.state.gatewaySessionID ?? UploadQueue.gatewaySessionID(of: current, in: app.storage),
+                          live: live)
     }
 
     private static func describe(_ stage: ScanSession.Stage) -> String {

@@ -165,7 +165,9 @@ struct RootView: View {
                 return try await gateway.voiceToken()
             },
             turn: { request in
-                let (gateway, latest) = await MainActor.run { (app.gateway, app.sessions.first?.gatewaySessionID) }
+                let (gateway, latest) = await MainActor.run {   // the newest scan that reached the gateway
+                    (app.gateway, app.sessions.lazy.compactMap { UploadQueue.gatewaySessionID(of: $0, in: app.storage) }.first)
+                }
                 guard let gateway else { throw GatewayError.message("Pair with the gateway in Settings to talk to Lea.") }
                 var request = request
                 if request.sessionID == nil && request.live.isEmpty { request.sessionID = latest }   // home: the latest scan
