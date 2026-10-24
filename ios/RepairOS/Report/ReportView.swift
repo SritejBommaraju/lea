@@ -174,9 +174,14 @@ struct PipelineProgress: Equatable {
     var stillsTotal = 0
 
     mutating func update(_ p: [String: Any]) {
+        // A run lists every stage as pending from its start: a stage counts once it has started.
         let stages = p["stages"] as? [String: Any] ?? [:]
-        if stages["report"] != nil { step = .write }
-        else if stages["fuse"] != nil || stages["locate"] != nil { step = .weigh }
+        func started(_ k: String) -> Bool {
+            guard let status = (stages[k] as? [String: Any])?["status"] as? String else { return false }
+            return status != "pending"
+        }
+        if started("report") { step = .write }
+        else if started("fuse") || started("locate") { step = .weigh }
         else { step = .inspect }
         let stills = (p["stills"] as? [String: Any] ?? [:]).values.compactMap { ($0 as? [String: Any])?["status"] as? String }
         stillsTotal = stills.count

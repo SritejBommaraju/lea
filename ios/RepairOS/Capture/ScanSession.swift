@@ -339,6 +339,10 @@ final class ScanSession: NSObject {
     func finish() async -> SessionRecord {
         stage = .finishing
         upload?.markDone()
+        // A still already being captured and saved finishes first, so its id is in the saved record (no new one
+        // starts once the stage is finishing). Bounded: a capture that never returns does not hold up Done.
+        let waitFrom = Date()
+        while capturing, Date().timeIntervalSince(waitFrom) < 5 { try? await Task.sleep(for: .milliseconds(20)) }
         exposure.stop()
         torch.off()
         var keyframes = await recorder.drain()

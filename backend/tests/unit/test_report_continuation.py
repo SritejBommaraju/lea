@@ -111,3 +111,26 @@ def test_a_scan_without_any_report_is_not_closed(env, tmp_path):  # noqa: F811
     later = datetime.now(UTC) + timedelta(hours=1)
     assert run(close_abandoned(ctx, now=later)) == []
     assert run(state.get("pipeline-run", run_id_for(scan["scan_id"]))).data["status"] == "inspecting"
+
+
+def test_stills_posted_after_a_finished_report_mean_a_rebuild_is_pending(env, tmp_path):  # noqa: F811
+    """Greptile PR #7: a continuation's stills are posted and /complete queues the run, but until a worker picks
+    either up the run row is still `done`. The phone polls in that window: it must be told a rebuild is pending,
+    or it settles on the old revision and never asks again."""
+    from repairos.api.app import create_app
+
+    state, blobs, scan = env
+    sid = scan["scan_id"]
+    ctx = Context(state=state, blobs=blobs, root=tmp_path / "pipeline")
+    for s in ("s_label", "s_skip"):
+        run(inspect_still_stage(ctx, s))
+    first = _publish(state, scan)
+    with serve(create_app(state, blobs, pairing_code=CODE)) as c:
+        c.token = c.req("POST", "/v1/devices/pair", {"code": CODE}, auth=False)[1]["token"]
+        _new_still(state, scan, "s_more")                   # posted, nothing has run yet
+        assert c.req("POST", f"/v1/scans/{sid}/complete")[0] == 202
+        view = c.req("GET", f"/v1/scans/{sid}/pipeline")[1]
+        assert view["status"] == "done" and view["report_rev"] == first.rev
+        assert view["rebuilding"] is True
+        assert view["pending"] == {"new_stills": 1, "inspected": 0, "closed": False}
+        assert c.req("GET", f"/v1/scans/{sid}/report")[2]["x-report-rebuilding"] == "1"

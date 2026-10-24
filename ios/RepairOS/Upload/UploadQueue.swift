@@ -10,6 +10,15 @@ final class UploadQueue {
     struct State: Codable {
         var gatewaySessionID: String?
         var refs: [String: String] = [:]      // relative path -> blob ref
+        /// relative path -> the file's size and modification time when its ref was made: a file rewritten since (a
+        /// continuation's merged cloud keeps its name) is uploaded again.
+        var stamps: [String: String]?
+
+        /// The ref made from this very file (same stamp), else nil: the file is new or was rewritten since.
+        func cachedRef(_ path: String, stamp: String) -> String? {
+            guard let ref = refs[path], stamps?[path] == stamp else { return nil }
+            return ref
+        }
         var scanPosted = false
         /// The scan was posted at least once (a continuation's stills can go before its re-post).
         var everPosted: Bool?
@@ -199,15 +208,8 @@ final class UploadQueue {
         }
         switch item {
         case .scan:
-            var body = try loadJSON(storage.scanPackageURL(record))
+            var body = try await Self.withRefs(loadJSON(storage.scanPackageURL(record)), ref)
             body["session_id"] = state.gatewaySessionID
-            for key in ["points_file", "mesh_file"] { body[key] = try await ref(body[key]) }
-            if var kfs = body["keyframes"] as? [[String: Any]] {
-                for i in kfs.indices {
-                    for key in ["image_file", "depth_file", "confidence_file"] { kfs[i][key] = try await ref(kfs[i][key]) }
-                }
-                body["keyframes"] = kfs
-            }
             let data = try JSONSerialization.data(withJSONObject: body)
             let answer = try await gateway.postScan(data)
             diag.log("scan_posted", ["updated": answer["updated"] ?? NSNull(), "rev": answer["rev"] ?? NSNull(),
@@ -228,16 +230,47 @@ final class UploadQueue {
         persist()
     }
 
-    /// Uploads the file at a relative path once and returns its blob ref (nil stays nil).
+    /// The scan package with every file field (clouds, mesh, keyframe files, each later segment's cloud) passed
+    /// through `ref`: the gateway refuses a package with any local path left in it.
+    static func withRefs(_ package: [String: Any], _ ref: @MainActor (Any?) async throws -> String?) async throws -> [String: Any] {
+        var body = package
+        for key in ["points_file", "mesh_file"] { body[key] = try await ref(body[key]) }
+        if var kfs = body["keyframes"] as? [[String: Any]] {
+            for i in kfs.indices {
+                for key in ["image_file", "depth_file", "confidence_file"] { kfs[i][key] = try await ref(kfs[i][key]) }
+            }
+            body["keyframes"] = kfs
+        }
+        if var segs = body["segments"] as? [[String: Any]] {
+            for i in segs.indices { segs[i]["points_file"] = try await ref(segs[i]["points_file"]) }
+            body["segments"] = segs
+        }
+        return body
+    }
+
+    /// Size and modification time of a file (what `ref` compares to tell a rewritten file).
+    static func stamp(of url: URL) -> String {
+        let a = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (a?[.size] as? Int) ?? -1
+        let modified = (a?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(size)@\(modified)"
+    }
+
+    /// Uploads the file at a relative path once and returns its blob ref (nil stays nil). A file changed since its
+    /// ref was made is uploaded again.
     private func ref(_ value: Any?) async throws -> String? {
         guard let path = value as? String else { return nil }
         if path.hasPrefix("blob://") { return path }
-        if let done = state.refs[path] { return done }
         let url = storage.dir(record).appending(path: path)
+        let stamp = Self.stamp(of: url)
+        if let done = state.cachedRef(path, stamp: stamp) { return done }
         let sha = try await Task.detached { try GatewayClient.sha256(of: url) }.value
         let type = path.hasSuffix(".jpg") ? "image/jpeg" : path.hasSuffix(".png") ? "image/png" : "application/octet-stream"
         let blob = try await gateway.uploadBlob(file: url, sha256: sha, contentType: type)
         state.refs[path] = blob
+        var stamps = state.stamps ?? [:]
+        stamps[path] = stamp
+        state.stamps = stamps
         uploadedFiles += 1
         bytesSent += Int64((try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0)
         persist()

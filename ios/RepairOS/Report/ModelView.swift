@@ -28,11 +28,15 @@ enum ModelSource: Sendable {
     case points(ScanCloud)
 
     /// The session's own files: the PLY the locator ray-casts against (same frame as `location.point_m`), else the
-    /// photogrammetry mesh.
+    /// photogrammetry mesh. A later segment's own cloud (`points_segmentN_…`, an unaligned continuation) is in
+    /// another frame, so it is never the one drawn under the pins.
     static func find(in scanDir: URL) -> ModelSource {
         let fm = FileManager.default
-        let names = (try? fm.contentsOfDirectory(atPath: scanDir.path)) ?? []
-        if let ply = names.first(where: { $0.hasSuffix(".ply") }) { return .pointCloud(scanDir.appending(path: ply)) }
+        let names = ((try? fm.contentsOfDirectory(atPath: scanDir.path)) ?? []).sorted()
+        let main = "points_arkit_world.ply"
+        if let ply = names.contains(main) ? main : names.first(where: { $0.hasSuffix(".ply") && !$0.hasPrefix("points_segment") }) {
+            return .pointCloud(scanDir.appending(path: ply))
+        }
         if let mesh = names.first(where: { $0.hasSuffix(".usdz") || $0.hasSuffix(".obj") }) { return .mesh(scanDir.appending(path: mesh)) }
         return .none
     }
