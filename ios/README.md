@@ -34,7 +34,10 @@ recognised on the iPhone (Apple, on-device where supported); spoken replies use 
 backend has `CARTESIA_API_KEY` (and optionally `CARTESIA_VOICE_ID`; the phone gets a short-lived token from `POST /v1/voice/token`).
 Each final turn goes to `POST /v1/voice/turns`, where Claude (the backend's `ANTHROPIC_API_KEY`) answers over the
 session's scans, findings and suspects. Lea can start a scan or open a report when asked.
-"Hey Leah" appears once a `HeyLeah.mlmodel` (Create ML sound classifier) is added to the app. Code: `RepairOS/Voice/`,
+From anywhere, say **"Hey Siri, hey lea"** (or "Siri, talk to lea"): Siri opens the app, Lea says "Hey, what's up?"
+and listens for one turn, no button needed. The phrases are an App Shortcut (`RepairOS/Voice/HeyLeaShortcut.swift`),
+registered when the app is installed; only Siri's own wake word works outside an app, so "Hey Siri" comes first.
+Inside the app, "Hey Leah" appears once a `HeyLeah.mlmodel` (Create ML sound classifier) is added to the app. Code: `RepairOS/Voice/`,
 backend `repairos/voice/`.
 
 ## The scan

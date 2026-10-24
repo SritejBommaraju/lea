@@ -154,6 +154,17 @@ final class VoiceCoordinator: ObservableObject {
         }
     }
 
+    /// Opened by Siri ("Hey Siri, hey lea"): say a short greeting, then listen for one turn without a button.
+    func greetAndListen(_ greeting: String = "Hey, what's up?") {
+        guard state == .idle || state == .listening else { return }
+        turnMode = "wake"
+        Task {
+            await say(greeting)
+            if state == .speaking { state = .idle }
+            await listen(open: true)
+        }
+    }
+
     /// Hands-free: the mic stays open for the conversation and speech itself takes the turn.
     func setHandsFree(_ on: Bool) {
         handsFree = on

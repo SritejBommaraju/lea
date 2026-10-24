@@ -87,8 +87,12 @@ struct RootView: View {
                 try? await Task.sleep(for: .milliseconds(300))
                 if app.autostart, active == nil { newScan() }
             }
+            .onReceive(NotificationCenter.default.publisher(for: VoiceLaunch.requested)) { _ in
+                if VoiceLaunch.take() { voice.greetAndListen() }
+            }
             .onAppear {
                 connectVoice()
+                if VoiceLaunch.take() { voice.greetAndListen() }   // Siri opened the app before this screen existed
                 if !Consent.accepted && !devAutostart {
                     showConsent = true
                 } else {
