@@ -302,7 +302,7 @@ final class VoiceCoordinator: ObservableObject {
             resumes += 1
             return speakAll([line.text] + stopped.rest)
         }
-        if TurnTaking.isBackchannel(text) || TurnTaking.isStop(text) { return }   // stay quiet; "go on" still resumes
+        guard TurnTaking.takesTurn(text, whileLeaTalks: state == .speaking || state == .thinking) else { return }   // "go on" still resumes
         interrupted = nil
         turn += 1
         let mine = turn

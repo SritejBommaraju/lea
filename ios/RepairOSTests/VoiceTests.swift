@@ -38,6 +38,14 @@ struct VoiceTests {
         #expect(T.hangover(after: "hello") == 0.9)
     }
 
+    @Test func shortAnswersReachLeaOnceSheStops() {
+        #expect(T.takesTurn("Yes.", whileLeaTalks: false))      // "Can you scan it?" "Yes."
+        #expect(T.takesTurn("yeah", whileLeaTalks: false))
+        #expect(!T.takesTurn("yeah", whileLeaTalks: true))      // listening, not taking the turn
+        #expect(!T.takesTurn("wait", whileLeaTalks: false))
+        #expect(T.takesTurn("it hums but won't spin", whileLeaTalks: true))
+    }
+
     @Test func gatewayRepliesDecode() throws {
         let json = #"{"id":"t1","reply":"Opening a new scan.","actions":[{"type":"scan","symptom":"stops after a minute"},{"type":"report","scan_id":"scan_1"}]}"#
         let r = try JSONDecoder().decode(VoiceReply.self, from: Data(json.utf8))

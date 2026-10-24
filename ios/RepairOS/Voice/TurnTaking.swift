@@ -31,6 +31,12 @@ nonisolated enum TurnTaking {
         matches("^(mm+|m+ ?hm+|uh ?huh|hmm+|yeah|yep|yes|ok(ay)?|right|sure|cool|nice|wow|oh|ah|i see|got it)$", norm(text))
     }
 
+    /// Does this final transcript take the turn? "yeah" or "okay" while Lea talks only says they're listening; once
+    /// she has stopped, it answers her ("Can you scan it?" "Yes."). "stop" and "wait" never ask for a reply.
+    static func takesTurn(_ text: String, whileLeaTalks: Bool) -> Bool {
+        !isStop(text) && !(whileLeaTalks && isBackchannel(text))
+    }
+
     /// "stop", "wait": the person wants Lea quiet, not a reply ("go on" resumes).
     static func isStop(_ text: String) -> Bool {
         matches("^(ok(ay)? )?(stop|wait|hold on|pause)( please| a (second|sec|moment))?$", norm(text))
