@@ -1,0 +1,53 @@
+{
+ "_note": "API shape only, built from the schema with generic names; not a recorded Grain response (those are private, private/grain/observed/). Today's shape: no index between readings and findings.",
+ "status": "error",
+ "readings": [
+  {
+   "net": "VIN",
+   "known": true,
+   "volts": 5.02,
+   "expected": {
+    "volts": 5.0,
+    "min": 4.75,
+    "max": 5.25,
+    "from": "simulation"
+   },
+   "verdict": "ok"
+  },
+  {
+   "net": "NET_A",
+   "known": true,
+   "continuity": false,
+   "wire": {
+    "name": "WIRE_A",
+    "from": "J1.1",
+    "to": "LOAD1.1",
+    "gauge": "22AWG",
+    "length_mm": 40.0,
+    "color": "red",
+    "conductors": 1
+   }
+  }
+ ],
+ "findings": [
+  {
+   "severity": "error",
+   "text": "NET_A is open between J1.1 and LOAD1.1: the harness wire WIRE_A does not conduct",
+   "where": "WIRE_A",
+   "fix": "replace WIRE_A"
+  }
+ ],
+ "expected_volts": {
+  "VIN": {
+   "volts": 5.0,
+   "min": 4.75,
+   "max": 5.25,
+   "from": "simulation"
+  }
+ },
+ "sources": {
+  "nets": true,
+  "harness": true,
+  "sim": true
+ }
+}

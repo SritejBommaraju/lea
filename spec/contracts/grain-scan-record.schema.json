@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grain-scan-record.schema.json",
+  "title": "GrainScanRecord",
+  "description": "Grain -> RepairOS: the stored scan record returned by POST /projects/{id}/scans?name=&units= (body = the file), GET .../scans/{sid}, and photo uploads (which return the record plus photos[]). Pinned against the private recorded Grain fixtures (private/grain/observed/), plus target fields marked x-target. Grain makes the id; name is only a label and must end in the format's extension (else 400). bbox_mm and centroid_mm are in the design frame's units (mm) after Grain applies `units` (an upload with units=m is multiplied by 1000). A photo-only record (POST /projects/{id}/photos) has kind 'photos', file and units null, points 0 and no bbox. Grain owns the shape: additionalProperties allowed.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["id", "name", "points", "created"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1, "description": "Grain's scan id, YYYYmmdd-HHMMSS-xxxx." },
+    "name": { "type": "string", "description": "The label from the upload query, e.g. scan_7f3a.ply." },
+    "kind": { "type": "string", "description": "'photos' for a photo-only record; absent for a scan." },
+    "file": { "type": ["string", "null"], "description": "Stored file name; null for a photo-only record." },
+    "units": { "type": ["string", "null"], "enum": ["mm", "cm", "m", null], "description": "As declared at upload; never guessed." },
+    "bytes": { "type": "integer", "minimum": 0 },
+    "created": { "type": "number", "description": "Unix seconds." },
+    "points": { "type": "integer", "minimum": 0, "description": "Points stored (a mesh upload is sampled to points)." },
+    "bbox_mm": { "$ref": "#/$defs/bbox" },
+    "centroid_mm": { "$ref": "#/$defs/vec3" },
+    "photos": {
+      "type": "array",
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/photo" },
+      "description": "Photos attached to this record (<= 8), stored downsized (px is the stored size)."
+    },
+    "frame": {
+      "type": "string", "enum": ["design", "world"], "x-target": "T9",
+      "description": "Target T9: echo of the upload's frame=design|world."
+    },
+    "gravity": {
+      "$ref": "#/$defs/vec3", "x-target": "T9",
+      "description": "Target T9: echo of the upload's gravity=x,y,z (unit vector, down)."
+    }
+  },
+  "x-target-required": [
+    { "path": "frame", "target": "T9" }
+  ],
+  "$defs": {
+    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+    "bbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/vec3" },
+        "max": { "$ref": "#/$defs/vec3" },
+        "size": { "$ref": "#/$defs/vec3" }
+      }
+    },
+    "photo": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["n", "name", "file"],
+      "properties": {
+        "n": { "type": "integer", "minimum": 1, "description": "1-based index on the record; with the record id it names the photo (target T5: {record, n} in /call)." },
+        "name": { "type": "string", "description": "The label from the upload; the only metadata a photo has today." },
+        "file": { "type": "string" },
+        "px": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2, "description": "Stored size [w, h]." },
+        "original_px": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2 },
+        "sha1": { "type": "string" },
+        "parts": { "type": "array", "items": { "type": "string" }, "x-target": "T5", "description": "Target T5: Grain part names the photo shows (diagnose parts[].name)." },
+        "harness": { "type": "array", "items": { "type": "string" }, "x-target": "T5", "description": "Target T5: harness wire names in view." },
+        "box_px": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 4, "maxItems": 4, "x-target": "T5", "description": "Target T5: [x0, y0, x1, y1] crop box in the original image." },
+        "camera": {
+          "type": "object",
+          "additionalProperties": true,
+          "x-target": "T5",
+          "description": "Target T5: camera pose and intrinsics. position_m and quaternion_xyzw are in the frame the scan was uploaded in.",
+          "properties": {
+            "position_m": { "$ref": "#/$defs/vec3" },
+            "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+            "intrinsics": { "type": "object", "additionalProperties": true }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+{ "schema": "grain-diagnose-response", "why": "parts are keyed by name (GLB node); ref is the BOM ref or null",
+  "base": "grain-diagnose-response.json",
+  "patch": { "parts": [ { "ref": "U1", "verdict": "ok", "coverage": 0.95 } ] } }

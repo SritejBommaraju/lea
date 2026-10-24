@@ -1,0 +1,4 @@
+#!/bin/sh
+# Installed by `make hooks` (git config core.hooksPath tools/hooks).
+# Blocks commits that would leak Grain internals or private files (tools/guard_proprietary.py).
+exec python3 -I "$(git rev-parse --show-toplevel)/tools/guard_proprietary.py"

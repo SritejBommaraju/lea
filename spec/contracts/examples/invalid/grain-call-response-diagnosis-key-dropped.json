@@ -1,0 +1,2 @@
+{ "schema": "grain-call-response", "why": "every key is always present: diagnosis is null with no scan, never absent (the merge patch's null deletes the key)",
+  "base": "grain-call-response.json", "patch": { "diagnosis": null } }

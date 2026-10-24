@@ -1,31 +1,34 @@
-# Proprietary Grain material: local only, never committed (get it from Sritej)
+__pycache__/
+*.pyc
+.DS_Store
+
+# secrets (never in git)
+backend/.env
+*.env
+!.env.example
+!**/.env.example
+ios/Config/Signing.xcconfig
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+
+# local state, caches, environments
+data/
+.venv/
+backend/.venv/
+node_modules/
+.pytest_cache/
+*.egg-info/
+
+# large binaries
+*.mlpackage/
+
+# Proprietary Grain material: local only, never committed
 private/
 **/GRAIN_SPEC.md
 **/GRAIN_STATUS.md
-**/grain-observed/
-samples/**/grain/
-
-# Secrets
-.env
-.env.*
-!.env.example
-backend/.env
-
-# Python
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-
-# Node
-node_modules/
-
-# Xcode / iOS
-xcuserdata/
-DerivedData/
-*.xcuserstate
-ios/Config/Signing.xcconfig
-
-# Data and OS
-data/
-.DS_Store
+samples/**/grain/*
+!samples/**/grain/README.md

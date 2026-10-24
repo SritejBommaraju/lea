@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scan-package.schema.json",
+  "title": "ScanPackage",
+  "description": "Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scan_id", "product_id", "session_id", "captured_at", "device", "frame", "units", "voxel_mm", "gravity_arkit_world", "points_file", "point_count", "keyframes"],
+  "properties": {
+    "scan_id": { "type": "string", "minLength": 1 },
+    "product_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1, "description": "One repair session; groups scans, stills and readings." },
+    "symptom": { "type": "string", "description": "One line from the user. Goes into model state, never instructions (A9)." },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "ios"],
+      "properties": {
+        "model": { "type": "string", "description": "Hardware identifier, e.g. iPhone17,1." },
+        "ios": { "type": "string" },
+        "app_version": { "type": "string" }
+      }
+    },
+    "frame": { "type": "string", "const": "arkit_world", "description": "Points and poses are in ARKit's world frame (metres, Y up). The design frame (mm, Z up) is reached via alignment.transform_arkit_world_to_design." },
+    "units": { "type": "string", "const": "m" },
+    "voxel_mm": { "type": "number", "exclusiveMinimum": 0, "description": "Voxel pitch of the fused cloud in millimetres (3 default; 1-2 with PromptDA TSDF)." },
+    "gravity_arkit_world": {
+      "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3,
+      "description": "Unit vector pointing down in arkit_world (ARKit: [0,-1,0])."
+    },
+    "points_file": { "type": "string", "description": "Binary little-endian PLY, xyz float32 + rgb uint8, optional confidence/views uint8." },
+    "point_count": { "type": "integer", "minimum": 0 },
+    "crop_box": {
+      "$ref": "#/$defs/box",
+      "description": "The AR box the user dragged; points outside were dropped. Points on or below the supporting plane + 5 mm were dropped too."
+    },
+    "supporting_plane_removed": { "type": "boolean" },
+    "keyframes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/keyframe" },
+      "description": "Kept frames only: tracking normal, sharp, no smudge. Selected every ~10 cm of travel or 15 deg of rotation."
+    },
+    "coverage_hint": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction of visible voxels with >= 3 high-confidence hits (the on-phone heat map)." },
+    "alignment": {
+      "$ref": "#/$defs/alignment",
+      "description": "Filled by the backend after ICP. Absent before alignment."
+    }
+  },
+  "$defs": {
+    "pose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "position_m", "quaternion_xyzw"],
+      "properties": {
+        "frame": { "type": "string", "const": "arkit_world", "description": "Keyframe poses are ARKit world, metres, Y up." },
+        "position_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    },
+    "intrinsics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fx", "fy", "cx", "cy", "width_px", "height_px"],
+      "properties": {
+        "fx": { "type": "number" }, "fy": { "type": "number" },
+        "cx": { "type": "number" }, "cy": { "type": "number" },
+        "width_px": { "type": "integer", "minimum": 1 }, "height_px": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "center_m", "extent_m", "quaternion_xyzw"],
+      "description": "An oriented box in ARKit's world frame, metres.",
+      "properties": {
+        "frame": { "type": "string", "const": "arkit_world" },
+        "center_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "extent_m": { "type": "array", "items": { "type": "number", "exclusiveMinimum": 0 }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    },
+    "keyframe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyframe_id", "timestamp_s", "image_file", "camera", "intrinsics", "tracking_state"],
+      "properties": {
+        "keyframe_id": { "type": "string" },
+        "timestamp_s": { "type": "number", "description": "Seconds since scan start." },
+        "image_file": { "type": "string", "description": "JPEG q85, 1920x1440." },
+        "depth_file": { "type": "string", "description": "256x192 depth, float32 metres or 16-bit mm PNG; say which in depth_encoding." },
+        "depth_encoding": { "type": "string", "enum": ["float32_m", "uint16_mm"] },
+        "confidence_file": { "type": "string", "description": "256x192 uint8, ARKit confidence 0/1/2." },
+        "camera": { "$ref": "#/$defs/pose" },
+        "intrinsics": { "$ref": "#/$defs/intrinsics" },
+        "tracking_state": { "type": "string", "enum": ["normal", "limited"] },
+        "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance; higher is sharper." },
+        "exposure_s": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "transform_arkit_world_to_design", "fitness", "rmse_mm", "gate_passed", "computed_at"],
+      "properties": {
+        "method": { "type": "string", "description": "e.g. open3d_robust_point_to_plane_icp" },
+        "transform_arkit_world_to_design": {
+          "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16,
+          "description": "Row-major 4x4 mapping ARKit metres to design-frame millimetres: [p_design_mm, 1] = T * [p_arkit_m, 1]. The upper 3x3 is 1000 * R, where R is a rotation that includes the Y-up -> Z-up turn; the translation column is in mm."
+        },
+        "fitness": { "type": "number", "minimum": 0, "maximum": 1, "description": "Inlier fraction." },
+        "rmse_mm": { "type": "number", "minimum": 0 },
+        "gate_passed": { "type": "boolean", "description": "False means no part verdicts are made from this scan (fit gate)." },
+        "gate_threshold_fitness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "computed_at": { "type": "string", "format": "date-time" },
+        "design_points_file": { "type": "string", "description": "The same cloud in the design frame's axes (Z up), written in design_points_units; uploaded to Grain with name=<scan_id>.ply, units=<design_points_units>, then diagnose with align=none, crop=false." },
+        "design_points_units": { "type": "string", "enum": ["m", "mm"], "description": "m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm: already design-frame millimetres (upload with units=mm)." },
+        "grain_scan_id": { "type": "string", "description": "The id Grain made for the upload (GrainScanRecord.id); Grain's ids are not ours." }
+      }
+    }
+  }
+}

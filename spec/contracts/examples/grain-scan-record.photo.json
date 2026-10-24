@@ -1,0 +1,21 @@
+{
+ "_note": "API shape only, built from the schema with generic names; not a recorded Grain response (those are private, private/grain/observed/). A photo-only record.",
+ "id": "20261024-120500-cd34",
+ "name": "crops_s7",
+ "kind": "photos",
+ "file": null,
+ "units": null,
+ "created": 1792850700.0,
+ "points": 0,
+ "photos": [
+  {
+   "n": 1,
+   "name": "J1_crop_s7.jpg",
+   "file": "1.jpg",
+   "px": [
+    800,
+    600
+   ]
+  }
+ ]
+}

@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shopping-quote.schema.json",
+  "title": "ShoppingQuote",
+  "description": "Sourcing decision for one part to buy. Selection and budget enforcement are deterministic (A5): the chosen candidate is the one selection_rule picks from the candidates, and total never exceeds budget.cap. AI may only discover candidates and extract datasheet fields; ai_assist records where it was used. Grain BOM prices are treated as current (owner decision 2026-10-23).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["quote_id", "plan_id", "part_ref", "budget", "candidates", "chosen_index", "selection_rule", "ai_assist", "created_at"],
+  "properties": {
+    "quote_id": { "type": "string", "minLength": 1 },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "part_ref": { "type": "string", "minLength": 1, "description": "BOM ref being replaced." },
+    "original_mpn": { "type": ["string", "null"] },
+    "qty_needed": { "type": "integer", "minimum": 1 },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cap", "currency"],
+      "properties": {
+        "cap": { "type": "number", "minimum": 0, "description": "Hard cap for this part including shipping estimate." },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["supplier", "url", "unit_price", "currency", "spec_match", "price_source", "fetched_at"],
+        "properties": {
+          "supplier": { "type": "string" },
+          "mpn": { "type": ["string", "null"] },
+          "url": { "type": "string" },
+          "unit_price": { "type": "number", "minimum": 0 },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+          "min_qty": { "type": "integer", "minimum": 1 },
+          "shipping_estimate": { "type": "number", "minimum": 0 },
+          "in_stock": { "type": ["boolean", "null"] },
+          "lead_days": { "type": ["integer", "null"], "minimum": 0 },
+          "price_source": { "type": "string", "enum": ["grain_bom", "supplier_page", "search_snippet"], "description": "grain_bom prices are treated as current." },
+          "spec_match": { "type": "string", "enum": ["exact_mpn", "equivalent", "substitute"], "description": "exact_mpn: same part. equivalent: same spec within tolerance. substitute: researched, needs the quick check." },
+          "protective_part_check": { "type": "string", "enum": ["passed", "failed", "not_applicable", "cannot_confirm"], "description": "A substitute for a protective part must be passed or it is ineligible (S2)." },
+          "eligible": { "type": "boolean", "description": "Passed every deterministic filter (spec_match, protective check, in budget)." },
+          "ineligible_reason": { "type": "string" },
+          "found_by": { "type": "string", "enum": ["grain_bom", "deterministic_search", "ai_discovery"], "description": "How the candidate entered the list. AI may add candidates; it cannot pick one." },
+          "fetched_at": { "type": "string", "format": "date-time" }
+        }
+      }
+    },
+    "chosen_index": { "type": ["integer", "null"], "minimum": 0, "description": "Index into candidates, or null when nothing is eligible within budget." },
+    "selection_rule": {
+      "type": "string",
+      "description": "Name of the deterministic rule applied, e.g. 'eligible, then exact_mpn before equivalent before substitute, then lowest total within cap, then shortest lead'. Versioned in code."
+    },
+    "total": { "type": ["number", "null"], "minimum": 0, "description": "unit_price * qty + shipping for the chosen candidate. Must be <= budget.cap." },
+    "ai_assist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["used"],
+      "properties": {
+        "used": { "type": "boolean" },
+        "roles": { "type": "array", "items": { "type": "string", "enum": ["candidate_discovery", "datasheet_extraction", "mpn_identification"] }, "description": "Never 'selection' or 'budget'." },
+        "model": { "type": "string" }
+      }
+    },
+    "made_alternative": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Print-it option from Grain's made[] / model.step, when one exists.",
+      "properties": {
+        "process": { "type": "string" },
+        "material": { "type": "string" },
+        "file": { "type": "string", "description": "STEP or STL path from the reference cache: Grain's made[].file (today the whole out/model.step; the part is its node) or a pilot export." },
+        "mass_g": { "type": "number", "minimum": 0 },
+        "est_cost": { "type": ["number", "null"], "minimum": 0 },
+        "est_cost_source": { "type": "string", "enum": ["grain_pilot_estimate", "grain", "repairos_estimate", "unknown"], "description": "Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain is kept for a future priced made[] row." },
+        "printer_available": { "type": "boolean", "description": "True at the hackathon venue." }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

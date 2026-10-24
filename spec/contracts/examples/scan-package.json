@@ -1,0 +1,58 @@
+{
+  "scan_id": "scan_7f3a",
+  "product_id": "prod_example_0001",
+  "session_id": "sess_2026-10-23_01",
+  "symptom": "no output when switched on",
+  "captured_at": "2026-10-23T18:10:02Z",
+  "device": { "model": "iPhone17,1", "ios": "26.1", "app_version": "repairos/0.1" },
+  "frame": "arkit_world",
+  "units": "m",
+  "voxel_mm": 3,
+  "gravity_arkit_world": [0, -1, 0],
+  "points_file": "scans/scan_7f3a/points_arkit_world.ply",
+  "point_count": 33120,
+  "crop_box": {
+    "frame": "arkit_world",
+    "center_m": [0.02, 0.11, -0.45],
+    "extent_m": [0.32, 0.24, 0.18],
+    "quaternion_xyzw": [0, 0, 0, 1]
+  },
+  "supporting_plane_removed": true,
+  "keyframes": [
+    {
+      "keyframe_id": "kf_000",
+      "timestamp_s": 0.0,
+      "image_file": "scans/scan_7f3a/kf_000.jpg",
+      "depth_file": "scans/scan_7f3a/kf_000_depth.png",
+      "depth_encoding": "uint16_mm",
+      "confidence_file": "scans/scan_7f3a/kf_000_conf.png",
+      "camera": { "frame": "arkit_world", "position_m": [0.31, 0.26, -0.02], "quaternion_xyzw": [0.08, 0.71, -0.09, 0.69] },
+      "intrinsics": { "fx": 1458.2, "fy": 1458.2, "cx": 960.0, "cy": 720.0, "width_px": 1920, "height_px": 1440 },
+      "tracking_state": "normal",
+      "sharpness": 412.5,
+      "exposure_s": 0.0083
+    },
+    {
+      "keyframe_id": "kf_006",
+      "timestamp_s": 7.4,
+      "image_file": "scans/scan_7f3a/kf_006.jpg",
+      "camera": { "frame": "arkit_world", "position_m": [-0.22, 0.28, -0.14], "quaternion_xyzw": [0.06, -0.62, 0.07, 0.78] },
+      "intrinsics": { "fx": 1458.2, "fy": 1458.2, "cx": 960.0, "cy": 720.0, "width_px": 1920, "height_px": 1440 },
+      "tracking_state": "normal",
+      "sharpness": 388.0
+    }
+  ],
+  "coverage_hint": 0.81,
+  "alignment": {
+    "method": "open3d_robust_point_to_plane_icp",
+    "transform_arkit_world_to_design": [998.6, 52.3, 0.0, -43.5, 0.0, 0.0, -1000.0, -450.0, -52.3, 998.6, 0.0, -78.8, 0, 0, 0, 1],
+    "fitness": 0.83,
+    "rmse_mm": 4.1,
+    "gate_passed": true,
+    "gate_threshold_fitness": 0.5,
+    "computed_at": "2026-10-23T18:10:09Z",
+    "design_points_file": "scans/scan_7f3a/points_design.ply",
+    "design_points_units": "m",
+    "grain_scan_id": "20261023-181012-a1b2"
+  }
+}

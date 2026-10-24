@@ -1,0 +1,2 @@
+{ "schema": "finding", "why": "Grain's not_seen must be mapped to our state (missing); raw verdicts live in grain.verdict",
+  "base": "finding.grain.json", "patch": { "state": "not_seen" } }

@@ -1,0 +1,2 @@
+{ "schema": "grain-call-response", "why": "call.diagnosis reuses the diagnose contract: a part with a numeric verdict fails inside the nested shape",
+  "base": "grain-call-response.json", "patch": { "diagnosis": { "parts": [ { "name": "housing", "ref": null, "verdict": 1, "coverage": 0.9 } ] } } }

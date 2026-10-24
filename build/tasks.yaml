@@ -1,0 +1,2051 @@
+# RepairOS task registry. Machine-readable twin of BUILD.md §5 (cards) and §0 (the 24-hour plan).
+# Source of truth for build/next.py, build/status.py and build/doctor.py.
+#
+# FORMAT (strict YAML subset, parsed by build/_lib.py without PyYAML):
+#   - two-space indent, one key per line, `key: value`
+#   - lists are flow lists `[a, b]` on one line, or block lists of `- item`
+#   - strings containing ':' or '#' must be double-quoted; no anchors, no multi-line scalars
+#
+# CARD FIELDS (missing fields take the default in brackets)
+#   id, title, phase                   required
+#   kind: core | module                [core]   core = needed whatever providers are chosen; module = one slot implementation or a slot interface
+#   slot: <SLOT id from config/providers.yaml>  (module cards only)
+#   impl: <impl id> | interface        (module cards only; `interface` = the slot's interface + conformance suite card)
+#   always: true | false               [false]  module impl card in play whatever is selected (the grain replay double for CI)
+#   optional: true | false             [false]  extra work: tracked separately, never counts toward "done" or the critical path
+#   stretch: true | false              [false]  demo stretch: only if the core path is done by ~H16; off the critical path
+#   track: demo | later                [later]  demo = on the 24-hour path (BUILD.md §0); later = after the hackathon
+#   phase1: true | false               [false]  Phase 1 = no Grain (BUILD.md Phases). Grain cards, cards with grain_needs and
+#                                               anything depending on a Phase 2 card are Phase 2; next.py --phase1 filters
+#   estimate_hours                     demo cards only, 0.25-4 (agent-assisted hours)
+#   owner_lane: L1..L6                 demo cards only; see `lanes`
+#   depends_on, owns, shared, contracts, human, questions, grain_needs   [ [] ]
+#   estimate_days                      [1]  full-build estimate (track all)
+#   status: todo | claimed | in_review | done | blocked   [todo]
+#   claimed_by, issue, pr              [null]
+#
+# RULES
+#   - Every card in BUILD.md §5 has exactly one entry here with the same id. CI (B0.3) checks they agree.
+#   - A demo card never depends on a later card (validate_tasks fails). There are no fallback paths in the demo
+#     (owner, 2026-10-24): the demo-critical Grain API capabilities (`private/grain/GRAIN_STATUS.md` §4 items 1-5,
+#     ask Sritej) are demo cards S2.7-S2.11 that must land; `grain_needs` names the Grain target (T-number), the card
+#     that lands it, or how we call Grain's API until a non-critical target lands (not a degraded mode).
+#   - Nobody edits status per PR: a card whose id leads a commit subject on main counts as done (squash-merge keeps
+#     the PR title; build/_lib.py merged_cards). Set `blocked` (with the reason in a comment) or `done` by hand only
+#     when git cannot tell.
+#   - `blocked` cards stay out of the ready list until someone sets them back to `todo`.
+#   - `owns` globs of cards that run in parallel must be disjoint. `shared` files follow the shared-file rule (BUILD.md §0.4).
+#   - `human` lists ids from `human_steps`. `questions` lists SPEC.md §11 ids (`decisions` below settles them for the
+#     24 hours). `grain_needs` lists Grain API targets (T-numbers; `private/grain/GRAIN_STATUS.md` §2) and the card
+#     that lands each.
+#   - A module impl card is `done` only when it passes the slot's conformance suite on recorded real data.
+
+version: 3
+updated: 2026-10-24
+
+phases:
+  - id: P0
+    name: "Bootstrap, codegen, CI, tooling, registry"
+  - id: P1
+    name: "Capture and real data"
+  - id: P2
+    name: "State layer, gateway, Grain, reference, align, render"
+  - id: P3
+    name: "Perception: detect, segment, OCR, wire check, compare"
+  - id: P4
+    name: "Fusion, next action, planner, Grain cross-check, pipeline"
+  - id: P5
+    name: "iOS: Mode B, AR, wizard, parts, plan UI"
+  - id: P6
+    name: "Parts on hand, shopping, assistant, plan, confirm"
+  - id: P7
+    name: "Training tier"
+  - id: P8
+    name: "Evaluation and generalisation gates"
+  - id: P9
+    name: "Observability, security, hosting, release, demo"
+
+# Lanes of the 24-hour plan (BUILD.md §0.B). People are the starting assignment; the owner can reassign.
+lanes:
+  - id: L1
+    name: "iOS capture: app shell, Mode A, dense point fusion + PLY, upload, Mode B stills, AR labels, Stray or Polycam converter (Q16)"
+    people: "Elysi (with Sritej)"
+  - id: L2
+    name: "Backend + Grain client + align: state, gateway, blobs, Grain slot, reference cache, ICP, cross-check"
+    people: "Rohan"
+  - id: L3
+    name: "Fusion and vision crops + Grain side: Jev, geometry compare, projection, crops; Grain-side API targets T1-T3, T7, T12-T13"
+    people: "Sritej + Elysi (Sritej lands the Grain-side cards S2.7-S2.11)"
+  - id: L4
+    name: "Meter wizard + electrical: word state, next action, planner, range check, wizard UI, confirm"
+    people: "Jayden"
+  - id: L5
+    name: "Parts, I have X, plan, assistant + VLM: LLM and VLM slots, datasheets, quick check, simulation check, plan writer"
+    people: "Samik"
+  - id: L6
+    name: "Demo + integration: hour 0, scaffold, codegen, pipeline, findings UI, demo script, backup video"
+    people: "Agents, coordinated by Sritej; Rohan runs the H0 scaffold cards; Samik + Jayden take the demo script and video from H16"
+
+# Work streams (areas/README.md). One person runs each stream; lanes L1-L6 are aliases inside them.
+# A card belongs to the FIRST stream whose `cards` globs match its id; `build` catches the rest.
+# `python3 -I build/next.py --stream <id>` lists what is ready in a stream.
+streams:
+  - id: grain
+    name: "Grain side (API capabilities RepairOS needs; Sritej)"
+    file: "areas/README.md"
+    people: "Sritej"
+    lanes: [L3]
+    cards: [S2.7, S2.8, S2.9, S2.10, S2.11]
+  - id: modeling
+    name: "Modeling + benchmark: perception slots, crops and compare, training, evaluation, real-data sets"
+    file: "areas/modeling-benchmark.md"
+    people: "one person (owner assigns)"
+    lanes: [L3, L5, L6]
+    cards: ["C1.8", "M.DET.*", "M.SEG.*", "M.OCRB.*", "M.VLM.*", "M.DEPTH.*", "M.RENDER.*", "V3.*", "M.TRAIN.*", "T7.*", "E8.*"]
+  - id: app
+    name: "App: the iOS app (capture Mode A/B, upload, AR labels, wizard, parts, plan and findings UI)"
+    file: "areas/app.md"
+    people: "one person (owner assigns)"
+    lanes: [L1, L4, L5, L6]
+    cards: ["C1.*", "I5.*", "M.OCRD.*", "M.SPEECH.*"]
+  - id: build
+    name: "Build-plan execution: scaffold, backend, Grain client, align, fusion, meter, parts, plan, pipeline, demo"
+    file: "areas/build-execution.md"
+    people: "Rohan (driving agents)"
+    lanes: [L2, L3, L4, L5, L6]
+    cards: ["*"]
+
+# Open questions settled for the 24 hours (BUILD.md §0.C). The owner can overrule any of them.
+# status.py and next.py treat a card's `questions` that appear here as decided, not as blockers.
+decisions:
+  - id: Q1
+    text: "Demo product picked by the owner at H0: low-voltage DC, removable connector or harness, battery or USB supply on a clear power path, table-sized, ideally Grain-designed (else Grain designs a reference by chat at H0-H2, design_trust low). Two units if possible. Facts only in samples/."
+  - id: Q2
+    text: "RepairOS ICP is primary; Grain align=icp on the raw scan is the cross-check"
+  - id: Q3
+    text: "claude-sonnet-5-5 for assistant and plan text; claude-haiku-5-5 for crop yes/no, cannot_tell escalates to Sonnet; Anthropic key on the backend only"
+  - id: Q4
+    text: "Owner: Jev is the demo fusion engine (FUSION=jev). No rules fallback on the demo path; Jev down is a blocker to fix at once"
+  - id: Q5
+    text: "Grey band 0.35-0.65 asks Grain /look for a second opinion"
+  - id: Q6
+    text: "Upload dense points at <= 2 mm spacing, high-confidence pixels only, 0.3-0.5 m range, overlapping frames averaged per surface point; no coarse voxel averaging (G29). Checked on the first real capture at H6"
+  - id: Q7
+    text: "Reference cache on backend disk keyed by Grain project id + last_build (hash when T11 lands)"
+  - id: Q8
+    text: "Simulation-checked swap pre-run and cached before the demo"
+  - id: Q9
+    text: "RepairOS searches and ranks substitutes; Grain only checks (simulation check)"
+  - id: Q10
+    text: "On device: capture + Apple Vision OCR only; no Core ML"
+  - id: Q11
+    text: "Hi-res still size and formats answered by the 10-line device test in H0-H1 (C1.2)"
+  - id: Q12
+    text: "Start with 3 stills; ask for more only on insufficient_evidence"
+  - id: Q13
+    text: "insufficient_evidence then 'the meter proves it' is an acceptable demo beat"
+  - id: Q14
+    text: "A scan fits in 2 minutes"
+  - id: Q15
+    text: "One phone, free Apple ID signing, no TestFlight"
+  - id: Q16
+    text: "Fallback capture app: Polycam Developer Mode or Stray Scanner, whichever someone has; our app is primary"
+  - id: Q17
+    text: "No purchases; a ring light is optional"
+  - id: Q18
+    text: "Licence follow-ups after the hackathon; add no dependency outside Apache/MIT/BSD/CC-BY"
+  - id: Q19
+    text: "RunPod not used"
+  - id: Q-S1
+    text: "SpacetimeDB deferred with the STDB cards"
+  - id: Q-S2
+    text: "SpacetimeDB deferred with the STDB cards"
+  - id: Q-S3
+    text: "SpacetimeDB deferred with the STDB cards"
+  - id: Q-S4
+    text: "SpacetimeDB deferred with the STDB cards"
+  - id: Q-G1
+    text: "Feedback into predicted-beside-measured: later idea"
+  - id: Q-G2
+    text: "Made-part price: the pilot's print estimate for simple printed parts; otherwise 'no price'"
+
+# Slots. `required: true` = the first working build needs one done implementation of this slot.
+slots:
+  - id: STATE
+    name: "State layer: tables, reducers, job queue, live subscriptions"
+    required: true
+  - id: BLOB
+    name: "Blob storage for scans, stills, crops, renders"
+    required: true
+  - id: GRAIN
+    name: "Grain client (pinned interface version)"
+    required: true
+  - id: FUSION
+    name: "Fusion engine (Jev)"
+    required: true
+  - id: LLM
+    name: "Text LLM: assistant tool loop, plan text, extraction"
+    required: true
+  - id: VLM
+    name: "Vision-language model for crop pairs"
+    required: true
+  - id: DET
+    name: "Open-vocabulary detector (`none` in the hackathon profile)"
+    required: true
+  - id: SEG
+    name: "Promptable segmenter (`none` in the hackathon profile)"
+    required: true
+  - id: OCRB
+    name: "Backend OCR (`none` in the hackathon profile)"
+    required: true
+  - id: OCRD
+    name: "On-device OCR"
+    required: false
+  - id: DEPTH
+    name: "Depth refinement (optional)"
+    required: false
+  - id: RENDER
+    name: "Expected-view renderer"
+    required: true
+  - id: SUPPLIER
+    name: "Parts and supplier search for shopping"
+    required: true
+  - id: TRAIN
+    name: "Training compute"
+    required: false
+  - id: HOST
+    name: "Backend hosting and runtime"
+    required: true
+  - id: SPEECH
+    name: "Speech input for meter readings"
+    required: false
+
+# Human steps. doctor.py checks `check` where it can; `how` is what the human does.
+human_steps:
+  - id: dev_tools
+    what: "Python 3.12+, git, gh and Node 22+ on the dev machine"
+    why: "Backend, codegen, CI and build tooling cards need these"
+    how: "`brew install python@3.12 gh node@22` (or your package manager), then `gh auth login`"
+    check: tools_core
+  - id: xcode
+    what: "Xcode 26.x with Swift 6.x and the iOS 26 SDK on the dev Mac"
+    why: "Every iOS card builds with it"
+    how: "Install Xcode from the App Store, open it once, run `xcode-select --install`, then `xcodebuild -version`"
+    check: xcode
+  - id: repo_access
+    what: "Write access to the RepairOS GitHub repo; `gh auth status` ok"
+    why: "Claiming a card = self-assigning its issue and opening a PR"
+    how: "Ask the owner for collaborator access, then `gh auth login`"
+    check: gh_auth
+  - id: grain_key
+    what: "Grain URL and key in backend/.env as GRAIN_URL and GRAIN_KEY"
+    why: "Every Grain card builds against the real Grain API (GEN3). No mock server; recorded real responses for offline work."
+    how: "Sritej starts Grain (private/grain/GRAIN_SPEC.md §2) and issues a RepairOS API key (sent as `Authorization: Bearer <key>`). GRAIN_URL = the Grain laptop's LAN URL or its tunnel URL (a quick tunnel changes on restart, G20). backend/.env only; never commit."
+    check: env_grain
+  - id: grain_project
+    what: "The demo product's Grain project id (with model.glb, harness.csv, elec.json, bom) as GRAIN_TEST_PROJECT in backend/.env"
+    why: "Contract tests and the reference cache need a real project to pull"
+    how: "Owner picks at H0 (Q1). Until then use the test project Sritej names (the one behind the private fixtures in private/grain/observed/). Set GRAIN_TEST_PROJECT=<id> in backend/.env"
+    check: env_grain_project
+  - id: jev_key
+    what: "TypeSafe (Jev) API key in backend/.env as TYPESAFE_KEY"
+    why: "FUSION=jev calls hosted Jev in both profiles; it fuses evidence and picks the next action (A2). Needed at H0 (B0.11)"
+    how: "Create a key in the TypeSafe console (docs.typesafe.ai); set TYPESAFE_KEY=... in backend/.env (backend only, never on the phone). Run tools/jev_smoke.py (B0.11)."
+    check: env_jev
+  - id: anthropic_key
+    what: "ANTHROPIC_API_KEY in backend/.env"
+    why: "LLM=anthropic and VLM=anthropic"
+    how: "Q3 decided: the owner provides one backend-only key. Set ANTHROPIC_API_KEY=... in backend/.env. Never on the phone (A6)."
+    check: env_anthropic
+  - id: openai_key
+    what: "OPENAI_API_KEY in backend/.env"
+    why: "LLM=openai or VLM=openai"
+    how: "Set OPENAI_API_KEY=... in backend/.env, or change LLM/VLM in config/providers.yaml"
+    check: env_openai
+  - id: openai_compatible_url
+    what: "OPENAI_COMPATIBLE_URL (and optional key) in backend/.env for a self-hosted model server"
+    why: "LLM=openai_compatible or VLM=qwen3vl"
+    how: "Run vLLM or similar with an Apache-2.0 model; set OPENAI_COMPATIBLE_URL=http://host:port/v1 in backend/.env"
+    check: env_openai_compatible
+  - id: runpod
+    what: "RunPod API key (RUNPOD_API_KEY in backend/.env) and a 50-100 GB network volume named repairos-data"
+    why: "TRAIN=runpod (and HOST=docker_gpu on a RunPod pod)"
+    how: "Owner creates the key at runpod.io; set RUNPOD_API_KEY=... in backend/.env; create the volume. Or change TRAIN in config/providers.yaml."
+    check: env_runpod
+  - id: modal_account
+    what: "Modal account and `modal token set` done on this machine"
+    why: "TRAIN=modal or HOST=modal"
+    how: "Sign up at modal.com; `pip install modal`; `modal token new`"
+    check: modal_cli
+  - id: lambda_key
+    what: "LAMBDA_API_KEY in backend/.env"
+    why: "TRAIN=lambda"
+    how: "Create a key at lambda.ai; set LAMBDA_API_KEY=... in backend/.env"
+    check: env_lambda
+  - id: spacetime_cli
+    what: "The `spacetime` CLI installed (SpacetimeDB 2.13.x)"
+    why: "STATE=spacetimedb: start a local server, publish the module, generate bindings"
+    how: "Install per https://spacetimedb.com/install (macOS: `curl -sSf https://install.spacetimedb.com | sh`), then `spacetime --version`"
+    check: spacetime_cli
+  - id: spacetime_server
+    what: "A reachable SpacetimeDB server: SPACETIMEDB_URL in backend/.env (local default http://127.0.0.1:3000) and SPACETIMEDB_DB name"
+    why: "STATE=spacetimedb: workers, gateway and tests need a server"
+    how: "Local: `spacetime start` in another terminal, set SPACETIMEDB_URL=http://127.0.0.1:3000 and SPACETIMEDB_DB=repairos in backend/.env. Maincloud: set STATE_TARGET: maincloud and SPACETIMEDB_URL=https://maincloud.spacetimedb.com"
+    check: spacetime_server
+  - id: spacetime_login
+    what: "Logged in to Maincloud: `spacetime login`"
+    why: "STATE_TARGET=maincloud: publishing needs a Clockwork account; the owner must also confirm the Maincloud terms (SPEC Q-S1)"
+    how: "`spacetime login` (GitHub or Google). Check the plan limits at https://spacetimedb.com/pricing"
+    check: spacetime_login
+  - id: s3_credentials
+    what: "S3-compatible endpoint and credentials in backend/.env (S3_ENDPOINT, S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"
+    why: "BLOB=s3"
+    how: "Create a bucket; set the four variables in backend/.env; or keep BLOB: local"
+    check: env_s3
+  - id: nexar_key
+    what: "NEXAR_CLIENT_ID and NEXAR_CLIENT_SECRET in backend/.env"
+    why: "SUPPLIER=nexar"
+    how: "Register at nexar.com; set the two variables; or keep SUPPLIER: bom_and_web"
+    check: env_nexar
+  - id: digikey_key
+    what: "DIGIKEY_CLIENT_ID and DIGIKEY_CLIENT_SECRET in backend/.env"
+    why: "SUPPLIER=digikey"
+    how: "Register at developer.digikey.com; set the two variables"
+    check: env_digikey
+  - id: gpu_box
+    what: "A Linux machine with an NVIDIA GPU (>= 16 GB) and Docker, reachable from the dev Mac (HOST_SSH in backend/.env)"
+    why: "HOST=docker_gpu runs the perception workers (full profile only)"
+    how: "A RunPod GPU pod, a lab machine or a cloud VM. Set HOST_SSH=user@host in backend/.env. Or HOST: local_mac (the hackathon profile)."
+    check: env_host_ssh
+  - id: iphone
+    what: "An iPhone 16 Pro or Pro Max, developer mode on, connected to the Mac"
+    why: "LiDAR, hi-res stills and ARKit do not run in the simulator"
+    how: "Settings > Privacy & Security > Developer Mode on; plug in via USB; trust the computer; check `xcrun devicectl list devices`"
+    check: device
+  - id: apple_signing
+    what: "Apple ID in Xcode with a development team for the RepairOS target"
+    why: "The app must be signed to run on the phone. Q15 decided: free Apple ID sideload (7-day profile), no TestFlight."
+    how: "Xcode > Settings > Accounts > add Apple ID; put DEVELOPMENT_TEAM in ios/Config/Signing.xcconfig (gitignored)."
+    check: signing
+  - id: multimeter
+    what: "A multimeter with continuity (beep), DC volts and ohms"
+    why: "The meter is the proof for every electrical fault (I2). Recorded sessions need real readings."
+    how: "Any basic DMM. Note its continuity threshold (ohms) in session.json"
+    check: none
+  - id: test_products
+    what: "The demo product on the table (Q1, picked at H0; two units if possible); later 3+ categories for evaluation"
+    why: "Real captures of a real product; GEN2 sanity check on a unit not used for tuning (E8.6)"
+    how: "Owner picks (Q1). Record it in samples/sessions/<id>/session.json. Never put product facts in code."
+    check: none
+  - id: polarised_light
+    what: "Optional: cross-polarised ring light or polariser film pair"
+    why: "Cuts glare for wire colour and connector checks (VF §11.2)"
+    how: "Optional (Q17: no purchases needed)."
+    check: none
+  - id: license_decisions
+    what: "LICENSE (Apache-2.0) and NOTICE in the repo (B0.1's output); the owner's licence decisions (Q18, Q-S1, Q-S2) recorded"
+    why: "B0.5 writes the licence manifest; it needs the base licence files and the owner's decisions, not the manifest it creates"
+    how: "Merge B0.1. Owner answers SPEC Q18 (emails) and Q-S1/Q-S2 (SpacetimeDB BSL fit, Maincloud terms, TypeScript bindings licence conflict)."
+    check: license_base
+  - id: release_licences
+    what: "Finished licence set for a release: LICENSE, NOTICE and licenses/manifest.json (B0.5's output) present"
+    why: "L1-L5 before the repo or an app build goes public (O9.4)"
+    how: "Finish B0.5 (`python tools/license_check.py`), then commit licenses/manifest.json"
+    check: license_manifest
+
+# Global definition of done ("RepairOS works"). status.py marks each item met / not met.
+# `requires` = card ids that must be done. `evidence` = a file that must exist (a measured result).
+done_checklist:
+  - id: D1
+    text: "Scan any product with a cached reference and get aligned per-part findings, with insufficient_evidence where fit or coverage is missing"
+    requires: [C1.4, C1.5, S2.1, S2.3, S2.4, S2.5, F4.8]
+  - id: D2
+    text: "Mode B close-ups give wire-check and connector findings with evidence crops and renders"
+    requires: [I5.1, V3.4, V3.5]
+  - id: D3
+    text: "Fusion ranks suspects and picks the next action, with the selected fusion engine; words not numbers"
+    requires: [F4.1, F4.3, F4.4]
+  - id: D4
+    text: "The meter wizard proves or clears an electrical fault by bisection; power state stated before probe points"
+    requires: [F4.5, F4.6, I5.4]
+  - id: D5
+    text: "Grain cross-check runs against the real Grain API with schema validation and version pinning; the plan says when it was skipped"
+    requires: [F4.7]
+  - id: D6
+    text: "Parts on hand get yes / yes_with_changes / no / need_simulation_check with S1-S5 in code; shopping is deterministic within budget"
+    requires: [K6.1, K6.2, K6.3, K6.5]
+  - id: D7
+    text: "A validated RepairPlan (I2, S3) is shown with AR labels and confirmed by rescan or re-reading"
+    requires: [K6.6, K6.7, I5.6, I5.2]
+  - id: D8
+    text: "Unknown product: reference built by a real Grain design turn, cached, design_trust=low, discovery mode; no harness degrades to discovery + symptom-driven meter guide"
+    requires: [S2.3, V3.7]
+  - id: D9
+    text: "Generalisation measured: held-out categories at or above the gate; guard green (no product names, refs or provider names hard-coded)"
+    requires: [B0.4, E8.1, E8.2, E8.3]
+    evidence: eval/results/latest.json
+  - id: D10
+    text: "Calibration measured per product class; probabilities stay words until validated"
+    requires: [E8.4]
+    evidence: eval/results/calibration.json
+  - id: D11
+    text: "Safety suite green: polarity never from colour, protective parts no when unconfirmed, power state before probes"
+    requires: [E8.5]
+  - id: D12
+    text: "Release ready: LICENSE, NOTICE, licence manifest green, no secrets on the phone, replay and dev-only providers locked out, evidence trail per scan"
+    requires: [B0.5, O9.2, O9.3, O9.4]
+  - id: D13
+    text: "Live state: findings, suspects, next actions and plan appear on the phone as they are written, through the selected STATE implementation"
+    requires: [S2.1]
+
+cards:
+  # ================================================================ P0 core
+  - id: B0.1
+    title: "Repo scaffold, Makefile, LICENSE, NOTICE, .gitignore"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L6
+    owns: [Makefile, LICENSE, NOTICE, .gitignore, backend/pyproject.toml, backend/repairos/__init__.py, backend/README.md, ios/README.md, docs/CONTRIBUTING.md]
+    human: [dev_tools, repo_access]
+    estimate_days: 0.5
+  - id: B0.2
+    title: "Contract codegen: Pydantic v2 models, Swift Codable types and TypeScript types from spec/contracts"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L6
+    depends_on: [B0.1]
+    owns: [tools/codegen/**, backend/repairos/contracts/**, ios/RepairOS/Contracts/**, stdb/src/contracts/**]
+    shared: [Makefile]
+    contracts: [all]
+    human: [dev_tools]
+  - id: B0.3
+    title: "CI: contracts, lint, unit tests, codegen drift, tasks.yaml sync, iOS build, PR template, CODEOWNERS"
+    phase: P0
+    track: later
+    phase1: true
+    depends_on: [B0.1]
+    owns: [.github/workflows/ci.yml, .github/workflows/ios.yml, .github/CODEOWNERS, .github/pull_request_template.md, tools/check_tasks_sync.py]
+    human: [repo_access]
+  - id: B0.4
+    title: "Generality guard: CI fails on hard-coded product names, refs, ids, class lists and provider names in core code"
+    phase: P0
+    track: later
+    phase1: true
+    depends_on: [B0.1]
+    owns: [tools/generality_guard.py, tools/generality_guard.toml, backend/tests/unit/test_generality_guard.py]
+    shared: [.github/workflows/ci.yml]
+  - id: B0.5
+    title: "Licence manifest and check (pip metadata, Swift and npm packages, model weights, service runtimes)"
+    phase: P0
+    track: later
+    phase1: true
+    depends_on: [B0.1]
+    owns: [tools/license_check.py, licenses/**]
+    shared: [.github/workflows/ci.yml]
+    human: [license_decisions]
+    questions: [Q18, Q-S1, Q-S2]
+  - id: B0.6
+    title: "Config and secrets: backend .env loading, release-build lockout of replay and dev-only providers"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L6
+    depends_on: [B0.1]
+    owns: [backend/repairos/config.py, backend/.env.example, backend/tests/unit/test_config.py]
+    estimate_days: 0.5
+  - id: B0.7
+    title: "Recorded-session format and replay runner (real captures, real Grain responses)"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 1
+    owner_lane: L6
+    depends_on: [B0.2]
+    owns: [samples/README.md, samples/session.schema.json, backend/repairos/sessions/**, tools/replay.py, backend/tests/replay/conftest.py]
+    contracts: [scan-package, still, meter-reading]
+    estimate_days: 1.5
+  - id: B0.8
+    title: "Build tooling: tasks.yaml, doctor.py, next.py, status.py"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L6
+    owns: [build/**]
+    shared: [AGENTS.md, BUILD.md]
+    status: in_review
+    claimed_by: lead
+    pr: "#3"
+  - id: B0.9
+    title: "Provider registry: config/providers.yaml loader, slot Protocols, env overrides, conformance test runner"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 1
+    owner_lane: L6
+    depends_on: [B0.6]
+    owns: [backend/repairos/registry.py, backend/repairos/slots/**, backend/tests/conformance/conftest.py, backend/tests/conformance/README.md]
+    shared: [config/providers.yaml]
+    estimate_days: 1.5
+  - id: B0.10
+    title: "Hour 0: decisions, demo product, Grain server up with a key, LAN or tunnel URL, backend/.env"
+    phase: P0
+    track: demo
+    estimate_hours: 1
+    owner_lane: L3
+    questions: [Q1, Q3, Q15, Q16]
+    grain_needs:
+      - "G20: quick-tunnel URL changes on restart: GRAIN_URL lives in backend/.env, never in code; prefer Grain on the demo laptop"
+  - id: B0.11
+    title: "Hour 0: Jev (TypeSafe) key in backend/.env and one working Jev call on a hand-written RepairOS word state"
+    phase: P0
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L3
+    owns: [tools/jev_smoke.py]
+    human: [jev_key]
+    questions: [Q4]
+    estimate_days: 0.25
+
+  # ================================================================ P1 core
+  - id: C1.1
+    title: "iOS app shell: SwiftUI navigation, settings, gateway pairing, session model, live event stream"
+    phase: P1
+    track: demo
+    phase1: true
+    estimate_hours: 2
+    owner_lane: L1
+    owns: [ios/RepairOS.xcodeproj/**, ios/RepairOS/App/**, ios/RepairOS/Networking/Client*.swift, ios/RepairOS/Networking/Events*.swift, ios/RepairOS/Model/**, ios/RepairOSTests/App/**]
+    human: [dev_tools, xcode, iphone, apple_signing]
+    estimate_days: 1.5
+  - id: C1.2
+    title: "Device capability probe: hi-res still size, 4K + sceneDepth, ultrawide minimum focus"
+    phase: P1
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L1
+    owns: [ios/RepairOS/Capture/DeviceProbe.swift, docs/device-probe.md]
+    human: [xcode, iphone, apple_signing]
+    questions: [Q11]
+    estimate_days: 0.5
+  - id: C1.3
+    title: "Mode A capture: ARKit depth + confidence, keyframe selection, poses, gravity, coverage heat map"
+    phase: P1
+    track: demo
+    phase1: true
+    estimate_hours: 3
+    owner_lane: L1
+    depends_on: [C1.1]
+    owns: [ios/RepairOS/Capture/ModeA/**, ios/RepairOSTests/Capture/ModeA/**]
+    contracts: [scan-package]
+    human: [iphone]
+    questions: [Q14]
+    estimate_days: 3
+  - id: C1.4
+    title: "Point fusion (dense, no coarse voxel averaging), plane + AR-box crop, binary PLY export, ScanPackage assembly"
+    phase: P1
+    track: demo
+    phase1: true
+    estimate_hours: 2.5
+    owner_lane: L1
+    depends_on: [C1.3]
+    owns: [ios/RepairOS/Capture/Fusion/**, ios/RepairOSTests/Capture/Fusion/**]
+    contracts: [scan-package]
+    human: [iphone]
+    questions: [Q6]
+    estimate_days: 2
+  - id: C1.5
+    title: "Upload client: chunked, resumable, idempotent, per-device token"
+    phase: P1
+    track: demo
+    phase1: true
+    estimate_hours: 1
+    owner_lane: L1
+    depends_on: [C1.1, S2.1]
+    owns: [ios/RepairOS/Networking/Upload*.swift, ios/RepairOSTests/Networking/**]
+    contracts: [scan-package, still, meter-reading, part-on-hand]
+  - id: C1.6
+    title: "On-phone session recorder: export a complete recorded session for replay"
+    phase: P1
+    track: later
+    phase1: true
+    depends_on: [C1.4]
+    owns: [ios/RepairOS/Capture/SessionRecorder.swift, ios/RepairOSTests/Capture/SessionRecorderTests.swift]
+    contracts: [scan-package, still, meter-reading]
+    human: [iphone]
+  - id: C1.7
+    title: "Day-0 converters: Stray Scanner and Polycam raw export to the recorded-session format"
+    phase: P1
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L1
+    depends_on: [B0.7]
+    owns: [tools/convert_stray.py, tools/convert_polycam.py, backend/tests/unit/test_converters.py]
+    contracts: [scan-package]
+    human: [iphone]
+    questions: [Q16]
+  - id: C1.8
+    title: "Real-data capture campaign: sessions across categories with induced faults and truth.json"
+    phase: P1
+    track: later
+    phase1: true
+    depends_on: [C1.7, E8.2]
+    owns: [samples/sessions/**]
+    shared: [eval/categories.yaml]
+    human: [iphone, multimeter, test_products]
+    questions: [Q1]
+    estimate_days: 3
+  - id: C1.9
+    title: "Demo captures: the demo product whole, one part removed, one connector unplugged; recorded as sessions; through Grain diagnose (T12)"
+    phase: P1
+    track: demo
+    estimate_hours: 1
+    owner_lane: L1
+    depends_on: [C1.4, C1.5]
+    owns: [samples/sessions/demo-*/**]
+    contracts: [scan-package, still, meter-reading]
+    human: [iphone, multimeter, test_products]
+    questions: [Q1, Q14]
+    grain_needs:
+      - "T12 + T13 (S2.10): these captures go through diagnose at H6; the staged fault is a part that leaves open space behind it (G1, G29)"
+
+  # ================================================================ P2 core
+  - id: S2.1
+    title: "FastAPI gateway: device pairing, uploads, reducer calls through the STATE slot, SSE live events to the phone"
+    phase: P2
+    track: demo
+    phase1: true
+    estimate_hours: 2
+    owner_lane: L2
+    depends_on: [B0.2, B0.6, B0.9, M.STATE.0]
+    owns: [backend/repairos/api/**, backend/repairos/main.py, backend/tests/unit/test_api_*.py]
+    contracts: [scan-package, still, meter-reading, part-on-hand]
+    estimate_days: 2
+  - id: S2.7
+    title: "Grain side, H0: the running Grain serves current scan diagnosis (`not_visible` parts) and the pilot CAD endpoints; private fixtures re-recorded"
+    phase: P2
+    track: demo
+    estimate_hours: 0.5
+    owner_lane: L3
+    owns: ["grain:API scan diagnosis + pilot (Sritej)", "private/grain/observed/**"]
+    grain_needs:
+      - "G6: must land at H0 (diagnose returns not_visible for parts the scan did not cover; pilot endpoints reachable with our key)"
+    estimate_days: 0.25
+  - id: S2.8
+    title: "Grain side: T1 range verdicts and T2 a verdict on every /electrical/check row, joined to its findings"
+    phase: P2
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L3
+    depends_on: [S2.7]
+    owns: ["grain:API /electrical/check T1 T2 (Sritej)"]
+    contracts: [grain-electrical-check-response]
+    grain_needs:
+      - "T1 + T2 (G2, G22): must land by ~H4; Sritej re-records the private fixtures and check.py's gap ledger shrinks"
+    estimate_days: 0.25
+  - id: S2.9
+    title: "Grain side: T3 structured fix subject{kind, id, pins} and sources[] on /call fixes"
+    phase: P2
+    track: demo
+    estimate_hours: 1
+    owner_lane: L3
+    depends_on: [S2.7]
+    owns: ["grain:API /call fixes T3 (Sritej)"]
+    contracts: [grain-call-response]
+    grain_needs:
+      - "T3 (G23): must land by ~H5; Sritej re-records the private /call fixture"
+    estimate_days: 0.25
+  - id: S2.10
+    title: "Grain side: T12 + T13 diagnose holds on real iPhone captures; a removed part is never `ok` at phone LiDAR noise"
+    phase: P2
+    track: demo
+    estimate_hours: 2
+    owner_lane: L3
+    depends_on: [S2.7]
+    owns: ["grain:API diagnose on real captures T12 T13 (Sritej)"]
+    grain_needs:
+      - "T12 + T13 (G1, G29): first real capture through diagnose at H6, must hold by ~H10"
+    estimate_days: 0.5
+  - id: S2.11
+    title: "Grain side: T7 pin positions in the design frame for every connector pin and harness end, one pin naming"
+    phase: P2
+    track: demo
+    estimate_hours: 2
+    owner_lane: L3
+    depends_on: [S2.7]
+    owns: ["grain:API pins.json + harness ends T7 (Sritej)"]
+    grain_needs:
+      - "T7 (G25, G26): lands inside the 24 hours (~H14)"
+    estimate_days: 0.5
+  - id: S2.3
+    title: "Reference cache per product model, unknown-product brief and design turn, no-harness degradation"
+    phase: P2
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L2
+    depends_on: [M.GRAIN.0]
+    owns: [backend/repairos/reference/**, backend/tests/unit/test_reference.py]
+    contracts: [reference-design]
+    human: [grain_key, grain_project]
+    questions: [Q7]
+    grain_needs:
+      - "T11 last_build.hash (until it lands: cache key = project id + last_build.seconds + artifacts; Q7)"
+      - "T7 pins.json + one pin naming lands in S2.11 (~H14); connector-level targets from GLB node bounds are the demo question either way (G25, G26)"
+    estimate_days: 2
+  - id: S2.4
+    title: "Alignment: gravity-aware robust ICP arkit_world to design, yaw search, scale sanity, fit gate"
+    phase: P2
+    track: demo
+    estimate_hours: 2.5
+    owner_lane: L2
+    depends_on: [B0.7, S2.3]
+    owns: [backend/repairos/geometry/align.py, backend/repairos/geometry/sampling.py, backend/tests/unit/test_align.py]
+    shared: [backend/repairos/config/thresholds.yaml]
+    contracts: [scan-package]
+    grain_needs:
+      - "T9 gravity on upload (until it lands: our ICP with gravity + fit gate, upload in the design frame with align=none; G4, G5)"
+    estimate_days: 2
+  - id: S2.5
+    title: "Per-part geometry compare: visibility from real poses, coverage, offset, shifted/missing states"
+    phase: P2
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L3
+    depends_on: [S2.4]
+    owns: [backend/repairos/geometry/compare_geom.py, backend/tests/unit/test_compare_geom.py]
+    shared: [backend/repairos/config/thresholds.yaml]
+    contracts: [finding]
+    estimate_days: 1.5
+  - id: S2.6
+    title: "Mode B target list from harness, geometry findings and symptom power path"
+    phase: P2
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L4
+    depends_on: [S2.5, F4.5]
+    owns: [backend/repairos/wiring/targets.py, backend/tests/unit/test_targets.py]
+    contracts: [still]
+    questions: [Q12]
+    grain_needs:
+      - "T7 pin positions land in S2.11 (~H14): targets stay one per connector node; pins refine the AR probe labels (G25, G26)"
+
+  # ================================================================ P3 core
+  - id: V3.4
+    title: "Wire check per harness row: mask, skeleton, endpoint hits, colour probability over the harness palette"
+    phase: P3
+    track: later
+    depends_on: [M.SEG.0, M.RENDER.0]
+    owns: [backend/repairos/wiring/wire_check.py, backend/repairos/wiring/colour.py, backend/tests/unit/test_wire_check.py]
+    contracts: [finding]
+    estimate_days: 2.5
+  - id: V3.5
+    title: "Per-part compare: silhouette IoU, edge chamfer, VLM crop pair through the VLM slot"
+    phase: P3
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L3
+    depends_on: [M.SEG.0, M.VLM.0, S2.5]
+    owns: [backend/repairos/compare/**, backend/tests/unit/test_compare.py]
+    contracts: [finding]
+    questions: [Q3]
+    grain_needs:
+      - "T5 photo metadata (until it lands: our own full-res crops and our own VLM question per crop; G7, G8, G9)"
+    estimate_days: 2
+  - id: V3.7
+    title: "Discovery mode for low-trust or no-reference products: unexpected_part / unexpected_wire, correction brief"
+    phase: P3
+    track: later
+    depends_on: [M.DET.0, V3.4, S2.3]
+    owns: [backend/repairos/reference/discovery.py, backend/tests/unit/test_discovery.py]
+    contracts: [finding, reference-design]
+    human: [grain_key]
+    grain_needs:
+      - "Reference design for an unknown product"
+    estimate_days: 1.5
+
+  # ================================================================ P4 core
+  - id: F4.1
+    title: "Evidence to words: state builder for fusion (numbers never leave code)"
+    phase: P4
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L4
+    depends_on: [B0.2]
+    owns: [backend/repairos/fuse/state.py, backend/repairos/config/words.yaml, backend/tests/unit/test_state.py]
+    contracts: [finding, suspect]
+  - id: F4.3
+    title: "Rules fallback: policy.json log-odds, hard-evidence override, always works offline (A3)"
+    phase: P4
+    track: later
+    phase1: true
+    depends_on: [F4.1]
+    owns: [backend/repairos/fuse/rules.py, backend/repairos/config/policy.json, backend/tests/unit/test_rules.py]
+    contracts: [suspect, next-action]
+  - id: F4.4
+    title: "Suspect ranking and NextAction: fusion slot (Jev), meter-reading override in code (I2), expansion into targets and AR labels"
+    phase: P4
+    track: demo
+    phase1: true
+    estimate_hours: 2
+    owner_lane: L4
+    depends_on: [M.FUSION.0, F4.1]
+    owns: [backend/repairos/fuse/suspects.py, backend/repairos/fuse/next_action.py, backend/tests/unit/test_next_action.py]
+    contracts: [suspect, next-action]
+    questions: [Q12]
+    estimate_days: 1.5
+  - id: F4.5
+    title: "Meter test planner: power path from nets, suspects first, bisection, power state before probes"
+    phase: P4
+    track: demo
+    estimate_hours: 2.5
+    owner_lane: L4
+    depends_on: [S2.3]
+    owns: [backend/repairos/wiring/planner.py, backend/repairos/wiring/graph.py, backend/tests/unit/test_planner.py]
+    contracts: [next-action, meter-reading]
+    grain_needs:
+      - "T8 expected values on every power-path net (until it lands: ~0 ohm for wires, fuses, closed switches; datasheet ranges; G13)"
+    estimate_days: 2
+  - id: F4.6
+    title: "Electrical expectations: ranges from electrical.json or report sim, derived ohms_max, local verdicts, Grain check merge"
+    phase: P4
+    track: demo
+    estimate_hours: 2
+    owner_lane: L4
+    depends_on: [S2.3, S2.8]
+    owns: [backend/repairos/wiring/electrical.py, backend/tests/unit/test_electrical.py]
+    contracts: [meter-reading, grain-electrical-check-request, grain-electrical-check-response]
+    human: [grain_key]
+    grain_needs:
+      - "T1 range verdicts and T2 verdict on every row: land in S2.8 by ~H4 (Grain side, must land)"
+      - "T8 expected values on every power-path net: later; the wizard uses ~0 ohm for wires, fuses, closed switches and datasheet ranges (G13)"
+  - id: F4.7
+    title: "Grain cross-check: scan upload by id, diagnose, call with findings, compact merge, disagreements"
+    phase: P4
+    track: demo
+    estimate_hours: 2
+    owner_lane: L2
+    depends_on: [M.GRAIN.1, S2.4, S2.9]
+    owns: [backend/repairos/grain/crosscheck.py, backend/repairos/fuse/merge.py, backend/tests/unit/test_crosscheck.py]
+    contracts: [grain-call-request, grain-call-response, grain-diagnose-response, finding]
+    human: [grain_key, grain_project]
+    questions: [Q5]
+    grain_needs:
+      - "T3 fix subject + sources: lands in S2.9 by ~H5 (Grain side, must land)"
+      - "T12 + T13 real-scan tuning and the free-space missing-part test land in S2.10 by ~H10 (must land)"
+      - "T4 findings in /call and T5 photo references: after the demo path; we merge suspects with fixes on our side and send nothing photo-shaped in /call"
+    estimate_days: 1.5
+  - id: F4.8
+    title: "Pipeline orchestrator per scan: stages as jobs on the STATE slot, insufficient_evidence everywhere, replay entry point"
+    phase: P4
+    track: demo
+    estimate_hours: 2
+    owner_lane: L6
+    depends_on: [F4.4, F4.7, S2.6, V3.5, M.RENDER.0, S2.1, M.STATE.11, M.FUSION.1]
+    owns: [backend/repairos/pipeline/**, backend/tests/replay/test_pipeline_replay.py]
+    contracts: [all]
+    estimate_days: 2
+
+  # ================================================================ P5 core
+  - id: I5.1
+    title: "Mode B guided close-ups: AR rings on targets, blur/smudge/tracking gates, 12 MP still with pose, skip = not_inspected"
+    phase: P5
+    track: demo
+    phase1: true
+    estimate_hours: 3
+    owner_lane: L1
+    depends_on: [C1.3]
+    owns: [ios/RepairOS/Capture/ModeB/**, ios/RepairOSTests/Capture/ModeB/**]
+    contracts: [still, next-action]
+    human: [iphone]
+    questions: [Q11, Q12]
+    estimate_days: 3
+  - id: I5.2
+    title: "AR labels: project reference parts and pins into the camera after alignment"
+    phase: P5
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L1
+    depends_on: [I5.1]
+    owns: [ios/RepairOS/AR/**, ios/RepairOSTests/AR/**]
+    contracts: [next-action, repair-plan]
+    human: [iphone]
+    grain_needs:
+      - "Reference data per product model"
+    estimate_days: 1.5
+  - id: I5.3
+    title: "Findings and suspects UI: words not numbers, evidence crop + render, not_inspected and insufficient_evidence shown"
+    phase: P5
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L6
+    depends_on: [C1.1]
+    owns: [ios/RepairOS/UI/Findings/**, ios/RepairOSTests/UI/Findings/**]
+    contracts: [finding, suspect]
+    estimate_days: 1.5
+  - id: I5.4
+    title: "Meter wizard UI: NextAction steps, power-state banner, typed and spoken readings, MeterReading upload"
+    phase: P5
+    track: demo
+    estimate_hours: 2.5
+    owner_lane: L4
+    depends_on: [C1.1, F4.5]
+    owns: [ios/RepairOS/UI/Wizard/**, ios/RepairOSTests/UI/Wizard/**]
+    contracts: [next-action, meter-reading]
+    estimate_days: 2
+  - id: I5.5
+    title: "Parts-on-hand UI: typed, spoken or photographed items, verdict and reasons"
+    phase: P5
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L5
+    depends_on: [C1.1]
+    owns: [ios/RepairOS/UI/Parts/**, ios/RepairOSTests/UI/Parts/**]
+    contracts: [part-on-hand, shopping-quote]
+    estimate_days: 1.5
+  - id: I5.6
+    title: "Plan and confirm UI: safety block first, steps with AR labels, have/print/buy, rescan or re-measure"
+    phase: P5
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L5
+    depends_on: [C1.1]
+    owns: [ios/RepairOS/UI/Plan/**, ios/RepairOSTests/UI/Plan/**]
+    contracts: [repair-plan]
+    estimate_days: 1.5
+
+  # ================================================================ P6 core
+  - id: K6.1
+    title: "Parts-on-hand store and matching order (exact mpn, same spec, researched substitute)"
+    phase: P6
+    track: demo
+    phase1: true
+    estimate_hours: 1
+    owner_lane: L5
+    depends_on: [S2.1]
+    owns: [backend/repairos/parts/store.py, backend/repairos/parts/matching.py, backend/tests/unit/test_parts_store.py]
+    contracts: [part-on-hand]
+  - id: K6.2
+    title: "Datasheet fetch and field extraction (ratings table first), with provenance, through the LLM slot"
+    phase: P6
+    track: demo
+    phase1: true
+    estimate_hours: 2
+    owner_lane: L5
+    depends_on: [S2.1, M.LLM.0]
+    owns: [backend/repairos/parts/datasheet.py, backend/tests/unit/test_datasheet.py]
+    contracts: [part-on-hand]
+    questions: [Q3, Q9]
+    estimate_days: 1.5
+  - id: K6.3
+    title: "Quick check in code plus safety rules S1-S5 and protective-part logic; fusion-slot triage with words"
+    phase: P6
+    track: demo
+    phase1: true
+    estimate_hours: 2.5
+    owner_lane: L5
+    depends_on: [K6.1, K6.2, M.FUSION.0]
+    owns: [backend/repairos/parts/quick_check.py, backend/repairos/parts/safety.py, backend/tests/unit/test_quick_check.py]
+    contracts: [part-on-hand]
+    estimate_days: 2
+  - id: K6.4
+    title: "Simulation check via Grain: project copy, detached design turn, report read, cached per (product, part, candidate)"
+    phase: P6
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L5
+    depends_on: [M.GRAIN.0, K6.3]
+    owns: [backend/repairos/parts/sim_check.py, backend/tests/unit/test_sim_check.py]
+    contracts: [part-on-hand]
+    human: [grain_key, grain_project]
+    questions: [Q8]
+    grain_needs:
+      - "T11 project copy (until it lands: copy the project through the project files API into a new project; G16)"
+      - "T6 detach (until it lands: chat with detach: true, poll GET /projects/{id}; pre-run before the demo, Q8)"
+    estimate_days: 1.5
+  - id: K6.5
+    title: "Deterministic shopping: candidates from BOM and the SUPPLIER slot, selection rule and budget cap in code"
+    phase: P6
+    track: later
+    phase1: true
+    depends_on: [K6.3, M.SUPPLIER.0]
+    owns: [backend/repairos/shopping/**, backend/tests/unit/test_shopping.py]
+    contracts: [shopping-quote]
+    questions: [Q9, Q-G2]
+    estimate_days: 2
+  - id: K6.6
+    title: "Assistant tool loop and plan writer through the LLM slot; plan validator for I2/S3/I5"
+    phase: P6
+    track: demo
+    estimate_hours: 2.5
+    owner_lane: L5
+    depends_on: [F4.4, F4.7, K6.3, M.LLM.0]
+    owns: [backend/repairos/assistant/**, backend/tests/unit/test_plan_validator.py]
+    contracts: [repair-plan]
+    questions: [Q3]
+    grain_needs:
+      - "T3 fix subject (S2.9)"
+    estimate_days: 2
+  - id: K6.7
+    title: "Confirm loop: rescan or re-run reading, compare against the plan, close or reopen"
+    phase: P6
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L4
+    depends_on: [K6.6, F4.8]
+    owns: [backend/repairos/pipeline/confirm.py, backend/tests/unit/test_confirm.py]
+    contracts: [repair-plan, meter-reading, scan-package]
+  - id: K6.8
+    title: "Stretch: Grain pilot CAD: mount or enclosure edit by text, STEP + STL export, rough print estimate, phone-desktop room"
+    phase: P6
+    stretch: true
+    track: demo
+    estimate_hours: 3
+    owner_lane: L5
+    depends_on: [B0.10]
+    owns: [backend/repairos/design/**, ios/RepairOS/UI/Design/**]
+    human: [grain_key]
+    questions: [Q-G2]
+    grain_needs:
+      - "Pilot CAD endpoints reachable with our API key (S2.7, G6); until then the stretch does not start"
+
+  # ================================================================ P7 core (compute-agnostic scripts; run on the TRAIN slot)
+  - id: T7.1
+    title: "Dataset builder from recorded sessions: train/val from non-held-out categories only, leakage checks"
+    phase: P7
+    track: later
+    phase1: true
+    depends_on: [C1.8, E8.2, M.TRAIN.0]
+    owns: [training/data/**, training/requirements-train.txt, training/README.md]
+    questions: [Q19]
+    estimate_days: 1.5
+  - id: T7.2
+    title: "Synthetic renders from any cached reference GLB and harness (Kubric): parts, wires, induced faults"
+    phase: P7
+    track: later
+    depends_on: [S2.3, M.TRAIN.0]
+    owns: [training/synth/**]
+    grain_needs:
+      - "Reference data per product model"
+    estimate_days: 2
+  - id: T7.3
+    title: "Detector fine-tune (RF-DETR-S, Apache weights) on generic classes; held-out eval"
+    phase: P7
+    track: later
+    depends_on: [T7.1, T7.2]
+    owns: [training/detector/**]
+    estimate_days: 2
+  - id: T7.4
+    title: "Thin-wire segmenter fine-tune (Tampere CC BY baseline, SAM 2 decoder or UNet)"
+    phase: P7
+    track: later
+    phase1: true
+    depends_on: [T7.1]
+    owns: [training/wires/**]
+    estimate_days: 2
+  - id: T7.5
+    title: "Connector-state classifier on crops (seated / gap_visible / unplugged / cannot_tell)"
+    phase: P7
+    track: later
+    phase1: true
+    depends_on: [T7.1]
+    owns: [training/connector_state/**]
+    estimate_days: 1.5
+  - id: T7.6
+    title: "Export: ONNX and Core ML, on-device latency measurement, weights licence manifest"
+    phase: P7
+    track: later
+    depends_on: [T7.3]
+    owns: [training/export/**, licenses/weights.json]
+    human: [iphone, xcode]
+    questions: [Q10]
+    estimate_days: 1.5
+
+  # ================================================================ P8 core
+  - id: E8.1
+    title: "truth.json format and scoring harness: per-stage metrics, honesty metric, false alarms"
+    phase: P8
+    track: later
+    phase1: true
+    depends_on: [B0.7]
+    owns: [eval/truth.schema.json, eval/score.py, eval/metrics.py, eval/README.md, backend/tests/unit/test_eval_score.py]
+    contracts: [finding, suspect, next-action]
+    estimate_days: 1.5
+  - id: E8.2
+    title: "Category list, held-out protocol, deterministic split by object and session, leakage rules"
+    phase: P8
+    track: later
+    phase1: true
+    depends_on: [E8.1]
+    owns: [eval/categories.yaml, eval/protocol.md, eval/assign_split.py, eval/leakage_check.py]
+    human: [test_products]
+    questions: [Q1]
+  - id: E8.3
+    title: "Generalisation gates in CI: replay scoring, held-out non-regression, one-product-fix detector"
+    phase: P8
+    track: later
+    depends_on: [E8.2, B0.3, F4.8]
+    owns: [eval/gates.py, eval/results/**, .github/workflows/eval.yml]
+    estimate_days: 1.5
+  - id: E8.4
+    title: "Calibration: reliability diagram and ECE per product class; flips calibration_validated per class"
+    phase: P8
+    track: later
+    phase1: true
+    depends_on: [E8.1, F4.4]
+    owns: [eval/calibration.py]
+    contracts: [suspect]
+  - id: E8.5
+    title: "Safety test suite: S1-S5 as executable tests over generated references"
+    phase: P8
+    track: later
+    depends_on: [K6.3, F4.5]
+    owns: [backend/tests/safety/**]
+    contracts: [next-action, part-on-hand, repair-plan]
+    estimate_days: 1.5
+  - id: E8.6
+    title: "One held-out sanity check: run the demo path on a unit or product not used for tuning; report honesty and top-3"
+    phase: P8
+    track: demo
+    estimate_hours: 1
+    owner_lane: L6
+    depends_on: [F4.8, C1.9]
+    owns: [eval/sanity/**]
+    human: [test_products]
+
+  # ================================================================ P9 core
+  - id: O9.1
+    title: "Structured logs, traces, per-stage timing, request ids end to end (gateway, workers, module)"
+    phase: P9
+    track: later
+    phase1: true
+    depends_on: [S2.1]
+    owns: [backend/repairos/obs/log.py, backend/repairos/obs/timing.py, backend/tests/unit/test_timing.py]
+  - id: O9.2
+    title: "Evidence trail per scan: crops, renders, every model request/response hashed; trace endpoint"
+    phase: P9
+    track: later
+    depends_on: [F4.8]
+    owns: [backend/repairos/obs/evidence.py, backend/tests/unit/test_evidence.py]
+    contracts: [finding]
+  - id: O9.3
+    title: "Security and privacy: keys backend-only, device tokens, photo retention and delete, injection boundary, secret scan"
+    phase: P9
+    track: later
+    phase1: true
+    depends_on: [S2.1]
+    owns: [backend/repairos/security/**, docs/privacy.md, backend/tests/unit/test_security.py]
+    shared: [.github/workflows/ci.yml]
+    estimate_days: 1.5
+  - id: O9.4
+    title: "Release: licence audit, NOTICE, manifest green, dev-only provider lockout, TestFlight or sideload runbook"
+    phase: P9
+    track: later
+    phase1: true
+    depends_on: [B0.5, B0.6, C1.1]
+    owns: [docs/release.md, ios/Config/**]
+    shared: [NOTICE, licenses/manifest.json]
+    human: [apple_signing, release_licences]
+    questions: [Q15]
+  - id: O9.5
+    title: "Demo script, dry run, recorded backup video, venue checklist (network, power, Grain URL, phone signing)"
+    phase: P9
+    track: demo
+    estimate_hours: 3
+    owner_lane: L6
+    depends_on: [K6.7, C1.9]
+    owns: [demo/**]
+    human: [iphone, multimeter, test_products]
+
+  # ================================================================ MODULE: STATE (default spacetimedb)
+  - id: M.STATE.0
+    title: "STATE slot interface (StateStore, JobQueue, LiveEvents Protocols) and conformance suite"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: interface
+    track: demo
+    phase1: true
+    estimate_hours: 0.75
+    owner_lane: L6
+    depends_on: [B0.9, B0.2]
+    owns: [backend/repairos/slots/state.py, backend/tests/conformance/state/**]
+    contracts: [all]
+    estimate_days: 1.5
+  - id: M.STATE.1
+    title: "SpacetimeDB setup: CLI, module project stdb/, local start, publish local and Maincloud, env wiring"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.0]
+    owns: [stdb/package.json, stdb/tsconfig.json, stdb/README.md, stdb/scripts/**]
+    shared: [Makefile, backend/.env.example]
+    human: [spacetime_cli, spacetime_server]
+    questions: [Q-S1, Q-S3]
+  - id: M.STATE.2
+    title: "SpacetimeDB schema and reducers: one table per contract object, jobs, devices; transitions enforce I1-I4"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.1, B0.2]
+    owns: [stdb/src/tables/**, stdb/src/reducers/**, stdb/src/index.ts, stdb/tests/**]
+    contracts: [all]
+    human: [spacetime_cli, spacetime_server]
+    estimate_days: 2.5
+  - id: M.STATE.3
+    title: "SpacetimeDB client bindings codegen (spacetime generate) and drift check against spec/contracts"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.2]
+    owns: [bridge/src/module_bindings/**, tools/codegen/stdb_bindings.sh, tools/check_stdb_drift.py]
+    shared: [.github/workflows/ci.yml]
+    human: [spacetime_cli]
+    estimate_days: 0.5
+  - id: M.STATE.4
+    title: "Worker bridge: Node service on the official TypeScript SDK subscribes to job tables and fans out to Python workers; results back via reducers"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.3]
+    owns: [bridge/**, backend/repairos/slots/state_spacetimedb/**, backend/tests/unit/test_state_spacetimedb.py]
+    human: [spacetime_cli, spacetime_server]
+    questions: [Q-S2]
+    estimate_days: 2
+  - id: M.STATE.5
+    title: "Gateway integration: FastAPI calls reducers via the HTTP API with a service identity; SSE relay of live rows to the phone"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.4]
+    owns: [backend/repairos/slots/state_spacetimedb/gateway.py, backend/repairos/slots/state_spacetimedb/sse.py]
+    human: [spacetime_server]
+    estimate_days: 1.5
+  - id: M.STATE.6
+    title: "SpacetimeDB auth: anonymous device identities, backend service identity, reducer-level authorization, token storage"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.2]
+    owns: [stdb/src/auth/**, backend/repairos/slots/state_spacetimedb/identity.py, docs/stdb-auth.md]
+    human: [spacetime_server]
+  - id: M.STATE.7
+    title: "SpacetimeDB migrations and backups: automatic-migration rules, incremental v2-table pattern, snapshot and restore runbook"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.2]
+    owns: [docs/stdb-migrations.md, stdb/scripts/backup.sh, stdb/scripts/restore.sh]
+    human: [spacetime_server]
+    questions: [Q-S3]
+  - id: M.STATE.8
+    title: "SpacetimeDB observability: module logs, reducer timing, energy use, alerts on scheduled-function delay"
+    phase: P9
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    track: later
+    phase1: true
+    depends_on: [M.STATE.4, O9.1]
+    owns: [stdb/src/obs/**, docs/stdb-observability.md]
+    estimate_days: 0.5
+  - id: M.STATE.9
+    title: "Optional: iOS direct SpacetimeDB client (community Swift SDK, MIT) for live rows without the gateway relay"
+    phase: P5
+    kind: module
+    slot: STATE
+    impl: spacetimedb
+    optional: true
+    track: later
+    phase1: true
+    depends_on: [M.STATE.6, C1.1]
+    owns: [ios/RepairOS/Realtime/**]
+    questions: [Q-S4]
+    estimate_days: 2
+  - id: M.STATE.10
+    title: "Alternative STATE implementation: Postgres + huey queue + SSE relay"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: postgres_queue
+    track: later
+    phase1: true
+    depends_on: [M.STATE.0]
+    owns: [backend/repairos/slots/state_postgres/**, backend/tests/unit/test_state_postgres.py]
+    estimate_days: 3
+  - id: M.STATE.11
+    title: "SQLite STATE implementation: contract rows as JSON + lifted columns, transitions enforce I1-I4, in-process job queue, SSE by polling"
+    phase: P2
+    kind: module
+    slot: STATE
+    impl: sqlite
+    track: demo
+    phase1: true
+    estimate_hours: 2
+    owner_lane: L6
+    depends_on: [M.STATE.0]
+    owns: [backend/repairos/slots/state_sqlite/**, backend/tests/unit/test_state_sqlite.py]
+    contracts: [all]
+
+  # ================================================================ MODULE: BLOB
+  - id: M.BLOB.0
+    title: "BLOB slot interface (put, get, presign, delete, size) and conformance suite"
+    phase: P2
+    kind: module
+    slot: BLOB
+    impl: interface
+    track: demo
+    phase1: true
+    estimate_hours: 0.25
+    owner_lane: L6
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/blob.py, backend/tests/conformance/blob/**]
+    estimate_days: 0.5
+  - id: M.BLOB.1
+    title: "Local disk blob store under data/ with content hashes"
+    phase: P2
+    kind: module
+    slot: BLOB
+    impl: local
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L6
+    depends_on: [M.BLOB.0]
+    owns: [backend/repairos/slots/blob_local/**]
+    estimate_days: 0.5
+  - id: M.BLOB.2
+    title: "S3-compatible blob store (boto3)"
+    phase: P9
+    kind: module
+    slot: BLOB
+    impl: s3
+    track: later
+    phase1: true
+    depends_on: [M.BLOB.0]
+    owns: [backend/repairos/slots/blob_s3/**]
+    human: [s3_credentials]
+
+  # ================================================================ MODULE: GRAIN
+  - id: M.GRAIN.0
+    title: "GRAIN slot interface (reference files, scans, diagnose, call, electrical check, chat detached, copy) and conformance suite on recorded real responses"
+    phase: P2
+    kind: module
+    slot: GRAIN
+    impl: interface
+    track: demo
+    estimate_hours: 1
+    owner_lane: L2
+    depends_on: [B0.9, B0.2]
+    owns: [backend/repairos/slots/grain.py, backend/tests/conformance/grain/**]
+    contracts: [grain-call-request, grain-call-response, grain-diagnose-response, grain-electrical-check-request, grain-electrical-check-response]
+    estimate_days: 1.5
+  - id: M.GRAIN.1
+    title: "Live Grain client: real API, interface version pin, schema validation, idempotent uploads, detach + poll, recorder"
+    phase: P2
+    kind: module
+    slot: GRAIN
+    impl: live
+    track: demo
+    estimate_hours: 2.5
+    owner_lane: L2
+    depends_on: [M.GRAIN.0]
+    owns: [backend/repairos/slots/grain_live/**, backend/tests/unit/test_grain_client.py]
+    human: [grain_key, grain_project]
+    grain_needs:
+      - "T10 version + Idempotency-Key (until it lands: snapshot /call/schema and fail on drift; list scans before re-upload; N5, N11)"
+      - "T6 detached /call (until it lands: no photos and no rebuild in /call; G3)"
+    estimate_days: 2
+  - id: M.GRAIN.2
+    title: "Replay double: serves recorded real Grain responses by request hash; CI and dev only; refused in release builds"
+    phase: P2
+    kind: module
+    slot: GRAIN
+    impl: replay
+    always: true
+    track: demo
+    estimate_hours: 1
+    owner_lane: L6
+    depends_on: [M.GRAIN.0]
+    owns: [backend/repairos/slots/grain_replay/**, samples/grain/README.md]
+    estimate_days: 0.5
+  - id: M.GRAIN.3
+    title: "Grain staging contract tests, scheduled, with fixture refresh"
+    phase: P2
+    kind: module
+    slot: GRAIN
+    impl: live
+    optional: true
+    track: later
+    depends_on: [M.GRAIN.1]
+    owns: [backend/tests/contract/**, .github/workflows/grain-contract.yml]
+    human: [grain_key, grain_project]
+    grain_needs:
+      - "Stable, versioned interface; safe retries"
+
+  # ================================================================ MODULE: FUSION
+  - id: M.FUSION.0
+    title: "FUSION slot interface (ask noul/choice over a word state) and conformance suite with recorded answers"
+    phase: P4
+    kind: module
+    slot: FUSION
+    impl: interface
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L4
+    depends_on: [B0.9, F4.1]
+    owns: [backend/repairos/slots/fusion.py, backend/tests/conformance/fusion/**]
+    contracts: [suspect, next-action]
+    estimate_days: 0.5
+  - id: M.FUSION.1
+    title: "Jev client (TypeSafe hosted): noul/choice over our word state, shuffled options with seed, timeouts, recorded fixtures"
+    phase: P4
+    kind: module
+    slot: FUSION
+    impl: jev
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L3
+    depends_on: [M.FUSION.0, B0.11]
+    owns: [backend/repairos/slots/fusion_jev/**, backend/tests/unit/test_jev.py]
+    human: [jev_key]
+    questions: [Q4]
+  - id: M.FUSION.2
+    title: "Rules engine registered as a FUSION implementation (wraps core F4.3 so the slot always has a passing impl)"
+    phase: P4
+    kind: module
+    slot: FUSION
+    impl: rules
+    track: later
+    phase1: true
+    depends_on: [M.FUSION.0, F4.3]
+    owns: [backend/repairos/slots/fusion_rules/**]
+    estimate_days: 0.5
+
+  # ================================================================ MODULE: LLM
+  - id: M.LLM.0
+    title: "LLM slot interface (complete, tool loop, structured output, prompt cache hints) and conformance suite with recorded transcripts"
+    phase: P6
+    kind: module
+    slot: LLM
+    impl: interface
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L5
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/llm.py, backend/tests/conformance/llm/**]
+    estimate_days: 0.5
+  - id: M.LLM.1
+    title: "Anthropic LLM implementation (anthropic SDK, MIT)"
+    phase: P6
+    kind: module
+    slot: LLM
+    impl: anthropic
+    track: demo
+    phase1: true
+    estimate_hours: 1
+    owner_lane: L5
+    depends_on: [M.LLM.0]
+    owns: [backend/repairos/slots/llm_anthropic/**]
+    human: [anthropic_key]
+    questions: [Q3]
+    estimate_days: 0.5
+  - id: M.LLM.2
+    title: "OpenAI LLM implementation (openai SDK, Apache-2.0)"
+    phase: P6
+    kind: module
+    slot: LLM
+    impl: openai
+    track: later
+    phase1: true
+    depends_on: [M.LLM.0]
+    owns: [backend/repairos/slots/llm_openai/**]
+    human: [openai_key]
+    estimate_days: 0.5
+  - id: M.LLM.3
+    title: "OpenAI-compatible self-hosted LLM implementation (vLLM + an Apache-2.0 model)"
+    phase: P6
+    kind: module
+    slot: LLM
+    impl: openai_compatible
+    track: later
+    phase1: true
+    depends_on: [M.LLM.0]
+    owns: [backend/repairos/slots/llm_openai_compatible/**]
+    human: [openai_compatible_url]
+    estimate_days: 0.5
+
+  # ================================================================ MODULE: VLM
+  - id: M.VLM.0
+    title: "VLM slot interface (crop pair -> structured state, cannot_tell escalation) and conformance suite on recorded crops"
+    phase: P3
+    kind: module
+    slot: VLM
+    impl: interface
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L5
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/vlm.py, backend/tests/conformance/vlm/**]
+    contracts: [finding]
+    estimate_days: 0.5
+  - id: M.VLM.1
+    title: "Anthropic VLM implementation (small model first, larger on cannot_tell)"
+    phase: P3
+    kind: module
+    slot: VLM
+    impl: anthropic
+    track: demo
+    phase1: true
+    estimate_hours: 1.5
+    owner_lane: L5
+    depends_on: [M.VLM.0]
+    owns: [backend/repairos/slots/vlm_anthropic/**]
+    human: [anthropic_key]
+    questions: [Q3]
+    estimate_days: 0.5
+  - id: M.VLM.2
+    title: "OpenAI VLM implementation"
+    phase: P3
+    kind: module
+    slot: VLM
+    impl: openai
+    track: later
+    phase1: true
+    depends_on: [M.VLM.0]
+    owns: [backend/repairos/slots/vlm_openai/**]
+    human: [openai_key]
+    estimate_days: 0.5
+  - id: M.VLM.3
+    title: "Qwen3-VL self-hosted VLM implementation (Apache-2.0)"
+    phase: P3
+    kind: module
+    slot: VLM
+    impl: qwen3vl
+    track: later
+    phase1: true
+    depends_on: [M.VLM.0]
+    owns: [backend/repairos/slots/vlm_qwen3vl/**]
+    human: [openai_compatible_url, gpu_box]
+
+  # ================================================================ MODULE: DET
+  - id: M.DET.0
+    title: "DET slot interface (prompts from one generic part-class list, plus BOM text when a reference exists in Phase 2 -> boxes with scores) and conformance suite on recorded stills"
+    phase: P3
+    kind: module
+    slot: DET
+    impl: interface
+    track: demo
+    phase1: true
+    estimate_hours: 1
+    owner_lane: L3
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/detector.py, backend/repairos/vision/generic_classes.py, backend/repairos/vision/prompts.py, backend/repairos/vision/match.py, backend/tests/conformance/det/**]
+    contracts: [finding]
+    estimate_days: 1.5
+  - id: M.DET.1
+    title: "Grounding DINO tiny detector, zero-shot (Hugging Face transformers; Apache-2.0 code + weights; CPU/MPS on the Mac), no training"
+    phase: P3
+    kind: module
+    slot: DET
+    impl: gdino
+    track: demo
+    phase1: true
+    estimate_hours: 2
+    owner_lane: L3
+    depends_on: [M.DET.0]
+    owns: [backend/repairos/slots/det_gdino/**]
+  - id: M.DET.2
+    title: "Florence-2 detector implementation (MIT)"
+    phase: P3
+    kind: module
+    slot: DET
+    impl: florence2
+    track: later
+    phase1: true
+    depends_on: [M.DET.0]
+    owns: [backend/repairos/slots/det_florence2/**]
+    human: [gpu_box]
+  - id: M.DET.3
+    title: "Fine-tuned RF-DETR-S detector implementation (Apache-2.0 weights from T7.3)"
+    phase: P7
+    kind: module
+    slot: DET
+    impl: rfdetr
+    track: later
+    depends_on: [M.DET.0, T7.3]
+    owns: [backend/repairos/slots/det_rfdetr/**]
+    human: [gpu_box]
+  - id: M.DET.4
+    title: "OWLv2 detector implementation (Apache-2.0; image-conditioned queries); the Phase 1 alternative to Grounding DINO"
+    phase: P3
+    kind: module
+    slot: DET
+    impl: owlv2
+    optional: true
+    track: later
+    phase1: true
+    depends_on: [M.DET.0]
+    owns: [backend/repairos/slots/det_owlv2/**]
+    human: [gpu_box]
+  - id: M.DET.5
+    title: "DET `none` (legacy, Phase 2): no detector; targets projected from the reference + VLM crops"
+    phase: P3
+    kind: module
+    slot: DET
+    impl: none
+    track: later
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/det_none/**]
+
+  # ================================================================ MODULE: SEG
+  - id: M.SEG.0
+    title: "SEG slot interface (boxes + points -> masks on full-resolution crops) and conformance suite"
+    phase: P3
+    kind: module
+    slot: SEG
+    impl: interface
+    track: demo
+    estimate_hours: 1
+    owner_lane: L3
+    depends_on: [B0.9, M.RENDER.0]
+    owns: [backend/repairos/slots/segmenter.py, backend/repairos/vision/crops.py, backend/tests/conformance/seg/**]
+    estimate_days: 1
+  - id: M.SEG.1
+    title: "SAM 2.1 segmenter implementation (Apache-2.0)"
+    phase: P3
+    kind: module
+    slot: SEG
+    impl: sam2
+    track: later
+    depends_on: [M.SEG.0]
+    owns: [backend/repairos/slots/seg_sam2/**]
+    human: [gpu_box]
+  - id: M.SEG.2
+    title: "Fine-tuned thin-wire segmenter implementation (from T7.4)"
+    phase: P7
+    kind: module
+    slot: SEG
+    impl: wireseg
+    track: later
+    depends_on: [M.SEG.0, T7.4]
+    owns: [backend/repairos/slots/seg_wireseg/**]
+    human: [gpu_box]
+  - id: M.SEG.3
+    title: "Stretch: SAM 2.1 tiny Core ML on-device segmenter"
+    phase: P7
+    kind: module
+    slot: SEG
+    impl: sam2_coreml
+    optional: true
+    track: later
+    depends_on: [M.SEG.0, T7.6]
+    owns: [ios/RepairOS/MLModels/**]
+    human: [iphone]
+    questions: [Q10]
+    estimate_days: 2
+  - id: M.SEG.4
+    title: "SEG `none`: no segmenter; crops come from projected node bounds (hackathon)"
+    phase: P3
+    kind: module
+    slot: SEG
+    impl: none
+    track: demo
+    estimate_hours: 0.25
+    owner_lane: L6
+    depends_on: [M.SEG.0]
+    owns: [backend/repairos/slots/seg_none/**]
+
+  # ================================================================ MODULE: OCRB / OCRD
+  - id: M.OCRB.0
+    title: "OCRB slot interface (image -> text regions) + BOM fuzzy match and conformance suite"
+    phase: P3
+    kind: module
+    slot: OCRB
+    impl: interface
+    track: later
+    phase1: true
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/ocr.py, backend/repairos/vision/ocr_match.py, backend/tests/conformance/ocr/**]
+    contracts: [finding]
+    estimate_days: 0.5
+  - id: M.OCRB.1
+    title: "PaddleOCR backend OCR implementation (Apache-2.0)"
+    phase: P3
+    kind: module
+    slot: OCRB
+    impl: paddleocr
+    track: later
+    phase1: true
+    depends_on: [M.OCRB.0]
+    owns: [backend/repairos/slots/ocr_paddle/**]
+    human: [gpu_box]
+    estimate_days: 0.5
+  - id: M.OCRB.2
+    title: "Florence-2 OCR-with-region implementation (MIT)"
+    phase: P3
+    kind: module
+    slot: OCRB
+    impl: florence2
+    track: later
+    phase1: true
+    depends_on: [M.OCRB.0]
+    owns: [backend/repairos/slots/ocr_florence2/**]
+    human: [gpu_box]
+    estimate_days: 0.5
+  - id: M.OCRB.3
+    title: "OCRB `none`: no backend OCR; label text is typed or read on the phone (hackathon)"
+    phase: P3
+    kind: module
+    slot: OCRB
+    impl: none
+    track: demo
+    phase1: true
+    estimate_hours: 0.25
+    owner_lane: L6
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/ocr_none/**]
+  - id: M.OCRD.0
+    title: "OCRD slot interface (on-device text recognition protocol in Swift) and conformance suite"
+    phase: P5
+    kind: module
+    slot: OCRD
+    impl: interface
+    track: later
+    phase1: true
+    depends_on: [C1.1]
+    owns: [ios/RepairOS/Vision/OCRProvider.swift, ios/RepairOSTests/Vision/OCRConformanceTests.swift]
+    estimate_days: 0.5
+  - id: M.OCRD.1
+    title: "Apple Vision on-device OCR for labels and product identification; text goes to state only (A9)"
+    phase: P5
+    kind: module
+    slot: OCRD
+    impl: apple_vision
+    track: later
+    phase1: true
+    depends_on: [M.OCRD.0]
+    owns: [ios/RepairOS/Vision/AppleVisionOCR.swift]
+    human: [iphone]
+
+  # ================================================================ MODULE: DEPTH
+  - id: M.DEPTH.0
+    title: "DEPTH slot interface (keyframes + ARKit depth -> refined depth or passthrough) and conformance suite"
+    phase: P3
+    kind: module
+    slot: DEPTH
+    impl: interface
+    track: later
+    depends_on: [B0.9, S2.4]
+    owns: [backend/repairos/slots/depth.py, backend/tests/conformance/depth/**]
+    estimate_days: 0.5
+  - id: M.DEPTH.1
+    title: "Passthrough depth (none): use the 3 mm voxel shell"
+    phase: P3
+    kind: module
+    slot: DEPTH
+    impl: none
+    track: later
+    depends_on: [M.DEPTH.0]
+    owns: [backend/repairos/slots/depth_none/**]
+    estimate_days: 0.25
+  - id: M.DEPTH.2
+    title: "Prompt Depth Anything ViT-S (Apache-2.0) + TSDF; measure minimum detectable shift vs LiDAR-only"
+    phase: P3
+    kind: module
+    slot: DEPTH
+    impl: promptda
+    track: later
+    depends_on: [M.DEPTH.0]
+    owns: [backend/repairos/slots/depth_promptda/**]
+    human: [gpu_box]
+    questions: [Q6]
+    estimate_days: 2
+
+  # ================================================================ MODULE: RENDER
+  - id: M.RENDER.0
+    title: "RENDER slot interface (pose + reference -> part-id mask, depth, projected pins, rows in view) and conformance suite"
+    phase: P2
+    kind: module
+    slot: RENDER
+    impl: interface
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L3
+    depends_on: [B0.9, S2.3]
+    owns: [backend/repairos/slots/renderer.py, backend/repairos/render/expected_view.py, backend/tests/conformance/render/**]
+    contracts: [still]
+    grain_needs:
+      - "T7 pin positions land in S2.11 (~H14): project pins when out/pins.json exists, node bounds always (G25)"
+    estimate_days: 1.5
+  - id: M.RENDER.1
+    title: "trimesh ray-cast renderer (MIT, CPU, headless anywhere)"
+    phase: P2
+    kind: module
+    slot: RENDER
+    impl: trimesh
+    track: demo
+    estimate_hours: 1.5
+    owner_lane: L2
+    depends_on: [M.RENDER.0]
+    owns: [backend/repairos/slots/render_trimesh/**]
+  - id: M.RENDER.2
+    title: "pyrender EGL renderer (MIT, GPU, Linux headless)"
+    phase: P2
+    kind: module
+    slot: RENDER
+    impl: pyrender
+    track: later
+    depends_on: [M.RENDER.0]
+    owns: [backend/repairos/slots/render_pyrender/**]
+    human: [gpu_box]
+    estimate_days: 0.5
+  - id: M.RENDER.3
+    title: "Open3D offscreen renderer (MIT)"
+    phase: P2
+    kind: module
+    slot: RENDER
+    impl: open3d
+    track: later
+    depends_on: [M.RENDER.0]
+    owns: [backend/repairos/slots/render_open3d/**]
+    estimate_days: 0.5
+  - id: M.RENDER.4
+    title: "Stretch: RealityKit on-device expected view"
+    phase: P5
+    kind: module
+    slot: RENDER
+    impl: realitykit
+    optional: true
+    track: later
+    depends_on: [M.RENDER.0, I5.2]
+    owns: [ios/RepairOS/Render/**]
+    human: [iphone]
+    estimate_days: 2
+
+  # ================================================================ MODULE: SUPPLIER
+  - id: M.SUPPLIER.0
+    title: "SUPPLIER slot interface (query by mpn or spec -> candidates with price provenance) and conformance suite on recorded pages"
+    phase: P6
+    kind: module
+    slot: SUPPLIER
+    impl: interface
+    track: later
+    phase1: true
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/supplier.py, backend/tests/conformance/supplier/**]
+    contracts: [shopping-quote]
+    estimate_days: 0.5
+  - id: M.SUPPLIER.1
+    title: "BOM url fetch + LLM candidate discovery (labelled ai_discovery); deterministic price extraction with provenance"
+    phase: P6
+    kind: module
+    slot: SUPPLIER
+    impl: bom_and_web
+    track: later
+    phase1: true
+    depends_on: [M.SUPPLIER.0, M.LLM.0]
+    owns: [backend/repairos/slots/supplier_bom_web/**]
+    questions: [Q9]
+  - id: M.SUPPLIER.2
+    title: "Nexar (Octopart) API supplier implementation"
+    phase: P6
+    kind: module
+    slot: SUPPLIER
+    impl: nexar
+    track: later
+    phase1: true
+    depends_on: [M.SUPPLIER.0]
+    owns: [backend/repairos/slots/supplier_nexar/**]
+    human: [nexar_key]
+  - id: M.SUPPLIER.3
+    title: "Digi-Key API supplier implementation"
+    phase: P6
+    kind: module
+    slot: SUPPLIER
+    impl: digikey
+    track: later
+    phase1: true
+    depends_on: [M.SUPPLIER.0]
+    owns: [backend/repairos/slots/supplier_digikey/**]
+    human: [digikey_key]
+
+  # ================================================================ MODULE: TRAIN
+  - id: M.TRAIN.0
+    title: "TRAIN slot interface (submit job, status, fetch artifacts; jobs are `training/run.py <recipe>`) and conformance suite with a 1-minute smoke recipe"
+    phase: P7
+    kind: module
+    slot: TRAIN
+    impl: interface
+    track: later
+    phase1: true
+    depends_on: [B0.9]
+    owns: [backend/repairos/slots/trainer.py, training/run.py, training/recipes/smoke.yaml, backend/tests/conformance/train/**]
+    estimate_days: 1
+  - id: M.TRAIN.1
+    title: "RunPod trainer (pod + network volume, rsync, per-second billing stop)"
+    phase: P7
+    kind: module
+    slot: TRAIN
+    impl: runpod
+    track: later
+    phase1: true
+    depends_on: [M.TRAIN.0]
+    owns: [backend/repairos/slots/train_runpod/**, training/runpod/**]
+    human: [runpod]
+    questions: [Q19]
+  - id: M.TRAIN.2
+    title: "Modal trainer"
+    phase: P7
+    kind: module
+    slot: TRAIN
+    impl: modal
+    track: later
+    phase1: true
+    depends_on: [M.TRAIN.0]
+    owns: [backend/repairos/slots/train_modal/**, training/modal/**]
+    human: [modal_account]
+  - id: M.TRAIN.3
+    title: "Lambda trainer"
+    phase: P7
+    kind: module
+    slot: TRAIN
+    impl: lambda
+    track: later
+    phase1: true
+    depends_on: [M.TRAIN.0]
+    owns: [backend/repairos/slots/train_lambda/**, training/lambda/**]
+    human: [lambda_key]
+  - id: M.TRAIN.4
+    title: "Local Mac trainer (MPS, smoke and tiny runs only)"
+    phase: P7
+    kind: module
+    slot: TRAIN
+    impl: local_mac
+    track: later
+    phase1: true
+    depends_on: [M.TRAIN.0]
+    owns: [backend/repairos/slots/train_local/**]
+    estimate_days: 0.5
+
+  # ================================================================ MODULE: HOST
+  - id: M.HOST.0
+    title: "HOST slot interface (container image, env contract, health, model weight download with licence check) and conformance smoke"
+    phase: P9
+    kind: module
+    slot: HOST
+    impl: interface
+    track: later
+    phase1: true
+    depends_on: [B0.9, B0.5]
+    owns: [deploy/Dockerfile, deploy/compose.yaml, deploy/README.md, deploy/healthcheck.py, backend/tests/conformance/host/**]
+    estimate_days: 1
+  - id: M.HOST.1
+    title: "Docker on any Linux GPU box (incl. a RunPod pod): gateway + workers + bridge + optional local SpacetimeDB, TLS via Caddy"
+    phase: P9
+    kind: module
+    slot: HOST
+    impl: docker_gpu
+    track: later
+    phase1: true
+    depends_on: [M.HOST.0, S2.1]
+    owns: [deploy/docker_gpu/**]
+    human: [gpu_box]
+    questions: [Q19]
+    estimate_days: 1.5
+  - id: M.HOST.2
+    title: "Modal serverless hosting of the workers"
+    phase: P9
+    kind: module
+    slot: HOST
+    impl: modal
+    track: later
+    phase1: true
+    depends_on: [M.HOST.0, S2.1]
+    owns: [deploy/modal/**]
+    human: [modal_account]
+    estimate_days: 1.5
+  - id: M.HOST.3
+    title: "Local Mac dev runtime (CPU or MPS, small models, never for release)"
+    phase: P2
+    kind: module
+    slot: HOST
+    impl: local_mac
+    track: demo
+    phase1: true
+    estimate_hours: 0.5
+    owner_lane: L6
+    depends_on: [B0.1]
+    owns: [deploy/local_mac/**]
+    estimate_days: 0.5
+
+  # ================================================================ MODULE: SPEECH
+  - id: M.SPEECH.0
+    title: "SPEECH slot interface in Swift (audio -> reading text) and conformance suite with recorded utterances"
+    phase: P5
+    kind: module
+    slot: SPEECH
+    impl: interface
+    track: later
+    phase1: true
+    depends_on: [C1.1]
+    owns: [ios/RepairOS/Speech/SpeechProvider.swift, ios/RepairOSTests/Speech/**]
+    estimate_days: 0.5
+  - id: M.SPEECH.1
+    title: "Apple Speech on-device recogniser for readings (numbers, units, beep/no beep)"
+    phase: P5
+    kind: module
+    slot: SPEECH
+    impl: apple_speech
+    track: later
+    phase1: true
+    depends_on: [M.SPEECH.0]
+    owns: [ios/RepairOS/Speech/AppleSpeech.swift]
+    human: [iphone]
+  - id: M.SPEECH.2
+    title: "Typed-only input (no speech)"
+    phase: P5
+    kind: module
+    slot: SPEECH
+    impl: typed_only
+    track: later
+    phase1: true
+    depends_on: [M.SPEECH.0]
+    owns: [ios/RepairOS/Speech/TypedOnly.swift]
+    estimate_days: 0.25

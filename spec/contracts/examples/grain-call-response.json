@@ -1,0 +1,183 @@
+{
+ "_note": "API shape only, built from the schema with generic names; not a recorded Grain response (those are private, private/grain/observed/). A call with a scan id and readings, no photos.",
+ "project": "proj_example",
+ "question": "the device does not turn on",
+ "fixes": [
+  {
+   "part": "BRKT1",
+   "problem": "not_seen",
+   "action": "remake",
+   "confidence": "low",
+   "detail": "BRKT1 is not seen in the scan",
+   "coverage": 0.05
+  },
+  {
+   "part": "WIRE_A",
+   "problem": "electrical",
+   "action": "rewire",
+   "confidence": "high",
+   "detail": "NET_A is open between J1.1 and LOAD1.1",
+   "how": "replace WIRE_A"
+  }
+ ],
+ "buy": [],
+ "remake": [],
+ "design": {
+  "status": "ok",
+  "findings": []
+ },
+ "scan": {
+  "id": "20261024-120000-ab12",
+  "name": "scan_7f3a.ply",
+  "file": "20261024-120000-ab12.ply",
+  "units": "m",
+  "bytes": 1200000,
+  "created": 1792850400.0,
+  "points": 100000,
+  "bbox_mm": {
+   "min": [
+    -100.0,
+    -60.0,
+    0.0
+   ],
+   "max": [
+    100.0,
+    60.0,
+    50.0
+   ],
+   "size": [
+    200.0,
+    120.0,
+    50.0
+   ]
+  },
+  "centroid_mm": [
+   0.0,
+   0.0,
+   25.0
+  ]
+ },
+ "diagnosis": {
+  "scan": "20261024-120000-ab12",
+  "tolerance_mm": 2.0,
+  "align": "none",
+  "alignment": {
+   "method": "none"
+  },
+  "parts": [
+   {
+    "name": "housing",
+    "ref": null,
+    "verdict": "ok",
+    "coverage": 0.95
+   },
+   {
+    "name": "BRKT1",
+    "ref": null,
+    "verdict": "not_seen",
+    "coverage": 0.05
+   },
+   {
+    "name": "U1",
+    "ref": "U1",
+    "verdict": "not_visible",
+    "coverage": null,
+    "why": "inside the product"
+   }
+  ],
+  "verdicts": {
+   "ok": [
+    "housing"
+   ],
+   "not_seen": [
+    "BRKT1"
+   ],
+   "not_visible": [
+    "U1"
+   ]
+  },
+  "coverage": 0.5,
+  "broken": [
+   "BRKT1"
+  ],
+  "not_seen": [
+   "BRKT1"
+  ],
+  "damaged": [],
+  "shifted": [],
+  "partly": [],
+  "ok": [
+   "housing"
+  ],
+  "not_visible": [
+   "U1"
+  ],
+  "findings": [
+   {
+    "severity": "warning",
+    "text": "BRKT1 is not seen in the scan",
+    "where": "BRKT1",
+    "verdict": "not_seen"
+   }
+  ]
+ },
+ "electrical": {
+  "status": "error",
+  "readings": [
+   {
+    "net": "VIN",
+    "known": true,
+    "volts": 5.02,
+    "expected": {
+     "volts": 5.0,
+     "min": 4.75,
+     "max": 5.25,
+     "from": "simulation"
+    },
+    "verdict": "ok"
+   },
+   {
+    "net": "NET_A",
+    "known": true,
+    "continuity": false,
+    "wire": {
+     "name": "WIRE_A",
+     "from": "J1.1",
+     "to": "LOAD1.1",
+     "gauge": "22AWG",
+     "length_mm": 40.0,
+     "color": "red",
+     "conductors": 1
+    }
+   }
+  ],
+  "findings": [
+   {
+    "severity": "error",
+    "text": "NET_A is open between J1.1 and LOAD1.1: the harness wire WIRE_A does not conduct",
+    "where": "WIRE_A",
+    "fix": "replace WIRE_A"
+   }
+  ],
+  "expected_volts": {
+   "VIN": {
+    "volts": 5.0,
+    "min": 4.75,
+    "max": 5.25,
+    "from": "simulation"
+   }
+  },
+  "sources": {
+   "nets": true,
+   "harness": true,
+   "sim": true
+  }
+ },
+ "photos": null,
+ "files": [],
+ "timings": {
+  "diagnosis": 1.0,
+  "electrical": 0.1
+ },
+ "summary": "Scan: 1 part not seen. Meter: 1 open wire."
+}

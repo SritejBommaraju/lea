@@ -1,0 +1,25 @@
+{
+  "product_id": "prod_example_0001",
+  "make_model": "Illustrative low-voltage DC product (placeholder; every value here is made up and belongs to no real product)",
+  "origin": "grain_reconstructed",
+  "design_trust": "low",
+  "grain_project_id": "proj_example",
+  "build_hash": null,
+  "last_build": { "ok": true, "errors": 0, "seconds": 135.3, "artifacts": ["bom.csv", "elec.json", "harness.csv", "main_placement.csv", "model.glb", "model.step", "netlist.net"] },
+  "files": {
+    "model_glb": "cache/proj_example/out/model.glb",
+    "model_step": "cache/proj_example/out/model.step",
+    "harness_csv": "cache/proj_example/out/harness.csv",
+    "elec_json": "cache/proj_example/out/elec.json",
+    "main_placement_csv": "cache/proj_example/out/main_placement.csv",
+    "bom_json": "cache/proj_example/bom.json",
+    "electrical_json": "cache/proj_example/electrical.json",
+    "report_json": "cache/proj_example/out/report.json"
+  },
+  "has_harness": true,
+  "pin_positions_available": false,
+  "fetched_at": "2026-10-23T18:04:11Z",
+  "design_turns_used": 1,
+  "corrections": [],
+  "notes": "First design turn answered Grain's questions from the label OCR. No correction turn yet."
+}

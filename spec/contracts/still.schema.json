@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "still.schema.json",
+  "title": "Still",
+  "description": "One Mode B close-up: a high-resolution still with its camera pose and the targets the backend asked for. camera is in arkit_world (metres, Y up) from the phone; the backend adds camera_design in the design frame (model.glb: millimetres, Z up) after alignment and per-still re-registration. The backend projects each target into the still from camera_design and the target's design-frame box.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["still_id", "scan_id", "session_id", "kind", "captured_at", "image_file", "width_px", "height_px", "camera", "intrinsics", "targets", "tracking_state"],
+  "properties": {
+    "still_id": { "type": "string", "minLength": 1 },
+    "scan_id": { "type": "string", "minLength": 1, "description": "The Mode A scan this still is registered to." },
+    "session_id": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": ["guided", "macro_detail", "label"],
+      "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification."
+    },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "image_file": { "type": "string", "description": "JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it." },
+    "width_px": { "type": "integer", "minimum": 1 },
+    "height_px": { "type": "integer", "minimum": 1 },
+    "camera": { "$ref": "#/$defs/pose_arkit", "description": "Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate." },
+    "camera_design": { "$ref": "#/$defs/pose_design", "description": "Backend-filled pose in the design frame (mm, Z up) after alignment and depth re-registration." },
+    "pose_reliable": { "type": "boolean", "description": "False for macro_detail or when tracking was limited." },
+    "intrinsics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fx", "fy", "cx", "cy"],
+      "properties": {
+        "fx": { "type": "number" }, "fy": { "type": "number" }, "cx": { "type": "number" }, "cy": { "type": "number" }
+      }
+    },
+    "depth_file": { "type": "string", "description": "Nearest ARKit depth frame (256x192) for re-registration." },
+    "confidence_file": { "type": "string" },
+    "targets": {
+      "type": "array",
+      "description": "What the backend asked this still to cover. Empty for a label still.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_id"],
+        "properties": {
+          "target_id": { "type": "string" },
+          "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Grain part names (model.glb nodes, diagnose parts[].name) expected in view, e.g. J1, LOAD1." },
+          "harness_rows": { "type": "array", "items": { "type": "string" }, "description": "harness.csv wire names expected in view, e.g. WIRE_A." },
+          "box_mm": {
+            "type": "object", "additionalProperties": false, "required": ["min", "max"],
+            "description": "The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level, because Grain has no pin positions yet (G25; pins are target T7).",
+            "properties": {
+              "min": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+              "max": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
+            }
+          },
+          "reason": { "type": "string", "enum": ["connector", "non_ok_part", "symptom_power_path", "reshoot", "user_added"] }
+        }
+      }
+    },
+    "attached_to_target_id": { "type": "string", "description": "For macro_detail: the guided target this detail belongs to." },
+    "tracking_state": { "type": "string", "enum": ["normal", "limited"] },
+    "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance." },
+    "torch_on": { "type": "boolean" },
+    "auto_fired": { "type": "boolean", "description": "True when the app took the shot because the ring filled, tracking was normal and sharpness was high." },
+    "user_skipped": { "type": "boolean", "description": "True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected." }
+  },
+  "$defs": {
+    "pose_arkit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "position_m", "quaternion_xyzw"],
+      "description": "Camera-to-world pose in ARKit's world frame: metres, Y up. Camera axes as ARKit (x right, y up, looking along -z).",
+      "properties": {
+        "frame": { "type": "string", "const": "arkit_world" },
+        "position_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    },
+    "pose_design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "position_mm", "quaternion_xyzw"],
+      "description": "Camera-to-design pose in the design frame (model.glb): millimetres, Z up. Same camera axes as pose_arkit.",
+      "properties": {
+        "frame": { "type": "string", "const": "design" },
+        "position_mm": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    }
+  }
+}

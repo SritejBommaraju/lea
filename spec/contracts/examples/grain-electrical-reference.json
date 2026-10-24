@@ -1,0 +1,56 @@
+{
+ "_note": "API shape only, built from the schema with generic names; not a recorded Grain response (those are private, private/grain/observed/).",
+ "nets": [
+  {
+   "name": "VIN",
+   "pins": [
+    "J2.1",
+    "U1.VIN",
+    "C1.1"
+   ],
+   "power": true
+  },
+  {
+   "name": "GND",
+   "pins": [
+    "J2.2",
+    "U1.GND",
+    "C1.2"
+   ],
+   "power": true
+  },
+  {
+   "name": "NET_A",
+   "pins": [
+    "J1.1",
+    "LOAD1.1"
+   ],
+   "power": false
+  }
+ ],
+ "wires": [
+  {
+   "name": "WIRE_A",
+   "from": "J1.1",
+   "to": "LOAD1.1",
+   "gauge": "22AWG",
+   "length_mm": 40.0,
+   "color": "red",
+   "conductors": 1
+  }
+ ],
+ "expected_volts": {
+  "VIN": {
+   "volts": 5.0,
+   "min": 4.75,
+   "max": 5.25,
+   "from": "simulation"
+  }
+ },
+ "sim_status": "ok",
+ "sources": {
+  "nets": true,
+  "harness": true,
+  "sim": true
+ }
+}

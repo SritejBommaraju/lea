@@ -1,0 +1,3 @@
+{ "schema": "grain-call-response", "why": "fixes[].confidence is a word (low|medium|high), not a number",
+  "base": "grain-call-response.json",
+  "patch": { "fixes": [ { "part": "WIRE_A", "problem": "electrical", "action": "rewire", "confidence": 0.9, "detail": "NET_A is open", "how": "replace WIRE_A" } ] } }

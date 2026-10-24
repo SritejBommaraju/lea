@@ -1,0 +1,78 @@
+{
+ "_note": "Target shape (T1, T2, T7, T8) RepairOS needs; built from the schema, not a recorded response.",
+ "status": "error",
+ "readings": [
+  {
+   "i": 0,
+   "id": "rd_0001",
+   "net": "VIN",
+   "known": true,
+   "volts": 5.02,
+   "expected": {
+    "volts": 5.0,
+    "min": 4.75,
+    "max": 5.25,
+    "from": "simulation"
+   },
+   "verdict": "ok"
+  },
+  {
+   "i": 1,
+   "id": "rd_0002",
+   "net": "NET_A",
+   "known": true,
+   "continuity": false,
+   "verdict": "open",
+   "wire": {
+    "name": "WIRE_A",
+    "from": "J1.1",
+    "to": "LOAD1.1",
+    "gauge": "22AWG",
+    "length_mm": 40.0,
+    "color": "red",
+    "conductors": 1,
+    "ends": [
+     {
+      "from": "J1.1",
+      "to": "LOAD1.1"
+     }
+    ],
+    "ohms_max": 0.05
+   }
+  },
+  {
+   "i": 2,
+   "net": "NET_B",
+   "known": false,
+   "verdict": "unknown_net"
+  }
+ ],
+ "findings": [
+  {
+   "reading": 1,
+   "severity": "error",
+   "text": "NET_A is open between J1.1 and LOAD1.1",
+   "where": "WIRE_A",
+   "fix": "replace WIRE_A"
+  },
+  {
+   "reading": 2,
+   "severity": "warning",
+   "text": "net NET_B is not in the design",
+   "where": "NET_B"
+  }
+ ],
+ "expected_volts": {
+  "VIN": {
+   "volts": 5.0,
+   "min": 4.75,
+   "max": 5.25,
+   "from": "simulation"
+  }
+ },
+ "sources": {
+  "nets": true,
+  "harness": true,
+  "sim": true
+ }
+}

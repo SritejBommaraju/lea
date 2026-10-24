@@ -1,0 +1,15 @@
+{
+  "finding_id": "f_0007",
+  "scan_id": "scan_7f3a",
+  "subject": { "kind": "part", "ref": "HOUSING1:lid" },
+  "state": "partly",
+  "source": "repairos.scan",
+  "confidence": 0.55,
+  "is_proof": false,
+  "evidence": ["coverage 0.72 of the visible surface; the rest was not swept closely"],
+  "evidence_refs": { "keyframe_ids": ["kf_000", "kf_006"] },
+  "measurements": { "coverage": 0.72, "offset_mm": 0.8, "views": 2 },
+  "design_trust": "low",
+  "on_symptom_power_path": false,
+  "created_at": "2026-10-23T18:10:30Z"
+}

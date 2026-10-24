@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "next-action.schema.json",
+  "title": "NextAction",
+  "description": "The one thing the app asks the user (or itself) to do next. Chosen by Jev 'choice' or the deterministic fallback. Every option is an action code already knows how to execute; code expands it into a concrete target. Instructions name parts by their AR label, never by a bare pin id.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action_id", "scan_id", "kind", "instruction", "chosen_by", "created_at"],
+  "properties": {
+    "action_id": { "type": "string", "minLength": 1 },
+    "scan_id": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "request_closeup", "request_other_angle", "rescan",
+        "run_reference_compare", "run_continuity_test", "run_voltage_test", "run_resistance_test",
+        "run_grain_second_opinion",
+        "report_insufficient_evidence", "report_finding", "ask_user"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What the action is about. Fields used depend on kind.",
+      "properties": {
+        "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Grain part names (model.glb nodes)." },
+        "harness_row": { "type": "string", "description": "harness.csv wire name (GrainElectricalReference wires[].name)." },
+        "net": { "type": "string", "description": "Grain net name." },
+        "pins": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "REF.PIN ids to probe in Grain's net naming (e.g. J1.1), the form /electrical/check accepts; never shown to the user bare." },
+        "ar_labels": { "type": "array", "items": { "type": "string" }, "description": "Labels drawn on the real product for these pins or parts." },
+        "still_ids": { "type": "array", "items": { "type": "string" }, "description": "Crops to send for a Grain second opinion." }
+      }
+    },
+    "instruction": { "type": "string", "minLength": 1, "description": "User-facing text. For meter steps it states the power state first." },
+    "reason": { "type": "string", "description": "Why this action, in one sentence, for the UI's 'why' tap." },
+    "power_state": { "type": "string", "enum": ["off", "on", "n/a"], "description": "off for continuity and resistance; on for voltage (S4)." },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from Grain's expected{min, max}, never from expected.volts alone (G2).",
+      "properties": {
+        "continuity": { "type": "boolean" },
+        "ohms_max": { "type": "number", "minimum": 0 },
+        "volts_min": { "type": "number" },
+        "volts_max": { "type": "number" },
+        "source": { "type": "string", "enum": ["grain_electrical", "report_json_minmax", "repairos_derived", "datasheet"], "description": "report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches." }
+      }
+    },
+    "safety_notes": { "type": "array", "items": { "type": "string" }, "description": "Shown before the step. Always present when power_state is on or the step touches a supply (S1, S3)." },
+    "chosen_by": { "type": "string", "enum": ["jev", "code_on_jev"], "description": "code_on_jev: code chose the action from Jev judgments (TypeSafe pattern: judgments from Jev, decisions in code)." },
+    "probabilities": {
+      "type": "object",
+      "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 },
+      "description": "Jev's distribution over action kinds, for the evaluation (rules vs Jev)."
+    },
+    "insufficient_evidence_reason": { "type": "string", "enum": ["blur", "dark", "glare", "occluded", "bad_alignment", "no_reference", "user_skipped", "other"] },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}
