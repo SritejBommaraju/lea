@@ -157,6 +157,7 @@ final class LeaConversation {
         var firstSentence: Int?
         task = Task {
             var answer = Turn(mine: false, text: "")
+            var fallback = StreamFallback()
             var answerIndex: Int?
             do {
                 for try await event in stream {
@@ -169,14 +170,15 @@ final class LeaConversation {
                         answer.text = answer.text.isEmpty ? s : answer.text + " " + s
                         if let i = answerIndex { turns[i] = answer } else { turns.append(answer); answerIndex = turns.count - 1 }
                         phase = .speaking
-                        if !withAudio { voice.queueOnDevice(s, stream: id) }
+                        if let say = fallback.sentence(s, withAudio: withAudio) { voice.queueOnDevice(say, stream: id) }
                     case .audio(let pcm):
+                        fallback.audio()
                         voice.appendStream(pcm, stream: id) { [weak self] in
                             let ms = Self.ms(since: start)
                             Task { @MainActor in if self?.firstAudioMs == nil { self?.firstAudioMs = ms } }
                         }
-                    case .audioOff:
-                        break
+                    case .audioOff:   // Cartesia stopped before this sentence's audio: the phone says it
+                        if let say = fallback.audioOff() { voice.queueOnDevice(say, stream: id) }
                     case .action(let kind, let label):
                         action = (kind, label)
                     case .done(_, let timings):
@@ -207,6 +209,29 @@ final class LeaConversation {
     }
 
     nonisolated private static func ms(since d: Date) -> Int { Int(Date().timeIntervalSince(d) * 1000) }
+}
+
+/// Which of Lea's streamed sentences the phone's own voice must say. A sentence the gateway sends with `audio: true`
+/// is followed by its audio, unless Cartesia stops (refused, spend cap) first: then `audio_off` comes with no audio
+/// for that sentence, and it would never be heard. The phone says it, then every later sentence (`audio: false`).
+struct StreamFallback: Equatable {
+    /// The last sentence sent with audio whose audio has not started yet.
+    private(set) var awaitingAudio: String?
+
+    /// A sentence arrived: the text to say on the device now, if any.
+    mutating func sentence(_ text: String, withAudio: Bool) -> String? {
+        awaitingAudio = withAudio ? text : nil
+        return withAudio ? nil : text
+    }
+
+    /// Audio arrived: it belongs to the sentence awaiting it, which is heard.
+    mutating func audio() { awaitingAudio = nil }
+
+    /// Cartesia stopped: the sentence that got no audio, to say on the device (nil when its audio had started).
+    mutating func audioOff() -> String? {
+        defer { awaitingAudio = nil }
+        return awaitingAudio
+    }
 }
 
 extension GatewayClient {

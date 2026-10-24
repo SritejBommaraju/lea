@@ -20,7 +20,7 @@ from typing import Any
 
 from repairos.voice.answer import report_facts
 from repairos.voice.settings import VoiceSettings
-from repairos.voice.spend_guard import charge, key_of
+from repairos.voice.spend_guard import charge, key_of, record_claude
 
 PERSONA = """You are Lea, the voice of a repair assistant. The person is talking with you out loud while they look \
 at an object they scanned with their phone, and everything you write is spoken aloud.
@@ -154,6 +154,14 @@ def messages_for(convo: dict, context: str, question: str, keep: int = 12) -> li
     return msgs
 
 
+def _snapshot(stream: Any) -> Any:
+    """The message so far of an interrupted stream (its usage counts what was spent), or None."""
+    try:
+        return stream.current_message_snapshot
+    except Exception:  # noqa: BLE001 - nothing streamed yet
+        return None
+
+
 class Talker:
     """Streams one Claude turn as text deltas (anthropic SDK, Apache-2.0)."""
 
@@ -166,15 +174,21 @@ class Talker:
 
     async def stream(self, scope: str, messages: list[dict]) -> AsyncIterator[str]:
         s = self.settings
-        charge("anthropic", key=key_of("converse", scope, messages[-1]["content"][-500:], time.time() // 5))
+        est = charge("anthropic", key=key_of("converse", scope, messages[-1]["content"][-500:], time.time() // 5))
         extra = {} if "haiku" in s.lea_voice_answer_model else {
             "betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
         async with self._client.beta.messages.stream(
                 model=s.lea_voice_answer_model, max_tokens=1024, system=PERSONA,
                 output_config={"effort": s.lea_voice_answer_effort}, messages=messages, **extra) as st:
-            async for text in st.text_stream:
-                yield text
-            final = await st.get_final_message()
+            final = None
+            try:
+                async for text in st.text_stream:
+                    yield text
+                final = await st.get_final_message()
+            finally:   # also when the person interrupts mid-answer: the tokens streamed so far are what was spent
+                snap = final if final is not None else _snapshot(st)
+                record_claude((getattr(snap, "model", None), s.lea_voice_answer_model), getattr(snap, "usage", None),
+                              est)
         if final.stop_reason == "refusal":
             yield " I can't help with that one."
 

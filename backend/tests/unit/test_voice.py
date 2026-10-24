@@ -484,6 +484,32 @@ def test_paused_services_fall_back_to_spoken_lines(gw, spend):
     assert len([e for e in events if e["type"] == "sentence"]) == 3
 
 
+def test_voice_claude_answers_record_their_measured_token_cost(gw):
+    """Greptile (PR #13): voice answers were charged at the shared estimate only. Each one now replaces it with the
+    cost of its own token counts (repairos.spend, the real module with this test's own counter file), priced by the
+    model that answered."""
+    from repairos import spend as real_spend
+
+    def usd_day() -> float:   # unrounded (usage() rounds to 4 places; one short answer is about 2e-5 USD)
+        c, _ = real_spend._conn()
+        return real_spend._window(c, "anthropic", real_spend._now())["usd_day"]
+
+    c = gw()
+    scan_id = publish_report(c)
+    price = real_spend.caps("anthropic")["usd_per_mtok"]["claude-haiku-5-5"]
+    assert usd_day() == 0
+    c.post("/v1/voice/ask", json={"scan_id": scan_id, "question": "is it safe to open"})
+    ask = (100 * price["input"] + 20 * price["output"]) / 1e6     # the Claude mock's usage for a message
+    assert usd_day() == pytest.approx(ask)            # not the 0.006 USD estimate
+    n = len(c.claude.bodies)
+    converse(c, scan_id, audio=False)
+    streams = len([b for b in c.claude.bodies[n:] if b.get("stream")])
+    turn = (50 * price["input"] + 30 * price["output"]) / 1e6    # a streamed turn: message_start + message_delta
+    assert streams >= 1
+    assert usd_day() == pytest.approx(ask + streams * turn)
+    assert real_spend.estimate_usd("anthropic") < real_spend.caps("anthropic")["usd_per_call"]   # learnt, not stuck
+
+
 # ------------------------------------------------------------------ live (only with a real key)
 LIVE_KEY = VoiceSettings().cartesia_key
 live = pytest.mark.skipif(not LIVE_KEY or os.environ.get("REPAIROS_VOICE_LIVE") == "0",

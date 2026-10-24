@@ -12,7 +12,7 @@ import re
 from typing import Any
 
 from repairos.voice.settings import VoiceSettings
-from repairos.voice.spend_guard import charge, key_of
+from repairos.voice.spend_guard import charge, key_of, record_claude
 
 SYSTEM = """You are Lea, the voice of a repair assistant. A person scanned an object with their phone; the app \
 inspected the photos and wrote a report. They are now asking you a question out loud, and your answer is read \
@@ -150,7 +150,7 @@ class Answerer:
 
     async def answer(self, question: str, report: dict, story: str | None) -> str:
         s = self.settings
-        charge("anthropic", key=key_of("ask", report.get("scan_id"), question))
+        est = charge("anthropic", key=key_of("ask", report.get("scan_id"), question))
         # Server-side refusal fallback where the model has one (Haiku 5.5 has none).
         extra = {} if "haiku" in s.lea_voice_answer_model else {
             "betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
@@ -158,6 +158,7 @@ class Answerer:
             model=s.lea_voice_answer_model, max_tokens=1024, system=SYSTEM,
             output_config={"effort": s.lea_voice_answer_effort},
             messages=[{"role": "user", "content": prompt(question, report, story)}], **extra)
+        record_claude((getattr(r, "model", None), s.lea_voice_answer_model), getattr(r, "usage", None), est)
         if r.stop_reason == "refusal":
             return "I can't help with that one. Try asking about what the scan found."
         text = " ".join(b.text for b in r.content if getattr(b, "type", None) == "text").strip()

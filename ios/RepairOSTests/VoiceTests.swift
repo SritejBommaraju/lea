@@ -141,3 +141,30 @@ struct WakePhraseTests {
         #expect(WakeListener.afterWake("") == nil)
     }
 }
+
+/// Greptile (PR #13): when Cartesia stops mid-answer, the sentence already sent with `audio: true` got no audio and
+/// was never said. The phone's voice now says it, then the rest.
+struct StreamFallbackTests {
+    @Test func aSentenceWhoseAudioNeverCameIsSaidOnTheDevice() {
+        var f = StreamFallback()
+        #expect(f.sentence("The connector may be loose.", withAudio: true) == nil)
+        #expect(f.audioOff() == "The connector may be loose.")
+        #expect(f.audioOff() == nil)                                         // said once
+        #expect(f.sentence("Unplug it first.", withAudio: false) == "Unplug it first.")
+    }
+
+    @Test func aSentenceWithItsAudioIsNotSaidTwice() {
+        var f = StreamFallback()
+        #expect(f.sentence("One.", withAudio: true) == nil)
+        f.audio()
+        #expect(f.sentence("Two.", withAudio: true) == nil)
+        f.audio()
+        #expect(f.audioOff() == nil)   // Cartesia stopped after Two's audio started: nothing is repeated
+    }
+
+    @Test func aOneSentenceAnswerIsNeverSilent() {
+        var f = StreamFallback()
+        _ = f.sentence("It looks fine from these photos.", withAudio: true)
+        #expect(f.audioOff() == "It looks fine from these photos.")
+    }
+}
