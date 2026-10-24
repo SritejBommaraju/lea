@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LEA: an inspection report for anything you can point a phone at</title>
+  <meta name="description" content="Scan a device with your iPhone's LiDAR, take the close-ups LEA asks for, and get a written report: what looks wrong, the photo behind it, and how sure it is, in words.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#F4EEE3" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16110D" media="(prefers-color-scheme: dark)">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,500;0,600;1,500&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="masthead page">
+    <a class="wordmark" href="#top" aria-label="LEA, home">LEA</a>
+    <nav aria-label="Sections">
+      <a href="#method">Method</a>
+      <a href="#report">The report</a>
+      <a href="#access">Early access</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="opening page" aria-labelledby="title">
+      <div class="opening-text">
+        <p class="label">Hardware inspection · iPhone with LiDAR</p>
+        <h1 id="title">An inspection report for anything you can point a phone at.</h1>
+        <p class="lede">Scan the device, take the close-ups LEA asks for, and read what it found: each problem with the
+          photo it came from, where it is, and how sure LEA is, in words. What nobody looked at is listed as not
+          inspected. It is never counted as fine.</p>
+        <p class="actions">
+          <a class="button" href="#access">Ask for early access</a>
+          <a class="text-link" href="#report">Read a sample report</a>
+        </p>
+      </div>
+
+      <figure class="device" aria-labelledby="fig1">
+        <div class="screen">
+          <picture>
+            <source srcset="img/07-report-dark.png" media="(prefers-color-scheme: dark)">
+            <img src="img/07-report-light.png" width="393" height="2703" alt="A LEA report for a kettle base: possible problems found, one safety problem with the power cable and a loose hinge pin, three parts not looked at.">
+          </picture>
+        </div>
+        <figcaption id="fig1" class="label">Fig. 1 &nbsp;The report, kettle base. Design prototype.</figcaption>
+      </figure>
+    </section>
+
+    <section id="method" class="method page" aria-labelledby="method-title">
+      <header class="section-head">
+        <h2 id="method-title">Three steps, in order.</h2>
+      </header>
+
+      <ol class="steps">
+        <li class="step">
+          <figure>
+            <div class="screen short"><img src="img/04-capture-searching.png" width="393" height="852" loading="lazy" alt="The capture screen while scanning: brackets searching for the object and a coverage dial filling in."></div>
+            <figcaption class="label">Fig. 2 &nbsp;Scanning, the dial filling in</figcaption>
+          </figure>
+          <p class="number">No. 01</p>
+          <h3>Scan</h3>
+          <p>Walk around the object. The dial fills in as each side is seen, and short cues tell you when you are
+            moving too fast, standing too close or working in poor light.</p>
+        </li>
+        <li class="step">
+          <figure>
+            <div class="screen short"><img src="img/05-capture-locked.png" width="393" height="852" loading="lazy" alt="The capture screen locked on to the object, with the cue Slow down and the Close-ups button."></div>
+            <figcaption class="label">Fig. 3 &nbsp;Locked on, ready for close-ups</figcaption>
+          </figure>
+          <p class="number">No. 02</p>
+          <h3>Close-ups</h3>
+          <p>LEA asks for full-resolution photos of each side at the camera’s sharpest distance, and drops any that
+            come out blurred. The close-ups are the evidence the report points back to.</p>
+        </li>
+        <li class="step">
+          <figure>
+   <div class="screen short">
+              <picture>
+                <source srcset="img/08-problem-detail-dark.png" media="(prefers-color-scheme: dark)">
+                <img src="img/08-problem-detail-light.png" width="393" height="903" loading="lazy" alt="One problem in detail: the power cable, the split jacket, where it is, the photo it was seen in and how sure LEA is.">
+              </picture>
+            </div>
+            <figcaption class="label">Fig. 4 &nbsp;One problem, in detail</figcaption>gcaption>
+          </figure>
+          <p class="number">No. 03</p>
+          <h3>Report</h3>
+          <p>A verdict first, then each problem, ranked, with its photo and its place on the 3D scan. Anything LEA
+            could not settle is set apart, with the reason.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="report" class="report page" aria-labelledby="report-title">
+      <header class="section-head">
+        <h2 id="report-title">Printed facts. Judgement in the margin.</h2>
+        <p class="lede">The report is set like a museum label. What the camera saw is printed upright. How sure LEA is
+          goes in the margin, in a word, never a percentage.</p>
+      </header>
+
+      <div class="report-body">
+        <div class="specimens" aria-label="An example of two entries from a report">
+          <article class="specimen">
+            <div class="specimen-top">
+              <span class="number">No. 01</span>
+              <span class="tag danger"><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M6 1.5 11 10.5H1Z"/><path d="M6 5v2.4M6 8.6v.2"/></svg>Safety</span>
+            </div>
+            <h3>Power cable</h3>
+            <p class="issue danger-text">Jacket split near the strain relief</p>
+            <dl>
+              <div><dt>Where</dt><dd>Back, lower left, by the plug</dd></div>
+              <div><dt>Evidence</dt><dd>Photo 7 of 12, seen twice</dd></div>
+            </dl>
+            <p class="margin-note">medium confidence</p>
+          </article>
+
+          <article class="specimen unknown">
+            <div class="specimen-top">
+              <span class="number">No. 04</span>
+              <span class="tag neutral"><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M1 6s1.8-3.5 5-3.5S11 6 11 6 9.2 9.5 6 9.5 1 6 1 6Z"/><path d="M2 10 10 2"/></svg>Not inspected</span>
+            </div>
+            <h3>Underside</h3>
+            <p class="issue">No photo from below</p>
+            <p class="small">Nobody looked, so it is not counted as fine.</p>
+          </article>
+        </div>
+
+        <ol class="rules">
+          <li>
+            <h3>Red means danger, and nothing else.</h3>
+            <p>Safety problems are the only red on the page, so a warning never has to compete with a button.</p>
+          </li>
+          <li>
+            <h3>Unknown is drawn dashed.</h3>
+            <p>Parts nobody photographed, and parts the photos could not settle, get a dashed outline. A guess never
+              looks like a finding.</p>
+          </li>
+          <li>
+            <h3>Photos keep their colour.</h3>
+            <p>Scorch marks and corrosion are evidence, so crops and scans are never tinted or filtered.</p>
+          </li>
+          <li>
+            <h3>A meter reading is proof.</h3>
+            <p>A photo can only raise a suspicion. Add a multimeter reading and an electrical suspicion becomes a
+              proven fault.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="details page" aria-labelledby="details-title">
+      <header class="section-head">
+        <h2 id="details-title">It keeps your hands free.</h2>
+      </header>
+      <dl class="ledger">
+        <div><dt>“Hey Lea”</dt><dd>Ask what to photograph next, or what a finding means, without putting the part down.</dd></div>
+        <div><dt>Your hunch, first</dt><dd>Say what you suspect before you scan. LEA looks there first and never counts your guess as a finding.</dd></div>
+        <div><dt>Fix it</dt><dd>For a problem you can fix, LEA finds replacement parts and a repair guide.</dd></div>
+        <div><dt>Circle to inspect</dt><dd>Draw around any spot on the 3D scan and LEA looks again, closer.</dd></div>
+        <div><dt>A second screen</dt><dd>Follow the scan and the report on a laptop or TV while you work.</dd></div>
+        <div><dt>Bad signal</dt><dd>An upload that drops resumes where it stopped. The scan is never lost.</dd></div>
+      </dl>
+    </section>
+
+    <section class="limits page" aria-labelledby="limits-title">
+      <h2 id="limits-title" class="annotation">What photos can’t tell</h2>
+      <ul>
+        <li>Whether a part works. Only a meter reading can prove that.</li>
+        <li>Anything inside the case that the camera could not see.</li>
+        <li>Damage smaller than about a millimetre.</li>
+      </ul>
+    </section>
+
+    <section id="access" class="access page" aria-labelledby="access-title">
+      <h2 id="access-title">We are testing LEA with a small group of repairers.</h2>
+      <p class="lede">If you open things up for a living, or for fun, tell us what you fix.</p>
+      <!-- TODO(website W2): point this at the team's contact address or sign-up form. -->
+      <p class="actions"><a class="button" href="#access">Ask for early access</a></p>
+    </section>
+  </main>
+
+  <footer class="colophon page">
+    <span class="wordmark">LEA</span>
+    <p class="label">Set in EB Garamond, SF Pro and SF Mono. Screens shown are design prototypes.</p>
+  </footer>
+</body>
+</html>

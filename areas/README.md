@@ -1,4 +1,4 @@
-# Areas: three streams
+# Areas: four streams
 
 Each stream is run by one person, mostly with coding agents. Pick yours, open its file, run its `next.py` line.
 Tasks and milestones: [PLAN.md](../PLAN.md) §6-§7; machine twin: [build/tasks.yaml](../build/tasks.yaml).
@@ -8,6 +8,7 @@ Tasks and milestones: [PLAN.md](../PLAN.md) §6-§7; machine twin: [build/tasks.
 | [App](app.md) | one person (owner assigns) | `ios/**` except generated contracts | `python3 -I build/next.py --stream app` |
 | [Modeling + benchmark](modeling-benchmark.md) | one person (owner assigns) | perception slots, `vision/**`, `eval/**`, `training/**`, `samples/sessions/**` | `python3 -I build/next.py --stream modeling` |
 | [Build execution](build-execution.md) | Rohan + agents | the rest of `backend/**`, `build/`, `config/`, `tools/`, contracts, CI | `python3 -I build/next.py --stream build` |
+| [Website](website.md) | Sritej + agents | `website/**` | the task table in [website.md](website.md) |
 
 Phase 2 (Grain) has no stream yet: [PLAN.md](../PLAN.md) §9.
 
