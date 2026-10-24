@@ -18,6 +18,7 @@ from . import next_action_schema
 from . import part_on_hand_schema
 from . import reference_design_schema
 from . import repair_plan_schema
+from . import report_schema
 from . import scan_package_schema
 from . import shopping_quote_schema
 from . import still_schema
@@ -39,6 +40,7 @@ MODELS = {
     "part-on-hand": part_on_hand_schema.PartOnHand,
     "reference-design": reference_design_schema.ReferenceDesign,
     "repair-plan": repair_plan_schema.RepairPlan,
+    "report": report_schema.Report,
     "scan-package": scan_package_schema.ScanPackage,
     "shopping-quote": shopping_quote_schema.ShoppingQuote,
     "still": still_schema.Still,

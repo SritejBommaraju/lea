@@ -19,6 +19,15 @@ class Device(BaseModel):
     app_version: str | None = None
 
 
+class DepthSource(StrEnum):
+    """
+    Where the scan's geometry comes from. lidar (also when absent, as in every package before this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8): ARKit world-tracking poses and images only, so there is no points_file or point_count and nothing metric can be read off the scan itself.
+    """
+
+    lidar = 'lidar'
+    none = 'none'
+
+
 class Pose(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -66,8 +75,13 @@ class DepthEncoding(StrEnum):
 
 
 class TrackingState(StrEnum):
+    """
+    ARKit tracking state of the frame. unknown: the capture app did not record it (an import).
+    """
+
     normal = 'normal'
     limited = 'limited'
+    unknown = 'unknown'
 
 
 class Keyframe(BaseModel):
@@ -87,7 +101,10 @@ class Keyframe(BaseModel):
     )
     camera: Pose
     intrinsics: Intrinsics
-    tracking_state: TrackingState
+    tracking_state: TrackingState = Field(
+        ...,
+        description='ARKit tracking state of the frame. unknown: the capture app did not record it (an import).',
+    )
     sharpness: float | None = Field(
         None, description='Laplacian variance; higher is sharper.', ge=0.0
     )
@@ -162,8 +179,12 @@ class ScanPackage(BaseModel):
         description="Points and poses are in ARKit's world frame (metres, Y up). The design frame (mm, Z up) is reached via alignment.transform_arkit_world_to_design.",
     )
     units: Literal['m']
-    voxel_mm: float = Field(
-        ...,
+    depth_source: DepthSource | None = Field(
+        None,
+        description="Where the scan's geometry comes from. lidar (also when absent, as in every package before this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8): ARKit world-tracking poses and images only, so there is no points_file or point_count and nothing metric can be read off the scan itself.",
+    )
+    voxel_mm: float | None = Field(
+        None,
         description='Voxel pitch of the fused cloud in millimetres (3 default; 1-2 with PromptDA TSDF).',
         gt=0.0,
     )
@@ -173,11 +194,15 @@ class ScanPackage(BaseModel):
         max_length=3,
         min_length=3,
     )
-    points_file: str = Field(
-        ...,
+    points_file: str | None = Field(
+        None,
         description='Binary little-endian PLY, xyz float32 + rgb uint8, optional confidence/views uint8.',
     )
-    point_count: int = Field(..., ge=0)
+    point_count: int | None = Field(None, ge=0)
+    mesh_file: str | None = Field(
+        None,
+        description='Optional triangle mesh of the same scene, binary little-endian PLY, arkit_world metres: float x, y, z (+ uchar red, green, blue) vertices and a face list. From backend TSDF fusion (an import, B12) or ARKit scene reconstruction (A2). Used to ray-cast close-up boxes onto the scan (repairos.locate).',
+    )
     crop_box: Box | None = Field(
         None,
         description='The AR box the user dragged; points outside were dropped. Points on or below the supporting plane + 5 mm were dropped too.',

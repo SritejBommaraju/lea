@@ -1,0 +1,33 @@
+{
+  "still_id": "s3",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "kind": "unguided",
+  "captured_at": "2026-10-23T18:13:40Z",
+  "image_file": "stills/s3.jpg",
+  "width_px": 1920,
+  "height_px": 1440,
+  "camera": {
+    "frame": "arkit_world",
+    "position_m": [
+      0.21,
+      0.18,
+      -0.12
+    ],
+    "quaternion_xyzw": [
+      0.1,
+      0.7,
+      -0.1,
+      0.69
+    ]
+  },
+  "intrinsics": {
+    "fx": 1458.2,
+    "fy": 1458.2,
+    "cx": 960.0,
+    "cy": 720.0
+  },
+  "targets": [],
+  "tracking_state": "unknown",
+  "sharpness": 603.2
+}

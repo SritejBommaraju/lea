@@ -1,0 +1,10 @@
+{
+ "schema": "report",
+ "why": "insufficient_evidence always carries a reason (I4)",
+ "base": "report.insufficient.json",
+ "patch": {
+  "verdict_reason": {
+   "text": ""
+  }
+ }
+}

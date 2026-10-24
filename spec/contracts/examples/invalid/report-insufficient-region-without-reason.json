@@ -1,0 +1,30 @@
+{
+ "schema": "report",
+ "why": "a region that could not be judged needs its reason (I4)",
+ "base": "report.json",
+ "patch": {
+  "insufficient_evidence": [
+   {
+    "finding_id": "f_example_d",
+    "subject": {
+     "kind": "wire",
+     "ref": "s1/det3"
+    },
+    "part_class": "wire",
+    "photo": {
+     "still_id": "s1",
+     "box_px": [
+      1200,
+      900,
+      1500,
+      1300
+     ]
+    },
+    "inspected_by": [
+     "detector",
+     "vlm"
+    ]
+   }
+  ]
+ }
+}

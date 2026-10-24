@@ -27,6 +27,14 @@ MODEL_CANNOT_EXPRESS = {
     "meter-reading-voltage-with-continuity-value.json",
     "repair-plan-power-on-step-without-gate.json",
     "repair-plan-power-path-step-without-gate.json",
+    "scan-package-lidar-without-points.json",       # depth_source if/then/else (no-LiDAR, A8)
+    "scan-package-no-depth-with-mesh.json",
+    "scan-package-no-depth-with-points.json",
+    # report (B9): if/then and contains rules; validate() and the STATE rules enforce them
+    "report-looks-good-with-issue.json",
+    "report-looks-good-with-uninspected-region.json",
+    "report-meter-proof-without-reading.json",
+    "report-ok-without-a-judge.json",
 }
 
 
