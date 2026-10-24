@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# Route B (no image build): run the LEA backend on an OFFICIAL Runpod PyTorch pod. Everything lives on the pod's
+# volume (/workspace), so the first boot installs and later boots only check and start.
+#
+# The pod's start command (README, "Route B") fetches this file from GitHub with the read-only token and runs it:
+#   1. repo     clone $LEA_REPO at $LEA_REF into $LEA_CHECKOUT, or update the checkout already there
+#   2. venv     create or reuse $LEA_VENV and install deploy/runpod/requirements.linux.lock (hash-checked); skipped
+#               when the lock's sha256 matches the one recorded after the last successful install
+#   3. weights  cache the detector weights (the revision pinned in repairos.slots.det_owlv2) in $HF_HOME, once
+#   4. start    exec deploy/runpod/start.sh from the checkout (gateway + worker, and the live bridge when configured)
+#
+# Secrets: GITHUB_TOKEN_READONLY (a Runpod secret) is used only for git and is never printed, never written to
+# .git/config and never put in a URL: git gets it as an http.extraheader through GIT_CONFIG_* environment variables,
+# and the variable is unset before anything else starts. The app's keys pass through untouched to start.sh.
+#
+# Knobs (all optional): LEA_REPO (SritejBommaraju/lea), LEA_REF (main; a branch, tag or commit sha), LEA_HOME
+# (/workspace), LEA_UPDATE=0 (keep the checkout as it is), LEA_RUNPOD_SERVICES=0 (skip the image's own /start.sh:
+# nginx, SSH with your account key, Jupyter only with JUPYTER_PASSWORD), LEA_PREPARE_ONLY=1 (stop after step 3),
+# LEA_LOCK (lock path inside the checkout), TORCH_INDEX (PyTorch wheel index for the lock's +cu126 torch).
+set -euo pipefail
+
+: "${LEA_REPO:=SritejBommaraju/lea}"
+: "${LEA_REF:=main}"
+: "${LEA_HOME:=/workspace}"
+: "${LEA_CHECKOUT:=$LEA_HOME/lea}"
+: "${LEA_VENV:=$LEA_HOME/venv}"
+: "${LEA_LOCK:=deploy/runpod/requirements.linux.lock}"
+: "${TORCH_INDEX:=https://download.pytorch.org/whl/cu126}"
+: "${LEA_UPDATE:=1}"
+: "${LEA_RUNPOD_SERVICES:=1}"
+: "${LEA_PREPARE_ONLY:=0}"
+: "${HF_HOME:=$LEA_HOME/hf}"
+: "${UV_CACHE_DIR:=$LEA_HOME/.cache/uv}"
+: "${REPAIROS_DATA_DIR:=$LEA_HOME/lea-data}"
+export HF_HOME UV_CACHE_DIR REPAIROS_DATA_DIR
+export UV_LINK_MODE=hardlink GIT_TERMINAL_PROMPT=0 PIP_DISABLE_PIP_VERSION_CHECK=1
+
+T_ALL=$SECONDS
+log() { echo "[bootstrap] $*"; }
+took() { log "$1 done in $(( SECONDS - $2 )) s"; }
+mkdir -p "$LEA_HOME" "$HF_HOME" "$UV_CACHE_DIR" "$REPAIROS_DATA_DIR"
+
+# ------------------------------------------------------------------ 1. repo
+git_auth_on() {   # the token as an Authorization header for github.com only, through the environment
+  [ -n "${GITHUB_TOKEN_READONLY:-}" ] || return 0
+  local basic
+  basic="$(printf 'x-access-token:%s' "$GITHUB_TOKEN_READONLY" | base64 | tr -d '\n')"
+  export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+  export GIT_CONFIG_VALUE_0="Authorization: Basic $basic"
+  export GIT_CONFIG_KEY_1="credential.helper" GIT_CONFIG_VALUE_1=""   # no helper may store or replace it
+}
+git_auth_off() { unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_CONFIG_KEY_1 GIT_CONFIG_VALUE_1; }
+
+T=$SECONDS
+URL="https://github.com/$LEA_REPO.git"
+if [ -d "$LEA_CHECKOUT/.git" ]; then
+  git -C "$LEA_CHECKOUT" remote set-url origin "$URL"   # a plain URL, whatever was there before
+  if [ "$LEA_UPDATE" = 1 ]; then
+    git_auth_on
+    if git -C "$LEA_CHECKOUT" fetch --quiet --depth 1 origin "$LEA_REF" 2>"$LEA_HOME/.git-fetch.err"; then
+      git -C "$LEA_CHECKOUT" checkout --quiet --force --detach FETCH_HEAD
+      log "repo: $LEA_REPO@$LEA_REF updated to $(git -C "$LEA_CHECKOUT" rev-parse --short HEAD)"
+    else
+      # an outage or an expired token must not keep the demo down: the checkout on the volume still runs
+      log "WARNING: fetching $LEA_REF failed ($(head -c 200 "$LEA_HOME/.git-fetch.err" | tr '\n' ' ')); running the existing checkout $(git -C "$LEA_CHECKOUT" rev-parse --short HEAD)"
+    fi
+    git_auth_off
+  else
+    log "repo: LEA_UPDATE=0, keeping $(git -C "$LEA_CHECKOUT" rev-parse --short HEAD)"
+  fi
+else
+  [ -n "${GITHUB_TOKEN_READONLY:-}" ] || log "WARNING: GITHUB_TOKEN_READONLY is not set; cloning without a token (works only if the repo is public)"
+  rm -rf "$LEA_CHECKOUT.partial"
+  git init --quiet "$LEA_CHECKOUT.partial"
+  git -C "$LEA_CHECKOUT.partial" remote add origin "$URL"
+  git_auth_on
+  git -C "$LEA_CHECKOUT.partial" fetch --quiet --depth 1 origin "$LEA_REF" \
+    || { git_auth_off; log "ERROR: cannot fetch $LEA_REPO@$LEA_REF (token scope, repo name or ref)"; exit 1; }
+  git_auth_off
+  git -C "$LEA_CHECKOUT.partial" checkout --quiet --detach FETCH_HEAD
+  mv "$LEA_CHECKOUT.partial" "$LEA_CHECKOUT"
+  log "repo: cloned $LEA_REPO@$LEA_REF at $(git -C "$LEA_CHECKOUT" rev-parse --short HEAD)"
+fi
+rm -f "$LEA_HOME/.git-fetch.err"
+if git -C "$LEA_CHECKOUT" config --get-regexp '^(remote\..*\.url|http\..*extraheader)' | grep -qiE '@github|authorization'; then
+  log "ERROR: a credential is stored in $LEA_CHECKOUT/.git/config; refusing to start"; exit 1
+fi
+took "repo" "$T"
+
+# ------------------------------------------------------------------ 2. system libraries open3d loads (container disk)
+T=$SECONDS
+if command -v ldconfig >/dev/null && ! ldconfig -p | grep -q 'libGL.so.1'; then
+  if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
+    log "installing libgl1 libgomp1 for open3d (the container disk is fresh on every start)"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libgl1 libgomp1 >/dev/null \
+      || log "WARNING: apt-get failed; the 3D scan mesh will report 'failed' until libGL is present"
+  else
+    log "WARNING: libGL.so.1 missing and no root apt-get; the 3D scan mesh will be unavailable"
+  fi
+fi
+took "system libraries" "$T"
+
+# ------------------------------------------------------------------ 3. venv + locked deps
+T=$SECONDS
+LOCK="$LEA_CHECKOUT/$LEA_LOCK"
+[ -f "$LOCK" ] || { log "ERROR: no lock file at $LOCK"; exit 1; }
+sha() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+WANT="$(sha "$LOCK")"
+HAVE="$(cat "$LEA_VENV/.lea-lock-sha256" 2>/dev/null || true)"
+# Python 3.12, as the lock was compiled for: the image's /usr/bin/python3.12, else uv's own 3.12, else python3
+PY_BASE="${LEA_PYTHON:-$(command -v python3.12 || { command -v uv >/dev/null && echo 3.12; } || command -v python3)}"
+if [ "$WANT" = "$HAVE" ] && [ -x "$LEA_VENV/bin/python" ]; then
+  log "venv: lock unchanged (${WANT:0:12}); skipping install"
+else
+  log "venv: installing $LEA_LOCK (${WANT:0:12}) into $LEA_VENV with Python $PY_BASE; first boot downloads ~3.8 GB"
+  rm -f "$LEA_VENV/.lea-lock-sha256"
+  hashes=(); grep -q -- '--hash=sha256:' "$LOCK" && hashes=(--require-hashes)
+  index=(); [ -n "$TORCH_INDEX" ] && index=(--extra-index-url "$TORCH_INDEX")
+  if command -v uv >/dev/null; then
+    [ -x "$LEA_VENV/bin/python" ] || uv venv --quiet --python "$PY_BASE" "$LEA_VENV"
+    log "venv: $("$LEA_VENV/bin/python" -V)"
+    # sync = exactly the lock: packages a previous lock had and this one does not are removed
+    uv pip sync --quiet --python "$LEA_VENV/bin/python" ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} --index-strategy unsafe-best-match "$LOCK"
+  else
+    [ -x "$LEA_VENV/bin/python" ] || "$PY_BASE" -m venv "$LEA_VENV"
+    "$LEA_VENV/bin/python" -m pip install --quiet --no-deps ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} -r "$LOCK"
+  fi
+  echo "$WANT" > "$LEA_VENV/.lea-lock-sha256"   # written last: an interrupted install is redone on the next boot
+fi
+took "venv" "$T"
+
+export PATH="$LEA_VENV/bin:$PATH" PYTHONPATH="$LEA_CHECKOUT/backend" PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1
+
+# ------------------------------------------------------------------ 4. detector weights
+T=$SECONDS
+WEIGHTS="$(python -c 'from repairos.slots.det_owlv2 import MODEL_REPO as r, MODEL_REVISION as v; print(f"{r}@{v}")')"
+MARK="$HF_HOME/.lea-weights-$(printf '%s' "$WEIGHTS" | tr '/@' '__')"
+if [ -f "$MARK" ]; then
+  log "weights: $WEIGHTS cached"
+else
+  log "weights: downloading $WEIGHTS (~620 MB) to $HF_HOME"
+  HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 python - <<'EOF'
+from repairos.slots.det_owlv2 import MODEL_REPO, MODEL_REVISION
+from transformers import AutoProcessor, Owlv2ForObjectDetection
+AutoProcessor.from_pretrained(MODEL_REPO, revision=MODEL_REVISION)
+Owlv2ForObjectDetection.from_pretrained(MODEL_REPO, revision=MODEL_REVISION)
+EOF
+  touch "$MARK"
+fi
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1   # from here on nothing fetches weights
+took "weights" "$T"
+
+log "ready in $(( SECONDS - T_ALL )) s (repo $(git -C "$LEA_CHECKOUT" rev-parse --short HEAD), venv ${WANT:0:12}, data $REPAIROS_DATA_DIR)"
+unset GITHUB_TOKEN_READONLY
+[ "$LEA_PREPARE_ONLY" = 1 ] && { log "LEA_PREPARE_ONLY=1: not starting"; exit 0; }
+
+# ------------------------------------------------------------------ 5. start
+# The official image's own start script (nginx on its side ports, SSH with the account key, Jupyter only when
+# JUPYTER_PASSWORD is set) in the background, so SSH and the web terminal keep working. It binds none of 8000/8790.
+if [ "$LEA_RUNPOD_SERVICES" = 1 ] && [ -x /start.sh ]; then
+  log "starting the image's /start.sh in the background (SSH, web terminal)"
+  /start.sh > "$LEA_HOME/.runpod-start.log" 2>&1 &
+fi
+export APP_DIR="$LEA_CHECKOUT"
+exec bash "$LEA_CHECKOUT/deploy/runpod/start.sh"
