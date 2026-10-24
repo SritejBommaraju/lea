@@ -1,12 +1,15 @@
 // The phone-facing API (/v1). Every route except /v1/health needs a paired-device token. Writes go
 // through module reducers and return only after SpacetimeDB committed them.
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { AssetError, type AssetStore } from './assets';
 import type { DeviceAuth } from './auth';
 import { config } from './config';
 import { GrainClient, GrainError } from './grain';
-import { newId, sha256Hex } from './jobs/context';
+import { lastJsonLine, newId, run, sha256Hex } from './jobs/context';
 import { type EventRow, ReducerError, sessionSnapshot, type StateStore, toWire } from './state';
 import { type ClientAction, runAgentTurn } from './agent';
 import { lookAtFrame } from './look';
@@ -113,6 +116,34 @@ export function createApi(deps: ApiDeps) {
     return snapshot(p.sid);
   });
 
+  // The validated scan as the phone draws it: aligned to the reference (mm), decimated, with each geometry candidate's region.
+  route('GET', '/v1/sessions/:sid/mesh-reports/:rid/view', async (_q, _r, p) => {
+    const t = store.read();
+    const report = t.meshReports.find(r => r.id === p.rid && r.sessionId === p.sid);
+    if (!report) throw new HttpError(404, 'no such mesh report');
+    const aligned = t.assets.find(a => a.kind === 'derived_ply' && a.sourceAssetIds.includes(report.meshAssetId) && JSON.parse(a.metaJson || '{}').units === 'mm');
+    if (!aligned) throw new HttpError(409, 'this scan has no aligned mesh');
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'lea-view-'));
+    try {
+      const src = path.join(dir, 'aligned.ply'), out = path.join(dir, 'view.bin');
+      await symlink(assets.pathFor(aligned.sha256), src);
+      const info = lastJsonLine(await run(config.geometryPython, ['-m', 'lea_geometry.mesh_view', src, out], undefined, 120_000, path.join(path.dirname(config.objcap), '..')));
+      if (info.error) throw new HttpError(422, info.error);
+      const bin = await readFile(out);
+      const split = info.vertices * 12;
+      return {
+        units: 'mm', verdict: report.verdict, vertices: info.vertices, triangles: info.triangles,
+        positions: bin.subarray(0, split).toString('base64'), indices: bin.subarray(split).toString('base64'),
+        regions: t.findings.filter(f => f.meshReportId === report.id && f.source === 'geometry').map(f => {
+          const r = JSON.parse(f.regionJson || '{}');
+          return { findingId: f.id, kind: r.kind ?? '', centroid: r.centroid_mm ?? [0, 0, 0], extent: r.extent_mm ?? [0, 0, 0] };
+        }),
+      };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   route('POST', '/v1/sessions/:sid/qa-policies', async (req, _r, p) => {
     const b = await body<{ scaleAnchorAxis: string; scaleAnchorMm: number; holdoutAxis: string; holdoutMm: number; maxHoldoutErrorMm: number; minCoverage: number; maxFitRmsMm: number; minFitInlierShare: number }>(req);
     if (!BOX_AXES.includes(b.scaleAnchorAxis) || !BOX_AXES.includes(b.holdoutAxis)) throw new HttpError(400, `axes must be one of ${BOX_AXES.join(', ')}`);
@@ -183,11 +214,44 @@ export function createApi(deps: ApiDeps) {
     return snapshot(p.sid);
   });
 
+  // The linked design's model.glb (millimetres) as this session's saved reference, when none is pinned yet.
+  route('POST', '/v1/sessions/:sid/reference-from-grain', async (_q, _r, p) => {
+    const s = session(p.sid);
+    if (!s.grainProjectId) throw new HttpError(409, 'link a Grain project first');
+    if (s.referenceMeshAssetId) throw new HttpError(409, 'this session is already pinned to a reference; start a new session to change it');
+    const glb = await grain.file(s.grainProjectId, 'out/model.glb').catch((e: GrainError) => {
+      throw new HttpError(e.status === 404 ? 409 : 502, e.status === 404 ? 'the Grain design has no built model yet' : e.message);
+    });
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'lea-ref-'));
+    try {
+      await writeFile(path.join(dir, 'model.glb'), glb);
+      const out = lastJsonLine(await run(config.geometryPython, ['-m', 'lea_geometry.glb_to_ply', path.join(dir, 'model.glb'), path.join(dir, 'reference.ply')],
+        undefined, 120_000, path.join(path.dirname(config.objcap), '..')));
+      if (out.error) throw new HttpError(422, out.error);
+      const { sha256, bytes } = await assets.putFile(path.join(dir, 'reference.ply'));
+      const id = newId('as');
+      await call('register_asset', { id, sessionId: p.sid, kind: 'reference_mesh', sha256, bytes: BigInt(bytes), mediaType: 'application/x-ply', sourceAssetIds: [],
+        metaJson: JSON.stringify({ extension: 'ply', unitsPerMm: '1', from: 'grain', grainProjectId: s.grainProjectId, grainPath: 'out/model.glb', glbSha256: sha256Hex(glb) }) });
+      await call('pin_reference_mesh', { sessionId: p.sid, assetId: id });
+      return snapshot(p.sid);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   route('GET', '/v1/sessions/:sid/grain', async (_q, _r, p) => {
     const s = session(p.sid);
     if (!s.grainProjectId) return { linked: false };
     const [project, log, files] = await Promise.all([grain.project(s.grainProjectId), grain.messages(s.grainProjectId), grain.files(s.grainProjectId)]);
     return { linked: true, project, question: project.waiting ? GrainClient.lastQuestion(log) : null, messages: log.slice(-40), files };
+  });
+
+  // Expected voltages from the linked design, offered as sourced ranges when adding a meter check.
+  route('GET', '/v1/sessions/:sid/grain/electrical', async (_q, _r, p) => {
+    const s = session(p.sid);
+    if (!s.grainProjectId) return { nets: [] };
+    const e = await grain.electrical(s.grainProjectId);
+    return { nets: Object.entries(e.expected_volts ?? {}).map(([net, v]) => ({ net, min: v.min, max: v.max, source: `Grain design (${v.from || net})` })) };
   });
 
   route('GET', '/v1/sessions/:sid/grain/events', async (req, res, p) => {
@@ -205,32 +269,43 @@ export function createApi(deps: ApiDeps) {
   });
 
   route('POST', '/v1/sessions/:sid/design-commands', async (req, _r, p) => {
-    const b = await body<{ text: string; origin: 'text' | 'voice'; meshReportId?: string; requestId: string }>(req);
-    return submitDesign(p.sid, b.origin === 'voice' ? 'voice' : 'text', b.text, b.meshReportId ?? '', b.requestId);
+    // checks: dimensions the returned STEP must meet, [{axis: longest|middle|shortest, mm, tolMm}].
+    const b = await body<{ text: string; origin: 'text' | 'voice'; meshReportId?: string; requestId: string; checks?: unknown[] }>(req);
+    return submitDesign(p.sid, b.origin === 'voice' ? 'voice' : 'text', b.text, b.meshReportId ?? '', b.requestId, b.checks);
   });
 
-  async function submitDesign(sid: string, origin: string, text: string, meshReportId: string, requestId: string) {
+  async function submitDesign(sid: string, origin: string, text: string, meshReportId: string, requestId: string, checks: unknown[] = []) {
     if (!requestId || requestId.length < 8) throw new HttpError(400, 'requestId is required');
     const id = newId('dc');
     const key = `${origin}:${sid}:${requestId}`;
-    await call('submit_design_command', { id, sessionId: sid, origin, text, meshReportId, idempotencyKey: key, jobId: newId('jb'), inputHash: sha256Hex(text) });
+    await call('submit_design_command', { id, sessionId: sid, origin, text, meshReportId, idempotencyKey: key, jobId: newId('jb'), inputHash: sha256Hex(text), checksJson: checks.length ? JSON.stringify(checks) : '' });
     return toWire(store.read().designCommands.find(c => c.idempotencyKey === key));
   }
 
   route('POST', '/v1/sessions/:sid/findings/:fid/checks', async (req, _r, p) => {
-    const b = await body<{ purpose: string; instruction: string; safety: string; powerState: string; expectedMin?: number; expectedMax?: number; expectedUnit?: string; expectedSource?: string }>(req);
+    const b = await body<{ purpose: string; instruction: string; safety: string; powerState: string; expectedMin?: number; expectedMax?: number; expectedUnit?: string; expectedSource?: string; net?: string }>(req);
     const id = newId('ck');
     await call('add_repair_check', {
       id, sessionId: p.sid, findingId: p.fid, purpose: b.purpose, instruction: String(b.instruction ?? ''), safety: String(b.safety ?? ''),
       powerState: b.powerState, expectedMin: opt(b.expectedMin), expectedMax: opt(b.expectedMax), expectedUnit: b.expectedUnit ?? '', expectedSource: b.expectedSource ?? '',
+      net: String(b.net ?? ''),
     });
     return toWire(store.read().checks.find(c => c.id === id));
   });
 
   route('POST', '/v1/sessions/:sid/checks/:cid/outcome', async (req, _r, p) => {
     const b = await body<{ observed: string; observationAssetId?: string; readingValue?: number; readingUnit?: string; note?: string }>(req);
+    const check = store.read().checks.find(c => c.id === p.cid && c.sessionId === p.sid);
+    // A voltage on a named net is also judged by Grain against its design; kept beside our verdict, never instead.
+    let crossCheck = '';
+    const pid = session(p.sid).grainProjectId;
+    if (check?.net && pid && b.readingUnit === 'V' && typeof b.readingValue === 'number') {
+      crossCheck = await grain.electricalCheck(pid, [{ net: check.net, volts: b.readingValue }])
+        .then(r => JSON.stringify({ row: r.readings[0] ?? null, findings: r.findings.map(f => f.text).slice(0, 3) }))
+        .catch((e: Error) => JSON.stringify({ error: e.message }));
+    }
     await call('record_check_outcome', {
-      checkId: p.cid, observed: b.observed, observationAssetId: b.observationAssetId ?? '', readingValue: opt(b.readingValue), readingUnit: b.readingUnit ?? '', note: b.note ?? '',
+      checkId: p.cid, observed: b.observed, observationAssetId: b.observationAssetId ?? '', readingValue: opt(b.readingValue), readingUnit: b.readingUnit ?? '', note: b.note ?? '', crossCheck,
     });
     return snapshot(p.sid);
   });
@@ -250,7 +325,7 @@ export function createApi(deps: ApiDeps) {
 
   route('POST', '/v1/sessions/:sid/voice-turns', async (req, _r, p) => {
     // frame: the camera view as base64 JPEG (optional), seen by the agent for this turn only and never stored.
-    const b = await body<{ id: string; mode: string; transcript: string; audioAssetId?: string; frame?: string }>(req, 6_000_000);
+    const b = await body<{ id: string; mode: string; transcript: string; audioAssetId?: string; frame?: string; focus?: string }>(req, 6_000_000);
     if (!ID.test(b.id ?? '')) throw new HttpError(400, 'voice turn id required');
     const transcript = String(b.transcript ?? '');
     if (!transcript.trim()) throw new HttpError(409, 'only final, non-empty transcripts are recorded');
@@ -259,7 +334,7 @@ export function createApi(deps: ApiDeps) {
     let reply = '', commandId = '', actions: ClientAction[] = [];
     if (config.anthropicConfigured) {
       try {
-        ({ reply, actions } = await runAgentTurn({ store, assets }, p.sid, b.id, transcript, b.frame ? Buffer.from(b.frame, 'base64') : undefined));
+        ({ reply, actions } = await runAgentTurn({ store, assets }, p.sid, b.id, transcript, b.frame ? Buffer.from(b.frame, 'base64') : undefined, b.focus));
       } catch (e) {
         console.error('[agent]', e);   // fall through to the rule-based router below
       }

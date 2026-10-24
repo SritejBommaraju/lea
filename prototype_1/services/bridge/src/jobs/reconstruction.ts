@@ -46,7 +46,9 @@ export async function runReconstruction(deps: JobDeps, lease: Lease, objcap: (im
       const refExt = (JSON.parse(reference.metaJson || '{}').extension as string | undefined) ?? 'ply';
       const refLink = path.join(work, `reference.${refExt}`);
       await symlink(deps.assets.pathFor(reference.sha256), refLink);
-      qaArgs.push('--reference', refLink, '--reference-units-per-mm', String(input.referenceUnitsPerMm));
+      // Units belong to the reference itself (declared at import or known from its source), not to the request.
+      const declared = Number(JSON.parse(reference.metaJson || '{}').unitsPerMm);
+      qaArgs.push('--reference', refLink, '--reference-units-per-mm', String(declared > 0 ? declared : input.referenceUnitsPerMm));
     }
     const qa = lastJsonLine(await runGeometry(qaArgs));
     if (qa.error) throw new Error(`geometry QA: ${qa.error}`);
@@ -128,7 +130,7 @@ async function afterPassingScan(deps: JobDeps, mr: MeshReportRow, report: QARepo
   await deps.store.call('submit_design_command', {
     id: newId('dc'), sessionId: mr.sessionId, origin: 'auto', text: packet, meshReportId: mr.id,
     idempotencyKey: `auto:${mr.sessionId}:${mr.id}:${sha256Hex(input.autoDesignObjective).slice(0, 16)}:${session.referenceMeshAssetId}`,
-    jobId: newId('jb'), inputHash: sha256Hex(packet),
+    jobId: newId('jb'), inputHash: sha256Hex(packet), checksJson: '',
   });
 }
 

@@ -5,7 +5,6 @@
     "start": "tsx src/main.ts",
     "pair": "tsx scripts/pair.ts",
     "authorize": "tsx scripts/authorize.ts",
-    "generate": "spacetime generate --lang typescript --out-dir src/module_bindings --module-path ../module",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -113,6 +113,7 @@ export async function runCloseupCompare(deps: JobDeps, lease: Lease, client = ne
         expectedMax: continuity && conducts ? 4.99 : undefined,
         expectedUnit: continuity ? 'ohm' : '',
         expectedSource: continuity ? (conducts ? 'healthy connection conducts: under 5 ohm' : 'healthy gap is open: 5 ohm or more') : '',
+        net: '',
       });
     }
   }

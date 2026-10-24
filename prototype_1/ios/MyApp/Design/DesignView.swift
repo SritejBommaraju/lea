@@ -6,6 +6,8 @@ struct DesignView: View {
     @EnvironmentObject private var sync: SessionSync
     @State private var command = ""
     @State private var linkId = ""
+    @State private var answer = ""
+    @State private var sizes: [SizeRow] = []
 
     var body: some View {
         NavigationStack {
@@ -52,6 +54,12 @@ struct DesignView: View {
             } else if sync.health?.grain.reachable == false {
                 Text("Grain is unreachable from the bridge.").font(.caption).foregroundStyle(.orange)
             }
+            if sync.snapshot?.session.referenceMeshAssetId.isEmpty == true, sync.grain?.project?.last_build?.ok == true {
+                Button("Use this Grain design as the reference") {
+                    Task { _ = await sync.perform { c, r in try await c.referenceFromGrain(sessionId: r) } }
+                }
+                .font(.caption)
+            }
             if sync.health?.grain.agentReady == false {
                 Text("Grain's design agent has no model key configured, so chat turns will be refused.").font(.caption).foregroundStyle(.orange)
             }
@@ -62,7 +70,13 @@ struct DesignView: View {
                     ForEach(q.questions, id: \.text) { item in
                         Text("• \(item.text)\(item.options.map { " (\($0.joined(separator: " / ")))" } ?? "")").font(.caption)
                     }
-                    Text("Answer below; Lea sends it as the next design turn.").font(.caption2).foregroundStyle(.secondary)
+                    ForEach(q.questions.flatMap { $0.options ?? [] }, id: \.self) { option in
+                        Button(option) { send("Answer to your question: \(option)") }.buttonStyle(.bordered).font(.caption)
+                    }
+                    HStack {
+                        TextField("Your answer", text: $answer).textFieldStyle(.roundedBorder)
+                        Button("Answer") { send("Answer to your question: \(answer)"); answer = "" }.disabled(answer.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
                 }
                 .padding(10).background(.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 10))
             }
@@ -79,11 +93,19 @@ struct DesignView: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Design change, e.g. increase the mounting hole diameter by 2 mm", text: $command, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-            Button {
-                let text = command
-                Task {
-                    if await sync.perform({ c, r in try await c.submitDesign(sessionId: r, text: text, origin: "text", meshReportId: nil, requestId: "txt-\(UUID().uuidString)") }) != nil { command = "" }
+            DisclosureGroup("Sizes to verify on the returned STEP (\(sizes.count))") {
+                ForEach($sizes) { $size in
+                    HStack {
+                        Picker("Side", selection: $size.check.axis) { ForEach(["longest", "middle", "shortest"], id: \.self) { Text($0) } }
+                        TextField("mm", value: $size.check.mm, format: .number).keyboardType(.decimalPad).textFieldStyle(.roundedBorder)
+                        TextField("± mm", value: $size.check.tolMm, format: .number).keyboardType(.decimalPad).textFieldStyle(.roundedBorder)
+                    }
                 }
+                if sizes.count < 3 { Button("Add a size") { sizes.append(SizeRow()) } }
+            }
+            .font(.caption)
+            Button {
+                send(command, checks: sizes.map(\.check).filter { $0.mm > 0 && $0.tolMm > 0 }) { command = ""; sizes = [] }
             } label: { Label("Send to Grain", systemImage: "paperplane.fill").frame(maxWidth: .infinity) }
             .buttonStyle(.borderedProminent).tint(.mint)
             .disabled(command.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -99,11 +121,22 @@ struct DesignView: View {
                         .foregroundStyle(cmd.status == "succeeded" ? .mint : ["failed", "uncertain"].contains(cmd.status) ? .orange : .secondary)
                     Text(cmd.text).font(.caption).lineLimit(5)
                     if let job = sync.snapshot?.jobs.first(where: { $0.id == cmd.jobId }) { JobStatusLine(job: job) }
+                    if cmd.status == "uncertain" {
+                        // The turn may have reached Grain; its chat is shown above. Send again only if it isn't there.
+                        Button("Not in Grain's chat? Send again") { send(cmd.text) }.font(.caption)
+                    }
                 }
                 Divider()
             }
         }
         .padding(18).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func send(_ text: String, checks: [BridgeClient.DimensionCheck] = [], then done: @escaping () -> Void = {}) {
+        Task {
+            if await sync.perform({ c, r in try await c.submitDesign(sessionId: r, text: text, origin: "text", meshReportId: nil,
+                                                                  requestId: "txt-\(UUID().uuidString)", checks: checks) }) != nil { done() }
+        }
     }
 
     private var versionsCard: some View {
@@ -141,6 +174,10 @@ private struct VersionDetail: View {
                     Text(step.ok ? "Valid solid" : "Failed: \(step.error ?? "not a valid solid")").foregroundStyle(step.ok ? .mint : .orange)
                     if let bb = step.bbox_mm { Text("Box \(bb.map { $0.formatted(.number.precision(.fractionLength(1))) }.joined(separator: " × ")) mm") }
                     if let n = step.solids { Text("\(n) solid(s)") }
+                    ForEach(step.dimension_checks ?? [], id: \.self) { d in
+                        Label("\(d.dimension): \(d.measured_mm.formatted()) mm (asked \(d.expected_mm.formatted()) ± \(d.tolerance_mm.formatted()))",
+                              systemImage: d.ok ? "checkmark" : "xmark").foregroundStyle(d.ok ? .mint : .orange)
+                    }
                 }
             }
             Section("Files (Lea's copy, \(manifest?.takenAt ?? ""))") {
@@ -170,6 +207,11 @@ private struct VersionDetail: View {
         try? data.write(to: url)
         shareURL = url
     }
+}
+
+private struct SizeRow: Identifiable {
+    let id = UUID()
+    var check = BridgeClient.DimensionCheck(axis: "longest", mm: 0, tolMm: 0.5)
 }
 
 struct IdentifiedURL: Identifiable { let url: URL; var id: String { url.path } }

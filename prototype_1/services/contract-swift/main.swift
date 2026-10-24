@@ -60,6 +60,10 @@ var seen = 0
 for try await event in client.events(sessionId: sid, after: 0) { seen += 1; if event.seq >= snap.lastSeq { break } }
 check("event stream replays from seq 0", seen >= 5, "\(seen) events")
 
+let sized = try await client.submitDesign(sessionId: sid, text: "bracket 80 mm long", origin: "text", meshReportId: nil, requestId: "swift-sized-1",
+                                          checks: [.init(axis: "longest", mm: 80, tolMm: 0.5)])
+check("design request carries its STEP dimension checks", sized.text == "bracket 80 mm long" && !sized.jobId.isEmpty)
+
 if let framePath = env["LEA_FRAME"] {
     let frame = try Data(contentsOf: URL(fileURLWithPath: framePath))
     let seen = try await client.look(sessionId: sid, frame: frame, subject: "fan connector", referenceAssetId: nil)

@@ -22,6 +22,7 @@ export interface ReducerArgs {
   record_voice_turn: Args<typeof logic.recordVoiceTurnImpl>;
   submit_design_command: Args<typeof logic.submitDesignCommandImpl>;
   record_design_version: Args<typeof logic.recordDesignVersionImpl>;
+  trim_events: Args<typeof logic.trimEventsImpl>;
 }
 export type ReducerName = keyof ReducerArgs;
 
@@ -33,7 +34,7 @@ export interface PolicyRow { id: string; sessionId: string; scaleAnchorLabel: st
 export interface JobRow { id: string; sessionId: string; kind: string; status: string; idempotencyKey: string; inputHash: string; inputJson: string; attempt: number; leaseOwner: string; leaseExpiresAt: Ts; progress: string; resultJson: string; error: string; createdAt: Ts; updatedAt: Ts }
 export interface MeshReportRow { id: string; sessionId: string; jobId: string; policyId: string; meshAssetId: string; reportAssetId: string; referenceMeshAssetId: string; engine: string; scaleFactor: number; measuredHoldoutMm: number; holdoutErrorMm: number; coverage: number; fitRmsMm: number; fitInlierShare: number; verdict: string; failedChecks: string[]; createdAt: Ts }
 export interface FindingRow { id: string; sessionId: string; subject: string; problem: string; source: string; state: string; evidenceAssetIds: string[]; referenceAssetId: string; meshReportId: string; regionJson: string; confidenceKind: string; confidenceText: string; detail: string; createdAt: Ts; updatedAt: Ts }
-export interface CheckRow { id: string; sessionId: string; findingId: string; purpose: string; instruction: string; safety: string; powerState: string; expectedMin?: number; expectedMax?: number; expectedUnit: string; expectedSource: string; outcome: string; observationAssetId: string; readingValue?: number; readingUnit: string; note: string; createdAt: Ts; updatedAt: Ts }
+export interface CheckRow { id: string; sessionId: string; findingId: string; purpose: string; instruction: string; safety: string; powerState: string; expectedMin?: number; expectedMax?: number; expectedUnit: string; expectedSource: string; outcome: string; observationAssetId: string; readingValue?: number; readingUnit: string; note: string; net: string; crossCheck: string; createdAt: Ts; updatedAt: Ts }
 export interface RepairRow { id: string; sessionId: string; findingId: string; action: string; verifyCheckId: string; result: string; createdAt: Ts; updatedAt: Ts }
 export interface VoiceTurnRow { id: string; sessionId: string; mode: string; transcript: string; replyText: string; audioAssetId: string; commandId: string; createdAt: Ts }
 export interface DesignCommandRow { id: string; sessionId: string; origin: string; text: string; meshReportId: string; idempotencyKey: string; jobId: string; grainProjectId: string; preVersionId: string; postVersionId: string; status: string; createdAt: Ts; updatedAt: Ts }

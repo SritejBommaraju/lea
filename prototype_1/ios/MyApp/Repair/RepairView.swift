@@ -13,6 +13,12 @@ struct RepairView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if let report = sync.snapshot?.meshReports.max(by: { $0.createdAt < $1.createdAt }) {
+                        NavigationLink { ModelView(reportId: report.id) } label: {
+                            Label("View the 3D scan\(report.passed ? "" : " (failed its checks: visual only)")", systemImage: "cube.transparent").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
                     compareCard
                     if let snap = sync.snapshot {
                         if snap.findings.isEmpty {

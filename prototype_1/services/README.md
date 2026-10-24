@@ -58,7 +58,7 @@ None of these is the live SpacetimeDB server, a real photo reconstruction, or th
 
 1. Install SpacetimeDB (official installer): `curl -sSf https://install.spacetimedb.com | sh`, then `spacetime version install 2.13.0 && spacetime version use 2.13.0`.
 2. `spacetime start` (leave running), then `cd module && spacetime publish --server local lea`.
-3. `cd bridge && npm run generate` (writes `src/module_bindings`).
+3. (No codegen: the bridge builds its client schema from `module/src/shapes.ts`.)
 4. `cp .env.example .env` and fill in the keys you have. Grain's design agent is configured on the Grain side (ask Sritej for the service URL and key).
 5. `cd bridge && npm start` (first run creates the bridge identity), stop it, run `npm run authorize`, then start it again.
 6. `npm run pair "iPhone"`. In Lea: Session → gear → the bridge URL it prints plus the token.

@@ -141,7 +141,7 @@ describe('mesh gate', () => {
     })).toThrow(/cannot drive diagnosis or CAD/);
     call(BRIDGE, mod.linkGrainProjectImpl, { sessionId: 's1', grainProjectId: 'abcdef012345' });
     expect(() => call(BRIDGE, mod.submitDesignCommandImpl, {
-      id: 'c1', sessionId: 's1', origin: 'auto', text: 'bracket', meshReportId: 'r1', idempotencyKey: 'auto-r1', jobId: 'dj1', inputHash: hex('1'),
+      id: 'c1', sessionId: 's1', origin: 'auto', text: 'bracket', meshReportId: 'r1', idempotencyKey: 'auto-r1', jobId: 'dj1', inputHash: hex('1'), checksJson: '',
     })).toThrow(/cannot drive diagnosis or CAD/);
   });
 
@@ -163,7 +163,7 @@ describe('mesh gate', () => {
     expect(h.db.meshReport.id.find('r1')!.verdict).toBe('pass');
     expect(h.db.job.id.find('j1')!.status).toBe('succeeded');
     call(BRIDGE, mod.linkGrainProjectImpl, { sessionId: 's1', grainProjectId: 'abcdef012345' });
-    const cmd = { id: 'c1', sessionId: 's1', origin: 'auto', text: 'bracket', meshReportId: 'r1', idempotencyKey: 'auto-r1', jobId: 'dj1', inputHash: hex('1') };
+    const cmd = { id: 'c1', sessionId: 's1', origin: 'auto', text: 'bracket', meshReportId: 'r1', idempotencyKey: 'auto-r1', jobId: 'dj1', inputHash: hex('1'), checksJson: '' };
     call(BRIDGE, mod.submitDesignCommandImpl, cmd);
     call(BRIDGE, mod.submitDesignCommandImpl, cmd);  // retry after a timeout: same row
     expect([...h.db.designCommand.iter()]).toHaveLength(1);
@@ -182,7 +182,7 @@ describe('repair evidence', () => {
   }
   const check = (over: object = {}) => ({
     id: 'k1', sessionId: 's1', findingId: 'f1', purpose: 'diagnose', instruction: 'Measure fan supply', safety: 'Battery only, 5 V max',
-    powerState: 'on_low_voltage', expectedMin: 4.75, expectedMax: 5.25, expectedUnit: 'V', expectedSource: 'fan datasheet', ...over,
+    powerState: 'on_low_voltage', expectedMin: 4.75, expectedMax: 5.25, expectedUnit: 'V', expectedSource: 'fan datasheet', net: '', ...over,
   });
 
   it('requires a saved reference and evidence for every finding', () => {
@@ -196,15 +196,22 @@ describe('repair evidence', () => {
   it('judges a reading against the sourced range in code, overriding the tap', () => {
     findingReady();
     call(BRIDGE, mod.addRepairCheckImpl, check());
-    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'k1', observed: 'as_expected', observationAssetId: '', readingValue: 0.2, readingUnit: 'V', note: '' });
+    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'k1', observed: 'as_expected', observationAssetId: '', readingValue: 0.2, readingUnit: 'V', note: '', crossCheck: '' });
     expect(h.db.repairCheck.id.find('k1')!.outcome).toBe('not_as_expected');
     expect(h.db.finding.id.find('f1')!.state).toBe('confirmed');
+  });
+
+  it('keeps Grain\'s cross-check beside the code verdict without changing it', () => {
+    findingReady();
+    call(BRIDGE, mod.addRepairCheckImpl, check({ net: 'VBAT' }));
+    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'k1', observed: 'as_expected', observationAssetId: '', readingValue: 5.0, readingUnit: 'V', note: '', crossCheck: '{"verdict":"off"}' });
+    expect(h.db.repairCheck.id.find('k1')).toMatchObject({ outcome: 'as_expected', net: 'VBAT', crossCheck: '{"verdict":"off"}' });
   });
 
   it('keeps a check without evidence unverified', () => {
     findingReady();
     call(BRIDGE, mod.addRepairCheckImpl, check({ expectedMin: undefined, expectedMax: undefined, expectedUnit: '', expectedSource: '' }));
-    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'k1', observed: 'not_as_expected', observationAssetId: '', readingValue: undefined, readingUnit: '', note: 'looked loose' });
+    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'k1', observed: 'not_as_expected', observationAssetId: '', readingValue: undefined, readingUnit: '', note: 'looked loose', crossCheck: '' });
     expect(h.db.repairCheck.id.find('k1')!.outcome).toBe('unverified');
     expect(h.db.finding.id.find('f1')!.state).toBe('unverified');
   });
@@ -218,7 +225,7 @@ describe('repair evidence', () => {
     findingReady();
     call(BRIDGE, mod.addRepairCheckImpl, check({ id: 'v1', purpose: 'verify_repair' }));
     call(BRIDGE, mod.recordRepairAttemptImpl, { id: 'rep1', sessionId: 's1', findingId: 'f1', action: 'Reseat connector', verifyCheckId: 'v1' });
-    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'v1', observed: 'as_expected', observationAssetId: '', readingValue: 5.02, readingUnit: 'V', note: '' });
+    call(BRIDGE, mod.recordCheckOutcomeImpl, { checkId: 'v1', observed: 'as_expected', observationAssetId: '', readingValue: 5.02, readingUnit: 'V', note: '', crossCheck: '' });
     expect(h.db.repairAttempt.id.find('rep1')!.result).toBe('fixed_verified');
   });
 });
@@ -230,7 +237,7 @@ describe('design versions', () => {
     call(BRIDGE, mod.recordDesignVersionImpl, { id: 'v0', sessionId: 's1', commandId: '', phase: 'baseline', manifestAssetId: 'm0', fileCount: 3, buildOk: true, jobId: '', attempt: 0 });
     expect(h.db.repairSession.id.find('s1')!.activeDesignVersionId).toBe('v0');
 
-    call(BRIDGE, mod.submitDesignCommandImpl, { id: 'c1', sessionId: 's1', origin: 'voice', text: 'widen slot by 2 mm', meshReportId: '', idempotencyKey: 'voice-t1', jobId: 'dj1', inputHash: hex('1') });
+    call(BRIDGE, mod.submitDesignCommandImpl, { id: 'c1', sessionId: 's1', origin: 'voice', text: 'widen slot by 2 mm', meshReportId: '', idempotencyKey: 'voice-t1', jobId: 'dj1', inputHash: hex('1'), checksJson: '' });
     call(BRIDGE, mod.claimJobImpl, { jobId: 'dj1', worker: 'grain', leaseSeconds: 600 });
     asset('m1', 'design_snapshot', '1');
     asset('m2', 'design_snapshot', '2');
@@ -244,13 +251,33 @@ describe('design versions', () => {
 
   it('marks a turn that ended in a Grain question as needs_user, not failed', () => {
     call(BRIDGE, mod.linkGrainProjectImpl, { sessionId: 's1', grainProjectId: 'abcdef012345' });
-    call(BRIDGE, mod.submitDesignCommandImpl, { id: 'c1', sessionId: 's1', origin: 'text', text: 'make a bracket', meshReportId: '', idempotencyKey: 'text-t1', jobId: 'dj1', inputHash: hex('1') });
+    call(BRIDGE, mod.submitDesignCommandImpl, { id: 'c1', sessionId: 's1', origin: 'text', text: 'make a bracket', meshReportId: '', idempotencyKey: 'text-t1', jobId: 'dj1', inputHash: hex('1'), checksJson: '' });
     call(BRIDGE, mod.claimJobImpl, { jobId: 'dj1', worker: 'grain', leaseSeconds: 600 });
     asset('m1', 'design_snapshot', '1');
     asset('m2', 'design_snapshot', '2');
     call(BRIDGE, mod.recordDesignVersionImpl, { id: 'v1', sessionId: 's1', commandId: 'c1', phase: 'pre', manifestAssetId: 'm1', fileCount: 0, buildOk: undefined, jobId: 'dj1', attempt: 1 });
     call(BRIDGE, mod.recordDesignVersionImpl, { id: 'v2', sessionId: 's1', commandId: 'c1', phase: 'post', manifestAssetId: 'm2', fileCount: 0, buildOk: undefined, jobId: 'dj1', attempt: 1 });
     expect(h.db.designCommand.id.find('c1')!.status).toBe('needs_user');
+  });
+
+  it('keeps the dimensions a design must meet with its job, and refuses bad ones', () => {
+    call(BRIDGE, mod.linkGrainProjectImpl, { sessionId: 's1', grainProjectId: 'abcdef012345' });
+    const cmd = { id: 'c1', sessionId: 's1', origin: 'text', text: 'bracket 80 mm long', meshReportId: '', idempotencyKey: 'text-dims', jobId: 'dj1', inputHash: hex('1') };
+    expect(() => call(BRIDGE, mod.submitDesignCommandImpl, { ...cmd, checksJson: '[{"axis":"widest","mm":80,"tolMm":0.5}]' })).toThrow(/dimension must be one of/);
+    call(BRIDGE, mod.submitDesignCommandImpl, { ...cmd, checksJson: '[{"axis":"longest","mm":80,"tolMm":0.5}]' });
+    expect(JSON.parse(h.db.job.id.find('dj1')!.inputJson).checks).toEqual([{ axis: 'longest', mm: 80, tolMm: 0.5 }]);
+  });
+
+  it('trims old events only', () => {
+    const before = [...h.db.sessionEvent.iter()].length;
+    const cut = new (h.clock.now().constructor as any)(h.clock.now().microsSinceUnixEpoch + 1n);
+    h.clock.set(new (h.clock.now().constructor as any)(h.clock.now().microsSinceUnixEpoch + 10_000_000n));
+    call(BRIDGE, mod.createSessionImpl, { id: 's2', title: 'later' });
+    call(BRIDGE, mod.trimEventsImpl, { before: cut });
+    const left = [...h.db.sessionEvent.iter()];
+    expect(before).toBeGreaterThan(0);
+    expect(left.map(e => e.sessionId)).toEqual(['s2']);
+    expect(() => call(STRANGER, mod.trimEventsImpl, { before: cut })).toThrow(/not an authorized bridge/);
   });
 
   it('records only final voice turns', () => {

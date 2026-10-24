@@ -46,7 +46,7 @@ export function asksForDesign(transcript: string): boolean {
 }
 
 export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore }, sessionId: string, turnId: string, transcript: string, frameJpeg: Buffer | undefined,
-  client = new Anthropic()): Promise<AgentTurn> {
+  focusFindingId?: string, client = new Anthropic()): Promise<AgentTurn> {
   const { store } = deps;
   const actions: ClientAction[] = [];
   const frame = frameJpeg ? await prepareFrame(frameJpeg).catch(() => undefined) : undefined;
@@ -135,6 +135,7 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
             expectedMin: continuity ? (conducts ? 0 : 5) : undefined, expectedMax: continuity && conducts ? 4.99 : undefined,
             expectedUnit: continuity ? 'ohm' : '',
             expectedSource: continuity ? (conducts ? 'healthy connection conducts: under 5 ohm' : 'healthy gap is open: 5 ohm or more') : '',
+            net: '',
           });
           actions.push({ type: 'screen', screen: 'repair' });
           return 'Check added; it is on the Repair screen.';
@@ -144,8 +145,12 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
     betaZodTool({
       name: 'design_solution',
       description: 'Send a measured design request to Grain for a replacement or fix, built from the validated scan: its measured envelope, fitted planes, holes and cylinders, and the regions that differ from the reference. Typing in Design still works for edits.',
-      inputSchema: z.object({ objective: z.string().describe('what the part must do, in the person\'s words, e.g. "a bracket holding the fan 10 mm above the base"') }),
-      run: async ({ objective }) => {
+      inputSchema: z.object({
+        objective: z.string().describe('what the part must do, in the person\'s words, e.g. "a bracket holding the fan 10 mm above the base"'),
+        dimensions: z.array(z.object({ axis: z.enum(['longest', 'middle', 'shortest']), mm: z.number(), tolMm: z.number() }))
+          .describe('overall sizes the person stated for the new part, checked on the returned STEP; empty if none were stated'),
+      }),
+      run: async ({ objective, dimensions }) => {
         if (!asksForDesign(transcript)) return 'Not sent: the person has not asked for a design. Ask whether they want one.';
         const s = snap();
         if (!s.session.grainProjectId) return 'Not sent: no Grain project is linked. Ask them to link one on the Design screen.';
@@ -155,7 +160,7 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
           const text = await featureSpec(deps, report, objective);
           await store.call('submit_design_command', {
             id: newId('dc'), sessionId, origin: 'voice', text, meshReportId: report.id,
-            idempotencyKey: `agent:${turnId}:solution`, jobId: newId('jb'), inputHash: sha256Hex(text),
+            idempotencyKey: `agent:${turnId}:solution`, jobId: newId('jb'), inputHash: sha256Hex(text), checksJson: dimensions?.length ? JSON.stringify(dimensions) : '',
           });
           actions.push({ type: 'screen', screen: 'design' });
           return 'Sent to Grain with the measured spec; the Design screen shows it live, and the design is saved before and after.';
@@ -171,7 +176,7 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
         try {
           await store.call('submit_design_command', {
             id: newId('dc'), sessionId, origin: 'voice', text: change, meshReportId: '',
-            idempotencyKey: `agent:${turnId}:change`, jobId: newId('jb'), inputHash: sha256Hex(change),
+            idempotencyKey: `agent:${turnId}:change`, jobId: newId('jb'), inputHash: sha256Hex(change), checksJson: '',
           });
           actions.push({ type: 'screen', screen: 'design' });
           return 'Sent to Grain.';
@@ -187,6 +192,8 @@ export async function runAgentTurn(deps: { store: StateStore; assets: AssetStore
   ]);
   const content: Anthropic.Beta.BetaContentBlockParam[] = [];
   if (frame) content.push({ type: 'text', text: 'Current camera frame:' }, { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: frame.toString('base64') } });
+  const focus = focusFindingId ? snap().findings.find(f => f.id === focusFindingId) : undefined;
+  if (focus) content.push({ type: 'text', text: `The person selected this candidate on the 3D model: ${focus.subject}, ${focus.problem} (finding ${focus.id}, ${focus.state}). ${focus.detail}` });
   content.push({ type: 'text', text: transcript });
 
   const final = await client.beta.messages.toolRunner({

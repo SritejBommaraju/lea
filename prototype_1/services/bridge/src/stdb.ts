@@ -1,17 +1,34 @@
-// StateStore backed by a live SpacetimeDB through the official TypeScript SDK and the bindings that
-// `npm run generate` (spacetime generate) writes to src/module_bindings. The bridge keeps its identity
-// token on disk; an admin authorizes that identity once with `npm run authorize`.
+// StateStore backed by a live SpacetimeDB through the official TypeScript SDK. The client schema is built from the
+// module's own shapes (module/src/shapes.ts) the same way generated bindings are, so table names, view names and
+// reducer arguments match the module by construction. The bridge keeps its identity token on disk; an admin
+// authorizes that identity once with `npm run authorize`.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { DbConnectionBuilder, DbConnectionImpl, procedures, reducerSchema, reducers, schema, t, table } from 'spacetimedb';
+import { reducerParams, rowShapes } from '../../module/src/shapes';
 import { config } from './config';
 import { type EventRow, ReducerError, type ReducerArgs, type ReducerName, type StateStore, type Tables } from './state';
 
-const VIEWS: Record<keyof Tables, string> = {
-  sessions: 'bridge_sessions', assets: 'bridge_assets', policies: 'bridge_policies', jobs: 'bridge_jobs',
-  meshReports: 'bridge_mesh_reports', findings: 'bridge_findings', checks: 'bridge_checks', repairs: 'bridge_repairs',
-  voiceTurns: 'bridge_voice_turns', designCommands: 'bridge_design_commands', designVersions: 'bridge_design_versions', events: 'bridge_events',
-};
-const camel = (s: string) => s.replace(/_(\w)/g, (_, c: string) => c.toUpperCase());
+const R = rowShapes(t);
+// Each bridge_* view returns rows of one base table; the client sees the view as a table of that row shape.
+const VIEWS = {
+  sessions: ['bridge_sessions', R.repairSession], assets: ['bridge_assets', R.asset], policies: ['bridge_policies', R.qaPolicy],
+  jobs: ['bridge_jobs', R.job], meshReports: ['bridge_mesh_reports', R.meshReport], findings: ['bridge_findings', R.finding],
+  checks: ['bridge_checks', R.repairCheck], repairs: ['bridge_repairs', R.repairAttempt], voiceTurns: ['bridge_voice_turns', R.voiceTurn],
+  designCommands: ['bridge_design_commands', R.designCommand], designVersions: ['bridge_design_versions', R.designVersion],
+  events: ['bridge_events', R.sessionEvent],
+} as const;
+
+export function remoteModule() {
+  const tables = schema(Object.fromEntries(Object.entries(VIEWS).map(([key, [name, row]]) => [key, table({ name }, row as any)])) as any);
+  const reducerDefs = reducers(...Object.entries(reducerParams(t)).map(([name, params]) => reducerSchema(name, params as any)));
+  return {
+    versionInfo: { cliVersion: '2.13.0' as const },
+    tables: tables.schemaType.tables,
+    reducers: reducerDefs.reducersType.reducers,
+    ...procedures(),
+  };
+}
 
 export class SpacetimeStore implements StateStore {
   connected = false;
@@ -27,30 +44,27 @@ export class SpacetimeStore implements StateStore {
   }
 
   private async open() {
-    const bindings = './module_bindings/index';
-    const { DbConnection } = await import(bindings).catch(() => {
-      throw new Error('SpacetimeDB bindings are missing: run `npm run generate` after installing the spacetime CLI');
-    });
     const saved = existsSync(this.tokenFile) ? JSON.parse(readFileSync(this.tokenFile, 'utf8')).token : undefined;
+    const save = (token: string) => {
+      mkdirSync(config.dataDir, { recursive: true });
+      writeFileSync(this.tokenFile, JSON.stringify({ identity: this.identityHex, token }), { mode: 0o600 });
+    };
     await new Promise<void>((resolve, reject) => {
-      let builder = DbConnection.builder()
+      let builder: any = new DbConnectionBuilder(remoteModule() as any, (c: any) => new DbConnectionImpl(c))
         .withUri(config.stdbUri)
         .withDatabaseName(config.stdbDatabase)
         .withConfirmedReads(true)  // acknowledge the phone only after durable commit
         .withAutomaticReconnect()
         .onConnect((conn: any, identity: any, token: string) => {
           this.identityHex = identity.toHexString();
-          mkdirSync(config.dataDir, { recursive: true });
-          writeFileSync(this.tokenFile, JSON.stringify({ identity: this.identityHex, token }), { mode: 0o600 });
-          conn.db[camel(VIEWS.events)].onInsert((_ctx: unknown, row: EventRow) => this.listeners.forEach(l => l(row)));
+          save(token);
+          conn.db.events.onInsert((_ctx: unknown, row: EventRow) => this.listeners.forEach(l => l(row)));
           conn.subscriptionBuilder()
             .onApplied(() => { this.connected = true; resolve(); })
             .onError((_ctx: unknown, err: unknown) => reject(err))
-            .subscribe(Object.values(VIEWS).map(v => `SELECT * FROM ${v}`));
+            .subscribe(Object.values(VIEWS).map(([name]) => `SELECT * FROM ${name}`));
         })
-        .onAutomaticReconnect((_conn: any, _identity: any, token: string) => {
-          writeFileSync(this.tokenFile, JSON.stringify({ identity: this.identityHex, token }), { mode: 0o600 });
-        })
+        .onAutomaticReconnect((_conn: any, _identity: any, token: string) => save(token))
         .onDisconnect(() => { this.connected = false; })
         .onConnectError((_ctx: unknown, err: unknown) => reject(err));
       if (saved) builder = builder.withToken(saved);
@@ -60,7 +74,7 @@ export class SpacetimeStore implements StateStore {
 
   async call<R extends ReducerName>(name: R, args: ReducerArgs[R]): Promise<void> {
     const fn = this.conn.reducers[camel(name)];
-    if (typeof fn !== 'function') throw new ReducerError(`reducer ${name} is not in the generated bindings`);
+    if (typeof fn !== 'function') throw new ReducerError(`reducer ${name} is not in the client schema`);
     try {
       await fn.call(this.conn.reducers, args);
     } catch (e) {
@@ -70,7 +84,7 @@ export class SpacetimeStore implements StateStore {
 
   read(): Tables {
     const out = {} as Tables;
-    for (const [key, view] of Object.entries(VIEWS)) (out as any)[key] = [...this.conn.db[camel(view)].iter()];
+    for (const key of Object.keys(VIEWS)) (out as any)[key] = [...this.conn.db[key].iter()];
     return out;
   }
 
@@ -79,3 +93,5 @@ export class SpacetimeStore implements StateStore {
     return () => this.listeners.delete(listener);
   }
 }
+
+const camel = (s: string) => s.replace(/_(\w)/g, (_, c: string) => c.toUpperCase());

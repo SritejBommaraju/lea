@@ -13,6 +13,7 @@ const IMPL: Record<ReducerName, (ctx: any, a: any) => void> = {
   record_mesh_report: logic.recordMeshReportImpl, record_finding: logic.recordFindingImpl, add_repair_check: logic.addRepairCheckImpl,
   record_check_outcome: logic.recordCheckOutcomeImpl, record_repair_attempt: logic.recordRepairAttemptImpl,
   record_voice_turn: logic.recordVoiceTurnImpl, submit_design_command: logic.submitDesignCommandImpl, record_design_version: logic.recordDesignVersionImpl,
+  trim_events: logic.trimEventsImpl,
 };
 
 export class HarnessStore implements StateStore {

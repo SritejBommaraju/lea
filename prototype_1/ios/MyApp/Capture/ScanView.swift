@@ -13,6 +13,8 @@ final class LeaActions: ObservableObject {
     @Published var scanning = false
     @Published var closeup: Closeup?
     @Published var whiteboard: Whiteboard?
+    /// A candidate the person tapped on the 3D model; sent with the next spoken turn.
+    @Published var focusFindingId: String?
     /// The live camera view as JPEG, while Capture is on screen; sent with a spoken turn so Lea can see it.
     var frameProvider: (() async -> Data?)?
 

@@ -119,6 +119,19 @@ describe('capture -> reconstruction -> QA gate -> candidates -> automatic CAD re
     for (const a of snap.assets.filter((x: any) => x.kind === 'photo_orbit')) expect(sha(readFileSync(assets.pathFor(a.sha256)))).toBe(a.sha256);
   });
 
+  it('serves the validated scan for the phone\'s 3D view, with its candidate regions', async () => {
+    const report = store.read().meshReports.find(r => r.sessionId === sid && r.verdict === 'pass')!;
+    const view = await api('GET', `/v1/sessions/${sid}/mesh-reports/${report.id}/view`);
+    expect(view.status).toBe(200);
+    const positions = new Float32Array(Buffer.from(view.json.positions, 'base64').buffer.slice(0));
+    const indices = new Uint32Array(Buffer.from(view.json.indices, 'base64').buffer.slice(0));
+    expect(positions.length).toBe(view.json.vertices * 3);
+    expect(indices.length).toBe(view.json.triangles * 3);
+    expect(Math.max(...indices)).toBeLessThan(view.json.vertices);
+    expect(view.json.regions.length).toBe(store.read().findings.filter(f => f.meshReportId === report.id && f.source === 'geometry').length);
+    expect(view.json.regions[0].centroid).toHaveLength(3);
+  });
+
   it('measures a model the phone built (guided scan) without rebuilding it', async () => {
     const t0 = store.read();
     const policy = t0.policies.find(p => p.sessionId === sid)!;
@@ -230,25 +243,89 @@ describe('agent tools', () => {
       return { stop_reason: 'end_turn', content: [{ type: 'text', text: `${text} [${results.join(' | ')}]` }] };
     } } } }) as any;
 
-    const scan = await runAgentTurn({ store, assets }, sid, 'vt_agent_1', 'Hey Leah, make a render of this for me', undefined, script([['start_scan', {}]], 'Opening the scan.'));
+    const scan = await runAgentTurn({ store, assets }, sid, 'vt_agent_1', 'Hey Leah, make a render of this for me', undefined, undefined, script([['start_scan', {}]], 'Opening the scan.'));
     expect(scan.actions).toEqual([{ type: 'scan' }]);
 
     const before = store.read().designCommands.length;
-    const idle = await runAgentTurn({ store, assets }, sid, 'vt_agent_2', 'what seems to be the issue here', undefined, script([['design_solution', { objective: 'x' }]], ''));
+    const idle = await runAgentTurn({ store, assets }, sid, 'vt_agent_2', 'what seems to be the issue here', undefined, undefined, script([['design_solution', { objective: 'x' }]], ''));
     expect(idle.reply).toMatch(/has not asked for a design/);
     expect(store.read().designCommands.length).toBe(before);
 
     const finding = store.read().findings.find(f => f.sessionId === sid)!;
-    const check = await runAgentTurn({ store, assets }, sid, 'vt_agent_3', 'how do I check that', undefined, script([['add_check', { finding_id: finding.id, kind: 'continuity_should_be_open', instruction: 'Probe pin 1 to pin 2' }]], ''));
+    const check = await runAgentTurn({ store, assets }, sid, 'vt_agent_3', 'how do I check that', undefined, undefined, script([['add_check', { finding_id: finding.id, kind: 'continuity_should_be_open', instruction: 'Probe pin 1 to pin 2' }]], ''));
     expect(check.actions).toEqual([{ type: 'screen', screen: 'repair' }]);
     expect(store.read().checks.at(-1)).toMatchObject({ expectedMin: 5, expectedUnit: 'ohm', powerState: 'off' });
 
-    const solve = await runAgentTurn({ store, assets }, sid, 'vt_agent_4', "Hey Leah, let's make a solution for this", undefined,
+    const solve = await runAgentTurn({ store, assets }, sid, 'vt_agent_4', "Hey Leah, let's make a solution for this", undefined, undefined,
       script([['design_solution', { objective: 'a bracket holding the fan 10 mm above the base' }]], ''));
     expect(solve.reply).toMatch(/Sent to Grain with the measured spec/);
     const spec = store.read().designCommands.at(-1)!;
     expect(spec.meshReportId).not.toBe('');
     expect(spec.text).toMatch(/Measured features/);
     expect(spec.text).toMatch(/Wall between planes .* 4\.0 mm thick|Plane 0: 80/);   // the synthetic bracket's 4 mm base / 80 mm plate
+  });
+});
+
+describe('SpacetimeDB client schema', () => {
+  it('lists exactly the module\'s reducers and bridge views, built from the same shapes', async () => {
+    const { remoteModule } = await import('../src/stdb');
+    const exported = Object.keys(await import('../../module/src/index'));
+    const m = remoteModule();
+    const reducerNames = (m.reducers as any[]).map(r => r.name).sort();
+    expect(reducerNames).toEqual(exported.filter(k => k !== 'default' && k !== 'init' && !k.startsWith('bridge_')).sort());
+    const tableNames = Object.values(m.tables as Record<string, any>).map(t => t.sourceName).sort();
+    expect(tableNames).toEqual(exported.filter(k => k.startsWith('bridge_')).sort());
+  });
+});
+
+describe('design snapshots', () => {
+  it('reuses unchanged Grain files and verifies requested STEP dimensions', async () => {
+    const { snapshot } = await import('../src/jobs/design');
+    const pid = (await grain.createProject('Lea snapshot test')).id;
+    await fetch(`${config.grainUrl}/projects/${pid}/files/src/DESIGN.md`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: '# bracket\n' }) });
+    // Placed where a Grain build writes its output (Grain's API only edits src/); a real build123d solid, 80 x 30 x 4 mm.
+    const projects = process.env.LEA_TEST_GRAIN_PROJECTS;
+    if (projects) {
+      execFileSync(config.stepPython, ['-c', `from build123d import Box, export_step; import os; os.makedirs(${JSON.stringify(path.join(projects, pid, 'out'))}, exist_ok=True); export_step(Box(80, 30, 4), ${JSON.stringify(path.join(projects, pid, 'out', 'model.step'))})`]);
+    }
+    await store.call('enqueue_job', { id: 'jb_snap', sessionId: sid, kind: 'design_turn', idempotencyKey: 'snapshot:test', inputHash: 'b'.repeat(64), inputJson: '{}' });
+    const lease = (await Lease.claim({ store, assets, workerId: 'test' }, store.read().jobs.find(j => j.id === 'jb_snap')!, 60))!;
+    let downloads = 0;
+    const counting = Object.assign(Object.create(grain), { file: (p: string, f: string) => { downloads++; return grain.file(p, f); } });
+    const first = await snapshot(counting, lease, pid, 'pre');
+    expect(downloads).toBe(first.manifest.files.length);
+    downloads = 0;
+    const second = await snapshot(counting, lease, pid, 'post', projects ? [{ axis: 'longest', mm: 80, tolMm: 0.1 }, { axis: 'shortest', mm: 5, tolMm: 0.1 }] : []);
+    expect(downloads).toBe(0);                                     // nothing changed, nothing downloaded again
+    expect(second.manifest.files.map(f => f.sha256)).toEqual(first.manifest.files.map(f => f.sha256));
+    if (projects) {
+      const step = second.manifest.stepCheck as any;
+      expect(step.solids).toBe(1);
+      expect(step.dimension_checks.map((c: any) => c.ok)).toEqual([true, false]);   // 80 mm met, 5 mm (actual 4) not
+      expect(step.ok).toBe(false);
+    }
+    lease.release();
+  });
+});
+
+describe('Grain design as the reference', () => {
+  it('pins the linked design\'s model.glb (mm) as the reference, once', async () => {
+    const s2 = `se_${randomUUID().slice(0, 8)}`;
+    await api('POST', '/v1/sessions', { id: s2, title: 'Grain reference' });
+    expect((await api('POST', `/v1/sessions/${s2}/reference-from-grain`)).status).toBe(409);   // nothing linked
+    const linked = await api('POST', `/v1/sessions/${s2}/grain`, { createName: 'Lea reference test' });
+    const pid = linked.json.session.grainProjectId;
+    const projects = process.env.LEA_TEST_GRAIN_PROJECTS;
+    if (!projects) {
+      expect((await api('POST', `/v1/sessions/${s2}/reference-from-grain`)).json.error.message).toMatch(/no built model/);
+      return;
+    }
+    // Placed where a Grain build writes model.glb: a real GLB with a node transform, 80 x 30 x 4 mm.
+    execFileSync(config.geometryPython, ['-c', `import trimesh, os; os.makedirs(${JSON.stringify(path.join(projects, pid, 'out'))}, exist_ok=True); s=trimesh.Scene(); s.add_geometry(trimesh.creation.box((80,30,4)), transform=trimesh.transformations.translation_matrix((10,0,0))); s.export(${JSON.stringify(path.join(projects, pid, 'out', 'model.glb'))})`]);
+    const pinned = await api('POST', `/v1/sessions/${s2}/reference-from-grain`);
+    expect(pinned.status).toBe(200);
+    const ref = pinned.json.assets.find((a: any) => a.id === pinned.json.session.referenceMeshAssetId);
+    expect(JSON.parse(ref.metaJson)).toMatchObject({ from: 'grain', unitsPerMm: '1', extension: 'ply' });
+    expect((await api('POST', `/v1/sessions/${s2}/reference-from-grain`)).status).toBe(409);   // already pinned
   });
 });

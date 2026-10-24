@@ -313,7 +313,7 @@ export function recordFindingImpl(ctx: Ctx, a: {
 
 export function addRepairCheckImpl(ctx: Ctx, a: {
   id: string; sessionId: string; findingId: string; purpose: string; instruction: string; safety: string; powerState: string;
-  expectedMin?: number; expectedMax?: number; expectedUnit: string; expectedSource: string;
+  expectedMin?: number; expectedMax?: number; expectedUnit: string; expectedSource: string; net: string;
 }) {
   requireBridge(ctx);
   requireId('check id', a.id);
@@ -327,8 +327,8 @@ export function addRepairCheckImpl(ctx: Ctx, a: {
   if (a.expectedUnit === 'ohm' && a.powerState !== 'off') fail('resistance and continuity are measured with power off');
   if (ctx.db.repairCheck.id.find(a.id)) return;
   ctx.db.repairCheck.insert({
-    ...a, expectedMin: a.expectedMin, expectedMax: a.expectedMax, outcome: 'pending', observationAssetId: '',
-    readingValue: undefined, readingUnit: '', note: '', createdAt: ctx.timestamp, updatedAt: ctx.timestamp,
+    ...a, net: a.net.slice(0, 100), expectedMin: a.expectedMin, expectedMax: a.expectedMax, outcome: 'pending', observationAssetId: '',
+    readingValue: undefined, readingUnit: '', note: '', crossCheck: '', createdAt: ctx.timestamp, updatedAt: ctx.timestamp,
   });
   emit(ctx, a.sessionId, 'repair_check', a.id);
 }
@@ -336,7 +336,7 @@ export function addRepairCheckImpl(ctx: Ctx, a: {
 /** Records what the person saw or measured. A numeric reading is judged here against the sourced range;
  *  without evidence or a range the outcome is `unverified`, whatever the person tapped. */
 export function recordCheckOutcomeImpl(ctx: Ctx, a: {
-  checkId: string; observed: string; observationAssetId: string; readingValue?: number; readingUnit: string; note: string;
+  checkId: string; observed: string; observationAssetId: string; readingValue?: number; readingUnit: string; note: string; crossCheck: string;
 }) {
   requireBridge(ctx);
   const c = ctx.db.repairCheck.id.find(a.checkId) ?? fail(`no check ${a.checkId}`);
@@ -360,7 +360,7 @@ export function recordCheckOutcomeImpl(ctx: Ctx, a: {
   }
   ctx.db.repairCheck.id.update({
     ...c, outcome, observationAssetId: a.observationAssetId, readingValue: a.readingValue, readingUnit: a.readingUnit,
-    note: a.note.slice(0, 2000), updatedAt: ctx.timestamp,
+    note: a.note.slice(0, 2000), crossCheck: a.crossCheck.slice(0, 2000), updatedAt: ctx.timestamp,
   });
 
   const f = ctx.db.finding.id.find(c.findingId);
@@ -407,6 +407,7 @@ export function recordVoiceTurnImpl(ctx: Ctx, a: { id: string; sessionId: string
 
 export function submitDesignCommandImpl(ctx: Ctx, a: {
   id: string; sessionId: string; origin: string; text: string; meshReportId: string; idempotencyKey: string; jobId: string; inputHash: string;
+  checksJson: string;
 }) {
   requireBridge(ctx);
   requireId('command id', a.id);
@@ -429,7 +430,7 @@ export function submitDesignCommandImpl(ctx: Ctx, a: {
   }
   insertJob(ctx, {
     id: a.jobId, sessionId: a.sessionId, kind: 'design_turn', idempotencyKey: `job:${a.idempotencyKey}`,
-    inputHash: a.inputHash, inputJson: JSON.stringify({ commandId: a.id }),
+    inputHash: a.inputHash, inputJson: JSON.stringify({ commandId: a.id, checks: designChecks(a.checksJson) }),
   });
   ctx.db.designCommand.insert({
     id: a.id, sessionId: a.sessionId, origin, text: a.text, meshReportId: a.meshReportId, idempotencyKey: a.idempotencyKey,
@@ -437,6 +438,20 @@ export function submitDesignCommandImpl(ctx: Ctx, a: {
     createdAt: ctx.timestamp, updatedAt: ctx.timestamp,
   });
   emit(ctx, a.sessionId, 'design_command', a.id);
+}
+
+/** Dimensions the returned STEP must meet: [{axis: longest|middle|shortest, mm, tolMm}], at most 6. */
+function designChecks(json: string) {
+  if (!json) return [];
+  let list: unknown;
+  try { list = JSON.parse(json); } catch { fail('checksJson is not JSON'); }
+  if (!Array.isArray(list) || list.length > 6) fail('checksJson must be a list of at most 6 dimensions');
+  return list.map((c: any) => {
+    oneOf('dimension', String(c?.axis), ['longest', 'middle', 'shortest'] as const);
+    finite('dimension mm', Number(c.mm), true);
+    finite('dimension tolerance', Number(c.tolMm), true);
+    return { axis: c.axis, mm: Number(c.mm), tolMm: Number(c.tolMm) };
+  });
 }
 
 export function recordDesignVersionImpl(ctx: Ctx, a: {
@@ -476,3 +491,11 @@ export function recordDesignVersionImpl(ctx: Ctx, a: {
   emit(ctx, a.sessionId, 'design_version', a.id);
 }
 
+
+/** Keeps the event log bounded. Replay after a gap is still safe: the phone refetches the whole snapshot. */
+export function trimEventsImpl(ctx: Ctx, a: { before: Timestamp }) {
+  requireBridge(ctx);
+  for (const e of [...ctx.db.sessionEvent.iter()]) {
+    if (e.at.microsSinceUnixEpoch < a.before.microsSinceUnixEpoch) ctx.db.sessionEvent.seq.delete(e.seq);
+  }
+}

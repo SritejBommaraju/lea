@@ -25,7 +25,7 @@ export class GrainClient {
     return { ...(this.key ? { Authorization: `Bearer ${this.key}` } : {}), ...extra };
   }
 
-  private async request(method: string, path: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<Response> {
+  private async request(method: string, path: string, body?: unknown, timeoutMs = this.timeoutMs, retried = false): Promise<Response> {
     let res: Response;
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
@@ -33,8 +33,11 @@ export class GrainClient {
         body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
-      // The request may or may not have reached Grain; callers must not blindly retry side effects.
-      throw new GrainError(0, `Grain unreachable at ${this.baseUrl}: ${(e as Error).message}`, true);
+      const code = (e as { cause?: { code?: string } }).cause?.code;
+      // A kept-alive connection the server had already closed: a read is safe to ask once more on a fresh one.
+      if (method === 'GET' && !retried && (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET')) return this.request(method, path, body, timeoutMs, true);
+      // Otherwise the request may or may not have reached Grain; callers must not blindly retry side effects.
+      throw new GrainError(0, `Grain unreachable at ${this.baseUrl}: ${(e as Error).message}${code ? ` (${code})` : ''}`, true);
     }
     if (!res.ok) {
       let detail = res.statusText;
@@ -62,6 +65,16 @@ export class GrainClient {
   /** Starts a detached design turn. 409 means another turn is running (nothing was started). */
   chat(pid: string, message: string) {
     return this.json<{ started: boolean; id: string; model: string }>('POST', `/projects/${enc(pid)}/chat`, { message, detach: true });
+  }
+
+  /** The design's nets and expected voltages ({NET: {volts, min, max, from}}), when the design has them. */
+  electrical(pid: string) {
+    return this.json<{ nets: { name: string; pins: string[] }[]; expected_volts: Record<string, { volts: number; min: number; max: number; from: string }> }>('GET', `/projects/${enc(pid)}/electrical`);
+  }
+
+  /** Grain's own judgement of readings against its design; advisory, stateless. */
+  electricalCheck(pid: string, readings: { net: string; volts: number }[]) {
+    return this.json<{ status: string; readings: Record<string, unknown>[]; findings: { severity: string; text: string }[] }>('POST', `/projects/${enc(pid)}/electrical/check`, { readings });
   }
 
   /** Grain's live event stream for a project, as raw SSE bytes. */

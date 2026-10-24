@@ -209,10 +209,12 @@ nonisolated struct DesignSnapshotManifest: Codable, Sendable {
         var id: String { path }
     }
     struct StepCheck: Codable, Sendable {
+        struct Dimension: Codable, Sendable, Hashable { let dimension: String; let expected_mm: Double; let tolerance_mm: Double; let measured_mm: Double; let ok: Bool }
         let ok: Bool
         let solids: Int?
         let valid: Bool?
         let bbox_mm: [Double]?
+        let dimension_checks: [Dimension]?
         let error: String?
     }
     let grainProjectId: String
@@ -220,6 +222,23 @@ nonisolated struct DesignSnapshotManifest: Codable, Sendable {
     let takenAt: String
     let files: [Entry]
     let stepCheck: StepCheck?
+}
+
+/// The validated scan for the 3D view (bridge mesh-reports/:id/view): float32 xyz in mm and uint32 triangles, base64.
+nonisolated struct MeshView: Codable, Sendable {
+    struct Region: Codable, Sendable { let findingId: String; let kind: String; let centroid: [Double]; let extent: [Double] }
+    let units: String
+    let verdict: String
+    let vertices: Int
+    let triangles: Int
+    let positions: String
+    let indices: String
+    let regions: [Region]
+}
+
+nonisolated struct GrainNets: Codable, Sendable {
+    struct Net: Codable, Sendable, Hashable { let net: String; let min: Double; let max: Double; let source: String }
+    let nets: [Net]
 }
 
 nonisolated struct CartesiaGrant: Codable, Sendable {

@@ -30,8 +30,9 @@ final class VoiceCoordinator: ObservableObject {
     var wakeDetector: WakeWordDetector?
     var wakeAvailable: Bool { wakeDetector != nil }
 
-    private let engine = AVAudioEngine()
-    private let player = AVAudioPlayerNode()
+    private var engine = AVAudioEngine()
+    private var player = AVAudioPlayerNode()
+    private var observers: [NSObjectProtocol] = []
     private let pipe = AudioPipe()
     private var input: SpeechInput?
     private var output: SpeechOutput = SystemVoiceOutput()
@@ -53,6 +54,58 @@ final class VoiceCoordinator: ObservableObject {
     func attach(_ sync: SessionSync, actions: LeaActions) {
         self.sync = sync
         self.actions = actions
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+        let session = AVAudioSession.sharedInstance()
+        observers = [
+            center.addObserver(forName: AVAudioSession.interruptionNotification, object: session, queue: .main) { [weak self] note in
+                let began = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) == AVAudioSession.InterruptionType.began.rawValue
+                MainActor.assumeIsolated { self?.audioInterrupted(began: began) }
+            },
+            center.addObserver(forName: AVAudioSession.routeChangeNotification, object: session, queue: .main) { [weak self] note in
+                let reason = AVAudioSession.RouteChangeReason(rawValue: note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt ?? 0)
+                // A different microphone or speaker can change the input format the tap was built for.
+                guard reason == .newDeviceAvailable || reason == .oldDeviceUnavailable else { return }
+                MainActor.assumeIsolated { self?.restartAudio(rebuild: false) }
+            },
+            center.addObserver(forName: AVAudioSession.mediaServicesWereResetNotification, object: session, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.restartAudio(rebuild: true) }
+            },
+        ]
+    }
+
+    /// A call, Siri or an alarm took the audio: stop cleanly; when it ends, pick up listening as it was.
+    private func audioInterrupted(began: Bool) {
+        if began {
+            turn += 1
+            _ = output.stop()
+            speaking?.cancel()
+            input?.cancel()
+            input = nil
+            pipe.input = nil
+            state = .idle
+        } else {
+            restartAudio(rebuild: false)
+        }
+    }
+
+    /// Rebuilds the mic tap for the current route (or the whole engine after a media-services reset), then resumes
+    /// hands-free or "Hey Leah" if either was on. A turn in progress is dropped rather than resumed half-heard.
+    private func restartAudio(rebuild: Bool) {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        input?.cancel()
+        input = nil
+        pipe.input = nil
+        if rebuild {
+            engine = AVAudioEngine()
+            player = AVAudioPlayerNode()
+            output = SystemVoiceOutput()
+            grant = nil
+        }
+        if state != .speaking { state = .idle }
+        if handsFree { Task { await listen(open: true) } }
+        else if wakeOn { do { try startEngine(); pipe.wake = wakeDetector } catch { wakeOn = false; message = error.localizedDescription } }
     }
 
     /// One whiteboard line: waits for Lea to finish speaking, then says it (stops early if interrupted).
@@ -219,7 +272,8 @@ final class VoiceCoordinator: ObservableObject {
         let mode = turnMode
         let sync = sync
         let frame = await actions?.frameProvider?()
-        let reply = Task { await sync?.perform { client, remote in try await client.recordVoiceTurn(sessionId: remote, id: id, mode: mode, transcript: text, frame: frame) } }
+        let focus = actions?.focusFindingId
+        let reply = Task { await sync?.perform { client, remote in try await client.recordVoiceTurn(sessionId: remote, id: id, mode: mode, transcript: text, frame: frame, focus: focus) } }
         let reaction = TurnTaking.reaction(for: text, recent: recentReactions)
         if let reaction {
             recentReactions.append(reaction)

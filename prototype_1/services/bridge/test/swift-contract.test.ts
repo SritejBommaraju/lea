@@ -29,13 +29,16 @@ it.skipIf(!existsSync(binary))('the Swift client decodes every bridge response i
   execFileSync(config.geometryPython, ['-c', `import numpy as np, open3d as o3d; o3d.io.write_image(${JSON.stringify(frame)}, o3d.geometry.Image((np.random.default_rng(2).random((900,700,3))*255).astype(np.uint8)))`]);
   const auth = new DeviceAuth(tmp);
   const token = auth.pair('swift contract');
-  const server = createApi({ store: new HarnessStore(), assets: new AssetStore(path.join(tmp, 'assets')), auth, grain: new GrainClient(config.grainUrl, config.grainKey) });
+  const store = new HarnessStore();
+  const server = createApi({ store, assets: new AssetStore(path.join(tmp, 'assets')), auth, grain: new GrainClient(config.grainUrl, config.grainKey) });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', () => r()));
   try {
     const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const { stdout } = await promisify(execFile)(binary, [], { env: { ...process.env, LEA_URL: url, LEA_TOKEN: token, LEA_SESSION: 'se_swift_contract', LEA_FRAME: frame } }).catch(e => ({ stdout: `${e.stdout}\n${e.stderr}` }));
     if (process.env.LEA_CONTRACT_LOG) (await import('node:fs')).writeFileSync(process.env.LEA_CONTRACT_LOG, stdout);
     expect(stdout).toContain('ALL PASS');
+    const job = store.read().jobs.find(j => j.idempotencyKey.endsWith(':swift-sized-1'));
+    expect(JSON.parse(job!.inputJson).checks).toEqual([{ axis: 'longest', mm: 80, tolMm: 0.5 }]);
   } finally {
     server.close();
     jev.close();

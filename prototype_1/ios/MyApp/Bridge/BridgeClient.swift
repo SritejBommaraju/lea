@@ -115,6 +115,10 @@ nonisolated final class BridgeClient: Sendable {
         try await send("POST", "/v1/sessions/\(sessionId)/reconstructions", request)
     }
 
+    func meshView(sessionId: String, reportId: String) async throws -> MeshView {
+        try await get("/v1/sessions/\(sessionId)/mesh-reports/\(reportId)/view")
+    }
+
     func compareCloseup(sessionId: String, closeupAssetId: String, referencePhotoAssetId: String, subject: String, requestId: String) async throws -> RemoteJob {
         try await send("POST", "/v1/sessions/\(sessionId)/closeup-comparisons", [
             "closeupAssetId": closeupAssetId, "referencePhotoAssetId": referencePhotoAssetId, "subject": subject, "requestId": requestId,
@@ -177,18 +181,31 @@ nonisolated final class BridgeClient: Sendable {
 
     func grainLive(sessionId: String) async throws -> GrainLive { try await get("/v1/sessions/\(sessionId)/grain") }
 
-    func submitDesign(sessionId: String, text: String, origin: String, meshReportId: String?, requestId: String) async throws -> DesignCommand {
-        var body = ["text": text, "origin": origin, "requestId": requestId]
-        if let meshReportId { body["meshReportId"] = meshReportId }
-        return try await send("POST", "/v1/sessions/\(sessionId)/design-commands", body)
+    /// A dimension the returned STEP must meet (checked on a re-imported solid).
+    struct DimensionCheck: Codable, Sendable, Hashable { var axis: String; var mm: Double; var tolMm: Double }
+
+    func submitDesign(sessionId: String, text: String, origin: String, meshReportId: String?, requestId: String, checks: [DimensionCheck] = []) async throws -> DesignCommand {
+        struct Body: Encodable { let text, origin, requestId: String; let meshReportId: String?; let checks: [DimensionCheck] }
+        return try await send("POST", "/v1/sessions/\(sessionId)/design-commands",
+                              Body(text: text, origin: origin, requestId: requestId, meshReportId: meshReportId, checks: checks))
     }
+
+    /// Pins the linked Grain design's built model as this session's reference.
+    func referenceFromGrain(sessionId: String) async throws -> SessionSnapshot {
+        try await send("POST", "/v1/sessions/\(sessionId)/reference-from-grain", [String: String]())
+    }
+
+    /// Expected voltages per net from the linked design, for sourced meter ranges.
+    func grainElectrical(sessionId: String) async throws -> GrainNets { try await get("/v1/sessions/\(sessionId)/grain/electrical") }
 
     func cartesiaGrant() async throws -> CartesiaGrant { try await send("POST", "/v1/voice/token", [String: String]()) }
 
     /// A final spoken turn, with the camera view if one is open (seen by the agent for this turn only, never stored).
-    func recordVoiceTurn(sessionId: String, id: String, mode: String, transcript: String, frame: Data? = nil) async throws -> VoiceTurnResult {
+    /// focus: a finding the person selected (on the 3D model), so "what's that?" has a referent.
+    func recordVoiceTurn(sessionId: String, id: String, mode: String, transcript: String, frame: Data? = nil, focus: String? = nil) async throws -> VoiceTurnResult {
         var body = ["id": id, "mode": mode, "transcript": transcript]
         if let frame { body["frame"] = frame.base64EncodedString() }
+        if let focus { body["focus"] = focus }
         return try await send("POST", "/v1/sessions/\(sessionId)/voice-turns", body)
     }
 
