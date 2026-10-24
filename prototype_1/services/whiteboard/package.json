@@ -1,0 +1,1 @@
+{"name":"lea-whiteboard","private":true,"scripts":{"build":"esbuild entry.js --bundle --alias:vel=${VEL_DIR:?set VEL_DIR to the VEL checkout} --format=iife --target=safari17 --minify --outfile=../../MyApp/Whiteboard/vel-stage.js --log-level=warning"},"devDependencies":{"esbuild":"0.25.11"}}

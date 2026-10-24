@@ -1,0 +1,9 @@
+.env
+data/
+node_modules/
+.venv/
+.cad-venv/
+bridge/src/module_bindings/
+reconstruction/objcap/lea-objcap
+contract-swift/swift-contract
+whiteboard/node_modules/
