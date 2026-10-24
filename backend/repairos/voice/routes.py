@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from repairos.voice.audio import TTSCache, line_key, wav
 from repairos.voice.cartesia import Cartesia, CartesiaError
 from repairos.voice.conversation import (ACTIONS, ConversationStore, SentenceSplitter, Talker, context_block,
-                                         history_view, limit_reached, messages_for)
+                                         history_view, limit_reached, live_note, messages_for, parse_live)
 from repairos.voice.settings import SAMPLE_RATE, VoiceSettings, get_voice_settings
 from repairos.voice.spend_guard import VoicePaused
 
@@ -316,15 +316,18 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
     @app.post("/v1/voice/converse", responses={200: {"content": {"application/x-lea-voice": {}}}})
     async def voice_converse(request: Request, d: device_dep,
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
-                             audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream"):
+                             audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
+                             live: Annotated[str | None, Query(max_length=2000)] = None):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
         after its `sentence` event (`audio: true`). A sentence with `audio: false` (no Cartesia, the spend guard
-        paused it, or `audio=none`) is for the phone to say in its own voice."""
+        paused it, or `audio=none`) is for the phone to say in its own voice. `live`: JSON of what the screen shows
+        now (a scan's stage, cue, progress), read for this turn only; during a scan no scan is offered."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
+        now = parse_live(live)
         question, stt_ms, paused_line = "", 0, None
         ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
         if ctype == "application/json":
@@ -381,7 +384,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
 
             async def produce():
                 try:
-                    msgs = messages_for(convo, context_block(report, identity, story), question)
+                    msgs = messages_for(convo, context_block(report, identity, story), live_note(now) + question)
                     async for delta in talker.stream(scope, msgs):
                         for sentence in splitter.feed(delta):
                             await queue.put(sentence)
@@ -420,6 +423,8 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 if producer is not None and not producer.done():
                     producer.cancel()
             action = splitter.actions[0] if splitter.actions else None
+            if now.get("screen") == "scan" and action == "start_scan":   # a scan is open: never a second one
+                action = None
             if action and action in ACTIONS:
                 yield jframe({"type": "action", "action": action, "label": ACTIONS[action]})
             answer = " ".join(spoken)

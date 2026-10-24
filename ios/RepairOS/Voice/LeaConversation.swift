@@ -40,6 +40,10 @@ final class LeaConversation {
     let diag: Diag?
     /// The gateway session, for sending what the person suspects (`POST /v1/sessions/{id}/story`).
     var sessionID: () -> String? = { nil }
+    /// What the screen shows now, sent with each turn (a scan's stage, cue and progress); empty off the scanner.
+    @ObservationIgnored var live: () -> [String: String] = { [:] }
+    /// Lea offered an action ("Start a scan") and the person said yes out loud: the same as tapping it.
+    @ObservationIgnored var acceptOffer: ((String) -> Void)?
 
     private(set) var turns: [Turn] = []
     private(set) var phase: Phase = .idle
@@ -115,7 +119,25 @@ final class LeaConversation {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         liveCaption = ""
         guard !words.isEmpty else { return }
+        if accept(words) { return }
         send(audio: nil, text: words, since: Date())
+    }
+
+    /// "Yes" to an offer on screen takes it, without another round trip. True when it did.
+    private func accept(_ words: String, offered: String? = nil) -> Bool {
+        guard let kind = offered ?? action?.kind, let acceptOffer, Self.isYes(words) else { return false }
+        turns.append(Turn(mine: true, text: words))
+        action = nil
+        phase = .idle
+        acceptOffer(kind)
+        return true
+    }
+
+    /// A plain yes ("yes", "yeah, let's do it", "okay go ahead"), not a question or more detail.
+    static func isYes(_ words: String) -> Bool {
+        let w = WakeListener.normalize(words)
+        let yes = "(yes|yeah|yep|yup|sure|ok|okay|alright|all right|please|go ahead|do it|let's do it|lets do it|let's go|lets go|sounds good|start it|scan it|start the scan)"
+        return w.range(of: "^\(yes)( \(yes))*( please| lea| leah| thanks)?$", options: .regularExpression) != nil
     }
 
     /// Lea says something on her own (what the object is, once the backend works it out).
@@ -146,11 +168,12 @@ final class LeaConversation {
 
     private func send(audio: Data?, text: String?, since start: Date) {
         task?.cancel()
+        let offered = action?.kind
         action = nil
         phase = .thinking
         if let text { turns.append(Turn(mine: true, text: text)); postStory(text) }
         let speech = LeaVoice.shared.status?.cartesia == true && !LeaVoice.shared.muted
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: speech)
+        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: speech, live: live())
         let voice = LeaVoice.shared
         let id = voice.beginStream()
         firstAudioMs = nil
@@ -164,6 +187,11 @@ final class LeaConversation {
                     if Task.isCancelled { break }
                     switch event {
                     case .transcript(let t):
+                        // Held to talk and said yes to the offer: take it (the gateway's answer is dropped).
+                        if audio != nil, offered != nil, accept(t, offered: offered) {
+                            voice.endStreamNow(id)
+                            return
+                        }
                         if audio != nil, !t.isEmpty { turns.append(Turn(mine: true, text: t)); postStory(t) }
                     case .sentence(let s, let withAudio):
                         firstSentence = firstSentence ?? Self.ms(since: start)

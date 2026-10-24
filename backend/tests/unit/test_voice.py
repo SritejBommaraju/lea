@@ -406,6 +406,27 @@ def test_converse_without_a_scan_is_a_home_conversation(gw):
     assert c.get("/v1/voice/conversation").json()["turns"][0]["text"] == "what should I check first"
 
 
+def test_converse_during_a_scan_sees_the_screen_and_never_offers_a_scan(gw):
+    import urllib.parse
+
+    from repairos.voice.conversation import parse_live
+    c = gw()
+    live = {"screen": "scan", "stage": "scanning", "on-screen cue": "Move closer", "progress": "40%"}
+    c.claude.deltas = ["Get the back where the cord goes in. <start", "_scan/>"]
+    q = "?audio=none&live=" + urllib.parse.quote(json.dumps(live))
+    r = c.post("/v1/voice/converse" + q, json={"text": "should I get the back"})
+    events = [p for k, p in frames(r.content) if k == "J"]
+    assert not [e for e in events if e["type"] == "action"]                    # a scan is open: no second one
+    asked = c.claude.bodies[0]["messages"][-1]["content"]
+    assert "<phone>screen: scan; stage: scanning; on-screen cue: Move closer; progress: 40%</phone>" in asked
+    assert c.get("/v1/voice/conversation").json()["turns"][0]["text"] == "should I get the back"   # not stored
+    # On the home screen the same marker is still an offer.
+    home = c.post("/v1/voice/converse?audio=none", json={"text": "it stopped spinning"})
+    assert {"type": "action", "action": "start_scan", "label": "Start a scan"} in [p for k, p in frames(home.content) if k == "J"]
+    assert parse_live("not json") == {} and parse_live('["a"]') == {}
+    assert len(parse_live(json.dumps({f"k{i}": "v" for i in range(20)}))) == 12
+
+
 def test_converse_turn_caps(gw):
     c = gw(lea_voice_turns_per_minute=1)
     scan_id = publish_report(c)
