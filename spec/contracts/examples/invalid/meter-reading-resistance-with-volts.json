@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "Greptile: resistance -> value.ohms, not volts",
+  "base": "meter-reading.json", "patch": { "kind": "resistance", "value": { "continuity": null, "volts": 0.3 } } }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grain-electrical-check-request.schema.json",
+  "title": "GrainElectricalCheckRequest",
+  "description": "RepairOS -> Grain: POST /projects/{id}/electrical/check {readings: [...]}, <= 200. The check is stateless: the meter wizard sends every reading so far each time (H4). Each reading is exactly one of {net, volts}, {net, pins: [a, b], continuity}, {net, pins: [a, b], ohms}. Pins use net naming REF.PIN (e.g. J1.1), which is what Grain checks against, not harness end names. Pinned against the private recorded Grain fixtures (private/grain/observed/), plus target fields marked x-target. GET /call/schema requires only `net`; the one-of rule is RepairOS's, so we never send a reading Grain can only half-judge. Grain owns the shape: additionalProperties allowed.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["readings"],
+  "properties": {
+    "readings": { "type": "array", "minItems": 1, "maxItems": 200, "items": { "$ref": "#/$defs/reading" } }
+  },
+  "$defs": {
+    "reading": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["net"],
+      "properties": {
+        "net": { "type": "string", "minLength": 1, "description": "A net name from GET /electrical nets[].name." },
+        "volts": { "type": "number" },
+        "pins": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 2, "maxItems": 2 },
+        "continuity": { "type": "boolean" },
+        "ohms": { "type": "number", "minimum": 0 },
+        "id": { "type": "string", "x-target": "T2", "description": "Target T2: our MeterReading.reading_id, echoed on the row." }
+      },
+      "oneOf": [
+        { "required": ["volts"], "not": { "anyOf": [{ "required": ["continuity"] }, { "required": ["ohms"] }] } },
+        { "required": ["pins", "continuity"], "not": { "anyOf": [{ "required": ["volts"] }, { "required": ["ohms"] }] } },
+        { "required": ["pins", "ohms"], "not": { "anyOf": [{ "required": ["volts"] }, { "required": ["continuity"] }] } }
+      ]
+    }
+  }
+}

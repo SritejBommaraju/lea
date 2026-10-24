@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grain-electrical-reference.schema.json",
+  "title": "GrainElectricalReference",
+  "description": "Grain -> RepairOS: GET /projects/{id}/electrical -- what the design says a meter should read: nets with pins, harness wires, expected voltages from the SPICE run, the run's measurements and signals. Fetched once per product model and cached (H1, H4). Pinned against the private recorded Grain fixtures (private/grain/observed/), plus target fields marked x-target. Pins are REF.PIN as the nets list them (e.g. J1.1); harness ends are written differently today (a part, or a board-prefixed connector; G26) and have no 3D position (G25). expected_volts covers only some nets today (G13): RepairOS judges against [min, max], never against `volts` alone (G2). Grain owns the shape: additionalProperties allowed.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["nets", "wires", "expected_volts", "sources"],
+  "properties": {
+    "nets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["name", "pins"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "pins": { "type": "array", "items": { "type": "string" } },
+          "power": { "type": "boolean" }
+        }
+      }
+    },
+    "wires": { "type": "array", "items": { "$ref": "#/$defs/wire" }, "description": "harness.csv rows; empty when the project has no harness." },
+    "expected_volts": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/expected" },
+      "description": "net name -> expected voltage."
+    },
+    "measurements": { "type": "object", "additionalProperties": true, "description": "SPICE .meas results by name." },
+    "signals": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": { "min": { "type": ["number", "null"] }, "max": { "type": ["number", "null"] }, "final": { "type": ["number", "null"] } }
+      },
+      "description": "SPICE node or branch -> {min, max, final}."
+    },
+    "sim_tool": { "type": ["string", "null"] },
+    "sim_status": { "type": "string", "description": "e.g. ok, absent." },
+    "sources": { "$ref": "#/$defs/sources" }
+  },
+  "x-target-required": [
+    { "path": "wires[*].ends", "target": "T7" },
+    { "path": "wires[*].ohms_max", "target": "T8" }
+  ],
+  "x-target-checks": [
+    { "check": "power_nets_expected", "path": "", "target": "T8" }
+  ],
+  "$defs": {
+    "expected": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["volts", "from"],
+      "properties": {
+        "volts": { "type": "number", "description": "The SPICE final value (or a .meas figure). Not the judgement basis (G2)." },
+        "min": { "type": ["number", "null"], "description": "Signal minimum over the run; absent when from is measurement." },
+        "max": { "type": ["number", "null"] },
+        "from": { "type": "string", "enum": ["simulation", "measurement"] },
+        "ohms_max": { "type": "number", "minimum": 0, "x-target": "T8", "description": "Target T8: for a reading between two pins of a wire, fuse or closed switch." }
+      }
+    },
+    "wire": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "from", "to"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "from": { "type": ["string", "null"], "description": "A harness end: a part (e.g. BT1), a pin (e.g. M1.+) or a board-prefixed connector pin (e.g. <board>.J1.1). Not net pin naming (G26)." },
+        "to": { "type": ["string", "null"] },
+        "gauge": { "type": ["string", "null"], "description": "e.g. 22AWG." },
+        "length_mm": { "type": ["number", "null"], "minimum": 0 },
+        "color": { "type": ["string", "null"], "description": "A colour word or #rrggbb." },
+        "conductors": { "type": ["number", "null"], "minimum": 0 },
+        "ends": {
+          "type": "array",
+          "x-target": "T7",
+          "description": "Target T7: one entry per conductor, in net pin naming.",
+          "items": {
+            "type": "object", "additionalProperties": true, "required": ["from", "to"],
+            "properties": { "from": { "type": "string" }, "to": { "type": "string" } }
+          }
+        },
+        "ohms_max": { "type": "number", "minimum": 0, "x-target": "T8", "description": "Target T8: expected end-to-end resistance ceiling." }
+      }
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": { "nets": { "type": "boolean" }, "harness": { "type": "boolean" }, "sim": { "type": "boolean" } }
+    }
+  }
+}

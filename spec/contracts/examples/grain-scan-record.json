@@ -1,0 +1,32 @@
+{
+ "_note": "API shape only, built from the schema with generic names; not a recorded Grain response (those are private, private/grain/observed/).",
+ "id": "20261024-120000-ab12",
+ "name": "scan_7f3a.ply",
+ "file": "20261024-120000-ab12.ply",
+ "units": "m",
+ "bytes": 1200000,
+ "created": 1792850400.0,
+ "points": 100000,
+ "bbox_mm": {
+  "min": [
+   -100.0,
+   -60.0,
+   0.0
+  ],
+  "max": [
+   100.0,
+   60.0,
+   50.0
+  ],
+  "size": [
+   200.0,
+   120.0,
+   50.0
+  ]
+ },
+ "centroid_mm": [
+  0.0,
+  0.0,
+  25.0
+ ]
+}

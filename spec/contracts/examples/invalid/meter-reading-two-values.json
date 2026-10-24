@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "exactly one value field: continuity and ohms together",
+  "base": "meter-reading.json", "patch": { "value": { "ohms": 0.3 } } }

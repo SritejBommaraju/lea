@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "part-on-hand.schema.json",
+  "title": "PartOnHand",
+  "description": "One item the user has lying around, named or photographed. Saved for later repairs and checked in order: exact mpn, same spec within tolerance, researched substitute, print, buy. Protective parts are judged on their protective role or the answer is no (S2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["item_id", "kind", "qty", "added_at", "source"],
+  "properties": {
+    "item_id": { "type": "string", "minLength": 1 },
+    "user_id": { "type": "string" },
+    "kind": { "type": "string", "minLength": 1, "description": "Free text class, e.g. 'fuse', 'phone charger', 'JST-XH 2-pin lead', 'speaker wire'." },
+    "description": { "type": "string", "description": "What the user said." },
+    "mpn": { "type": ["string", "null"], "description": "Manufacturer part number if known or read by OCR." },
+    "spec": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Extracted ratings as typed values. Units in key names: volts, amps, ohms, watts, awg, length_mm, connector_family, pins.",
+      "properties": {
+        "volts": { "type": "number" },
+        "amps": { "type": "number" },
+        "ohms": { "type": "number" },
+        "watts": { "type": "number" },
+        "awg": { "type": "integer" },
+        "length_mm": { "type": "number" },
+        "connector_family": { "type": "string" },
+        "pins": { "type": "integer" },
+        "protective": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Only for fuse, polyfuse, TVS, BMS, thermal cut-off. Any null here means 'cannot confirm' and forces verdict no.",
+          "properties": {
+            "hold_current_a": { "type": ["number", "null"] },
+            "trip_current_a": { "type": ["number", "null"] },
+            "trip_time_s": { "type": ["number", "null"] },
+            "i2t_a2s": { "type": ["number", "null"] },
+            "voltage_rating_v": { "type": ["number", "null"] },
+            "breaking_capacity_a": { "type": ["number", "null"] }
+          }
+        }
+      }
+    },
+    "dimensions_mm": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
+    "qty": { "type": "integer", "minimum": 0 },
+    "photo_file": { "type": "string" },
+    "datasheet_url": { "type": "string" },
+    "datasheet_extract": { "type": "string", "description": "Ratings table text we pre-extracted, so a long datasheet's tables reach Grain's design turn intact." },
+    "source": { "type": "string", "enum": ["user_typed", "user_voice", "photo_ocr"] },
+    "added_at": { "type": "string", "format": "date-time" },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Result of checking this item against a part in the current plan.",
+      "required": ["matched_part_ref", "order", "verdict", "basis", "reasons"],
+      "properties": {
+        "matched_part_ref": { "type": "string", "description": "BOM ref it was checked against." },
+        "order": { "type": "string", "enum": ["exact_mpn", "same_spec", "researched_substitute"], "description": "Which rung of the ladder matched. print and buy are not matches of an on-hand item." },
+        "verdict": { "type": "string", "enum": ["yes", "yes_with_changes", "no", "need_simulation_check"] },
+        "basis": { "type": "string", "enum": ["quick_check", "simulation_check"], "description": "simulation_check means Grain's simulation check passed on a project copy with the swap; a limited check, never 'verified' (I5)." },
+        "reasons": { "type": "array", "items": { "type": "string" } },
+        "changes_required": { "type": "array", "items": { "type": "string" }, "description": "For yes_with_changes." },
+        "safety_notes": { "type": "array", "items": { "type": "string" }, "description": "Always includes the polarity rule when the item is a supply (S1)." },
+        "protective_part_check": { "type": "string", "enum": ["passed", "failed", "not_applicable", "cannot_confirm"], "description": "cannot_confirm forces verdict no." },
+        "jev_probabilities": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } },
+        "checked_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}

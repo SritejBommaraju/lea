@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "session.schema.json",
+  "title": "RecordedSession",
+  "description": "session.json of a recorded session folder (samples/README.md). One real capture of one physical unit. No product facts beyond what the operator recorded; never a product name in an id. $defs/truth validates truth.json (the expected outcomes).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_id", "device"],
+  "properties": {
+    "session_id": { "type": "string", "pattern": "^sess_[A-Za-z0-9_-]+$" },
+    "object_id": { "type": "string", "pattern": "^obj_[0-9a-f]{8}$", "description": "Stable per physical unit, random." },
+    "category": { "type": "string", "description": "eval/categories.yaml id." },
+    "product_id": { "type": "string" },
+    "make_model": { "type": "string", "description": "As the operator typed it. Data, never code (GEN1)." },
+    "symptom": { "type": "string" },
+    "operator": { "type": "string" },
+    "lighting": { "type": "string", "enum": ["room", "torch", "polarised"] },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model"],
+      "properties": {
+        "model": { "type": "string", "description": "Hardware identifier, e.g. iPhone17,1." },
+        "ios": { "type": "string" },
+        "app_version": { "type": "string" }
+      }
+    },
+    "meter": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string" },
+        "continuity_ohms_threshold": { "type": "number", "minimum": 0 }
+      }
+    },
+    "source": {
+      "type": "string",
+      "enum": ["gateway", "phone_export", "converter"],
+      "description": "gateway: written by the backend as it received the upload; phone_export: C1.6; converter: C1.7."
+    },
+    "split": {
+      "type": "string",
+      "enum": ["unassigned", "train", "val", "test", "heldout"],
+      "description": "Written by eval/assign_split.py. heldout sessions are read only by the evaluation."
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["faults", "not_inspected_expected", "negatives"],
+      "description": "Expected outcomes, written by the person who induced (or ruled out) the faults on the real unit.",
+      "properties": {
+        "faults": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["subject", "fault"],
+            "properties": {
+              "subject": { "$ref": "finding.schema.json#/$defs/subject" },
+              "fault": { "$ref": "finding.schema.json#/properties/state" },
+              "magnitude_mm": { "type": "number", "minimum": 0 },
+              "notes": { "type": "string" }
+            }
+          }
+        },
+        "not_inspected_expected": {
+          "type": "array",
+          "items": { "$ref": "finding.schema.json#/$defs/subject" },
+          "description": "Subjects the capture cannot see; RepairOS should report them not_inspected (I3)."
+        },
+        "negatives": { "type": "boolean", "description": "True when the unit has no induced fault: every non-ok finding is a false alarm." },
+        "notes": { "type": "string" }
+      }
+    }
+  }
+}

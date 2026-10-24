@@ -1,0 +1,6 @@
+{ "schema": "repair-plan", "why": "Greptile: a step that touches the power path must have safety_gate true",
+  "base": "repair-plan.json",
+  "patch": { "steps": [
+    { "n": 1, "text": "Unplug the adapter.", "power_state": "off", "on_power_path": true, "safety_gate": true },
+    { "n": 2, "text": "Push the J1 plug firmly onto its header.", "part_refs": ["J1"], "power_state": "off", "on_power_path": true }
+  ] } }

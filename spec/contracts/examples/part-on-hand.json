@@ -1,0 +1,41 @@
+{
+  "item_id": "poh_0021",
+  "user_id": "u_owner",
+  "kind": "fuse",
+  "description": "a 3 A blade fuse from a car kit",
+  "mpn": null,
+  "spec": {
+    "amps": 3,
+    "volts": 32,
+    "connector_family": "ATO blade",
+    "protective": {
+      "hold_current_a": 3.0,
+      "trip_current_a": null,
+      "trip_time_s": null,
+      "i2t_a2s": null,
+      "voltage_rating_v": 32,
+      "breaking_capacity_a": null
+    }
+  },
+  "dimensions_mm": [19.1, 5.1, 18.5],
+  "qty": 4,
+  "photo_file": "parts/poh_0021.jpg",
+  "datasheet_url": "",
+  "source": "user_voice",
+  "added_at": "2026-10-23T18:20:00Z",
+  "match": {
+    "matched_part_ref": "F1",
+    "order": "researched_substitute",
+    "verdict": "no",
+    "basis": "quick_check",
+    "reasons": [
+      "F1 is a 5 A polyfuse in the design; the circuit peaks at 2.4 A, so a 3 A blade fuse would run near its rating.",
+      "Trip time, I2t and breaking capacity of the candidate could not be confirmed (no datasheet). Protective part: the answer is no.",
+      "A simulation check cannot settle whether a fuse still trips in a fault."
+    ],
+    "safety_notes": ["Use the 5 A polyfuse from the BOM or an exact equivalent."],
+    "protective_part_check": "cannot_confirm",
+    "jev_probabilities": { "yes": 0.03, "yes_with_changes": 0.05, "no": 0.84, "need_simulation_check": 0.08 },
+    "checked_at": "2026-10-23T18:20:14Z"
+  }
+}

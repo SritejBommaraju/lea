@@ -1,0 +1,3 @@
+{ "schema": "repair-plan", "why": "a power-on step must have safety_gate true (S3)",
+  "base": "repair-plan.json",
+  "patch": { "steps": [ { "n": 1, "text": "Switch on and check it runs.", "power_state": "on", "safety_gate": false } ] } }

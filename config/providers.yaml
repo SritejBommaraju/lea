@@ -1,0 +1,70 @@
+# RepairOS provider selection. Config picks the implementation of every module slot; code never does.
+#
+# Read by: backend/repairos/registry.py (runtime), build/doctor.py (prerequisite checks), build/next.py and
+# build/status.py (which implementation cards count). Slot ids and implementation ids match `slot:` and `impl:` in
+# build/tasks.yaml.
+#
+# Profiles. `profile:` below is the default; env REPAIROS_PROFILE=<name> picks another (the build tools also take
+# --profile). Then per-slot env overrides apply: REPAIROS_SLOT_<SLOT>=<impl>, e.g. REPAIROS_SLOT_LLM=openai.
+#   hackathon  the 24-hour demo build (BUILD.md Phases + §0): one laptop, SQLite state, Jev fusion, zero-shot Grounding DINO
+#              tiny on CPU/MPS, no other vision models, no training.
+#   full       the full product defaults (SPEC.md): SpacetimeDB, Jev, Grounding DINO / SAM 2 / PaddleOCR, GPU host.
+#
+# Rules
+#   - Changing a value here is a config change. The implementation must have a `done` card (it passed the slot's
+#     conformance suite) before it is selected in a release build.
+#   - A default change is a SPEC.md §8 decision-log row (W2).
+#   - `grain.replay` and `host.local_mac` are development-only: the release build refuses them (GEN3). The hackathon
+#     profile is a development profile; it is never a release.
+#   - Format: strict YAML subset (see build/tasks.yaml header). One `slot: impl` per line.
+
+version: 2
+updated: 2026-10-24
+
+profile: hackathon
+
+profiles:
+  hackathon:
+    GRAIN: live            # Phase 2 only: Phase 1 makes no Grain calls. live = real Grain from Sritej (laptop or tunnel)
+    FUSION: jev            # Jev (TypeSafe hosted) fuses evidence and picks the next action (A2); owner decision, no rules fallback
+    LLM: anthropic         # claude-sonnet-5-5 for assistant and plan text (Q3)
+    VLM: anthropic         # claude-haiku-5-5 for crop yes/no; cannot_tell escalates to claude-sonnet-5-5 (Q3)
+    DET: owlv2             # Phase 1 (no Grain, so no projected targets): OWLv2 base, zero-shot; measured ~5x faster than Grounding DINO tiny with comparable boxes (gdino = swap-in)
+                           # (Apache-2.0 code + weights), CPU/MPS on the Mac, no training; owlv2 is the alternative (owner 2026-10-24)
+    SEG: none              # no segmenter: crops come from the detector boxes, cut from the full-resolution stills
+    OCRB: none             # no backend OCR
+    OCRD: apple_vision     # on-device label OCR only (Q10)
+    DEPTH: none            # LiDAR voxel shell only
+    RENDER: trimesh        # CPU ray cast / projection, headless
+    STATE: sqlite          # SQLite + polling/SSE inside the FastAPI backend (M.STATE.11); SpacetimeDB is later
+    BLOB: local            # disk under data/
+    SUPPLIER: bom_and_web  # BOM rows and their urls; shopping search is later
+    TRAIN: none            # no training in the 24 hours
+    HOST: local_mac        # the demo laptop (dev only, never a release)
+    SPEECH: typed_only     # readings typed in the wizard
+
+  full:
+    GRAIN: live            # live (real Grain API, pinned interface version) | replay (recorded real responses; CI and dev only)
+    FUSION: jev            # jev (TypeSafe hosted) | rules (deterministic fallback; always present, A3)
+    LLM: anthropic         # anthropic | openai | openai_compatible (self-hosted, e.g. vLLM + an Apache-2.0 model)
+    VLM: anthropic         # anthropic | openai | qwen3vl (self-hosted, Apache-2.0)
+    DET: gdino             # gdino (Grounding DINO, Apache-2.0) | florence2 (MIT) | rfdetr (fine-tuned, Apache-2.0) | owlv2 (Apache-2.0) | none
+    SEG: sam2              # sam2 (SAM 2.1, Apache-2.0) | wireseg (fine-tuned thin-wire segmenter, ours) | sam2_coreml (on-device, stretch) | none
+    OCRB: paddleocr        # paddleocr (Apache-2.0) | florence2 (MIT) | none
+    OCRD: apple_vision     # apple_vision (on-device, free) | none (backend OCR only)
+    DEPTH: none            # none (use the voxel shell) | promptda (Prompt Depth Anything ViT-S, Apache-2.0)
+    RENDER: trimesh        # trimesh (ray cast, MIT, CPU, headless anywhere) | pyrender (MIT, EGL) | open3d (MIT) | realitykit (on-device, stretch)
+    STATE: spacetimedb     # spacetimedb (server BSL 1.1 under the 1-instance grant) | postgres_queue (Postgres + huey + SSE) | sqlite (single process, dev)
+    STATE_TARGET: local    # local (self-hosted `spacetime start` or the standalone container) | maincloud (Clockwork hosted)
+    BLOB: local            # local (disk under data/) | s3 (any S3-compatible store via boto3, Apache-2.0)
+    STDB_MODULE_LANG: typescript  # typescript (procedures stable; bindings licence conflict, see SPEC Q-S2) | rust (bindings Apache-2.0; procedures behind an unstable flag)
+    STDB_WORKER_BRIDGE: node_sdk  # node_sdk (official TypeScript SDK subscribes, fans out to Python workers) | http_poll (Python polls the HTTP SQL endpoint; no SDK)
+    STDB_PHONE_PATH: gateway      # gateway (phone talks only to the FastAPI gateway, SSE for live state) | direct_swift (community Swift SDK, optional, after conformance)
+    SUPPLIER: bom_and_web  # bom_and_web (BOM url fetch + LLM discovery, deterministic selection) | nexar (Octopart API) | digikey (API)
+    TRAIN: runpod          # runpod | modal | lambda | local_mac (MPS; small runs only) | none
+    HOST: docker_gpu       # docker_gpu (any Linux box with an NVIDIA GPU, incl. a RunPod pod) | modal | local_mac (dev only)
+    SPEECH: apple_speech   # apple_speech (on-device Speech framework) | typed_only
+
+# Pinned Grain interface version. Grain has no version field yet (target T10): until it does, the client snapshots
+# GET /call/schema and fails loudly on any drift (GRAIN_SPEC H0, A10). Set to Grain's string when T10 lands.
+grain_interface_version: null

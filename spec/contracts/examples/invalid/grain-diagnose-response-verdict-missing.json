@@ -1,0 +1,3 @@
+{ "schema": "grain-diagnose-response", "why": "verdict enum has exactly 6 values; 'missing' is our Finding state, not Grain's",
+  "base": "grain-diagnose-response.json",
+  "patch": { "parts": [ { "name": "housing", "ref": null, "verdict": "missing", "coverage": 0.05 } ] } }

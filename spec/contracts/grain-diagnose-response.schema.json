@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grain-diagnose-response.schema.json",
+  "title": "GrainDiagnoseResponse",
+  "description": "Grain -> RepairOS: POST /projects/{id}/scans/{sid}/diagnose?tolerance_mm=&align=none|bbox|icp&crop= -- the scan judged part by part against out/model.glb. Used as a cross-check of our own coverage result. Pinned against the private recorded Grain fixtures (private/grain/observed/), plus target fields marked x-target (none yet: T9 and T12 change verdict quality, not the shape). Every *_mm field is in the design frame: millimetres, Z up. Parts are keyed by `name` (the GLB node; sub-parts carry a colon, e.g. U1:usb); `ref` is the BOM ref or null for made parts. Grain owns the shape: additionalProperties allowed.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "scan", "tolerance_mm", "align", "alignment", "parts", "verdicts", "coverage",
+    "broken", "not_seen", "damaged", "shifted", "partly", "ok", "not_visible", "findings"
+  ],
+  "properties": {
+    "scan": { "type": ["string", "null"], "description": "The scan id." },
+    "tolerance_mm": { "type": "number", "minimum": 0, "description": "As asked." },
+    "scan_spacing_mm": { "type": "number", "minimum": 0 },
+    "scan_noise_mm": { "type": "number", "minimum": 0 },
+    "tolerance_global_mm": { "type": "number", "minimum": 0, "description": "The tolerance Grain used for the whole scan, mm." },
+    "align": { "type": "string", "enum": ["none", "bbox", "icp"], "description": "RepairOS sends none: it uploads in the design frame (our ICP with gravity + fit gate). icp is the cross-check on the raw scan (Q2)." },
+    "alignment": { "$ref": "#/$defs/alignment" },
+    "crop": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "plane_removed": { "type": "integer", "minimum": 0 },
+        "outside_removed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "points_used": { "type": "integer", "minimum": 0 },
+    "shift_mm": { "$ref": "#/$defs/vec3" },
+    "exterior": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Grain's own visibility bookkeeping; RepairOS does not read it.",
+      "properties": {
+        "cameras": { "type": "integer", "minimum": 0 },
+        "camera_match": { "type": "array", "items": { "type": "number" } },
+        "cameras_swept": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "thresholds": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["ok", "partly", "not_seen", "shifted"],
+      "properties": {
+        "ok": { "type": "number" },
+        "partly": { "type": "number" },
+        "not_seen": { "type": "number" },
+        "shifted": { "type": "number" },
+        "note": { "type": "string" }
+      }
+    },
+    "model_bbox_mm": { "$ref": "#/$defs/bbox" },
+    "scan_bbox_mm": { "oneOf": [{ "$ref": "#/$defs/bbox" }, { "type": "null" }] },
+    "coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Mean coverage over judged parts; null when none could be judged." },
+    "parts": { "type": "array", "items": { "$ref": "#/$defs/part" } },
+    "verdicts": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } },
+      "description": "verdict -> [part names].",
+      "properties": {
+        "ok": { "$ref": "#/$defs/names" }, "partly": { "$ref": "#/$defs/names" }, "shifted": { "$ref": "#/$defs/names" },
+        "damaged": { "$ref": "#/$defs/names" }, "not_seen": { "$ref": "#/$defs/names" }, "not_visible": { "$ref": "#/$defs/names" }
+      }
+    },
+    "broken": { "$ref": "#/$defs/names", "description": "not_seen + damaged + shifted." },
+    "not_seen": { "$ref": "#/$defs/names" },
+    "damaged": { "$ref": "#/$defs/names" },
+    "shifted": { "$ref": "#/$defs/names" },
+    "partly": { "$ref": "#/$defs/names" },
+    "ok": { "$ref": "#/$defs/names" },
+    "not_visible": { "$ref": "#/$defs/names" },
+    "extra_points": { "type": "integer", "minimum": 0, "description": "Scan points far from every designed surface." },
+    "extra_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+    "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "bom_total_usd": { "type": ["number", "null"] }
+  },
+  "$defs": {
+    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+    "names": { "type": "array", "items": { "type": "string" } },
+    "bbox": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/vec3" },
+        "max": { "$ref": "#/$defs/vec3" },
+        "size": { "$ref": "#/$defs/vec3" }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["ok", "partly", "shifted", "damaged", "not_seen", "not_visible"],
+      "description": "ok, partly, damaged (may name missing_region_mm), not_seen (the scan should have shown the part and did not), shifted (shift_mm says by how much), not_visible (the scan could not have seen it; `why` says why). How Grain decides is private (private/grain/GRAIN_SPEC.md, ask Sritej). RepairOS maps these onto Finding.state: ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected."
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "ref", "verdict", "coverage"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "model.glb node name; the key RepairOS joins on." },
+        "ref": { "type": ["string", "null"], "description": "BOM ref (several nodes can share one, e.g. M1 and M1:cap); null for made parts." },
+        "verdict": { "$ref": "#/$defs/verdict" },
+        "coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1, "description": "Null when not_visible." },
+        "visible_share": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tolerance_used_mm": { "type": "number", "minimum": 0 },
+        "median_gap_mm": { "type": ["number", "null"], "minimum": 0 },
+        "shift_mm": { "oneOf": [{ "$ref": "#/$defs/vec3" }, { "type": "null" }], "description": "Design frame, mm." },
+        "coverage_if_shifted": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "missing_region_mm": { "$ref": "#/$defs/missing_region" },
+        "why": { "type": "string", "description": "For not_visible: a short reason in words." },
+        "bought": { "type": "boolean" },
+        "buy": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "name": { "type": "string" },
+            "mpn": { "type": ["string", "null"] },
+            "supplier": { "type": ["string", "null"] },
+            "url": { "type": ["string", "null"] },
+            "datasheet": { "type": ["string", "null"] },
+            "price": { "type": ["number", "null"], "minimum": 0 }
+          }
+        },
+        "make": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "process": { "type": "string" },
+            "material": { "type": "string" },
+            "file": { "type": "string", "description": "Today out/model.step (the whole model; the part is its node)." }
+          }
+        },
+        "process": { "type": "string" },
+        "material": { "type": "string" },
+        "size_mm": { "$ref": "#/$defs/vec3" },
+        "exterior_points": { "type": "integer", "minimum": 0 },
+        "expected_points": { "type": "integer", "minimum": 0 },
+        "extra_points_near": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "missing_region": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "#/$defs/vec3" },
+        "max": { "$ref": "#/$defs/vec3" },
+        "share": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["method"],
+      "properties": {
+        "method": { "type": "string", "enum": ["none", "bbox", "icp"] },
+        "transform": {
+          "type": "array", "minItems": 4, "maxItems": 4,
+          "items": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+          "description": "4x4 applied to the scan, mm."
+        },
+        "rms_mm": { "type": "number", "minimum": 0 },
+        "median_mm": { "type": "number", "minimum": 0 },
+        "inlier_share": { "type": "number", "minimum": 0, "maximum": 1 },
+        "inlier_mm": { "type": "number", "minimum": 0 },
+        "start": { "type": "string" },
+        "starts_tried": { "type": "integer", "minimum": 0 },
+        "note": { "type": "string" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["severity", "text"],
+      "properties": {
+        "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+        "verdict": { "type": "string", "description": "A part verdict, or 'alignment' / 'extra'." },
+        "where": { "type": "string", "description": "Part name(s), 'scan', or a bbox in mm." },
+        "text": { "type": "string" },
+        "fix": { "type": "string" }
+      }
+    }
+  }
+}

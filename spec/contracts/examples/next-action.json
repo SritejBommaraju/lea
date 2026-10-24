@@ -1,0 +1,31 @@
+{
+  "action_id": "act_0005",
+  "scan_id": "scan_7f3a",
+  "kind": "run_continuity_test",
+  "target": {
+    "part_refs": ["J1", "LOAD1"],
+    "harness_row": "WIRE_A",
+    "net": "NET_A",
+    "pins": ["J1.1", "LOAD1.1"],
+    "ar_labels": ["J1 plug, pin 1", "LOAD1 terminal, pin 1"]
+  },
+  "instruction": "Power OFF. Unplug the adapter. Set the meter to continuity (beep). Probe pin 1 of the J1 plug and pin 1 of the LOAD1 terminal (both labelled in AR). Expect a beep.",
+  "reason": "The close-up shows a gap at the J1 plug; one continuity check proves or clears it before anything is replaced.",
+  "power_state": "off",
+  "expected": { "continuity": true, "ohms_max": 1.0, "source": "repairos_derived" },
+  "safety_notes": [
+    "Unplug the power adapter before probing.",
+    "Do not rely on wire colour to identify polarity; the AR labels mark the exact pins."
+  ],
+  "chosen_by": "jev",
+  "probabilities": {
+    "run_continuity_test": 0.61,
+    "request_closeup": 0.12,
+    "request_other_angle": 0.08,
+    "run_voltage_test": 0.07,
+    "run_reference_compare": 0.04,
+    "report_finding": 0.05,
+    "report_insufficient_evidence": 0.03
+  },
+  "created_at": "2026-10-23T18:14:05Z"
+}

@@ -1,0 +1,295 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "finding.schema.json",
+  "title": "Finding",
+  "description": "One piece of evidence about a part, wire or net from one source. A finding is a suspect, never proof, unless its source is repairos.meter (I1). Findings feed fusion, and go to Grain /call as findings[] once target T4 lands (until then as text in `question`). Grain results are wrapped as findings with a grain.* source and keep Grain's own verdict and row in `grain`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "finding_id",
+    "scan_id",
+    "subject",
+    "state",
+    "source",
+    "confidence",
+    "evidence",
+    "is_proof",
+    "created_at"
+  ],
+  "properties": {
+    "finding_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scan_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "partly",
+        "missing",
+        "shifted",
+        "damaged",
+        "broken",
+        "worn",
+        "dirty",
+        "loose",
+        "unseated",
+        "wrong_pin",
+        "colour_mismatch",
+        "open",
+        "short",
+        "out_of_range",
+        "unexpected_part",
+        "unexpected_wire",
+        "not_seen_in_photo",
+        "not_inspected",
+        "insufficient_evidence",
+        "unsure"
+      ],
+      "description": "Our scan states (ok partly shifted missing, BUILD S2.5), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault)."
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "repairos.scan",
+        "repairos.vision",
+        "repairos.wire_check",
+        "repairos.ocr",
+        "repairos.meter",
+        "repairos.user",
+        "grain.diagnose",
+        "grain.look",
+        "grain.electrical"
+      ],
+      "description": "Which stage produced it. Grain sources are wrapped Grain results, kept separate so they are never merged with our measurements."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Source's own confidence. Not calibrated; fusion recalibrates."
+    },
+    "is_proof": {
+      "type": "boolean",
+      "description": "True only when source is repairos.meter. Enforced in code."
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev and Grain."
+    },
+    "evidence_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "still_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keyframe_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "crop_box_px": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "minItems": 4,
+          "maxItems": 4,
+          "description": "[x0, y0, x1, y1] in the source still's pixels."
+        },
+        "crop_file": {
+          "type": "string",
+          "description": "Full-resolution crop saved for the UI and for a Grain /look second opinion (Grain stores photos downsized)."
+        },
+        "render_file": {
+          "type": "string",
+          "description": "CAD render of the same view (the 'normal' reference)."
+        },
+        "reading_id": {
+          "type": "string",
+          "description": "MeterReading id when source is repairos.meter."
+        }
+      }
+    },
+    "measurements": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Numbers stay here. They are converted to words before reaching Jev (S5).",
+      "properties": {
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "offset_mm": {
+          "type": "number",
+          "description": "Mean signed distance along the surface normal, mm."
+        },
+        "shift_mm": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Translation in the design frame (mm, Z up), as Grain's shift_mm."
+        },
+        "gap_mm": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Connector housing gap estimate."
+        },
+        "colour_match_p": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "silhouette_iou": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ocr_text": {
+          "type": "string"
+        },
+        "views": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of stills or keyframes that saw the subject."
+        },
+        "sharpness": {
+          "type": "number",
+          "minimum": 0
+        }
+      }
+    },
+    "vlm_answer": {
+      "type": "string",
+      "enum": [
+        "seated",
+        "gap_visible",
+        "unplugged",
+        "present",
+        "absent",
+        "cannot_tell"
+      ],
+      "description": "Structured answer from the crop-pair question, when source is repairos.vision."
+    },
+    "design_trust": {
+      "type": "string",
+      "enum": [
+        "high",
+        "low"
+      ]
+    },
+    "on_symptom_power_path": {
+      "type": "boolean"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "grain": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.",
+      "required": [
+        "endpoint",
+        "verdict"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "enum": [
+            "diagnose",
+            "look",
+            "electrical_check",
+            "call"
+          ]
+        },
+        "verdict": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Grain's word: a diagnose verdict, a /look state, an electrical row verdict, or a /call fix action. null when Grain gave none (e.g. an electrical row without a verdict today, G22)."
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Grain part name (diagnose parts[].name), a finding's where, or a fix's part string."
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Grain's BOM ref (diagnose parts[].ref); null for made parts."
+        },
+        "confidence": {
+          "type": [
+            "number",
+            "string",
+            "null"
+          ],
+          "description": "As Grain gave it: a number for /look, a word (low|medium|high) for /call fixes."
+        },
+        "raw": {
+          "type": "object",
+          "description": "The Grain object this came from (a part row, observation, reading row or fix)."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ref"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "part",
+            "wire",
+            "net"
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1,
+          "description": "part: the Grain part name, i.e. the model.glb node (diagnose parts[].name, e.g. U1 or a sub-part U1:usb) -- not the BOM ref, which is null for made parts; wire: the harness.csv name; net: the net name."
+        },
+        "pins": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional REF.PIN ids in Grain's net naming, e.g. SW1.1."
+        }
+      },
+      "description": "What the finding is about. Maps onto Grain's target subject {kind, id, pins} (T3/T4) with ref -> id."
+    }
+  }
+}

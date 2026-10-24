@@ -1,0 +1,3 @@
+{ "schema": "grain-electrical-check-response", "why": "expected is {volts, min, max, from}; the old volts_min/volts_max names are not Grain's",
+  "base": "grain-electrical-check-response.json",
+  "patch": { "readings": [ { "net": "VIN", "known": true, "volts": 5.02, "expected": { "volts_min": 4.75, "volts_max": 5.25 }, "verdict": "ok" } ] } }

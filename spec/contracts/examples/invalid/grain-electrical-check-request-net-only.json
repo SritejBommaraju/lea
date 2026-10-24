@@ -1,0 +1,2 @@
+{ "schema": "grain-electrical-check-request", "why": "a reading needs exactly one of volts, continuity (+pins), ohms (+pins)",
+  "instance": { "readings": [ { "net": "VIN" } ] } }

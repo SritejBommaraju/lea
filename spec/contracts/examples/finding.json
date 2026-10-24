@@ -1,0 +1,31 @@
+{
+  "finding_id": "f_0012",
+  "scan_id": "scan_7f3a",
+  "subject": { "kind": "part", "ref": "J1", "pins": ["J1.1", "J1.2"] },
+  "state": "unseated",
+  "source": "repairos.vision",
+  "confidence": 0.86,
+  "is_proof": false,
+  "evidence": [
+    "housing gap ~2 mm between J1 plug and header (still s7)",
+    "wire WIRE_A present, colour matches harness (red)",
+    "CAD render of the same view shows the housing flush"
+  ],
+  "evidence_refs": {
+    "still_ids": ["s7"],
+    "crop_box_px": [1810, 1240, 2834, 2264],
+    "crop_file": "crops/J1_crop_s7.jpg",
+    "render_file": "renders/J1_render_s7.png"
+  },
+  "measurements": {
+    "gap_mm": 2.1,
+    "colour_match_p": 0.93,
+    "silhouette_iou": 0.71,
+    "views": 2,
+    "sharpness": 603.2
+  },
+  "vlm_answer": "gap_visible",
+  "design_trust": "low",
+  "on_symptom_power_path": true,
+  "created_at": "2026-10-23T18:13:52Z"
+}
