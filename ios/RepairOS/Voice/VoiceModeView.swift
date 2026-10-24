@@ -45,6 +45,7 @@ struct VoiceModeView: View {
         }
         .padding(Spacing.gutter)
         .background(Palette.canvas.ignoresSafeArea())
+        .tint(Palette.accent)
         .animation(Motion.settle, value: scanOffered)
         .animation(Motion.standard, value: voice.exchanges)
         .sensoryFeedback(Haptic.milestone, trigger: scanOffered) { _, offered in offered }

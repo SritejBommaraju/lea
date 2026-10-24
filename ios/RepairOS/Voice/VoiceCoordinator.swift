@@ -53,7 +53,10 @@ final class VoiceCoordinator: ObservableObject {
     var onActions: (([VoiceAction]) -> Void)?
     /// Read at each turn: what the open screen shows (a scan in progress, a report). Nil on the home screen.
     var scene: (() -> VoiceScene)?
-    private var cartesiaUnavailable = false
+    /// Cartesia is skipped until then: after a failed token fetch (not paired yet, gateway down, no key) or a failing
+    /// recognizer, on-device speech carries on and Cartesia is tried again a minute later.
+    private var cartesiaRetryAt = Date.distantPast
+    private var fetchingGrant: Task<CartesiaGrant?, Never>?
 
     private var recentReactions: [String] = []
     private var recentlySpoken: [String] = []        // the last few lines, so a late echo of any of them is ignored
@@ -258,7 +261,7 @@ final class VoiceCoordinator: ObservableObject {
     }
 
     private func makeInput() async throws -> SpeechInput {
-        if !cartesiaUnavailable, let grant = await cartesiaGrant() {
+        if Date() >= cartesiaRetryAt, let grant = await cartesiaGrant() {
             listenerName = "Cartesia Ink 2"
             if state == .idle || state == .listening {
                 output = CartesiaVoiceOutput(grant: grant, engine: engine, player: player) { [weak self] why in
@@ -284,12 +287,29 @@ final class VoiceCoordinator: ObservableObject {
         output = SystemVoiceOutput()
     }
 
-    /// One Cartesia token serves every turn until shortly before it expires, so a turn doesn't wait for a fetch.
+    /// Fetches the speech token ahead of the first turn (voice mode or a scan opening), so pressing the mic doesn't
+    /// wait on the network and clip the first words.
+    func warmUp() {
+        guard Date() >= cartesiaRetryAt, grant.map({ $0.until.timeIntervalSinceNow < 60 }) ?? true else { return }
+        Task { _ = await cartesiaGrant() }
+    }
+
+    /// One Cartesia token serves every turn until shortly before it expires; one fetch is shared by everyone waiting,
+    /// and a token close to expiry is refreshed in the background while it still works.
     private func cartesiaGrant() async -> CartesiaGrant? {
-        if let grant, grant.until > Date() { return grant.value }
+        if let grant, grant.until > Date() {
+            if grant.until.timeIntervalSinceNow < 60, fetchingGrant == nil { fetchingGrant = Task { await fetchGrant() } }
+            return grant.value
+        }
+        if fetchingGrant == nil { fetchingGrant = Task { await fetchGrant() } }
+        return await fetchingGrant?.value
+    }
+
+    private func fetchGrant() async -> CartesiaGrant? {
+        defer { fetchingGrant = nil }
         guard let link else { return nil }
         guard let fresh = try? await link.token() else {
-            cartesiaUnavailable = true   // not set up on the gateway: on-device speech for the rest of this run
+            cartesiaRetryAt = Date().addingTimeInterval(60)
             return nil
         }
         grant = (fresh, Date().addingTimeInterval(Double(max(fresh.expiresInSeconds - 30, 0))))
@@ -321,6 +341,10 @@ final class VoiceCoordinator: ObservableObject {
             // One hiccup must not end a conversation in the middle of a scan: hands-free listens again after a
             // moment. A recognizer that keeps failing would loop, so after three in a row hands-free stops and says why.
             recognizerErrors += 1
+            if input is CartesiaSpeechInput {   // the next listen uses on-device recognition, with a fresh token later
+                grant = nil
+                cartesiaRetryAt = Date().addingTimeInterval(60)
+            }
             if handsFree && recognizerErrors < 3 {
                 pipe.input = nil
                 input = nil
@@ -371,6 +395,7 @@ final class VoiceCoordinator: ObservableObject {
         partial = text
         let id = Self.newID("vt")
         exchanges.append(Exchange(id: id, said: text))
+        if exchanges.count > 100 { exchanges.removeFirst(exchanges.count - 100) }   // the screen shows the recent past
 
         // Ask the bridge now; react at once; hold the turn with a thinking sound if the answer is slow.
         let scene = scene?()

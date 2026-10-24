@@ -25,6 +25,8 @@ struct RootView: View {
     @State private var offeredSymptom: String?
     @State private var handsFreeBeforeVoiceMode = false
     @State private var scanAfterReport = false
+    /// Siri opened the app while consent or pairing was on screen: voice mode opens when they close (greeting or not).
+    @State private var voiceModeWaiting: Bool?
     private static let recentCount = 3
     @FocusState private var symptomFocused: Bool
 
@@ -67,8 +69,8 @@ struct RootView: View {
             }
             .confirmDeleteScan($pendingDelete)
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(isPresented: $showPairing) { PairingView() }
-            .fullScreenCover(isPresented: $showConsent) {
+            .sheet(isPresented: $showPairing, onDismiss: openWaitingVoiceMode) { PairingView() }
+            .fullScreenCover(isPresented: $showConsent, onDismiss: openWaitingVoiceMode) {
                 ConsentView { agreed in
                     showConsent = false
                     if agreed { afterConsent() }
@@ -95,18 +97,19 @@ struct RootView: View {
             .task {
                 try? await Task.sleep(for: .milliseconds(300))
                 if app.autostart, active == nil { newScan() }
+                if CommandLine.arguments.contains("--voice-mode") { openVoiceMode(greet: false) }   // smoke tests
             }
             .onReceive(NotificationCenter.default.publisher(for: VoiceLaunch.requested)) { _ in
                 if VoiceLaunch.take() { openVoiceMode(greet: true) }
             }
             .onAppear {
                 connectVoice()
-                if VoiceLaunch.take() { openVoiceMode(greet: true) }   // Siri opened the app before this screen existed
                 if !Consent.accepted && !devAutostart {
                     showConsent = true
                 } else {
                     offerPairingOnce()
                 }
+                if VoiceLaunch.take() { openVoiceMode(greet: true) }   // Siri opened the app before this screen existed
             }
         }
         .tint(Palette.accent)
@@ -200,6 +203,9 @@ struct RootView: View {
     /// Voice mode is a hands-free conversation. Siri's "Hey lea" starts a new one and Lea asks what's up; the voice
     /// bar's button picks up the current one. Closing it puts hands-free back as it was.
     private func openVoiceMode(greet: Bool) {
+        // One full-screen view at a time: wait for consent or pairing (both come before talking to Lea anyway).
+        guard !showConsent && !showPairing else { voiceModeWaiting = greet; return }
+        voice.warmUp()
         handsFreeBeforeVoiceMode = voice.handsFree
         showVoiceMode = true
         if greet {
@@ -208,6 +214,12 @@ struct RootView: View {
         } else if !voice.handsFree {
             voice.setHandsFree(true)
         }
+    }
+
+    private func openWaitingVoiceMode() {
+        guard let greet = voiceModeWaiting, !showConsent, !showPairing, active == nil else { return }
+        voiceModeWaiting = nil
+        openVoiceMode(greet: greet)
     }
 
     /// A scan Lea started (or the person accepted) opens once voice mode has closed; two full-screen covers can't

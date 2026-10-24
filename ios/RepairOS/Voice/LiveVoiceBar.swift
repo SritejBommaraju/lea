@@ -37,6 +37,7 @@ struct LiveVoiceBar: View {
         .padding(.vertical, Spacing.s)
         .background(.black.opacity(0.55), in: Capsule())
         .environment(\.colorScheme, .dark)
+        .onAppear { voice.warmUp() }
     }
 
     private var caption: String {
