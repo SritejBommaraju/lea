@@ -250,3 +250,136 @@ def test_recreation_route_and_live_event(gw):  # noqa: F811
     assert ready == [{"scan_id": pkg["scan_id"], "kind": "textured_mesh", "rev": 2, "format": "usdz",
                       "url": f"/v1/scans/{pkg['scan_id']}/recreation?rev=2", "frame": "arkit_world",
                       "bytes": len(body)}]
+
+
+def test_splat_file_is_cut_to_the_size_cap_keeping_the_most_important():
+    from repairos.recreation.splat import BYTES_PER_GAUSSIAN, read_splat, splat_bytes
+
+    rng = np.random.default_rng(3)
+    n = 200
+    means, scales = rng.normal(size=(n, 3)), rng.uniform(0.001, 0.01, (n, 3))
+    q, op, rgb = np.tile([1.0, 0, 0, 0], (n, 1)), rng.uniform(0, 1, n), rng.uniform(0, 1, (n, 3))
+    data = splat_bytes(means, scales, q, op, rgb, max_bytes=50 * BYTES_PER_GAUSSIAN + 7)
+    assert len(data) == 50 * BYTES_PER_GAUSSIAN
+    top = np.argsort(-(np.prod(scales, 1) * op))[:50]
+    assert np.allclose(read_splat(data)["means"], means[top], atol=1e-6)
+    assert splat_bytes(means, scales, q, op, rgb, max_bytes=0) == b""
+
+
+def test_splat_config_bounds_and_engine_override(monkeypatch):
+    from repairos.recreation.service import recreation_config
+
+    cfg = recreation_config({"engine": "textured_mesh"})
+    assert cfg["splat_steps"] >= 1 and cfg["splat_timeout_s"] <= 120 and cfg["splat_max_mb"] <= 15
+    assert cfg["splat_max_gaussians"] * 32 <= 15_000_000          # the Gaussian cap alone fits the file cap
+    for bad in ({"splat_gpu_mem_gb": 0}, {"splat_max_mb": "big"}, {"splat_timeout_s": 0}, {"splat_log_every": 1.5}):
+        with pytest.raises(ValueError):
+            recreation_config(bad)
+    monkeypatch.setenv("LEA_RECREATION_ENGINE", "splat")
+    assert recreation_config({"engine": "textured_mesh"})["engine"] == "splat"
+    monkeypatch.setenv("LEA_RECREATION_ENGINE", "nerf")
+    with pytest.raises(ValueError):
+        recreation_config({})
+
+
+def test_splat_waits_for_its_kernels(monkeypatch, tmp_path):
+    """On the pod the engine is not available until bootstrap's background setup wrote the ready marker."""
+    torch = pytest.importorskip("torch")
+    import importlib.util
+
+    from repairos.recreation import splat
+
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a: object() if n == "gsplat" else real(n, *a))
+    marker = tmp_path / ".lea-gsplat-ready"
+    monkeypatch.setenv("LEA_GSPLAT_READY", str(marker))
+    assert "not compiled yet" in splat.unavailable_reason()
+    marker.write_text("ok")
+    assert splat.unavailable_reason() is None
+
+
+def test_low_priority_gpu_step_waits_for_the_detector(tmp_path):
+    import threading
+    import time
+
+    from repairos.pipeline.run import Context
+
+    ctx = Context(state=None, blobs=None, root=tmp_path)
+    ctx.gpu_wanted = 1
+    got = []
+    t = threading.Thread(target=lambda: (ctx.gpu_low_priority().__enter__(), got.append(time.monotonic())))
+    t.start()
+    time.sleep(0.1)
+    assert not got                                  # a detector pass wants the GPU: the splat step waits
+    released = time.monotonic()
+    ctx.gpu_wanted = 0
+    t.join(2)
+    assert got and got[0] >= released
+
+
+def test_splat_without_cuda_keeps_the_mesh_and_retries_later(gw, monkeypatch, tmp_path):  # noqa: F811
+    import asyncio
+
+    from repairos.pipeline.run import Context, run_id_for
+    from repairos.recreation import splat
+    from repairos.recreation.service import ensure_splat
+    from test_api_gateway import make_scan, new_session
+
+    sid = new_session(gw)
+    pkg = make_scan(gw, sid)
+    assert gw.req("POST", "/v1/scans", pkg)[0] == 201
+    mesh = {"status": "done", "ref": gw.blobs.put(b"PK" + bytes(10), "model/vnd.usdz+zip"), "rev": 1,
+            "kind": "textured_mesh", "format": "usdz"}
+    asyncio.run(gw.state.transition("pipeline-run", run_id_for(pkg["scan_id"]), "pipeline.update",
+                                    {"scan_id": pkg["scan_id"], "session_id": sid, "recreation": mesh}))
+    ctx = Context(state=gw.state, blobs=gw.blobs, root=tmp_path)
+    monkeypatch.delenv("LEA_RECREATION_ENGINE", raising=False)
+    assert asyncio.run(ensure_splat(ctx, pkg["scan_id"])) == {"status": "off"}
+    monkeypatch.setenv("LEA_RECREATION_ENGINE", "splat")
+    monkeypatch.setattr(splat, "unavailable_reason", lambda: "no CUDA device")
+    rec = asyncio.run(ensure_splat(ctx, pkg["scan_id"]))
+    assert rec == {"status": "unavailable", "reason": "no CUDA device", "input_key": None}   # no key: tried again
+    row = asyncio.run(gw.state.get("pipeline-run", run_id_for(pkg["scan_id"]))).data
+    assert row["recreation"] == mesh and row["splat"]["status"] == "unavailable"
+    status, got, h = gw.req("GET", f"/v1/scans/{pkg['scan_id']}/recreation")
+    assert status == 200 and h["x-recreation-kind"] == "textured_mesh"           # the mesh is still served
+    status, out, _ = gw.req("GET", f"/v1/scans/{pkg['scan_id']}/recreation?kind=splat")
+    assert status == 404 and out["detail"]["reason"] == "no CUDA device"
+
+
+def test_splat_route_and_live_event_name_the_mesh_fallback(gw):  # noqa: F811
+    import asyncio
+
+    from repairos.api.app import _named_event
+    from repairos.pipeline.run import run_id_for
+    from repairos.recreation.splat import splat_bytes
+    from test_api_gateway import make_scan, new_session
+
+    sid = new_session(gw)
+    pkg = make_scan(gw, sid)
+    assert gw.req("POST", "/v1/scans", pkg)[0] == 201
+    scan_id = pkg["scan_id"]
+    mesh_body, n = b"PK" + bytes(100), 5
+    sp = splat_bytes(np.zeros((n, 3)), np.full((n, 3), 0.01), np.tile([1.0, 0, 0, 0], (n, 1)), np.ones(n),
+                     np.ones((n, 3)))
+    mesh = {"status": "done", "ref": gw.blobs.put(mesh_body, "model/vnd.usdz+zip"), "rev": 3, "kind": "textured_mesh",
+            "format": "usdz", "bytes": len(mesh_body), "focus_center": [0, 0, 0], "focus_radius": 0.1}
+    spl = {"status": "done", "ref": gw.blobs.put(sp, "application/octet-stream"), "rev": 1, "kind": "splat",
+           "format": "splat", "bytes": len(sp), "focus_center": [0.0, 0.05, 0.0], "focus_radius": 0.1}
+    for patch in ({"recreation": mesh, "announce": "recreation_ready"}, {"splat": spl, "announce": "splat_ready"}):
+        asyncio.run(gw.state.transition("pipeline-run", run_id_for(scan_id), "pipeline.update",
+                                        {"scan_id": scan_id, "session_id": sid, **patch}))
+    status, got, h = gw.req("GET", f"/v1/scans/{scan_id}/recreation?kind=splat&rev=1")
+    assert status == 200 and got == sp and h["x-recreation-kind"] == "splat" and h["x-recreation-format"] == "splat"
+    assert h["x-recreation-focus"] == "0.0,0.05,0.0,0.1"
+    status, got, h = gw.req("GET", f"/v1/scans/{scan_id}/recreation")
+    assert status == 200 and got == mesh_body and h["x-recreation-kind"] == "textured_mesh"   # old clients: the mesh
+    assert gw.req("GET", f"/v1/scans/{scan_id}/recreation?kind=nerf")[0] == 400
+    named = [p for name, p in (n for n in (_named_event(e) for e in asyncio.run(gw.state.events_since(sid))) if n)
+             if name == "recreation_ready"]
+    assert [p["kind"] for p in named] == ["textured_mesh", "splat"]
+    assert named[1] == {"scan_id": scan_id, "kind": "splat", "rev": 1, "format": "splat", "frame": "arkit_world",
+                        "url": f"/v1/scans/{scan_id}/recreation?kind=splat&rev=1", "bytes": len(sp),
+                        "fallback_url": f"/v1/scans/{scan_id}/recreation?rev=3", "fallback_kind": "textured_mesh",
+                        "fallback_rev": 3}

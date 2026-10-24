@@ -22,6 +22,7 @@ PipelineFailed; nothing is defaulted in its place (GEN3).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import os
@@ -107,6 +108,7 @@ class Context:
         self.config = self.config or load_pipeline_config()
         self._lock = threading.Lock()          # slot loading, the detection cache, the VLM pool
         self.gpu = threading.Lock()            # one detector pass at a time (one model, one GPU)
+        self.gpu_wanted = 0                    # detector passes waiting for or holding the GPU (splats yield to them)
         self._detections: OrderedDict[str, Future] = OrderedDict()
         self._vlm_pool: ThreadPoolExecutor | None = None
         self._shares: dict[str, Any] = {}
@@ -202,8 +204,14 @@ class Context:
 
             im = image if image is not None else load_still(self.local_file(scan_id, ref))
             det = self.slot("DET")
-            with self.gpu:
-                dets = det.detect(im)
+            with self._lock:
+                self.gpu_wanted += 1
+            try:
+                with self.gpu:
+                    dets = det.detect(im)
+            finally:
+                with self._lock:
+                    self.gpu_wanted -= 1
         except BaseException as e:
             fut.set_exception(e)
             with self._lock:
@@ -212,6 +220,15 @@ class Context:
             raise
         fut.set_result(dets)
         return dets, False
+
+    @contextlib.contextmanager
+    def gpu_low_priority(self, poll_s: float = 0.005):
+        """The GPU for one short step of low-priority work (a splat training step): waits while any detector pass
+        wants it, so inspection always goes first, then holds the detector's lock for the step."""
+        while self.gpu_wanted:
+            time.sleep(poll_s)
+        with self.gpu:
+            yield
 
     def depth(self, scan_id: str, still: dict) -> Any:
         """The still's depth grid in metres, or None when it has none or it cannot be read."""

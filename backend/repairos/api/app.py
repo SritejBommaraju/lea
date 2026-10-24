@@ -83,6 +83,9 @@ def _named_event(ev) -> tuple[str, dict] | None:
         if what == "recreation_ready" and (ev.row.get("recreation") or {}).get("status") == "done":
             from repairos.recreation.service import payload as recreation_payload
             return "recreation_ready", recreation_payload(sid, ev.row["recreation"])
+        if what == "splat_ready" and (ev.row.get("splat") or {}).get("status") == "done":
+            from repairos.recreation.service import payload as recreation_payload
+            return "recreation_ready", recreation_payload(sid, ev.row["splat"], ev.row.get("recreation"))
         if what == "lead":
             from repairos.pipeline.story import lead_payload
             p = lead_payload(sid, ev.row)
@@ -671,14 +674,20 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
     @app.get("/v1/scans/{scan_id}/recreation", responses={200: {"content": {"model/vnd.usdz+zip": {},
                                                                           "application/octet-stream": {}}}})
-    async def scan_recreation(scan_id: str, request: Request, _d: Device, rev: int | None = None):
+    async def scan_recreation(scan_id: str, request: Request, _d: Device, rev: int | None = None,
+                              kind: str | None = None):
         """The photo-real recreation of the scanned object (repairos.recreation): a USDZ textured mesh
         (`X-Recreation-Kind: textured_mesh`) or a `.splat` Gaussian splat (`splat`), in the scan's ARKit world frame
         (metres, Y up: the frame of every finding's location). `X-Recreation-Rev` = its revision (up when the scan
         gains photos); `X-Recreation-Focus` = the object's centre x,y,z and radius. 404 while there is none (`reason`).
-        The live event `recreation_ready` announces each revision. `rev` is a cache key only."""
+        The live event `recreation_ready` announces each revision. `rev` is a cache key only. `kind=splat` serves
+        the scan's Gaussian splat (engine `splat`, trained after the mesh; 404 with `reason` until there is one);
+        without `kind` (or `kind=textured_mesh`) the textured mesh, the splat's fallback."""
         await _get(request, "scan-package", scan_id)
-        rec = ((await _run(request, scan_id)) or {}).get("recreation") or {}
+        if kind not in (None, "textured_mesh", "splat"):
+            raise HTTPException(400, {"error": "bad_kind", "reason": "kind is splat or textured_mesh"})
+        run = (await _run(request, scan_id)) or {}
+        rec = run.get("splat" if kind == "splat" else "recreation") or {}
         if rec.get("status") != "done" or not rec.get("ref"):
             raise HTTPException(404, {"error": "no_recreation", "reason": rec.get("reason") or "not built yet"})
         b = blob_store(request)

@@ -30,17 +30,27 @@ same_region_m: 0.02
 # The 3D view: the scan's LiDAR mesh is decimated to at most this many triangles (GET /v1/scans/{id}/mesh).
 mesh_max_triangles: 80000
 # The photo-real recreation (backend/repairos/recreation, GET /v1/scans/{id}/recreation, live `recreation_ready`):
-# engine textured_mesh (any CPU: the LiDAR surface textured from the stills, a USDZ, seconds), splat (a Gaussian
-# splat trained on the GPU pod; falls back to the textured mesh without CUDA + gsplat) or off. Bounded: at most
-# max_stills stills (sharpest first) and max_keyframes keyframes, an atlas_px square texture, timeout_s between stages.
+# engine textured_mesh (any CPU: the LiDAR surface textured from the stills, a USDZ, seconds), splat (the textured mesh
+# first, then a Gaussian splat trained on the GPU pod, served with ?kind=splat; the mesh stays the fallback and is all
+# there is without CUDA + gsplat) or off. The env LEA_RECREATION_ENGINE overrides `engine` (the pod sets splat with
+# LEA_SPLAT=1). Bounded: at most max_stills stills (sharpest first) and max_keyframes keyframes, an atlas_px square
+# texture, timeout_s between stages.
+# The splat: splat_steps steps within splat_timeout_s seconds of GPU time (time spent waiting for the detector does
+# not count; 4x that is a hard stop), densification stopped at splat_max_gaussians or splat_gpu_mem_gb of its own GPU
+# memory, the file cut to splat_max_mb (32 bytes per Gaussian, SH degree 0), progress logged every splat_log_every.
+# Sized for an RTX A5000 shared with the detector: ~3000 steps fit about 100 s (to be measured on the pod).
 recreation:
   engine: textured_mesh
   atlas_px: 4096
   max_stills: 60
   max_keyframes: 80
   timeout_s: 120
-  splat_steps: 4000
-  splat_max_gaussians: 600000
+  splat_steps: 3000
+  splat_max_gaussians: 450000
+  splat_timeout_s: 110
+  splat_gpu_mem_gb: 10
+  splat_max_mb: 15
+  splat_log_every: 500
 
 # Spend guards (backend/repairos/spend.py): hard caps per paid service, checked BEFORE every call. A cap that trips
 # opens that service's breaker for `breaker_cooldown_s` (longer if the 24 h window needs longer to free up): every call

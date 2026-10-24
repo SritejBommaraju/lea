@@ -4,8 +4,13 @@ GET /v1/scans/{id}/recreation.
 
 Engines (config/pipeline.yaml `recreation.engine`):
 - `textured_mesh` (default, any CPU): surface.scan_surface + texture.texture_mesh, written as a USDZ. Seconds.
-- `splat`: a Gaussian splat trained on the GPU pod from the posed stills (recreation.splat). Needs CUDA + gsplat;
-  without them the textured mesh is built instead and the record says why.
+- `splat`: the textured mesh first (as above, announced at once), then a Gaussian splat trained on the GPU pod from
+  the same posed stills (recreation.splat), recorded beside it on the run row (`splat`) and announced with
+  `recreation_ready` again, `kind: splat` (GET /v1/scans/{id}/recreation?kind=splat). The mesh stays the
+  fallback: it is what GET .../recreation serves without `kind`, and what stays when the splat cannot be trained
+  here (no CUDA, gsplat not installed or its kernels still compiling) or fails (the `splat` record says why).
+  One splat at a time per process, outside the side-work gate, every training step yielding the GPU to the
+  detector (Context.gpu_low_priority). The env `LEA_RECREATION_ENGINE` overrides the config's engine.
 - `off`: nothing.
 
 Bounded: the inputs are capped (stills, keyframes, voxels, triangles, atlas size), each build checks its wall clock
@@ -27,7 +32,11 @@ log = logging.getLogger(__name__)
 
 ENGINES = ("textured_mesh", "splat", "off")
 DEFAULTS = {"engine": "textured_mesh", "atlas_px": 4096, "max_stills": 60, "max_keyframes": 80, "timeout_s": 120,
-            "splat_steps": 4000, "splat_max_gaussians": 600_000}
+            "splat_steps": 3000, "splat_max_gaussians": 450_000, "splat_timeout_s": 110, "splat_gpu_mem_gb": 10,
+            "splat_max_mb": 15, "splat_log_every": 500}
+INT_KEYS = ("atlas_px", "max_stills", "max_keyframes", "timeout_s", "splat_steps", "splat_max_gaussians",
+            "splat_timeout_s", "splat_log_every")
+ENGINE_ENV = "LEA_RECREATION_ENGINE"
 
 
 class RecreationUnavailable(RuntimeError):
@@ -48,11 +57,16 @@ def recreation_config(raw: Mapping[str, Any] | None = None) -> dict:
         path = Path(os.environ.get("REPAIROS_PIPELINE_CONFIG") or PIPELINE_CONFIG)
         raw = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("recreation") or {}
     out = {**DEFAULTS, **dict(raw)}
+    if os.environ.get(ENGINE_ENV):
+        out["engine"] = os.environ[ENGINE_ENV].strip()
     if out["engine"] not in ENGINES:
         raise ValueError(f"recreation.engine must be one of {ENGINES}, not {out['engine']!r}")
-    for k in ("atlas_px", "max_stills", "max_keyframes", "timeout_s", "splat_steps", "splat_max_gaussians"):
+    for k in INT_KEYS:
         if not isinstance(out[k], int) or isinstance(out[k], bool) or out[k] < 1:
             raise ValueError(f"recreation.{k} must be a whole number of at least 1")
+    for k in ("splat_gpu_mem_gb", "splat_max_mb"):
+        if not isinstance(out[k], (int, float)) or isinstance(out[k], bool) or out[k] <= 0:
+            raise ValueError(f"recreation.{k} must be a number above 0")
     if not 512 <= out["atlas_px"] <= 8192:
         raise ValueError("recreation.atlas_px must be between 512 and 8192")
     return out
@@ -90,15 +104,6 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     radius = float(0.5 * (box.extent ** 2).sum() ** 0.5)
     stills = sorted(stills_local, key=lambda s: -(s.get("sharpness") or 0.0))[: int(cfg["max_stills"])]
     note = ""
-    if cfg["engine"] == "splat":
-        from repairos.recreation import splat
-
-        why = splat.unavailable_reason()
-        if why is None:
-            out = splat.train_scan(pkg_local, stills, box, steps=int(cfg["splat_steps"]),
-                                   max_gaussians=int(cfg["splat_max_gaussians"]), timeout_s=float(cfg["timeout_s"]))
-            return Recreation("splat", "splat", out.data, focus, radius, out.seconds, out.stats)
-        note = f"splat engine not available here ({why}); built the textured mesh"
     from repairos.recreation.surface import scan_surface
     from repairos.recreation.texture import scan_views, texture_mesh
     from repairos.recreation.usdz import usdz_bytes
@@ -125,14 +130,43 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     return Recreation("textured_mesh", "usdz", data, focus, radius, seconds, {**tex.stats, **surf.params}, note)
 
 
+def build_splat(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]], cfg: Mapping[str, Any], *,
+                gate: Any = None, label: str = "") -> Recreation:   # pragma: no cover - needs CUDA
+    """The scan's Gaussian splat (recreation.splat.train_scan within the `splat_*` bounds)."""
+    from repairos.recon.tsdf import ObjectBox
+    from repairos.recreation import splat
+
+    if not pkg_local.get("crop_box"):
+        raise RecreationUnavailable("the scan has no object box")
+    box = ObjectBox.from_contract(pkg_local["crop_box"])
+    stills = sorted(stills_local, key=lambda s: -(s.get("sharpness") or 0.0))[: int(cfg["max_stills"])]
+    out = splat.train_scan(pkg_local, stills, box, steps=int(cfg["splat_steps"]),
+                           max_gaussians=int(cfg["splat_max_gaussians"]), timeout_s=float(cfg["splat_timeout_s"]),
+                           max_bytes=int(float(cfg["splat_max_mb"]) * 1e6), mem_cap_gb=float(cfg["splat_gpu_mem_gb"]),
+                           log_every=int(cfg["splat_log_every"]), gate=gate, label=label)
+    if out.count == 0:
+        raise RecreationUnavailable("the trained splat kept no Gaussians inside the object box")
+    focus = [float(x) for x in box.centre]
+    radius = float(0.5 * (box.extent ** 2).sum() ** 0.5)
+    return Recreation("splat", "splat", out.data, focus, radius, out.seconds, out.stats)
+
+
 # ------------------------------------------------------------------------------------------------ the pipeline side
 _locks: dict[str, asyncio.Lock] = {}
+_splat_locks: dict[str, asyncio.Lock] = {}
+_splat_gate: asyncio.Semaphore | None = None
 
 
-def payload(scan_id: str, rec: Mapping[str, Any]) -> dict:
-    """The live event `recreation_ready` (and the pipeline view's `recreation`)."""
-    return {"scan_id": scan_id, "kind": rec["kind"], "url": f"/v1/scans/{scan_id}/recreation?rev={rec['rev']}",
-            "rev": rec["rev"], "format": rec["format"], "frame": "arkit_world", "bytes": rec.get("bytes")}
+def payload(scan_id: str, rec: Mapping[str, Any], fallback: Mapping[str, Any] | None = None) -> dict:
+    """The live event `recreation_ready` (and the pipeline view's `recreation`). A splat names its own URL
+    (`kind=splat`) and the textured mesh it falls back to (`fallback_url`)."""
+    q = "kind=splat&" if rec["kind"] == "splat" else ""
+    out = {"scan_id": scan_id, "kind": rec["kind"], "url": f"/v1/scans/{scan_id}/recreation?{q}rev={rec['rev']}",
+           "rev": rec["rev"], "format": rec["format"], "frame": "arkit_world", "bytes": rec.get("bytes")}
+    if rec["kind"] == "splat" and fallback and fallback.get("status") == "done":
+        out.update(fallback_url=f"/v1/scans/{scan_id}/recreation?rev={fallback['rev']}",
+                   fallback_kind=fallback.get("kind"), fallback_rev=fallback.get("rev"))
+    return out
 
 
 def input_key(scan_rev: int, stills: Sequence[Mapping[str, Any]]) -> str:
@@ -190,8 +224,97 @@ async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
         return rec
 
 
+async def ensure_splat(ctx: Any, scan_id: str) -> dict:
+    """The scan's splat for its current inputs (engine `splat`), built once after the textured mesh and recorded on
+    the run row as `splat` with the live event `recreation_ready` (kind splat). Not trainable here now (no CUDA,
+    gsplat missing or still compiling): recorded without an input key, so a later trigger tries again. A failure
+    is recorded for this input (no retry loop) and the textured mesh stays the recreation."""
+    global _splat_gate
+    from repairos.pipeline.run import _local_scan, _run_row, _update
+    from repairos.recreation import splat
+    from repairos.sessions.layout import map_files
+
+    cfg = recreation_config()
+    if cfg["engine"] != "splat":
+        return {"status": "off"}
+    if _splat_gate is None:
+        _splat_gate = asyncio.Semaphore(1)
+    lock = _splat_locks.setdefault(scan_id, asyncio.Lock())
+    async with lock, _splat_gate:
+        row = await ctx.state.get("scan-package", scan_id)
+        if row is None:
+            raise RecreationUnavailable(f"no scan-package {scan_id}")
+        scan, rev = row.data, row.rev
+        stills = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
+        key = input_key(rev, stills)
+        run = await _run_row(ctx, scan_id) or {}
+        have = run.get("splat") or {}
+        if have.get("input_key") == key and have.get("status") in ("done", "unavailable", "failed"):
+            return have
+        why = await asyncio.to_thread(splat.unavailable_reason)
+        if why:
+            log.info("splat for scan %s skipped: %s; the textured mesh stays the recreation", scan_id, why)
+            if have.get("status") != "done":
+                rec = {"status": "unavailable", "reason": why, "input_key": None}
+                await _update(ctx, scan, {"splat": rec})
+                return rec
+            return have
+        t0 = time.monotonic()
+        gate = getattr(ctx, "gpu_low_priority", None)
+        try:
+            local = await asyncio.to_thread(_local_scan, ctx, scan)
+            local_stills = await asyncio.to_thread(
+                lambda: [map_files("still", s, lambda v, _b: str(ctx.local_file(scan_id, v))) for s in stills])
+            r = await asyncio.to_thread(build_splat, local, local_stills, cfg, gate=gate, label=scan_id)
+        except Exception as e:  # noqa: BLE001 - a splat never fails the report or the mesh; the row says why
+            unavailable = isinstance(e, RecreationUnavailable)
+            log.warning("splat for scan %s failed after %.1f s (%s: %s); the textured mesh stays the recreation",
+                        scan_id, time.monotonic() - t0, type(e).__name__, e)
+            reason = str(e) if unavailable else f"training the splat failed ({type(e).__name__}: {e})"[:500]
+            if have.get("status") == "done":
+                rec = {"rebuild_error": reason, "rebuild_input_key": key}
+            else:
+                rec = {"status": "unavailable" if unavailable else "failed", "reason": reason, "input_key": key}
+            try:
+                import torch
+
+                torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001 - only frees the cache after an out-of-memory
+                pass
+            await _update(ctx, scan, {"splat": rec})
+            return rec
+        ref = await asyncio.to_thread(ctx.blobs.put, r.data, "application/octet-stream")
+        rec = {"status": "done", "ref": ref, "kind": "splat", "format": "splat", "rev": int(have.get("rev") or 0) + 1,
+               "input_key": key, "scan_rev": rev, "frame": "arkit_world", "bytes": len(r.data),
+               "focus_center": [round(x, 5) for x in r.focus_center], "focus_radius": round(r.focus_radius, 5),
+               "seconds": {**r.seconds, "with_io_s": round(time.monotonic() - t0, 3)},
+               "stats": {k: v for k, v in r.stats.items() if isinstance(v, (int, float, str))},
+               "reason": None, "rebuild_error": None, "rebuild_input_key": None,
+               "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        await _update(ctx, scan, {"splat": rec, "announce": "splat_ready"})
+        log.info("splat for scan %s ready: rev %d, %.2f MB, %s Gaussians, %.1f s with I/O", scan_id, rec["rev"],
+                 len(r.data) / 1e6, r.stats.get("gaussians_kept"), rec["seconds"]["with_io_s"])
+        return rec
+
+
+async def splat_quietly(ctx: Any, scan_id: str) -> None:
+    try:
+        await ensure_splat(ctx, scan_id)
+    except Exception as e:  # noqa: BLE001 - ensure_splat records its own failures; this only guards the task
+        log.warning("splat for scan %s: %s", scan_id, e)
+
+
 async def recreation_quietly(ctx: Any, scan_id: str) -> None:
     try:
-        await ensure_recreation(ctx, scan_id)
+        rec = await ensure_recreation(ctx, scan_id)
     except Exception as e:  # noqa: BLE001 - ensure_recreation records its own failures; this only guards the task
         log.warning("recreation for scan %s: %s", scan_id, e)
+        return
+    try:
+        engine = recreation_config()["engine"]
+    except Exception:  # noqa: BLE001 - a bad config was already reported by ensure_recreation
+        return
+    if engine == "splat" and rec.get("status") in ("done", "unavailable", "failed"):
+        # outside the side-work gate: a 2-minute training must not hold back the next scan's identity or mesh
+        starter = getattr(ctx, "start", None) or ctx.spawn
+        starter(splat_quietly(ctx, scan_id))

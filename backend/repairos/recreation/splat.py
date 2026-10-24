@@ -9,18 +9,29 @@ Rasteriser: gsplat (nerfstudio-project/gsplat, Apache-2.0), its `rasterization` 
     out = train_scan(pkg_local, stills_local, box, steps=4000, max_gaussians=600_000, timeout_s=120)
     out.data                                  # .splat bytes (32 bytes per Gaussian)
 
-STATUS: the data preparation (cameras, images, initial points), the crop and the .splat writer are tested on the
-Mac (tests/unit/test_recreation.py). The training loop needs CUDA and has NOT been run here; run it on the pod
-first (`python -m repairos.recreation.splat <session_dir> <scan_id> <out.splat>`) and record its time and quality.
+Production bounds (config/pipeline.yaml `recreation.splat_*`, recreation.service): `steps` and an active-time
+budget `timeout_s` (time paused for the detector does not count; a hard wall of 4x stops it anyway), densification
+stops at `max_gaussians` or when the training's own GPU memory passes `mem_cap_gb` (and the run stops at 1.25x), and
+the cropped file keeps at most `max_bytes` (the most important Gaussians: opacity x volume). SH degree 0: the `.splat`
+format holds one RGB per Gaussian, so higher bands would be trained and then dropped. `gate` wraps every step; the
+pipeline passes one that waits while the detector wants the GPU (inspection first).
 
-The phone shows `kind: splat` only with a splat renderer (MetalSplatter, MIT, is the candidate); until then the
-phone keeps its textured shell.
+STATUS: the data preparation (cameras, images, initial points), the crop, the size cap and the .splat writer are tested
+on the Mac (tests/unit/test_recreation.py). The training loop needs CUDA; run it on the pod first
+(`python -m repairos.recreation.splat <session_dir> <scan_id> <out.splat>`) and record its time and quality.
+
+Readiness on the pod: deploy/runpod/bootstrap.sh (LEA_SPLAT=1) installs gsplat and compiles its CUDA kernels once in
+the background, then writes the file named by LEA_GSPLAT_READY; until that file exists this engine says it is not
+available (and the textured mesh stays the recreation), so no scan ever waits on a compile.
 """
 from __future__ import annotations
 
+import contextlib
+import logging
 import math
+import os
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,22 +40,29 @@ import numpy as np
 
 from repairos.locate.camera import FLIP_YZ, Pinhole, Pose
 
+log = logging.getLogger(__name__)
+
 SH_C0 = 0.28209479177387814
 STILL_TRAIN_PX = 1008          # stills are trained at this width (12 MP is 4032); keyframes at their own 640 px
 REGION_GROW = 0.6              # Gaussians kept within the box footprint grown by this share of its larger side
+BYTES_PER_GAUSSIAN = 32
 
 
 def unavailable_reason() -> str | None:
+    """None when a splat can be trained here now: CUDA, gsplat installed and (on the pod) its kernels compiled."""
     try:
         import torch
     except ImportError:
         return "torch is not installed"
     if not torch.cuda.is_available():
         return "no CUDA device"
-    try:
-        import gsplat  # noqa: F401
-    except ImportError:
-        return "gsplat is not installed"
+    import importlib.util
+
+    if importlib.util.find_spec("gsplat") is None:
+        return "gsplat is not installed (pod: LEA_SPLAT=1, deploy/runpod/bootstrap.sh)"
+    ready = os.environ.get("LEA_GSPLAT_READY")
+    if ready and not os.path.exists(ready):
+        return "gsplat's CUDA kernels are not compiled yet (bootstrap [splat-setup] runs in the background)"
     return None
 
 
@@ -147,12 +165,15 @@ def initial_points(pkg: Mapping[str, Any], box: Any, *, max_points: int = 150_00
     return p, c
 
 
-def splat_bytes(means: np.ndarray, scales: np.ndarray, quats_wxyz: np.ndarray, opacity: np.ndarray, rgb: np.ndarray
-                ) -> bytes:
+def splat_bytes(means: np.ndarray, scales: np.ndarray, quats_wxyz: np.ndarray, opacity: np.ndarray, rgb: np.ndarray,
+                max_bytes: int | None = None) -> bytes:
     """The `.splat` layout (antimatter15/splat; read by MetalSplatter): per Gaussian float32 x y z, float32 scale
-    x y z (linear), uint8 r g b a (a = opacity), uint8 quaternion w x y z (q * 128 + 128); largest first."""
-    n = len(means)
+    x y z (linear), uint8 r g b a (a = opacity), uint8 quaternion w x y z (q * 128 + 128); largest first. With
+    `max_bytes`, only the most important Gaussians (opacity x volume) that fit are written."""
     order = np.argsort(-(np.prod(scales, axis=1) * opacity.reshape(-1)))
+    if max_bytes is not None:
+        order = order[: max(0, int(max_bytes) // BYTES_PER_GAUSSIAN)]
+    n = len(order)
     q = quats_wxyz / np.maximum(np.linalg.norm(quats_wxyz, axis=1, keepdims=True), 1e-12)
     rec = np.empty(n, dtype=np.dtype([("p", "<f4", 3), ("s", "<f4", 3), ("c", "u1", 4), ("q", "u1", 4)]))
     rec["p"] = means[order]
@@ -180,8 +201,11 @@ def _load_image(v: TrainView) -> np.ndarray:
 
 
 def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box: Any, *, steps: int,
-               max_gaussians: int, timeout_s: float) -> SplatResult:   # pragma: no cover - needs CUDA
-    """Trains the splat (L1 + 0.2 D-SSIM, gsplat's default densification) and returns the cropped `.splat`."""
+               max_gaussians: int, timeout_s: float, max_bytes: int = 15_000_000, mem_cap_gb: float = 10.0,
+               log_every: int = 500, gate: Callable[[], Any] | None = None, label: str = ""
+               ) -> SplatResult:   # pragma: no cover - needs CUDA
+    """Trains the splat (L1 + 0.2 D-SSIM, gsplat's default densification) and returns the cropped `.splat`.
+    `gate()` is entered around every step (a context manager; the pipeline's waits while the detector wants the GPU)."""
     import torch
     import torch.nn.functional as F
     from gsplat import rasterization
@@ -190,8 +214,12 @@ def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box:
     from repairos.recreation.surface import GROW, ground_height
     from repairos.recon.tsdf import frames_from_scan_package
 
+    gate = gate or contextlib.nullcontext
     t0 = time.monotonic()
     dev = torch.device("cuda")
+    torch.cuda.reset_peak_memory_stats(dev)
+    base_mem = torch.cuda.memory_allocated(dev)
+    cap = int(mem_cap_gb * (1 << 30))
     views = train_views(pkg, stills)
     if len(views) < 3:
         raise RuntimeError("fewer than 3 posed views")
@@ -202,6 +230,9 @@ def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box:
     if len(p0) < 100:
         raise RuntimeError("too few depth points to seed the splat")
     load_s = time.monotonic() - t0
+    log.info("splat %s: start, %d views, %d seeds, %d steps, budget %.0f s, cap %d Gaussians / %.1f GB GPU / %.1f MB "
+             "(%s, images on GPU %.0f MB)", label, len(views), len(p0), steps, timeout_s, max_gaussians, mem_cap_gb,
+             max_bytes / 1e6, torch.cuda.get_device_name(dev), (torch.cuda.memory_allocated(dev) - base_mem) / 2**20)
 
     pts = torch.tensor(p0, dtype=torch.float32, device=dev)
     # initial scale: mean distance to the 3 nearest seeds (chunked)
@@ -238,27 +269,50 @@ def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box:
         return (((2 * mu_a * mu_b + c1) * (2 * sab + c2)) / ((mu_a ** 2 + mu_b ** 2 + c1) * (sa + sb + c2))).mean()
 
     rng = np.random.default_rng(0)
-    step = 0
+    step, stopped, paused, losses = -1, "steps", 0.0, []
+    t_train = time.monotonic()
     for step in range(steps):
-        if time.monotonic() - t0 > timeout_s:
+        now = time.monotonic()
+        if now - t_train - paused > timeout_s:
+            stopped = "time budget"
+            break
+        if now - t_train > 4 * timeout_s:
+            stopped = "wall clock (the GPU was busy with inspection)"
             break
         i = int(rng.integers(len(views)))
         v = views[i]
-        colors, alphas, info = rasterization(
-            params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
-            torch.sigmoid(params["opacities"]), params["sh0"], w2cs[i][None], ks[i][None], v.width, v.height,
-            sh_degree=0, packed=False)
-        img = colors[0].clamp(0, 1)
-        loss = 0.8 * (img - images[i]).abs().mean() + 0.2 * (1 - ssim(img, images[i]))
-        strategy.step_pre_backward(params, optimizers, state, step, info)
-        loss.backward()
-        for opt in optimizers.values():
-            opt.step()
-            opt.zero_grad(set_to_none=True)
-        strategy.step_post_backward(params, optimizers, state, step, info, packed=False)
-        if len(params["means"]) > max_gaussians and step > strategy.refine_stop_iter:
-            break
-    train_s = time.monotonic() - t0 - load_s
+        tw = time.monotonic()
+        with gate():
+            paused += time.monotonic() - tw
+            colors, alphas, info = rasterization(
+                params["means"], F.normalize(params["quats"], dim=-1), torch.exp(params["scales"]),
+                torch.sigmoid(params["opacities"]), params["sh0"], w2cs[i][None], ks[i][None], v.width, v.height,
+                sh_degree=0, packed=False)
+            img = colors[0].clamp(0, 1)
+            loss = 0.8 * (img - images[i]).abs().mean() + 0.2 * (1 - ssim(img, images[i]))
+            strategy.step_pre_backward(params, optimizers, state, step, info)
+            loss.backward()
+            for opt in optimizers.values():
+                opt.step()
+                opt.zero_grad(set_to_none=True)
+            strategy.step_post_backward(params, optimizers, state, step, info, packed=False)
+        if step % 50 == 0:
+            losses.append(float(loss.detach()))
+        if step % 100 == 0 and step < strategy.refine_stop_iter:
+            used = torch.cuda.memory_allocated(dev) - base_mem
+            if len(params["means"]) > max_gaussians or used > cap:
+                strategy.refine_stop_iter = step   # no more growth; the Gaussians there are trained on
+                log.info("splat %s: densification stopped at step %d (%d Gaussians, %.2f GB)", label, step,
+                         len(params["means"]), used / 2**30)
+            if used > 1.25 * cap:
+                stopped = "GPU memory cap"
+                break
+        if log_every and step and step % log_every == 0:
+            log.info("splat %s: step %d/%d, loss %.4f, %d Gaussians, %.0f s (%.0f s waiting for the detector), "
+                     "GPU %.2f GB now / %.2f GB peak", label, step, steps, float(loss.detach()),
+                     len(params["means"]), time.monotonic() - t_train, paused,
+                     torch.cuda.memory_allocated(dev) / 2**30, torch.cuda.max_memory_allocated(dev) / 2**30)
+    train_s = time.monotonic() - t_train
 
     with torch.no_grad():
         means = params["means"].cpu().numpy().astype(np.float64)
@@ -266,13 +320,25 @@ def train_scan(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], box:
         quats = F.normalize(params["quats"], dim=-1).cpu().numpy()
         opac = torch.sigmoid(params["opacities"]).cpu().numpy()
         rgb = np.clip(params["sh0"][:, 0].cpu().numpy() * SH_C0 + 0.5, 0, 1)
+    peak_gb = torch.cuda.max_memory_allocated(dev) / 2**30
+    del params, optimizers, state, images
+    torch.cuda.empty_cache()   # give the memory back to the detector
     frames = frames_from_scan_package(pkg, Path("/"))
     keep = region_mask(means, box, ground_height(frames, box, GROW)) & (opac > 0.02)
-    data = splat_bytes(means[keep], scales[keep], quats[keep], opac[keep], rgb[keep])
-    return SplatResult(data, int(keep.sum()), {"load_s": round(load_s, 2), "train_s": round(train_s, 2),
-                                               "total_s": round(time.monotonic() - t0, 2)},
-                       {"steps": step + 1, "views": len(views), "gaussians_trained": int(len(means)),
-                        "gaussians_kept": int(keep.sum())})
+    data = splat_bytes(means[keep], scales[keep], quats[keep], opac[keep], rgb[keep], max_bytes=max_bytes)
+    count = len(data) // BYTES_PER_GAUSSIAN
+    out = SplatResult(data, count, {"load_s": round(load_s, 2), "train_s": round(train_s, 2),
+                                    "paused_s": round(paused, 2), "total_s": round(time.monotonic() - t0, 2)},
+                      {"steps": step + 1, "stopped": stopped, "views": len(views), "seeds": int(len(p0)),
+                       "gaussians_trained": int(len(means)), "gaussians_in_box": int(keep.sum()),
+                       "gaussians_kept": count, "loss_first": round(losses[0], 4) if losses else None,
+                       "loss_last": round(losses[-1], 4) if losses else None, "gpu_peak_gb": round(peak_gb, 2),
+                       "sh_degree": 0})
+    log.info("splat %s: done, %d steps (stopped by %s) in %.1f s train / %.1f s total, %d Gaussians kept of %d "
+             "trained, %.2f MB, GPU peak %.2f GB, loss %s -> %s", label, step + 1, stopped, train_s,
+             out.seconds["total_s"], count, len(means), len(data) / 1e6, peak_gb, out.stats["loss_first"],
+             out.stats["loss_last"])
+    return out
 
 
 def main(argv: Sequence[str] | None = None) -> int:   # pragma: no cover - a pod tool
@@ -286,16 +352,20 @@ def main(argv: Sequence[str] | None = None) -> int:   # pragma: no cover - a pod
     ap.add_argument("session_dir")
     ap.add_argument("scan_id")
     ap.add_argument("out")
-    ap.add_argument("--steps", type=int, default=4000)
-    ap.add_argument("--timeout-s", type=float, default=120)
+    ap.add_argument("--steps", type=int, default=3000)
+    ap.add_argument("--timeout-s", type=float, default=110)
+    ap.add_argument("--max-gaussians", type=int, default=450_000)
+    ap.add_argument("--max-mb", type=float, default=15)
     a = ap.parse_args(argv)
     why = unavailable_reason()
     if why:
         print(json.dumps({"ok": False, "reason": why}))
         return 1
     pkg, stills = load_scan_dir(a.session_dir, a.scan_id)
-    r = train_scan(pkg, stills, ObjectBox.from_contract(pkg["crop_box"]), steps=a.steps, max_gaussians=600_000,
-                   timeout_s=a.timeout_s)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    r = train_scan(pkg, stills, ObjectBox.from_contract(pkg["crop_box"]), steps=a.steps,
+                   max_gaussians=a.max_gaussians, timeout_s=a.timeout_s, max_bytes=int(a.max_mb * 1e6),
+                   label=a.scan_id)
     Path(a.out).write_bytes(r.data)
     print(json.dumps({"ok": True, "gaussians": r.count, "bytes": len(r.data), **r.seconds, **r.stats}))
     return 0
