@@ -32,3 +32,7 @@ private/
 **/GRAIN_STATUS*
 samples/**/grain/*
 !samples/**/grain/README.md
+
+# local secrets: never committed, never read by tools
+.env
+**/.env
