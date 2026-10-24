@@ -17,6 +17,7 @@
 //   let partOnHand = try? JSONDecoder().decode(PartOnHand.self, from: jsonData)
 //   let referenceDesign = try? JSONDecoder().decode(ReferenceDesign.self, from: jsonData)
 //   let repairPlan = try? JSONDecoder().decode(RepairPlan.self, from: jsonData)
+//   let report = try? JSONDecoder().decode(Report.self, from: jsonData)
 //   let scanPackage = try? JSONDecoder().decode(ScanPackage.self, from: jsonData)
 //   let shoppingQuote = try? JSONDecoder().decode(ShoppingQuote.self, from: jsonData)
 //   let still = try? JSONDecoder().decode(Still.self, from: jsonData)
@@ -381,7 +382,7 @@ public struct GrainCallRequest: Codable, Sendable {
     /// Now: inline {name, data_base64} only, and slow, so RepairOS never sends photos here
     /// (photo upload + /look instead). A stored photo cannot be referenced today (Grain answers
     /// 400; G24). Target T5: {record, n} for a stored photo.
-    public let photos: [Photo]?
+    public let photos: [PhotoElement]?
     /// Grain project id of the product model.
     public let project: String
     /// What the person asked; passed back unchanged. Until T4, it also carries a compact text
@@ -413,7 +414,7 @@ public struct GrainCallRequest: Codable, Sendable {
         case toleranceMm = "tolerance_mm"
     }
 
-    public init(align: Align?, crop: Bool?, designTrust: FindingDesignTrust?, detach: Bool?, files: [File]?, findings: [GrainCallRequestSchema]?, notInspected: [String]?, photos: [Photo]?, project: String, question: String?, readings: [GrainElectricalCheckRequestSchema]?, rebuild: Bool?, scan: Scan?, toleranceMm: Double?) {
+    public init(align: Align?, crop: Bool?, designTrust: FindingDesignTrust?, detach: Bool?, files: [File]?, findings: [GrainCallRequestSchema]?, notInspected: [String]?, photos: [PhotoElement]?, project: String, question: String?, readings: [GrainElectricalCheckRequestSchema]?, rebuild: Bool?, scan: Scan?, toleranceMm: Double?) {
         self.align = align
         self.crop = crop
         self.designTrust = designTrust
@@ -467,7 +468,7 @@ public struct GrainCallRequestSchema: Codable, Sendable {
     public let source: String
     /// A RepairOS Finding.state.
     public let state: String
-    public let subject: FindingSubjectClass
+    public let subject: FixSubject
 
     public enum CodingKeys: String, CodingKey {
         case confidence = "confidence"
@@ -478,7 +479,7 @@ public struct GrainCallRequestSchema: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(confidence: Double, evidence: [String]?, photo: String?, source: String, state: String, subject: FindingSubjectClass) {
+    public init(confidence: Double, evidence: [String]?, photo: String?, source: String, state: String, subject: FixSubject) {
         self.confidence = confidence
         self.evidence = evidence
         self.photo = photo
@@ -493,8 +494,8 @@ public struct GrainCallRequestSchema: Codable, Sendable {
 /// Finding.subject.ref maps onto id.
 ///
 /// Target T3: structured subject; keep part as the display string.
-// MARK: - FindingSubjectClass
-public struct FindingSubjectClass: Codable, Sendable {
+// MARK: - FixSubject
+public struct FixSubject: Codable, Sendable {
     public let id: String
     public let kind: FluffyKind
     /// REF.PIN, net naming.
@@ -520,8 +521,8 @@ public enum FluffyKind: String, Codable, Sendable {
     case wire = "wire"
 }
 
-// MARK: - Photo
-public struct Photo: Codable, Sendable {
+// MARK: - PhotoElement
+public struct PhotoElement: Codable, Sendable {
     public let dataBase64: String?
     public let name: String?
     public let n: Int?
@@ -1452,7 +1453,7 @@ public struct FixElement: Codable, Sendable {
     /// Target T3: which evidence produced the fix.
     public let sources: [SourceElement]?
     /// Target T3: structured subject; keep part as the display string.
-    public let subject: FindingSubjectClass?
+    public let subject: FixSubject?
 
     public enum CodingKeys: String, CodingKey {
         case action = "action"
@@ -1472,7 +1473,7 @@ public struct FixElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(action: Action, buy: [String: JSONAny]?, confidence: ConfidenceEnum, coverage: Double?, detail: String?, how: String?, missingRegionMm: MissingRegionMmClass?, note: String?, part: String?, problem: String, remake: Remake?, seenBy: String?, shiftMm: [Double]?, sources: [SourceElement]?, subject: FindingSubjectClass?) {
+    public init(action: Action, buy: [String: JSONAny]?, confidence: ConfidenceEnum, coverage: Double?, detail: String?, how: String?, missingRegionMm: MissingRegionMmClass?, note: String?, part: String?, problem: String, remake: Remake?, seenBy: String?, shiftMm: [Double]?, sources: [SourceElement]?, subject: FixSubject?) {
         self.action = action
         self.buy = buy
         self.confidence = confidence
@@ -3268,7 +3269,7 @@ public enum GrainDesignTrust: String, Codable, Sendable {
 // MARK: - InsufficientEvidence
 public struct InsufficientEvidence: Codable, Sendable {
     public let reason: String
-    public let subject: InsufficientEvidenceSubject
+    public let subject: RootCauseSubject
     public let whatWouldHelp: String?
 
     public enum CodingKeys: String, CodingKey {
@@ -3277,7 +3278,7 @@ public struct InsufficientEvidence: Codable, Sendable {
         case whatWouldHelp = "what_would_help"
     }
 
-    public init(reason: String, subject: InsufficientEvidenceSubject, whatWouldHelp: String?) {
+    public init(reason: String, subject: RootCauseSubject, whatWouldHelp: String?) {
         self.reason = reason
         self.subject = subject
         self.whatWouldHelp = whatWouldHelp
@@ -3286,8 +3287,8 @@ public struct InsufficientEvidence: Codable, Sendable {
 
 /// Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name
 /// or net name.
-// MARK: - InsufficientEvidenceSubject
-public struct InsufficientEvidenceSubject: Codable, Sendable {
+// MARK: - RootCauseSubject
+public struct RootCauseSubject: Codable, Sendable {
     public let kind: PurpleKind
     public let pins: [String]?
     public let ref: String
@@ -3381,10 +3382,10 @@ public struct Substitute: Codable, Sendable {
 public struct RootCause: Codable, Sendable {
     public let evidenceSummary: [String]?
     public let fix: Fix
-    public let pFaultWord: PFaultWord?
+    public let pFaultWord: Word?
     /// Null means unproven; the plan must say so.
     public let proofReadingID: String?
-    public let subject: InsufficientEvidenceSubject
+    public let subject: RootCauseSubject
     public let suspectID: String
     public let verdict: RootCauseVerdict
 
@@ -3398,7 +3399,7 @@ public struct RootCause: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(evidenceSummary: [String]?, fix: Fix, pFaultWord: PFaultWord?, proofReadingID: String?, subject: InsufficientEvidenceSubject, suspectID: String, verdict: RootCauseVerdict) {
+    public init(evidenceSummary: [String]?, fix: Fix, pFaultWord: Word?, proofReadingID: String?, subject: RootCauseSubject, suspectID: String, verdict: RootCauseVerdict) {
         self.evidenceSummary = evidenceSummary
         self.fix = fix
         self.pFaultWord = pFaultWord
@@ -3421,7 +3422,7 @@ public enum Fix: String, Codable, Sendable {
 }
 
 /// Word shown to the user. Mapping from p_fault lives in code (policy.json).
-public enum PFaultWord: String, Codable, Sendable {
+public enum Word: String, Codable, Sendable {
     case likely = "likely"
     case unlikely = "unlikely"
     case unsure = "unsure"
@@ -3470,6 +3471,532 @@ public struct Step: Codable, Sendable {
     }
 }
 
+/// The Phase 1 inspection report for one scan (task B9), written by the pipeline (B10) and
+/// the report builder (B11). Code picks the verdict from a truth table; Claude writes
+/// `summary.text` from words only (S5). Every stored finding of the scan appears exactly
+/// once: in `findings` (a model judged its state), `not_inspected` (nobody looked at it, I3)
+/// or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No
+/// probability number appears anywhere: confidence is a word (I6). A vision finding is a
+/// suspect; only a meter reading proves or rules out (I1, I2). Phase 1 makes no Grain calls.
+// MARK: - Report
+public struct Report: Codable, Sendable {
+    public let capture: Capture
+    public let createdAt: Date
+    /// Regions a model judged: an issue, or `none` (looked at, no visible issue).
+    public let findings: [ReportFinding]
+    /// Phase 1 makes no Grain calls.
+    public let grain: GrainEnum
+    /// Regions looked at that could not be judged (I4), each with the reason.
+    public let insufficientEvidence: [InsufficientEvidenceElement]
+    /// Provenance: which model (and version) did each step, or why a step did not run.
+    public let models: Models
+    /// The one next action code chose from Jev's judgments (repairos.fusion), when there is one.
+    public let nextStep: NextStep?
+    /// Regions nobody looked at (I3), each with the reason. Never shown as ok.
+    public let notInspected: [NotInspectedElement]
+    public let reportID: String
+    public let scanID: String
+    public let sessionID: String
+    public let summary: Summary
+    /// Picked in code (repairos.report.verdict truth table), never by a model.
+    public let verdict: ReportVerdict
+    public let verdictReason: VerdictReason
+
+    public enum CodingKeys: String, CodingKey {
+        case capture = "capture"
+        case createdAt = "created_at"
+        case findings = "findings"
+        case grain = "grain"
+        case insufficientEvidence = "insufficient_evidence"
+        case models = "models"
+        case nextStep = "next_step"
+        case notInspected = "not_inspected"
+        case reportID = "report_id"
+        case scanID = "scan_id"
+        case sessionID = "session_id"
+        case summary = "summary"
+        case verdict = "verdict"
+        case verdictReason = "verdict_reason"
+    }
+
+    public init(capture: Capture, createdAt: Date, findings: [ReportFinding], grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], models: Models, nextStep: NextStep?, notInspected: [NotInspectedElement], reportID: String, scanID: String, sessionID: String, summary: Summary, verdict: ReportVerdict, verdictReason: VerdictReason) {
+        self.capture = capture
+        self.createdAt = createdAt
+        self.findings = findings
+        self.grain = grain
+        self.insufficientEvidence = insufficientEvidence
+        self.models = models
+        self.nextStep = nextStep
+        self.notInspected = notInspected
+        self.reportID = reportID
+        self.scanID = scanID
+        self.sessionID = sessionID
+        self.summary = summary
+        self.verdict = verdict
+        self.verdictReason = verdictReason
+    }
+}
+
+// MARK: - Capture
+public struct Capture: Codable, Sendable {
+    /// The phone's coverage hint in words, or 'not measured'.
+    public let coverageWords: String
+    /// lidar when the scan or a still carries ARKit depth; none otherwise (A8: sizes cannot be
+    /// claimed).
+    public let depthSource: DepthSource
+    public let keyframes: Int
+    public let scanPoints: Int?
+    /// Close-up stills received.
+    public let stills: Int
+    /// Stills with at least one region a model judged.
+    public let stillsInspected: Int
+
+    public enum CodingKeys: String, CodingKey {
+        case coverageWords = "coverage_words"
+        case depthSource = "depth_source"
+        case keyframes = "keyframes"
+        case scanPoints = "scan_points"
+        case stills = "stills"
+        case stillsInspected = "stills_inspected"
+    }
+
+    public init(coverageWords: String, depthSource: DepthSource, keyframes: Int, scanPoints: Int?, stills: Int, stillsInspected: Int) {
+        self.coverageWords = coverageWords
+        self.depthSource = depthSource
+        self.keyframes = keyframes
+        self.scanPoints = scanPoints
+        self.stills = stills
+        self.stillsInspected = stillsInspected
+    }
+}
+
+/// lidar when the scan or a still carries ARKit depth; none otherwise (A8: sizes cannot be
+/// claimed).
+///
+/// Where the scan's geometry comes from. lidar (also when absent, as in every package before
+/// this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8):
+/// ARKit world-tracking poses and images only, so there is no points_file or point_count and
+/// nothing metric can be read off the scan itself.
+public enum DepthSource: String, Codable, Sendable {
+    case lidar = "lidar"
+    case none = "none"
+}
+
+// MARK: - ReportFinding
+public struct ReportFinding: Codable, Sendable {
+    public let confidenceWord: ConfidenceEnum
+    public let crop: FindingCrop
+    public let evidence: [String]
+    public let findingID: String
+    /// Stages that looked at this region. A judged region always includes a state judge (vlm,
+    /// classifier or meter).
+    public let inspectedBy: [InspectedBy]
+    /// none = a model looked and saw no issue. Every other value is Finding.state: a suspect.
+    public let issue: Issue
+    public let judgment: Judgment?
+    public let location: Location
+    /// Generic class (vision/generic_classes.py), never a product name.
+    public let partClass: String
+    public let proof: Proof
+    public let subject: NotInspectedSubject
+
+    public enum CodingKeys: String, CodingKey {
+        case confidenceWord = "confidence_word"
+        case crop = "crop"
+        case evidence = "evidence"
+        case findingID = "finding_id"
+        case inspectedBy = "inspected_by"
+        case issue = "issue"
+        case judgment = "judgment"
+        case location = "location"
+        case partClass = "part_class"
+        case proof = "proof"
+        case subject = "subject"
+    }
+
+    public init(confidenceWord: ConfidenceEnum, crop: FindingCrop, evidence: [String], findingID: String, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, partClass: String, proof: Proof, subject: NotInspectedSubject) {
+        self.confidenceWord = confidenceWord
+        self.crop = crop
+        self.evidence = evidence
+        self.findingID = findingID
+        self.inspectedBy = inspectedBy
+        self.issue = issue
+        self.judgment = judgment
+        self.location = location
+        self.partClass = partClass
+        self.proof = proof
+        self.subject = subject
+    }
+}
+
+// MARK: - FindingCrop
+public struct FindingCrop: Codable, Sendable {
+    public let boxPx: [Int]
+    /// blob://sha256:<hex> of the full-resolution crop (GET /v1/blobs/<sha256>).
+    public let cropRef: String?
+    public let stillID: String
+
+    public enum CodingKeys: String, CodingKey {
+        case boxPx = "box_px"
+        case cropRef = "crop_ref"
+        case stillID = "still_id"
+    }
+
+    public init(boxPx: [Int], cropRef: String?, stillID: String) {
+        self.boxPx = boxPx
+        self.cropRef = cropRef
+        self.stillID = stillID
+    }
+}
+
+public enum InspectedBy: String, Codable, Sendable {
+    case classifier = "classifier"
+    case detector = "detector"
+    case meter = "meter"
+    case ocr = "ocr"
+    case vlm = "vlm"
+}
+
+/// none = a model looked and saw no issue. Every other value is Finding.state: a suspect.
+public enum Issue: String, Codable, Sendable {
+    case broken = "broken"
+    case colourMismatch = "colour_mismatch"
+    case damaged = "damaged"
+    case dirty = "dirty"
+    case issueOpen = "open"
+    case loose = "loose"
+    case missing = "missing"
+    case none = "none"
+    case outOfRange = "out_of_range"
+    case partly = "partly"
+    case shifted = "shifted"
+    case short = "short"
+    case unexpectedPart = "unexpected_part"
+    case unexpectedWire = "unexpected_wire"
+    case unseated = "unseated"
+    case worn = "worn"
+    case wrongPin = "wrong_pin"
+}
+
+/// Jev's judgment of this subject, ranked in code (Suspect), in words.
+// MARK: - Judgment
+public struct Judgment: Codable, Sendable {
+    public let likelihoodWord: Word
+    public let rank: Int
+    public let verdict: JudgmentVerdict
+
+    public enum CodingKeys: String, CodingKey {
+        case likelihoodWord = "likelihood_word"
+        case rank = "rank"
+        case verdict = "verdict"
+    }
+
+    public init(likelihoodWord: Word, rank: Int, verdict: JudgmentVerdict) {
+        self.likelihoodWord = likelihoodWord
+        self.rank = rank
+        self.verdict = verdict
+    }
+}
+
+/// confirmed and cleared require a meter reading for electrical subjects (I2).
+public enum JudgmentVerdict: String, Codable, Sendable {
+    case cleared = "cleared"
+    case confirmed = "confirmed"
+    case insufficientEvidence = "insufficient_evidence"
+    case notInspected = "not_inspected"
+    case suspect = "suspect"
+}
+
+/// Where the region is on the scan: the crop box through the still's pose onto the scan
+/// (repairos.locate). `not_computed` says why there is none; a location is never made up.
+// MARK: - Location
+public struct Location: Codable, Sendable {
+    /// Size of the region on the scan, axis-aligned in arkit_world, when known.
+    public let extentM: [Double]?
+    /// The scan's frame: metres, Y up.
+    public let frame: LocationFrame?
+    /// Locator and version.
+    public let method: String?
+    public let pointM: [Double]?
+    public let status: LocationStatus
+    public let reason: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case extentM = "extent_m"
+        case frame = "frame"
+        case method = "method"
+        case pointM = "point_m"
+        case status = "status"
+        case reason = "reason"
+    }
+
+    public init(extentM: [Double]?, frame: LocationFrame?, method: String?, pointM: [Double]?, status: LocationStatus, reason: String?) {
+        self.extentM = extentM
+        self.frame = frame
+        self.method = method
+        self.pointM = pointM
+        self.status = status
+        self.reason = reason
+    }
+}
+
+public enum LocationFrame: String, Codable, Sendable {
+    case arkitWorld = "arkit_world"
+}
+
+public enum LocationStatus: String, Codable, Sendable {
+    case computed = "computed"
+    case notComputed = "not_computed"
+}
+
+/// Only a meter reading proves or rules out (I1, I2).
+// MARK: - Proof
+public struct Proof: Codable, Sendable {
+    public let readingID: String?
+    public let status: ProofStatus
+
+    public enum CodingKeys: String, CodingKey {
+        case readingID = "reading_id"
+        case status = "status"
+    }
+
+    public init(readingID: String?, status: ProofStatus) {
+        self.readingID = readingID
+        self.status = status
+    }
+}
+
+public enum ProofStatus: String, Codable, Sendable {
+    case confirmedByMeter = "confirmed_by_meter"
+    case notMeasured = "not_measured"
+    case ruledOutByMeter = "ruled_out_by_meter"
+}
+
+/// Same as Finding.subject.
+// MARK: - NotInspectedSubject
+public struct NotInspectedSubject: Codable, Sendable {
+    public let kind: PurpleKind
+    public let pins: [String]?
+    public let ref: String
+
+    public enum CodingKeys: String, CodingKey {
+        case kind = "kind"
+        case pins = "pins"
+        case ref = "ref"
+    }
+
+    public init(kind: PurpleKind, pins: [String]?, ref: String) {
+        self.kind = kind
+        self.pins = pins
+        self.ref = ref
+    }
+}
+
+public enum GrainEnum: String, Codable, Sendable {
+    case notCalled = "not called"
+}
+
+// MARK: - InsufficientEvidenceElement
+public struct InsufficientEvidenceElement: Codable, Sendable {
+    public let findingID: String
+    public let inspectedBy: [InspectedBy]
+    public let location: Location?
+    public let partClass: String
+    public let photo: InsufficientEvidencePhoto?
+    public let reason: String
+    public let subject: NotInspectedSubject
+
+    public enum CodingKeys: String, CodingKey {
+        case findingID = "finding_id"
+        case inspectedBy = "inspected_by"
+        case location = "location"
+        case partClass = "part_class"
+        case photo = "photo"
+        case reason = "reason"
+        case subject = "subject"
+    }
+
+    public init(findingID: String, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: InsufficientEvidencePhoto?, reason: String, subject: NotInspectedSubject) {
+        self.findingID = findingID
+        self.inspectedBy = inspectedBy
+        self.location = location
+        self.partClass = partClass
+        self.photo = photo
+        self.reason = reason
+        self.subject = subject
+    }
+}
+
+// MARK: - InsufficientEvidencePhoto
+public struct InsufficientEvidencePhoto: Codable, Sendable {
+    public let boxPx: [Int]?
+    public let cropRef: String?
+    public let stillID: String
+
+    public enum CodingKeys: String, CodingKey {
+        case boxPx = "box_px"
+        case cropRef = "crop_ref"
+        case stillID = "still_id"
+    }
+
+    public init(boxPx: [Int]?, cropRef: String?, stillID: String) {
+        self.boxPx = boxPx
+        self.cropRef = cropRef
+        self.stillID = stillID
+    }
+}
+
+/// Provenance: which model (and version) did each step, or why a step did not run.
+// MARK: - Models
+public struct Models: Codable, Sendable {
+    public let classifier: String
+    public let detector: String
+    public let jev: String
+    public let locate: String
+    public let ocr: String?
+    public let summaryWriter: String
+    public let vlm: String
+
+    public enum CodingKeys: String, CodingKey {
+        case classifier = "classifier"
+        case detector = "detector"
+        case jev = "jev"
+        case locate = "locate"
+        case ocr = "ocr"
+        case summaryWriter = "summary_writer"
+        case vlm = "vlm"
+    }
+
+    public init(classifier: String, detector: String, jev: String, locate: String, ocr: String?, summaryWriter: String, vlm: String) {
+        self.classifier = classifier
+        self.detector = detector
+        self.jev = jev
+        self.locate = locate
+        self.ocr = ocr
+        self.summaryWriter = summaryWriter
+        self.vlm = vlm
+    }
+}
+
+/// The one next action code chose from Jev's judgments (repairos.fusion), when there is one.
+// MARK: - NextStep
+public struct NextStep: Codable, Sendable {
+    public let actionID: String
+    public let instruction: String
+    public let kind: NextActionKind
+    public let reason: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case actionID = "action_id"
+        case instruction = "instruction"
+        case kind = "kind"
+        case reason = "reason"
+    }
+
+    public init(actionID: String, instruction: String, kind: NextActionKind, reason: String?) {
+        self.actionID = actionID
+        self.instruction = instruction
+        self.kind = kind
+        self.reason = reason
+    }
+}
+
+// MARK: - NotInspectedElement
+public struct NotInspectedElement: Codable, Sendable {
+    public let findingID: String
+    public let location: Location?
+    public let partClass: String
+    public let photo: InsufficientEvidencePhoto?
+    public let reason: String
+    public let subject: NotInspectedSubject
+
+    public enum CodingKeys: String, CodingKey {
+        case findingID = "finding_id"
+        case location = "location"
+        case partClass = "part_class"
+        case photo = "photo"
+        case reason = "reason"
+        case subject = "subject"
+    }
+
+    public init(findingID: String, location: Location?, partClass: String, photo: InsufficientEvidencePhoto?, reason: String, subject: NotInspectedSubject) {
+        self.findingID = findingID
+        self.location = location
+        self.partClass = partClass
+        self.photo = photo
+        self.reason = reason
+        self.subject = subject
+    }
+}
+
+// MARK: - Summary
+public struct Summary: Codable, Sendable {
+    /// The writer received words only (S5); checked in code before the call.
+    public let fromWordsOnly: Bool
+    /// Plain-language summary. No numbers.
+    public let text: String
+    /// Model id that wrote the text.
+    public let writtenBy: String
+
+    public enum CodingKeys: String, CodingKey {
+        case fromWordsOnly = "from_words_only"
+        case text = "text"
+        case writtenBy = "written_by"
+    }
+
+    public init(fromWordsOnly: Bool, text: String, writtenBy: String) {
+        self.fromWordsOnly = fromWordsOnly
+        self.text = text
+        self.writtenBy = writtenBy
+    }
+}
+
+/// Picked in code (repairos.report.verdict truth table), never by a model.
+public enum ReportVerdict: String, Codable, Sendable {
+    case insufficientEvidence = "insufficient_evidence"
+    case looksGood = "looks_good"
+    case potentialIssues = "potential_issues"
+}
+
+// MARK: - VerdictReason
+public struct VerdictReason: Codable, Sendable {
+    /// issues_found: at least one region shows a potential issue (or a meter reading confirmed
+    /// one). all_inspected_ok: every region was judged and none shows an issue. no_regions:
+    /// nothing was captured or detected to judge. nothing_inspected: regions exist but no model
+    /// could judge any. some_not_inspected: nothing judged shows an issue, but some regions were
+    /// not inspected or could not be judged.
+    public let code: Code
+    /// The truth-table row that decided, e.g. V3.
+    public let rule: String
+    /// Why, in plain words (no numbers; it is sent to the summary writer).
+    public let text: String
+
+    public enum CodingKeys: String, CodingKey {
+        case code = "code"
+        case rule = "rule"
+        case text = "text"
+    }
+
+    public init(code: Code, rule: String, text: String) {
+        self.code = code
+        self.rule = rule
+        self.text = text
+    }
+}
+
+/// issues_found: at least one region shows a potential issue (or a meter reading confirmed
+/// one). all_inspected_ok: every region was judged and none shows an issue. no_regions:
+/// nothing was captured or detected to judge. nothing_inspected: regions exist but no model
+/// could judge any. some_not_inspected: nothing judged shows an issue, but some regions were
+/// not inspected or could not be judged.
+public enum Code: String, Codable, Sendable {
+    case allInspectedOk = "all_inspected_ok"
+    case issuesFound = "issues_found"
+    case noRegions = "no_regions"
+    case nothingInspected = "nothing_inspected"
+    case someNotInspected = "some_not_inspected"
+}
+
 /// Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame
 /// plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up
 /// (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is
@@ -3492,7 +4019,7 @@ public struct ScanPackage: Codable, Sendable {
     public let device: Device
     /// Points and poses are in ARKit's world frame (metres, Y up). The design frame (mm, Z up)
     /// is reached via alignment.transform_arkit_world_to_design.
-    public let frame: CropBoxFrame
+    public let frame: LocationFrame
     /// Unit vector pointing down in arkit_world (ARKit: [0,-1,0]).
     public let gravityArkitWorld: [Double]
     /// Kept frames only: tracking normal, sharp, no smudge. Selected every ~10 cm of travel or
@@ -3539,7 +4066,7 @@ public struct ScanPackage: Codable, Sendable {
         case voxelMm = "voxel_mm"
     }
 
-    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: CropBoxFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, productID: String, scanID: String, sessionID: String, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
+    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, productID: String, scanID: String, sessionID: String, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
         self.alignment = alignment
         self.capturedAt = capturedAt
         self.coverageHint = coverageHint
@@ -3630,7 +4157,7 @@ public enum DesignPointsUnits: String, Codable, Sendable {
 public struct CropBox: Codable, Sendable {
     public let centerM: [Double]
     public let extentM: [Double]
-    public let frame: CropBoxFrame
+    public let frame: LocationFrame
     public let quaternionXyzw: [Double]
 
     public enum CodingKeys: String, CodingKey {
@@ -3640,25 +4167,12 @@ public struct CropBox: Codable, Sendable {
         case quaternionXyzw = "quaternion_xyzw"
     }
 
-    public init(centerM: [Double], extentM: [Double], frame: CropBoxFrame, quaternionXyzw: [Double]) {
+    public init(centerM: [Double], extentM: [Double], frame: LocationFrame, quaternionXyzw: [Double]) {
         self.centerM = centerM
         self.extentM = extentM
         self.frame = frame
         self.quaternionXyzw = quaternionXyzw
     }
-}
-
-public enum CropBoxFrame: String, Codable, Sendable {
-    case arkitWorld = "arkit_world"
-}
-
-/// Where the scan's geometry comes from. lidar (also when absent, as in every package before
-/// this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8):
-/// ARKit world-tracking poses and images only, so there is no points_file or point_count and
-/// nothing metric can be read off the scan itself.
-public enum DepthSource: String, Codable, Sendable {
-    case lidar = "lidar"
-    case none = "none"
 }
 
 // MARK: - Device
@@ -3733,7 +4247,7 @@ public struct ScanPackageSchema: Codable, Sendable {
 // MARK: - KeyframeCamera
 public struct KeyframeCamera: Codable, Sendable {
     /// Keyframe poses are ARKit world, metres, Y up.
-    public let frame: CropBoxFrame
+    public let frame: LocationFrame
     public let positionM: [Double]
     public let quaternionXyzw: [Double]
 
@@ -3743,7 +4257,7 @@ public struct KeyframeCamera: Codable, Sendable {
         case quaternionXyzw = "quaternion_xyzw"
     }
 
-    public init(frame: CropBoxFrame, positionM: [Double], quaternionXyzw: [Double]) {
+    public init(frame: LocationFrame, positionM: [Double], quaternionXyzw: [Double]) {
         self.frame = frame
         self.positionM = positionM
         self.quaternionXyzw = quaternionXyzw
@@ -4138,7 +4652,7 @@ public struct Still: Codable, Sendable {
 /// y up, looking along -z).
 // MARK: - StillCamera
 public struct StillCamera: Codable, Sendable {
-    public let frame: CropBoxFrame
+    public let frame: LocationFrame
     public let positionM: [Double]
     public let quaternionXyzw: [Double]
 
@@ -4148,7 +4662,7 @@ public struct StillCamera: Codable, Sendable {
         case quaternionXyzw = "quaternion_xyzw"
     }
 
-    public init(frame: CropBoxFrame, positionM: [Double], quaternionXyzw: [Double]) {
+    public init(frame: LocationFrame, positionM: [Double], quaternionXyzw: [Double]) {
         self.frame = frame
         self.positionM = positionM
         self.quaternionXyzw = quaternionXyzw
@@ -4298,7 +4812,7 @@ public struct Suspect: Codable, Sendable {
     /// P(this subject is the cause or part of the cause of the symptom).
     public let pFault: Double
     /// Word shown to the user. Mapping from p_fault lives in code (policy.json).
-    public let pFaultWord: PFaultWord
+    public let pFaultWord: Word
     /// MeterReading that confirmed or cleared this subject. Null while unproven.
     public let proofReadingID: String?
     /// 1 = top suspect.
@@ -4308,7 +4822,7 @@ public struct Suspect: Codable, Sendable {
     public let suspectID: String
     public let updatedAt: Date
     /// confirmed and cleared require a meter reading for electrical subjects (I2).
-    public let verdict: FluffyVerdict
+    public let verdict: JudgmentVerdict
 
     public enum CodingKeys: String, CodingKey {
         case calibrationValidated = "calibration_validated"
@@ -4331,7 +4845,7 @@ public struct Suspect: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(calibrationValidated: Bool, designTrust: FindingDesignTrust?, faultKind: FaultKind?, findingIDS: [String], fusionSource: Fusion, grainFix: GrainFix?, grainVerdict: PartGrainVerdict?, jevModel: String?, onSymptomPowerPath: Bool?, pFault: Double, pFaultWord: PFaultWord, proofReadingID: String?, rank: Int, scanID: String, subject: SuspectSubject, suspectID: String, updatedAt: Date, verdict: FluffyVerdict) {
+    public init(calibrationValidated: Bool, designTrust: FindingDesignTrust?, faultKind: FaultKind?, findingIDS: [String], fusionSource: Fusion, grainFix: GrainFix?, grainVerdict: PartGrainVerdict?, jevModel: String?, onSymptomPowerPath: Bool?, pFault: Double, pFaultWord: Word, proofReadingID: String?, rank: Int, scanID: String, subject: SuspectSubject, suspectID: String, updatedAt: Date, verdict: JudgmentVerdict) {
         self.calibrationValidated = calibrationValidated
         self.designTrust = designTrust
         self.faultKind = faultKind
@@ -4416,15 +4930,6 @@ public struct SuspectSubject: Codable, Sendable {
         self.pins = pins
         self.ref = ref
     }
-}
-
-/// confirmed and cleared require a meter reading for electrical subjects (I2).
-public enum FluffyVerdict: String, Codable, Sendable {
-    case cleared = "cleared"
-    case confirmed = "confirmed"
-    case insufficientEvidence = "insufficient_evidence"
-    case notInspected = "not_inspected"
-    case suspect = "suspect"
 }
 
 // MARK: - Encode/decode helpers

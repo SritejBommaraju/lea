@@ -1,7 +1,7 @@
 """FastAPI gateway (PLAN.md task B5, Phase 1): the only server the phone talks to.
 
 Device pairing, chunked resumable blob uploads (content-hashed), scan package / still / reading ingestion
-validated with repairos.contracts.validate() plus the capture files themselves, read endpoints, SSE live events.
+validated with repairos.contracts.validate() plus the capture files themselves, read endpoints, SSE live events, the pipeline trigger and the report (B10, B11).
 Every write goes through StateStore.transition (PLAN.md invariants I1-I4 enforced there). Every object received is also written
 into a session folder (data/sessions/<session_id>/, the samples/README.md layout) so a real run is replayable.
 The gateway imports slot Protocols only; implementations come from the registry. No Grain calls in Phase 1.
@@ -24,7 +24,7 @@ from typing import Annotated, Any
 
 import jsonschema
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict
 
 from repairos import contracts
@@ -42,12 +42,25 @@ MAX_BLOB_BYTES = 4 << 30
 SSE_POLL_S = 0.25
 SSE_KEEPALIVE_S = 15.0
 _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
-# Jobs queued when an object arrives; the pipeline workers (B10) consume them.
+# Jobs queued when an object arrives; the pipeline workers (B10, `make run-workers`) consume them. The whole run
+# (fusion, locations, report) is queued by POST /v1/scans/{scan_id}/complete once the upload is complete.
 JOBS_ON = {"scan-package": ["detect"], "still": ["detect"]}
+REPORT_KIND, RUN_KIND = "report", "pipeline-run"
 
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _named_event(ev) -> tuple[str, dict] | None:
+    """The app-level SSE event a row change means, besides its `<kind>.<op>` event: `report_ready` when a report is
+    published, `pipeline_failed` when a run fails (the stage and the error)."""
+    if ev.kind == REPORT_KIND:
+        return "report_ready", {"scan_id": ev.row["scan_id"], "report_id": ev.row["report_id"],
+                                "verdict": ev.row["verdict"]}
+    if ev.kind == RUN_KIND and ev.row.get("status") == "failed":
+        return "pipeline_failed", {"scan_id": ev.row["scan_id"], "error": ev.row.get("error")}
+    return None
 
 
 def _token_hash(token: str) -> str:
@@ -388,6 +401,72 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         await _get(request, "scan-package", scan_id)
         return await _list(request, "suspect", scan_id=scan_id)
 
+    # ------------------------------------------------------------ pipeline + report (B10, B11)
+    @app.post("/v1/scans/{scan_id}/complete", status_code=202)
+    async def complete_scan(scan_id: str, request: Request, _d: Device):
+        """The upload of this scan and its stills is complete: queue the pipeline run (inspect what is left,
+        fuse with Jev, locate, report). Idempotent for the same set of stills; a new still queues a new run."""
+        scan = await _get(request, "scan-package", scan_id)
+        stills = sorted(r.id for r in await store(request).list("still", scan_id=scan_id))
+        digest = hashlib.sha256(f"{scan_id}:{','.join(stills)}".encode()).hexdigest()[:16]
+        job_id = await store(request).enqueue(Job(kind="pipeline", job_id=f"job_pipeline_{digest}",
+                                                  session_id=scan["session_id"], scan_id=scan_id,
+                                                  inputs={"kind": "scan-package", "scan_id": scan_id}))
+        return {"scan_id": scan_id, "job_id": job_id, "stills": len(stills)}
+
+    def _run_view(run: dict | None) -> dict:
+        if run is None:
+            return {"status": "not_started"}
+        out = {k: run.get(k) for k in ("status", "attempt", "started_at", "finished_at", "report_id", "error")
+               if run.get(k) is not None}
+        out["stages"] = {k: {"status": v.get("status")} for k, v in (run.get("stages") or {}).items()}
+        out["stills"] = {k: {"status": v.get("status"), **({"error": v["error"]} if v.get("error") else {})}
+                         for k, v in (run.get("stills") or {}).items()}
+        return out
+
+    async def _run(request: Request, scan_id: str) -> dict | None:
+        row = await store(request).get(RUN_KIND, f"run_{scan_id}")
+        return row.data if row else None
+
+    @app.get("/v1/scans/{scan_id}/pipeline")
+    async def scan_pipeline(scan_id: str, request: Request, _d: Device):
+        await _get(request, "scan-package", scan_id)
+        return _run_view(await _run(request, scan_id))
+
+    async def _report(request: Request, scan_id: str) -> dict:
+        await _get(request, "scan-package", scan_id)
+        run = await _run(request, scan_id)
+        if run and run.get("status") == "failed":
+            raise HTTPException(409, {"error": "pipeline_failed", "pipeline": _run_view(run)})
+        reports = await _list(request, REPORT_KIND, scan_id=scan_id)
+        if not reports or (run and run.get("status") != "done"):
+            raise HTTPException(404, {"error": "no_report", "pipeline": _run_view(run)})
+        return reports[-1]
+
+    @app.get("/v1/scans/{scan_id}/report")
+    async def scan_report(scan_id: str, request: Request, _d: Device):
+        """The scan's report (spec/contracts/report.schema.json). 404 while it is being made (with the pipeline
+        status), 409 when the pipeline failed (with the stage and the error)."""
+        return await _report(request, scan_id)
+
+    @app.get("/v1/scans/{scan_id}/report/export", responses={200: {"content": {"text/html": {}, "text/markdown": {}}}})
+    async def scan_report_export(scan_id: str, request: Request, _d: Device,
+                                 format: Annotated[str, Query(pattern="^(html|md)$")] = "html"):
+        """A printable copy of the report for sharing: self-contained HTML (crops embedded) or Markdown."""
+        from repairos.report.export import crop_thumbnail, to_html, to_markdown
+
+        report = await _report(request, scan_id)
+        if format == "md":
+            return PlainTextResponse(to_markdown(report), media_type="text/markdown; charset=utf-8")
+        b = blob_store(request)
+
+        def crop(ref: str) -> bytes | None:
+            try:
+                return crop_thumbnail(b.get(ref))
+            except BlobError:
+                return None
+        return HTMLResponse(await asyncio.to_thread(to_html, report, crop))
+
     @app.get("/v1/stills/{still_id}")
     async def get_still(still_id: str, request: Request, _d: Device):
         return await _get(request, "still", still_id)
@@ -422,6 +501,9 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                     payload = json.dumps({"kind": ev.kind, "id": ev.id, "op": ev.op, "rev": ev.rev, "row": ev.row,
                                           "at": ev.at}, separators=(",", ":"))
                     yield f"id: {ev.event_id}\nevent: {ev.kind}.{ev.op}\ndata: {payload}\n\n".encode()
+                    named = _named_event(ev)
+                    if named:
+                        yield f"id: {ev.event_id}\nevent: {named[0]}\ndata: {json.dumps(named[1])}\n\n".encode()
                     last_sent = time.monotonic()
                 if not batch:
                     if time.monotonic() - last_sent > SSE_KEEPALIVE_S:

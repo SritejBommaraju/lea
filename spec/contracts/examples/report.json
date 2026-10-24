@@ -1,0 +1,177 @@
+{
+  "report_id": "rep_scan_example",
+  "scan_id": "scan_example",
+  "session_id": "sess_example",
+  "created_at": "2026-10-24T12:00:00Z",
+  "verdict": "potential_issues",
+  "verdict_reason": {
+    "code": "issues_found",
+    "rule": "V5",
+    "text": "At least one inspected region shows a potential issue."
+  },
+  "summary": {
+    "text": "One connector may be loose. It is a suspicion from the photos, not proof. Take a closer photo of it as the next step.",
+    "written_by": "<llm model id>",
+    "from_words_only": true
+  },
+  "findings": [
+    {
+      "finding_id": "f_example_a",
+      "subject": {
+        "kind": "part",
+        "ref": "s1/det0"
+      },
+      "part_class": "connector",
+      "issue": "loose",
+      "confidence_word": "medium",
+      "evidence": [
+        "connector in still s1 looks loose",
+        "vision model: a gap is visible between the plug and its housing",
+        "vision suspect, not proof"
+      ],
+      "inspected_by": [
+        "detector",
+        "vlm"
+      ],
+      "crop": {
+        "still_id": "s1",
+        "box_px": [
+          100,
+          200,
+          612,
+          712
+        ],
+        "crop_ref": "blob://sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "location": {
+        "status": "not_computed",
+        "reason": "the 3D localization module is not installed"
+      },
+      "proof": {
+        "status": "not_measured"
+      },
+      "judgment": {
+        "rank": 1,
+        "likelihood_word": "unsure",
+        "verdict": "suspect"
+      }
+    },
+    {
+      "finding_id": "f_example_b",
+      "subject": {
+        "kind": "part",
+        "ref": "s1/det1"
+      },
+      "part_class": "capacitor",
+      "issue": "none",
+      "confidence_word": "high",
+      "evidence": [
+        "capacitor in still s1 looks ok",
+        "vision suspect, not proof"
+      ],
+      "inspected_by": [
+        "detector",
+        "vlm"
+      ],
+      "crop": {
+        "still_id": "s1",
+        "box_px": [
+          700,
+          200,
+          956,
+          456
+        ]
+      },
+      "location": {
+        "status": "computed",
+        "frame": "arkit_world",
+        "point_m": [
+          0.1,
+          0.02,
+          -0.3
+        ],
+        "extent_m": [
+          0.01,
+          0.01,
+          0.01
+        ],
+        "method": "<locator id and version>"
+      },
+      "proof": {
+        "status": "not_measured"
+      }
+    }
+  ],
+  "not_inspected": [
+    {
+      "finding_id": "f_example_c",
+      "subject": {
+        "kind": "part",
+        "ref": "s1/det2"
+      },
+      "part_class": "circuit board",
+      "photo": {
+        "still_id": "s1",
+        "box_px": [
+          0,
+          0,
+          3000,
+          2800
+        ]
+      },
+      "location": {
+        "status": "not_computed",
+        "reason": "the 3D localization module is not installed"
+      },
+      "reason": "the region covers most of the still; take a closer still"
+    }
+  ],
+  "insufficient_evidence": [
+    {
+      "finding_id": "f_example_d",
+      "subject": {
+        "kind": "wire",
+        "ref": "s1/det3"
+      },
+      "part_class": "wire",
+      "photo": {
+        "still_id": "s1",
+        "box_px": [
+          1200,
+          900,
+          1500,
+          1300
+        ]
+      },
+      "reason": "could not judge the wire in still s1: it is blurred",
+      "inspected_by": [
+        "detector",
+        "vlm"
+      ]
+    }
+  ],
+  "next_step": {
+    "action_id": "act_example",
+    "kind": "request_closeup",
+    "instruction": "Take a close, sharp photo of the part s1/det0. Fill the frame with it and hold the phone steady.",
+    "reason": "The evidence about the part is not clear enough to judge it."
+  },
+  "capture": {
+    "depth_source": "lidar",
+    "stills": 1,
+    "stills_inspected": 1,
+    "keyframes": 2,
+    "scan_points": 1000,
+    "coverage_words": "partly covered"
+  },
+  "models": {
+    "detector": "<detector model id>",
+    "classifier": "not selected (CLS=none)",
+    "vlm": "<vlm model ladder>",
+    "ocr": "not selected (OCRB=none)",
+    "summary_writer": "<llm model id>",
+    "jev": "<jev model version>",
+    "locate": "not available"
+  },
+  "grain": "not called"
+}
