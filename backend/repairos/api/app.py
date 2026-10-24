@@ -415,9 +415,10 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
     @app.post("/v1/voice/turns")
     async def voice_turn(body: VoiceTurn, request: Request, _d: Device):
-        """A final spoken turn: the reply to speak and what the phone should do (start a scan, open a report).
-        Idempotent by turn id, so a retry after a dropped connection never answers twice."""
+        """A final spoken turn answered by Claude: the reply to speak and what the phone should do (start a scan, open a
+        report). Idempotent by turn id, so a retry after a dropped connection never answers twice."""
         from repairos import voice
+        from repairos.config import MissingSettingError
 
         if not body.transcript.strip():
             raise HTTPException(422, "only final, non-empty transcripts")
@@ -430,17 +431,14 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             snap = {k: await _list(request, kind, **by) for k, kind in
                     (("scans", "scan-package"), ("findings", "finding"), ("suspects", "suspect"), ("next_actions", "next-action"))}
         history = request.app.state.voice_history.setdefault(body.session_id or "", [])
-        reply, actions, by_ = "", [], "rules"
-        if get_settings().anthropic_api_key is not None:
-            try:
-                reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history)
-                by_ = "claude"
-            except Exception as e:  # the rules below still answer
-                print(f"[voice] assistant failed, answering by rules: {type(e).__name__}: {e}")
-        if not reply:
-            reply, actions = voice.route(body.transcript, snap)
+        try:
+            reply, actions = await asyncio.to_thread(voice.agent_turn, body.transcript, snap, history)
+        except MissingSettingError as e:
+            raise HTTPException(503, str(e)) from None
+        except Exception as e:  # not cached: the phone can ask again
+            raise HTTPException(502, f"the assistant did not answer: {type(e).__name__}") from None
         history.append((body.transcript, reply))
-        out = {"id": body.id, "reply": reply, "actions": actions, "by": by_}
+        out = {"id": body.id, "reply": reply, "actions": actions}
         request.app.state.voice_turns[body.id] = out
         return out
 

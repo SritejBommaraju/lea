@@ -1,14 +1,13 @@
 """Spoken turns from the phone: a final transcript in, a short spoken reply and phone actions out.
 
-With ANTHROPIC_API_KEY the reply comes from a short Claude tool loop over the session's scans, findings, suspects and
-next actions; without it, plain rules answer. The phone sends final transcripts only (partials never arrive here),
-streams its own speech with a short-lived Cartesia token from `cartesia_token`, and holds no key (A6).
+Every reply comes from a short Claude tool loop over the session's scans, findings, suspects and next actions
+(ANTHROPIC_API_KEY, backend only). The phone sends final transcripts only (partials never arrive here), streams its
+own speech with a short-lived Cartesia token from `cartesia_token`, and holds no key (A6).
 Suspects stay suspects: replies use the suspect's own probability word and never call a fault proven.
 """
 from __future__ import annotations
 
 import json
-import re
 import threading
 import urllib.request
 from typing import Any
@@ -18,44 +17,9 @@ from repairos.config import get_settings
 MODEL = "claude-opus-5-5"
 MAX_TOOL_ROUNDS = 4
 
-SCAN = re.compile(r"\b(make a (render|scan|model)|start (a |the )?scan|scan (this|it)|new scan|capture (this|it))\b", re.I)
-REPORT = re.compile(r"\b(show|open|see|read)\b.{0,20}\breport\b", re.I)
-STATUS = re.compile(r"\b(what did you find|what'?s wrong|what seems to be|status|findings|suspects?|what next|next step|did it work)\b", re.I)
-WAKE = re.compile(r"^\s*(hey|hi|ok)?\s*,?\s*(leah|lea)\b[\s,.:]*", re.I)
-
-
 def _subject(s: dict) -> str:
     sub = s.get("subject") or {}
     return str(sub.get("ref") or sub.get("kind") or "a part")
-
-
-def status_reply(snap: dict) -> str:
-    """Where the session stands, in a sentence or two."""
-    suspects = sorted(snap.get("suspects", []), key=lambda s: s.get("rank") or 99)
-    actions = snap.get("next_actions", [])
-    if not snap.get("scans"):
-        return "There's no scan yet. Say “make a scan” or press Start."
-    if not suspects:
-        return "The scan is in, and nothing is suspected so far." if snap.get("findings") else "The scan is in; I'm still looking at it."
-    top = suspects[0]
-    kind = ((top.get("fault_kind") or {}).get("choice") or "a fault").replace("_", " ")
-    line = f"The most likely problem is {_subject(top)}: {top.get('p_fault_word', 'possibly')} {kind}. That's a suspect, not proven yet."
-    if actions:
-        line += f" Next: {actions[0].get('instruction', '')}"
-    return line
-
-
-def route(transcript: str, snap: dict) -> tuple[str, list[dict]]:
-    """The rule-based answer, used when no assistant key is set or the assistant fails."""
-    text = WAKE.sub("", transcript).strip()
-    if SCAN.search(text):
-        return "Opening a new scan. Walk slowly around the object.", [{"type": "scan"}]
-    if REPORT.search(text):
-        scans = snap.get("scans", [])
-        return ("Opening the report.", [{"type": "report", "scan_id": scans[-1]["scan_id"]}]) if scans else ("There's no report yet.", [])
-    if STATUS.search(text):
-        return status_reply(snap), []
-    return "I can start a scan, tell you what I found, or open the report. Which do you want?", []
 
 
 SYSTEM = """You are Lea, a repair copilot talking with someone through their iPhone while they look at a physical product.
@@ -101,7 +65,7 @@ def _brief(snap: dict) -> dict:
 
 
 def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], client=None) -> tuple[str, list[dict]]:
-    """One spoken turn through Claude with tools. Raises on API errors; the caller falls back to `route`."""
+    """One spoken turn through Claude with tools. Raises MissingSettingError without a key, and on API errors."""
     client = client or _anthropic()
     actions: list[dict] = []
     messages: list[dict] = []
