@@ -39,7 +39,8 @@ TRANSITIONS = (
     "reading.record",
     "part.add",
     "plan.create", "plan.confirm", "plan.reopen",
-    "pipeline.update", "pipeline.claim_still",
+    "pipeline.update", "pipeline.claim_still", "pipeline.beat_still", "pipeline.finish_still",
+    "pipeline.release_still",
     "report.publish",
 )
 

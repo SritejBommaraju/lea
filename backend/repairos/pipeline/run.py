@@ -59,6 +59,10 @@ class PipelineError(RuntimeError):
     """A pipeline precondition is not met (configuration, missing object). Raised inside a stage."""
 
 
+class WorkerStopping(RuntimeError):
+    """The worker is shutting down: inspection stops before its next detector or model call."""
+
+
 class PipelineFailed(RuntimeError):
     """A stage failed. The run row says `failed` with `stage` and `message`."""
 
@@ -107,6 +111,23 @@ class Context:
         self._shares: dict[str, Any] = {}
         self._scan_locks: dict[str, asyncio.Lock] = {}
         self.held: set[tuple[str, str]] = set()   # (scan_id, still_id) claims this worker holds (beat_claims)
+        self.stopping = threading.Event()   # set on shutdown: inspection threads stop before their next model call
+        self._beater: asyncio.Task | None = None
+
+    def hold(self, scan_id: str, still_id: str) -> None:
+        """Record a claim this worker now holds and make sure its heartbeat runs (in every mode: run_forever,
+        drain / --once, a direct call), for as long as any claim is held."""
+        self.held.add((scan_id, still_id))
+        if self._beater is None or self._beater.done():
+            self._beater = asyncio.get_running_loop().create_task(self._beat_while_held())
+
+    async def _beat_while_held(self) -> None:
+        while self.held:
+            await asyncio.sleep(CLAIM_BEAT_S)
+            try:
+                await beat_claims(self)
+            except Exception as e:  # noqa: BLE001 - a missed beat is retried; the claim goes stale only after many
+                log.error("claim heartbeat failed: %s", e)
 
     def scan_lock(self, scan_id: str) -> asyncio.Lock:
         """Still-selection decisions of one scan, one at a time (this worker process; one event loop)."""
@@ -166,6 +187,8 @@ class Context:
 
             im = image if image is not None else load_still(self.local_file(scan_id, ref))
             det = self.slot("DET")
+            if self.stopping.is_set():
+                raise WorkerStopping("the worker is stopping")
             with self.gpu:
                 dets = det.detect(im)
         except BaseException as e:
@@ -337,7 +360,7 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict
     crop_dir = ctx.workdir(scan_id) / "crops" / still["still_id"]
     res = inspect_still(im, still_id=still["still_id"], scan_id=scan_id, detector=detector, judge=judge,
                         crop_dir=crop_dir, sharpness=still.get("sharpness"), detections=dets, pool=ctx.vlm_pool,
-                        share=share, max_crops=ctx.config["max_crops_per_still"])
+                        share=share, max_crops=ctx.config["max_crops_per_still"], stop=ctx.stopping)
     timing = {"load_s": round(t1 - t0, 3), "detect_s": round(t2 - t1, 3), "detections_ready": cached,
               "vlm_s": round(res.timing.get("vlm_s", 0.0), 3), "vlm_calls": int(res.timing.get("vlm_calls", 0)),
               "reused_regions": int(res.timing.get("reused_regions", 0))}
@@ -413,8 +436,25 @@ async def _claim(ctx: Context, scan: dict, still_id: str) -> tuple[str, dict | N
         if e.status == "done":
             return "done", (await _run_row(ctx, scan["scan_id"]))["stills"][still_id]
         return "wait", None
-    ctx.held.add((scan["scan_id"], still_id))
+    ctx.hold(scan["scan_id"], still_id)
     return "mine", None
+
+
+class ClaimLost(PipelineError):
+    """This worker's claim on a still was released or taken over while it inspected: its result is not written."""
+
+
+async def _write_still(ctx: Context, scan: dict, still_id: str, stage: dict) -> None:
+    """The still's result, only while this worker still holds its claim (pipeline.finish_still, one transaction)."""
+    try:
+        await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.finish_still",
+                                   {"still_id": still_id, "worker": ctx.worker, "stage": stage,
+                                    "scan_id": scan["scan_id"], "session_id": scan["session_id"]})
+    except AlreadyClaimed as e:
+        raise ClaimLost(f"still {still_id}: the claim of {ctx.worker} was released or taken over (now {e.status}, "
+                        f"worker {e.worker}); this result is dropped") from None
+    finally:
+        ctx.held.discard((scan["scan_id"], still_id))
 
 
 async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) -> dict:
@@ -423,12 +463,9 @@ async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) ->
         stage = await _inspect_one(ctx, scan, still, covered)
     except Exception as e:
         msg = f"{type(e).__name__}: {e}"
-        await _update(ctx, scan, {"stills": {still_id: {"status": "failed", "error": msg[:2000],
-                                                        "finished_at": _now()}}})
-        ctx.held.discard((scan["scan_id"], still_id))
+        await _write_still(ctx, scan, still_id, {"status": "failed", "error": msg[:2000], "finished_at": _now()})
         raise
-    await _update(ctx, scan, {"stills": {still_id: stage}})
-    ctx.held.discard((scan["scan_id"], still_id))
+    await _write_still(ctx, scan, still_id, stage)
     return stage
 
 
@@ -493,10 +530,17 @@ async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
         if not st or claim_is_stale(st, datetime.now(UTC)):
             row = await ctx.state.get("still", still_id)
             if row is not None:
-                await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.claim_still",
-                                           {"still_id": still_id, "worker": ctx.worker, "at": _now(), "force": True,
-                                            "scan_id": scan["scan_id"], "session_id": scan["session_id"]})
-                ctx.held.add((scan["scan_id"], still_id))
+                take = {"still_id": still_id, "worker": ctx.worker, "at": _now(), "scan_id": scan["scan_id"],
+                        "session_id": scan["session_id"]}
+                if st:   # take over exactly the stale claim seen; if anyone changed it since, keep waiting
+                    take["expect"] = {k: st.get(k) for k in ("worker", "started_at", "heartbeat_at")}
+                try:
+                    await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.claim_still",
+                                               take)
+                except AlreadyClaimed:
+                    await asyncio.sleep(POLL_S)
+                    continue
+                ctx.hold(scan["scan_id"], still_id)
                 log.info("still %s: took over a claim of %s, which is gone", still_id, st.get("worker"))
                 return await _finish(ctx, scan, row.data, None)
         await asyncio.sleep(POLL_S)
@@ -774,16 +818,16 @@ def claim_is_stale(st: dict, now: datetime, me: str | None = None) -> bool:
 
 
 async def beat_claims(ctx: Context) -> int:
-    """Refresh `heartbeat_at` on every still claim this worker holds (Worker.run_forever, every CLAIM_BEAT_S)."""
+    """Refresh `heartbeat_at` on every still claim this worker holds (Context.hold runs it every CLAIM_BEAT_S while
+    any claim is held, in every mode). Each beat is owner-checked in one transaction (pipeline.beat_still)."""
     n = 0
     for scan_id, still_id in list(ctx.held):
-        run = await _run_row(ctx, scan_id) or {}
-        st = (run.get("stills") or {}).get(still_id) or {}
-        if st.get("status") != "running" or st.get("worker") != ctx.worker:
+        try:
+            await ctx.state.transition("pipeline-run", run_id_for(scan_id), "pipeline.beat_still",
+                                       {"still_id": still_id, "worker": ctx.worker, "at": _now()})
+        except AlreadyClaimed:   # finished, released or taken over: not ours to beat any more
             ctx.held.discard((scan_id, still_id))
             continue
-        await ctx.state.transition("pipeline-run", run_id_for(scan_id), "pipeline.update", {
-            "scan_id": scan_id, "session_id": run["session_id"], "stills": {still_id: {"heartbeat_at": _now()}}})
         n += 1
     return n
 
@@ -805,8 +849,11 @@ async def release_claims(ctx: Context, *, worker: str | None = None, now: dateti
             mine = worker is not None and st.get("status") == "running" and st.get("worker") == worker
             if not (mine or (worker is None and claim_is_stale(st, now, me=ctx.worker))):
                 continue
-            await ctx.state.transition("pipeline-run", row.id, "pipeline.update", {
-                "scan_id": run["scan_id"], "session_id": run["session_id"], "stills": {sid: None}})
+            try:   # only the claim exactly as seen: a claim that was beaten, finished or taken since is left alone
+                await ctx.state.transition("pipeline-run", row.id, "pipeline.release_still", {
+                    "still_id": sid, "expect": {k: st.get(k) for k in ("worker", "started_at", "heartbeat_at")}})
+            except AlreadyClaimed:
+                continue
             ctx.held.discard((run["scan_id"], sid))
             still = await ctx.state.get("still", sid)
             if still is not None:

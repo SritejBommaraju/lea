@@ -131,3 +131,97 @@ def test_worker_liveness_is_only_judged_on_this_host(name, alive):
     assert worker_alive(f"{socket.gethostname()}:{os.getpid()}") is True
     assert worker_alive(f"{socket.gethostname()}:{_dead_pid()}") is False
     assert ex("still")["still_id"]
+
+
+# ------------------------------------------------------------------- Greptile round 2 (PR #7, after ffb2d32)
+def test_a_stale_claim_is_taken_over_by_one_waiter_only(env, tmp_path):  # noqa: F811
+    from repairos.slots.state import AlreadyClaimed
+
+    state, blobs, scan = env
+    _claim_as(state, scan, "s_label", "gone-host:9", datetime.now(UTC) - timedelta(seconds=CLAIM_STALE_S + 5))
+    seen = dict(_stills(state, scan)["s_label"])
+    expect = {k: seen.get(k) for k in ("worker", "started_at", "heartbeat_at")}
+    take = {"still_id": "s_label", "at": _stamp(datetime.now(UTC)), "expect": expect}
+    run(state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.claim_still", {**take, "worker": "a"}))
+    with pytest.raises(AlreadyClaimed):    # the same stale snapshot no longer matches: the second waiter loses
+        run(state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.claim_still",
+                             {**take, "worker": "b"}))
+    assert _stills(state, scan)["s_label"]["worker"] == "a"
+    # and through the pipeline: two runs waiting on one dead claim, concurrently; both end done, one inspected it
+    _claim_as(state, scan, "s_skip", "gone-host:10", datetime.now(UTC) - timedelta(seconds=CLAIM_STALE_S + 5))
+    one = Context(state=state, blobs=blobs, root=tmp_path / "1", worker="one")
+    two = Context(state=state, blobs=blobs, root=tmp_path / "2", worker="two")
+
+    async def both():
+        return await asyncio.gather(inspect_still_stage(one, "s_skip"), inspect_still_stage(two, "s_skip"))
+    a, b = run(asyncio.wait_for(both(), 20))
+    assert a["status"] == b["status"] == "done" and _stills(state, scan)["s_skip"]["worker"] in ("one", "two")
+
+
+def test_release_leaves_a_claim_that_changed_since_it_was_seen(env, tmp_path):  # noqa: F811
+    state, blobs, scan = env
+    old = datetime.now(UTC) - timedelta(seconds=CLAIM_STALE_S + 30)
+    _claim_as(state, scan, "s_label", "slow-host:3", old)
+    seen = dict(_stills(state, scan)["s_label"])
+    # the owner beats between the sweep's read and its write: the release must not happen
+    run(state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.beat_still",
+                         {"still_id": "s_label", "worker": "slow-host:3", "at": _stamp(datetime.now(UTC))}))
+    from repairos.slots.state import AlreadyClaimed
+
+    with pytest.raises(AlreadyClaimed):
+        run(state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.release_still", {
+            "still_id": "s_label", "expect": {k: seen.get(k) for k in ("worker", "started_at", "heartbeat_at")}}))
+    assert _stills(state, scan)["s_label"]["status"] == "running"
+
+
+def test_a_released_claim_is_never_written_over_by_the_old_inspection(env, tmp_path):  # noqa: F811
+    from repairos.pipeline.run import ClaimLost, _write_still
+
+    state, blobs, scan = env
+    me = Context(state=state, blobs=blobs, root=tmp_path / "p", worker="old")
+
+    async def go():
+        assert (await _claim(me, scan, "s_label"))[0] == "mine"
+        await release_claims(me, worker="old")                    # shutdown released it
+        nxt = Context(state=state, blobs=blobs, root=tmp_path / "q", worker="new")
+        assert (await _claim(nxt, scan, "s_label"))[0] == "mine"  # another worker took the still
+        with pytest.raises(ClaimLost):                            # the old inspection finishing late
+            await _write_still(me, scan, "s_label", {"status": "done", "finding_ids": ["f_x"]})
+    run(go())
+    st = _stills(state, scan)["s_label"]
+    assert st["status"] == "running" and st["worker"] == "new" and "finding_ids" not in st
+
+
+def test_a_stopping_worker_starts_no_further_model_call():
+    import threading
+
+    from PIL import Image
+
+    from repairos.slots.detector import Detection
+    from repairos.vision.inspect import inspect_still
+
+    stop = threading.Event()
+    stop.set()
+    dets = [Detection(box=(10, 10, 60, 60), label="connector", score=0.5)]
+    with pytest.raises(RuntimeError, match="stopping"):
+        inspect_still(Image.new("RGB", (400, 300)), still_id="s1", scan_id="sc", detector=object(),
+                      judge=object(), classifier=False, detections=dets, stop=stop)   # judge is never reached
+
+
+def test_claims_beat_in_every_mode_not_only_run_forever(env, tmp_path, monkeypatch):  # noqa: F811
+    from repairos.pipeline import run as R
+
+    state, blobs, scan = env
+    monkeypatch.setattr(R, "CLAIM_BEAT_S", 0.05)
+
+    async def held_job(ctx, job):   # a --once / drain job holding a claim for a while
+        assert (await _claim(ctx, scan, "s_label"))[0] == "mine"
+        await asyncio.sleep(0.4)
+        return {"held": True}
+
+    monkeypatch.setattr(W, "handle", held_job)
+    run(state.enqueue(Job(kind="detect", job_id="job_held", inputs={"kind": "still", "id": "s_label"})))
+    w = W.Worker(state, blobs, name="drainer")
+    jobs = run(w.drain())
+    assert [j.status for j in jobs] == ["done"]
+    assert _stills(state, scan)["s_label"].get("heartbeat_at")      # beaten while held, without run_forever

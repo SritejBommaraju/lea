@@ -8,10 +8,12 @@ Jobs (queued by the gateway, repairos.api.app):
   ocr      on a label still: the inspect stage (label stills are not_inspected until OCR exists, M8)
   pipeline on `POST /v1/scans/{scan_id}/complete` (the upload is complete): the whole run, then the report
 Every SWEEP_S the worker also closes continuations nobody finished (run.close_abandoned).
-Shutdown (SIGTERM from the pod, SIGINT): no new job is claimed; running jobs get GRACE_S to finish; what is still
-running is cancelled, its still claims are released to pending (their stills queued again) and its jobs go back to
-the queue untried. Startup and every sweep release claims whose worker is gone (run.release_claims), and every still
-claim carries a heartbeat (run.beat_claims), so a crash or a kill never leaves a still `running` for good.
+Shutdown (SIGTERM from the pod, SIGINT): no new job is claimed and no new model call starts; running jobs get GRACE_S
+to end; what is still running is cancelled, its still claims are released to pending (their stills queued again) and
+its jobs go back to the queue untried. Startup and every sweep release claims whose worker is gone
+(run.release_claims). Every still claim carries a heartbeat while it is held, in every mode (Context.hold), and every
+claim change (take over, beat, result, release) is a compare-and-set in one transaction, so two workers never both
+own a still and a released claim is never written over.
 One worker runs up to `worker_jobs` (config/pipeline.yaml) jobs at once in one event loop, sharing one Context: one
 detector model, one Claude call pool. A pipeline job is claimed before any other kind, so a finished scan's report
 is not queued behind the next scan's stills.
@@ -28,8 +30,8 @@ import socket
 import sys
 from typing import Any
 
-from repairos.pipeline.run import (CLAIM_BEAT_S, Context, PipelineFailed, beat_claims, close_abandoned,
-                                   inspect_still_stage, record_capture, release_claims, run_scan)
+from repairos.pipeline.run import (Context, PipelineFailed, close_abandoned, inspect_still_stage, record_capture,
+                                   release_claims, run_scan)
 from repairos.slots.state import Job
 
 KINDS = ["detect", "ocr", "pipeline"]
@@ -121,7 +123,7 @@ class Worker:
         """Up to `jobs_at_once` jobs at a time; an idle worker polls every `poll_s`."""
         stop = stop or asyncio.Event()
         running: set[asyncio.Task] = set()
-        swept = beat = 0.0
+        swept = 0.0
         loop = asyncio.get_running_loop()
         while not stop.is_set():
             if loop.time() - swept >= SWEEP_S:
@@ -131,12 +133,6 @@ class Worker:
                     await close_abandoned(self.ctx)
                 except Exception as e:  # noqa: BLE001 - the sweep never stops the worker; it is retried next time
                     log.error("sweep failed: %s", e)
-            if loop.time() - beat >= CLAIM_BEAT_S:
-                beat = loop.time()
-                try:
-                    await beat_claims(self.ctx)
-                except Exception as e:  # noqa: BLE001
-                    log.error("claim heartbeat failed: %s", e)
             while len(running) < self.jobs_at_once and not stop.is_set() and (job := await self._claim()) is not None:
                 task = asyncio.create_task(self._run(job))
                 self.active[task] = job
@@ -152,8 +148,11 @@ class Worker:
         await self.shutdown(running, grace_s)
 
     async def shutdown(self, running: set[asyncio.Task], grace_s: float = GRACE_S) -> None:
-        """Let running jobs finish for `grace_s`, then cancel the rest, release their still claims and put their
-        jobs back in the queue."""
+        """Stop new model work at once (Context.stopping: an inspection thread stops before its next detector or
+        vision-model call), let running jobs end within `grace_s`, then cancel the rest, release this worker's still
+        claims and put its unfinished jobs back in the queue. A thread still in a model call when its claim is
+        released cannot write over the claim afterwards: every still result is owner-checked (finish_still)."""
+        self.ctx.stopping.set()
         if running:
             log.info("stopping: %d job(s) running, %.0f s to finish", len(running), grace_s)
             _, late = await asyncio.wait(running, timeout=grace_s)

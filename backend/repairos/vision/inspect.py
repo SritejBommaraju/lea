@@ -481,7 +481,8 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
                   with_context: bool = True, crop_dir: str | Path | None = None, workers: int = 4,
                   sharpness: float | None = None, classifier: Any = None, max_classified: int = 48,
                   min_box_side: float = MIN_BOX_SIDE, max_regions: int | None = None,
-                  detections: Sequence[Any] | None = None, pool: Any = None, share: Any = None) -> Inspection:
+                  detections: Sequence[Any] | None = None, pool: Any = None, share: Any = None,
+                  stop: Any = None) -> Inspection:
     """Run detect -> crops -> [defect classifier] -> VLM on one full-resolution still (PIL image, array or path).
 
     `classifier`: None = the configured CLS slot (off when the profile says `none`), False = off, or a
@@ -494,7 +495,8 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     second pass); `pool` = a shared executor for the VLM calls (bounds Claude calls across stills; `workers` is used
     only without it); `share` = the scan's cross-still region register (pipeline/regions.py): a region another still
     already sends to the VLM is not sent again, its answer is reused (finding_from_other_still), and reused regions do
-    not use this still's crop budget. `share` applies without a classifier only."""
+    not use this still's crop budget. `share` applies without a classifier only. `stop` (a threading.Event): when
+    set, no further VLM call starts (the worker is shutting down) and the inspection raises."""
     from repairos.registry import slot
 
     detector = detector or slot("DET")
@@ -589,6 +591,8 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     def look(i: int) -> tuple[int, dict]:
         d = dets[i]
         try:
+            if stop is not None and stop.is_set():
+                raise RuntimeError("the worker is stopping: no further vision-model call")
             ctx = outline(context_base, d.box, context_base.width / im.width) if context_base is not None else None
             state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
                                        family=crop_family(d.label, d.score, abstained(i)))

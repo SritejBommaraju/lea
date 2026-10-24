@@ -223,7 +223,7 @@ class SqliteState:
             return self._create(c, kind, id, p)
         if action == "plan.create":
             return self._create(c, kind, id, p, status="open")
-        if action in ("pipeline.update", "pipeline.claim_still"):
+        if action.startswith("pipeline."):
             return self._pipeline(c, id, action, p)
         if action == "report.publish":   # a re-run replaces the scan's report (new rev, one event)
             prev = self._get(c, kind, id)
@@ -269,8 +269,17 @@ class SqliteState:
 
     def _pipeline(self, c, id: str, action: str, p: dict) -> Row:
         """pipeline.update: an RFC 7386 merge patch on the run row (created on first use; None deletes a key).
-        pipeline.claim_still: {still_id, worker, at[, force]} marks one still `running` for one worker, atomically;
-        AlreadyClaimed when it is running or done (unless force)."""
+        Still claims, each one compare-and-set inside this write transaction (AlreadyClaimed when the claim is not
+        as expected; nothing is written then):
+          pipeline.claim_still   {still_id, worker, at[, expect]}: mark the still `running` for `worker`. Without
+                                 `expect` only a still that is not running or done; with `expect` ({worker,
+                                 started_at, heartbeat_at} of a running claim seen stale) only if the claim is still
+                                 exactly that one (a takeover two waiters cannot both win);
+          pipeline.beat_still    {still_id, worker, at}: refresh heartbeat_at of `worker`'s running claim;
+          pipeline.finish_still  {still_id, worker, stage}: write the still's result, only while `worker` still
+                                 holds the running claim (a released or taken-over claim is never written over);
+          pipeline.release_still {still_id, expect}: back to pending (the entry removed), only if the claim is
+                                 still exactly `expect`."""
         prev = self._get(c, "pipeline-run", id)
         base = prev.data if prev else {"run_id": id, "scan_id": p.get("scan_id"), "session_id": p.get("session_id"),
                                        "status": "inspecting", "attempt": 0, "stages": {}, "stills": {}}
@@ -279,12 +288,39 @@ class SqliteState:
         else:
             sid = p["still_id"]
             cur = (base.get("stills") or {}).get(sid) or {}
-            if cur.get("status") in ("running", "done") and not p.get("force"):
-                raise AlreadyClaimed(sid, cur["status"], cur.get("worker"))
-            data = _merge(base, {"stills": {sid: {"status": "running", "worker": p.get("worker"),
-                                                  "started_at": p.get("at") or now(), "error": None}}})
-            if data.get("status") in ("done", "failed", "closed"):   # a new still after a report: out of date
-                data["status"] = "inspecting"
+
+            def refuse():
+                raise AlreadyClaimed(sid, cur.get("status") or "pending", cur.get("worker"))
+
+            def same(expect: dict) -> bool:
+                return cur.get("status") == "running" and all(cur.get(k) == expect.get(k)
+                                                              for k in ("worker", "started_at", "heartbeat_at"))
+            owned = cur.get("status") == "running" and cur.get("worker") == p.get("worker")
+            if action == "pipeline.claim_still":
+                if "expect" in p:
+                    if not same(p["expect"] or {}):
+                        refuse()
+                elif cur.get("status") in ("running", "done"):
+                    refuse()
+                data = _merge(base, {"stills": {sid: None}})
+                data = _merge(data, {"stills": {sid: {"status": "running", "worker": p.get("worker"),
+                                                      "started_at": p.get("at") or now(), "error": None}}})
+                if data.get("status") in ("done", "failed", "closed"):   # a new still after a report: out of date
+                    data["status"] = "inspecting"
+            elif action == "pipeline.beat_still":
+                if not owned:
+                    refuse()
+                data = _merge(base, {"stills": {sid: {"heartbeat_at": p.get("at") or now()}}})
+            elif action == "pipeline.finish_still":
+                if not owned:
+                    refuse()
+                data = _merge(base, {"stills": {sid: p["stage"]}})
+            elif action == "pipeline.release_still":
+                if not same(p.get("expect") or {}):
+                    refuse()
+                data = _merge(base, {"stills": {sid: None}})
+            else:
+                raise StateError(f"transition {action} not implemented")
         data["run_id"] = id
         return self._write(c, "pipeline-run", data, prev.rev if prev else 0, status=data.get("status"))
 
