@@ -2,8 +2,9 @@
 
 Three facts about the scan's regions, each computed in code from the report's buckets:
 
-  judged      a model (VLM, classifier or meter) judged at least one region's state
-  issue       some region shows an issue that no meter reading ruled out, or a meter reading confirmed one
+  judged      a model (VLM, classifier or meter) judged at least one region's state (`findings` or `cosmetic`)
+  issue       some region in `findings` shows an issue that no meter reading ruled out, or a meter reading confirmed
+              one (a cosmetic issue never counts)
   unsettled   some region was not inspected (I3) or could not be judged (I4)
 
 | row | judged | issue | unsettled | verdict               | reason code          |
@@ -42,7 +43,7 @@ REASON_TEXT = {
     "no_regions": "Nothing was captured or detected that could be inspected.",
     "nothing_inspected": "Regions were found, but none of them could be inspected or judged.",
     "issues_found": "At least one inspected region shows a potential issue.",
-    "all_inspected_ok": "Every detected region was inspected and none shows an issue.",
+    "all_inspected_ok": "Every detected region was inspected and none shows a functional or safety issue.",
     "some_not_inspected": ("Nothing that was inspected shows an issue, but some regions were not inspected or could "
                            "not be judged, so the product cannot be called good yet."),
 }
@@ -72,9 +73,10 @@ def decide(facts: Facts) -> Verdict:
 
 
 def facts_of(report: dict) -> Facts:
-    """The three facts from a report's buckets (findings / not_inspected / insufficient_evidence)."""
+    """The three facts from a report's buckets (findings / cosmetic / not_inspected / insufficient_evidence). A
+    cosmetic issue counts as judged, never as an issue: it would not stop the device working."""
     findings = report.get("findings", [])
-    judged = bool(findings)
+    judged = bool(findings) or bool(report.get("cosmetic"))
     issue = any((e["issue"] != "none" and e["proof"]["status"] != "ruled_out_by_meter")
                 or e["proof"]["status"] == "confirmed_by_meter" for e in findings)
     unsettled = bool(report.get("not_inspected")) or bool(report.get("insufficient_evidence"))

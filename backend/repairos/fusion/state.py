@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from repairos.contracts import validate
 from repairos.fusion import words
 from repairos.fusion.override import Proof, SubjectKey, proofs, reading_subjects, reading_verdict
-from repairos.slots.fusion import NUMERIC_TOKEN, UNIT_TOKEN, assert_words_only
+from repairos.slots.fusion import NUMERIC_TOKEN, UNIT_TOKEN, assert_words_only, identifier_pattern
 
 _SCRUB = re.compile(r"~?(?:" + UNIT_TOKEN.pattern + r")|~?(?:" + NUMERIC_TOKEN.pattern + r")\s?%?")
 _REPEAT = re.compile(r"(?:\[measured\][\s,x×/-]*){2,}")
@@ -37,6 +37,7 @@ class Subject:
     not_inspected_only: bool = True     # every finding says not_inspected (I3); a subject with none is not inspected
     meter: str | None = None            # agrees | disagrees | unknown | None (not tested)
     proof: Proof | None = None
+    words: str | None = None            # how a person finds it: "black wire to the motor (photo 3)"; never sent to Jev
 
     @property
     def key(self) -> SubjectKey:
@@ -44,7 +45,13 @@ class Subject:
 
     @property
     def name(self) -> str:
+        """The machine name Jev's questions and the state use ("part s9/det5")."""
         return f"{self.kind} {self.ref}"
+
+    @property
+    def display(self) -> str:
+        """The name shown to a person: the plain words when known, else the machine name."""
+        return self.words or self.name
 
     label = name  # the key of this subject in state["subjects"]
 
@@ -72,8 +79,9 @@ def scrub(text: str, allowed: tuple[str, ...] = ()) -> str:
     for i, name in enumerate(sorted(allowed, key=len, reverse=True)):
         token = "\x00" + _letters(i) + "\x00"
         if name and name in text:
-            text = text.replace(name, token)
-            protected[token] = name
+            text, n = identifier_pattern(name).subn(token, text)
+            if n:
+                protected[token] = name
     text = _SCRUB.sub(words.MEASURED, text)
     text = _REPEAT.sub(words.MEASURED + " ", text).strip()
     for token, name in protected.items():
@@ -90,6 +98,44 @@ def _letters(i: int) -> str:
             return out
 
 
+# The VLM's own generic part name, from the lead sentence vision.inspect.finding_from_crop writes.
+_VLM_LEAD = (re.compile(r"^could not judge the (.+?) in still \S+$"), re.compile(r"^(.+?) in still \S+ looks .+$"))
+_DET_LEAD = re.compile(r"^region labelled '([^']+)' in still \S+")
+# Subject refs that are not one part (vision.inspect roll-ups, pipeline.run whole-still rows) -> words
+REF_WORDS = {"small_regions": "small regions", "more_regions": "more regions", "whole": "whole photo",
+             "label": "label", "nothing": "whole photo"}
+
+
+def vlm_part_class(f: dict[str, Any]) -> str | None:
+    lead = (f.get("evidence") or [""])[0].strip()
+    m = _VLM_LEAD[0].match(lead) or _VLM_LEAD[1].match(lead)
+    return m.group(1).strip() if m else None
+
+
+def _part_words_of(fs: list[dict[str, Any]], ref: str) -> str:
+    """Plain words for a subject's part: the VLM's part_words, else its part name, else the detector's label, else
+    what a roll-up or whole-still ref stands for."""
+    for f in fs:
+        if f.get("part_words"):
+            return re.sub(r"^the\s+", "", f["part_words"].strip(), flags=re.I)
+    for f in fs:
+        if (p := vlm_part_class(f)):
+            return p.replace("_", " ")
+    for f in fs:
+        if (m := _DET_LEAD.match((f.get("evidence") or [""])[0].strip())):
+            return m.group(1)
+    tail = ref.rpartition("/")[2]
+    return REF_WORDS.get(tail, tail.replace("_", " "))
+
+
+def subject_words(fs: list[dict[str, Any]], ref: str, still_ids: list[str], still_words: dict[str, str]) -> str | None:
+    """"<part words> (photo N)" for a subject seen in photos, None when no still names it."""
+    photos = [still_words[x] for x in still_ids if x in still_words]
+    if not photos:
+        return None
+    return f"{_part_words_of(fs, ref)} ({', '.join(dict.fromkeys(photos))})"
+
+
 def _finding_words(f: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any]:
     w: dict[str, Any] = {
         "from": words.FINDING_SOURCE[f["source"]],
@@ -98,6 +144,8 @@ def _finding_words(f: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any
     }
     if f.get("vlm_answer"):
         w["photo_check"] = words.VLM_ANSWER[f["vlm_answer"]]
+    if f.get("severity"):
+        w["matters"] = words.SEVERITY[f["severity"]]
     m = f.get("measurements") or {}
     if "coverage" in m:
         w["coverage"] = words.band("coverage", m["coverage"])
@@ -124,10 +172,12 @@ def _finding_words(f: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any
 
 
 def build_state(scan_id: str, findings: list[Any], readings: list[Any] = (), symptom: str | None = None,
-                actions: dict[str, dict[str, Any]] | None = None) -> FusionState:
+                actions: dict[str, dict[str, Any]] | None = None,
+                still_words: dict[str, str] | None = None) -> FusionState:
     """The word state for one scan. `findings` are Finding objects or dicts (validated against the contract),
     `readings` MeterReading objects or dicts, `actions` the NextActions already issued (by action_id), used to tie
-    a reading to the harness row it answered."""
+    a reading to the harness row it answered. `still_words` ({still_id: "photo 3"}) gives each subject the plain
+    words a person uses to find it (Subject.words, for the next step); the state Jev sees keeps the refs."""
     fs = [as_dict(f, "finding") for f in findings]
     rs = [as_dict(r, "meter-reading") for r in readings]
     for f in fs:
@@ -148,6 +198,12 @@ def build_state(scan_id: str, findings: list[Any], readings: list[Any] = (), sym
             s.not_inspected_only = False
         if "on_symptom_power_path" in f:
             s.on_path = bool(s.on_path) or f["on_symptom_power_path"]
+    if still_words:
+        of_subject: dict[SubjectKey, list[dict[str, Any]]] = {}
+        for f in fs:
+            of_subject.setdefault((f["subject"]["kind"], f["subject"]["ref"]), []).append(f)
+        for key, s in subjects.items():
+            s.words = subject_words(of_subject.get(key, []), s.ref, s.still_ids, still_words)
     for r in rs:  # a reading on a net nobody reported makes that net a subject
         if ("net", r["net"]) not in subjects:
             subjects[("net", r["net"])] = Subject("net", r["net"], not_inspected_only=False)

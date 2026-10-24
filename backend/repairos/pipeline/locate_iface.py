@@ -33,6 +33,7 @@ from typing import Any
 MODULE = "repairos.locate"
 NOT_INSTALLED = "location not computed: the 3D localization module (repairos.locate) is not present"
 NO_BOX = "the finding has no region in a still"
+NO_POSE = "the photo has no camera pose (a plain photo, not taken in the app), so it cannot be placed on the scan"
 NO_SECOND_VIEW = ("no-LiDAR scan: locating needs a second still of the same target that shows exactly one region of "
                   "the same part to triangulate with")
 

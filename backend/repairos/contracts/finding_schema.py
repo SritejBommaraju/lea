@@ -125,6 +125,16 @@ class VlmAnswer(StrEnum):
     cannot_tell = 'cannot_tell'
 
 
+class Severity(StrEnum):
+    """
+    For a finding with an issue, how much it matters, judged by the vision model per crop: cosmetic = looks worn but would not stop the device working; functional = could stop it working or working right; safety = could hurt someone. Absent = not judged (treated as functional).
+    """
+
+    cosmetic = 'cosmetic'
+    functional = 'functional'
+    safety = 'safety'
+
+
 class DesignTrust(StrEnum):
     high = 'high'
     low = 'low'
@@ -232,6 +242,16 @@ class Finding(BaseModel):
     vlm_answer: VlmAnswer | None = Field(
         None,
         description='Structured answer from the crop-pair question, when source is repairos.vision.',
+    )
+    severity: Severity | None = Field(
+        None,
+        description='For a finding with an issue, how much it matters, judged by the vision model per crop: cosmetic = looks worn but would not stop the device working; functional = could stop it working or working right; safety = could hurt someone. Absent = not judged (treated as functional).',
+    )
+    part_words: str | None = Field(
+        None,
+        description='A few plain words a person can use to find the part in the photo (colour, what it connects to, where it sits), from the vision model. Shown to the user; never sent to Jev as an instruction.',
+        max_length=200,
+        min_length=1,
     )
     design_trust: DesignTrust | None = None
     on_symptom_power_path: bool | None = None

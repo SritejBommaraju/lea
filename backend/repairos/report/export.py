@@ -13,8 +13,9 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from repairos.fusion import words
+from repairos.report.safety import LIMITS
 
-TITLE = {"looks_good": "Looks good", "potential_issues": "Potential issues",
+TITLE = {"looks_good": "No visible problems found", "potential_issues": "Potential issues",
          "insufficient_evidence": "Not enough evidence"}
 PROOF = {"not_measured": "suspicion from photos, not proof", "confirmed_by_meter": "confirmed by a meter reading",
          "ruled_out_by_meter": "ruled out by a meter reading"}
@@ -48,18 +49,61 @@ def _evidence(e: Mapping[str, Any]) -> list[str]:
     return [s for s in e.get("evidence", []) if s.strip() and s.strip() != NOT_PROOF]
 
 
+SEVERITY = {"safety": "safety", "functional": "could stop it working", "cosmetic": "cosmetic"}
+
+
+def _name(e: Mapping[str, Any]) -> str:
+    """Part name plus the plain words that find it in the photo."""
+    return e["part_class"] + (f" ({e['part_words']})" if e.get("part_words") else "")
+
+
+def _also(e: Mapping[str, Any]) -> str:
+    """For a collapsed row: where else the same issue was seen."""
+    others = e.get("crops") or []
+    if not others:
+        return ""
+    stills = sorted({c["still_id"] for c in others})
+    return f"; also seen in {len(others)} more {'region' if len(others) == 1 else 'regions'} ({', '.join(stills)})"
+
+
+def _most_likely(report: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    ids = report.get("most_likely") or []
+    rows = {e["finding_id"]: e for e in report["findings"]}
+    return [rows[i] for i in ids if i in rows]
+
+
+def _why_first(e: Mapping[str, Any]) -> str:
+    j = e.get("judgment") or {}
+    bits = [SEVERITY[e.get("severity") or "functional"]]
+    if j.get("explains_symptom") == "yes":
+        bits.append("may explain the problem")
+    bits.append(f"confidence {e['confidence_word']}")
+    return ", ".join(bits)
+
+
 def to_markdown(report: Mapping[str, Any]) -> str:
     out = [f"# Inspection report: {TITLE[report['verdict']]}", "",
            f"Scan `{report['scan_id']}`, report `{report['report_id']}`, {report['created_at']}", "",
            report["summary"]["text"], "", f"**Why this verdict:** {report['verdict_reason']['text']}", ""]
     issues = [e for e in report["findings"] if e["issue"] != "none"]
     fine = [e for e in report["findings"] if e["issue"] == "none"]
+    if report.get("safety"):
+        out = out[:2] + ["## Safety first", ""] + [f"- {n['text']}" for n in report["safety"]] + [""] + out[2:]
     if report.get("next_step"):
         out += [f"**Next step:** {report['next_step']['instruction']}", ""]
+    top = _most_likely(report)
+    if top:
+        out += ["## Most likely problems", ""]
+        out += [f"{i}. **{_name(e)}**: {_issue(e)} ({_why_first(e)}). {_photo(e)}{_also(e)}."
+                for i, e in enumerate(top, 1)] + [""]
     out += ["## Potential issues", ""]
-    out += [f"- **{e['part_class']}** ({e['subject']['ref']}): {_issue(e)}; confidence {e['confidence_word']}; "
-            f"{PROOF[e['proof']['status']]}. {_photo(e)}; {_where(e.get('location'))}. "
-            f"Evidence: {' '.join(_evidence(e))}" for e in issues] or ["- none"]
+    out += [f"- **{_name(e)}** ({e['subject']['ref']}): {_issue(e)}; {SEVERITY[e.get('severity') or 'functional']}; "
+            f"confidence {e['confidence_word']}; {PROOF[e['proof']['status']]}. {_photo(e)}{_also(e)}; "
+            f"{_where(e.get('location'))}. Evidence: {' '.join(_evidence(e))}" for e in issues] or ["- none"]
+    out += ["", "## Cosmetic only (would not stop it working)", ""]
+    out += [f"- {_name(e)} ({e['subject']['ref']}): {_issue(e)}; confidence {e['confidence_word']}. "
+            f"{_photo(e)}{_also(e)}. Evidence: {' '.join(_evidence(e))}" for e in report.get("cosmetic", [])] \
+        or ["- none"]
     out += ["", "## Looked at, no visible issue", ""]
     out += [f"- {e['part_class']} ({e['subject']['ref']}): confidence {e['confidence_word']}. {_photo(e)}; "
             f"{_where(e.get('location'))}." for e in fine] or ["- none"]
@@ -77,7 +121,8 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             "", "## Models", ""]
     out += [f"- {k.replace('_', ' ')}: {v}" for k, v in m.items()]
     out += [f"- summary written by {report['summary']['written_by']} from words only", "- Grain: not called", "",
-            "Photo findings are suspicions; only a meter reading proves a fault.", ""]
+            "## What photos cannot tell", ""]
+    out += [f"- {line}" for line in report.get("limits") or LIMITS] + [""]
     return "\n".join(out)
 
 
@@ -127,13 +172,26 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
         f"<p>{esc(report['summary']['text'])}</p>",
         f"<p><strong>Why this verdict:</strong> {esc(report['verdict_reason']['text'])}</p>",
     ]
+    if report.get("safety"):
+        parts.insert(1, "<h2>Safety first</h2><ul>" + "".join(f"<li>{esc(n['text'])}</li>" for n in report["safety"])
+                     + "</ul>")
     if report.get("next_step"):
         parts.append(f"<p><strong>Next step:</strong> {esc(report['next_step']['instruction'])}</p>")
+    top = _most_likely(report)
+    if top:
+        parts.append("<h2>Most likely problems</h2><ol>" + "".join(
+            f"<li><strong>{esc(_name(e))}</strong>: {esc(_issue(e))} ({esc(_why_first(e))})</li>" for e in top)
+            + "</ol>")
     parts.append(section("Potential issues", [item(e, [
-        f"<strong>{esc(e['part_class'])}</strong>: {esc(_issue(e))}",
+        f"<strong>{esc(_name(e))}</strong>: {esc(_issue(e))} ({esc(SEVERITY[e.get('severity') or 'functional'])})",
         f"Confidence {esc(e['confidence_word'])}; {esc(PROOF[e['proof']['status']])}",
         esc(" ".join(_evidence(e))),
-        f'<span class="muted">{esc(_photo(e))}; {esc(_where(e.get("location")))}</span>']) for e in issues]))
+        f'<span class="muted">{esc(_photo(e) + _also(e))}; {esc(_where(e.get("location")))}</span>'])
+        for e in issues]))
+    parts.append(section("Cosmetic only (would not stop it working)", [item(e, [
+        f"<strong>{esc(_name(e))}</strong>: {esc(_issue(e))}; confidence {esc(e['confidence_word'])}",
+        esc(" ".join(_evidence(e))),
+        f'<span class="muted">{esc(_photo(e) + _also(e))}</span>']) for e in report.get("cosmetic", [])]))
     parts.append(section("Looked at, no visible issue", [item(e, [
         f"<strong>{esc(e['part_class'])}</strong>: no visible issue; confidence {esc(e['confidence_word'])}",
         f'<span class="muted">{esc(_photo(e))}; {esc(_where(e.get("location")))}</span>']) for e in fine]))
@@ -150,7 +208,9 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
                  f"Scan coverage: {esc(cap['coverage_words'])}.<br>"
                  + "<br>".join(f"{esc(k.replace('_', ' '))}: {esc(v)}" for k, v in report["models"].items())
                  + f"<br>Summary written by {esc(report['summary']['written_by'])} from words only. Grain: not called."
-                 "</p><p class=\"muted\">Photo findings are suspicions; only a meter reading proves a fault.</p>")
+                 "</p>")
+    parts.append("<h2>What photos cannot tell</h2><ul>"
+                 + "".join(f"<li>{esc(line)}</li>" for line in report.get("limits") or LIMITS) + "</ul>")
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             f"<title>Inspection report</title><style>{_CSS}</style></head><body>{''.join(parts)}</body></html>\n")

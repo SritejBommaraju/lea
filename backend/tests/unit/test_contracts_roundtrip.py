@@ -30,6 +30,8 @@ MODEL_CANNOT_EXPRESS = {
     "scan-package-lidar-without-points.json",       # depth_source if/then/else (no-LiDAR, A8)
     "scan-package-no-depth-with-mesh.json",
     "scan-package-no-depth-with-points.json",
+    "still-no-intrinsics-without-pose-unreliable.json",   # camera/intrinsics if/else on pose_reliable (photos)
+    "still-no-pose-without-pose-unreliable.json",
     # report (B9): if/then and contains rules; validate() and the STATE rules enforce them
     "report-looks-good-with-issue.json",
     "report-looks-good-with-uninspected-region.json",

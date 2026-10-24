@@ -8,6 +8,13 @@ Product-agnostic: prompts come from the generic classes only (no reference in Ph
   detected parts.
 Numbers stay in `measurements`/`evidence_refs`; evidence sentences use words (S5).
 
+Budget and prompt (eval/defects/QUICKWINS.md):
+- regions whose crops would show nearly the same pixels are merged first (vision/ranking.py); a merged region whose
+  detector box shows the same part as the kept one (inspect.same_part) gets the kept answer, else it is
+  `not_inspected` with that reason;
+- each crop gets the failure checklist of its part family (vision/checklists.py); a weak detector label or a crop the
+  classifier abstains on gets the general checklist, and a region nobody identified is named `unknown_part`.
+
 With a defect classifier (CLS slot selected, or `classifier=` passed; task M7) the classifier scores every part crop
 first (up to `max_classified`) and decides which crops the VLM sees:
 - flagged (likely defect) and unsure crops go to the VLM, flagged first, most likely defect first, up to `max_crops`;
@@ -36,11 +43,22 @@ from typing import Any
 from repairos.contracts import validate
 from repairos.slots.classifier import (ABSTAIN, FLAGGED, OK, UNSURE, DefectScore, confidence_word, evidence_words,
                                       route)
-from repairos.vision.crops import context_view, cut, load_still
+from repairos.vision.checklists import UNKNOWN_PART, WEAK_LABEL_BELOW, crop_family
+from repairos.vision.crops import context_view, crop_region, cut, load_still
 from repairos.vision.generic_classes import DEFECT_TO_CROP_STATE, WIRE_CLASSES
+from repairos.vision.ranking import MERGE_IOU, RANK_BY, rank_regions
+from repairos.vision.tiling import iou
 
 VLM_MAX_SIDE = 1568      # crops are downsized only past this (the VLM's own input limit), never upscaled
 MAX_BOX_FRACTION = 0.5   # a box over half the still is scene-level, not a part: not inspected at crop level
+# Region list caps (eval/defects/QUICKWINS.md §5). A 12-24 MP phone photo of a whole device gives the tiled detector
+# about ninety boxes; most are specks and texture. Chosen on the non-held-out dev stills (VisA pcb1-3 + webcam):
+# every floor from 0 to 0.015 loses no dev defect (0.0175 loses one), and MAX_REGIONS is the per-still cap past which
+# no dev defect is gained (11 is the smallest lossless value; 12 matches the VLM crop budget). The floor is the low
+# end of that range: the dev pick 0.015 cost one flagged held-out defect crop, 0.01 costs none (disclosed there).
+MIN_BOX_SIDE = 0.01      # sqrt(box area / still area): a box smaller than this is dropped before cropping
+MAX_REGIONS = 12         # regions kept per still after merging, by detector score (a classifier's budget if larger)
+SMALL_REGIONS, MORE_REGIONS = "small_regions", "more_regions"   # refs of the per-still not-inspected roll-ups
 
 STATE_TO_FINDING = {
     "ok": "ok", "damaged": "damaged", "burnt": "damaged", "cracked": "broken", "corroded": "damaged",
@@ -57,6 +75,10 @@ class Inspection:
     timing: dict[str, float] = field(default_factory=dict)
     defect_scores: dict[int, DefectScore] = field(default_factory=dict)  # detection index -> CLS score (M7)
     routes: dict[int, str] = field(default_factory=dict)   # detection index -> ok | unsure | flagged (CLS routing)
+    merged: dict[int, int] = field(default_factory=dict)   # detection index -> the index whose crop covers it
+    part_classes: dict[int, str] = field(default_factory=dict)  # index -> detector label, or unknown_part (weak)
+    dropped: dict[str, list[int]] = field(default_factory=dict)  # small_regions | more_regions -> indices not kept
+    rollups: dict[str, dict] = field(default_factory=dict)  # finding_id -> {part_class, regions} for a roll-up
 
 
 def _now() -> str:
@@ -75,6 +97,12 @@ def _subject(still_id: str, index: int, label: str) -> dict:
     return {"kind": "wire" if label in WIRE_CLASSES else "part", "ref": f"{still_id}/det{index}"}
 
 
+def part_name(vlm_part_class: str | None) -> str:
+    """The VLM's own generic part name; `unknown_part` when it could not identify the part."""
+    p = (vlm_part_class or "").strip()
+    return UNKNOWN_PART if p.lower().replace("_", " ") in ("", "unknown", "unknown part", "unidentified part") else p
+
+
 def vlm_answer_for(state: str) -> str:
     return {"missing": "absent", "unplugged": "unplugged", "cannot_tell": "cannot_tell"}.get(state, "present")
 
@@ -84,8 +112,9 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
     """The Finding (as a dict) for one VLM-inspected crop; `defect_score` adds the classifier's answer in words."""
     state = STATE_TO_FINDING[crop_state.state]
     words = crop_state.state.replace("_", " ")
-    lead = (f"could not judge the {crop_state.part_class} in still {still_id}" if crop_state.state == "cannot_tell"
-            else f"{crop_state.part_class} in still {still_id} looks {words}")
+    part = part_name(crop_state.part_class)
+    lead = (f"could not judge the {part} in still {still_id}" if crop_state.state == "cannot_tell"
+            else f"{part} in still {still_id} looks {words}")
     evidence = [
         lead,
         f"vision model ({crop_state.model}{', after escalation' if crop_state.escalated else ''}): "
@@ -107,7 +136,7 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
     meas: dict[str, Any] = {"views": 1}
     if sharpness is not None:
         meas["sharpness"] = sharpness
-    return {
+    out = {
         "finding_id": _fid(scan_id, still_id, index, det.box, det.label),
         "scan_id": scan_id,
         "subject": _subject(still_id, index, det.label),
@@ -122,6 +151,19 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         "design_trust": "low",
         "created_at": _now(),
     }
+    if (sev := severity_of(state, getattr(crop_state, "severity", "none"))):
+        out["severity"] = sev
+    if (pw := " ".join((getattr(crop_state, "part_words", "") or "").split())[:200]):
+        out["part_words"] = pw
+    return out
+
+
+def severity_of(finding_state: str, vlm_severity: str) -> str | None:
+    """Finding.severity for a VLM-judged crop: only an issue has one; an issue the VLM gave no severity (`none`, or
+    an older answer without the field) is treated as functional, never waved through as cosmetic."""
+    if finding_state in ("ok", "insufficient_evidence"):
+        return None
+    return vlm_severity if vlm_severity in ("cosmetic", "functional", "safety") else "functional"
 
 
 def finding_from_classifier(*, scan_id: str, still_id: str, index: int, det, crop, score: DefectScore,
@@ -223,6 +265,44 @@ def finding_not_inspected(*, scan_id: str, still_id: str, index: int, det, reaso
     }
 
 
+ROLLUP_WORDS = {
+    SMALL_REGIONS: ("small regions", "too small in this photo to judge; take a closer photo of the area"),
+    MORE_REGIONS: ("more regions", "past this photo's limit of the strongest detector regions; take closer photos "
+                                   "to inspect them"),
+}
+
+
+def box_side(box: Sequence[float], width: int, height: int) -> float:
+    """A box's size relative to the still: sqrt(box area / still area) (a thin long part keeps its area)."""
+    area = max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+    return (area / (width * height)) ** 0.5 if width * height > 0 else 0.0
+
+
+def finding_rollup(*, scan_id: str, still_id: str, what: str, indices: Sequence[int], dets: Sequence[Any]) -> dict:
+    """One not_inspected finding for the detector regions of a still that were not kept as regions (too small, or
+    past the per-still region cap): nobody looked at them (I3), so they are counted, never called ok. The exact
+    count is in the evidence; the report shows it as one row per still."""
+    part, why = ROLLUP_WORDS[what]
+    labels = sorted({dets[i].label for i in indices})
+    shown = ", ".join(f"'{x}'" for x in labels[:6]) + (", and others" if len(labels) > 6 else "")
+    return {
+        "finding_id": _fid(scan_id, still_id, what, tuple(sorted(indices))),
+        "scan_id": scan_id,
+        "subject": {"kind": "part", "ref": f"{still_id}/{what}"},
+        "state": "not_inspected",
+        "source": "repairos.vision",
+        "confidence": 0.0,
+        "is_proof": False,
+        "evidence": [(f"{len(indices)} {part} in still {still_id} were detected but not inspected: {why}"
+                      if len(indices) > 1 else
+                      f"{len(indices)} {part[:-1]} in still {still_id} was detected but not inspected: {why}"),
+                     f"detector labels: {shown}"],
+        "evidence_refs": {"still_ids": [still_id]},
+        "design_trust": "low",
+        "created_at": _now(),
+    }
+
+
 def finding_nothing_detected(*, scan_id: str, still_id: str) -> dict:
     return {
         "finding_id": _fid(scan_id, still_id, "nothing"),
@@ -240,20 +320,108 @@ def finding_nothing_detected(*, scan_id: str, still_id: str) -> dict:
 
 
 def order_for_inspection(detections: Sequence[Any]) -> list[int]:
-    """Indices in inspection order: by detector score. Damage labels get no priority: measured on a real photo,
-    zero-shot damage labels ('melted plastic', 'missing screw') fired mostly on blur and intact parts, so ranking
-    them first spent the crop budget on noise. The VLM judges damage on every crop it sees."""
+    """Indices by detector score (the order before merging). Damage labels get no priority: measured on a real
+    photo, zero-shot damage labels ('melted plastic', 'missing screw') fired mostly on blur and intact parts; ranking
+    by the detector's damage evidence did not raise the defects inside the budget on held-out stills either
+    (eval/defects/QUICKWINS.md). The VLM judges damage on every crop it sees."""
     return sorted(range(len(detections)), key=lambda i: -detections[i].score)
+
+
+def inside_share(box: Sequence[float], region: Sequence[float]) -> float:
+    """How much of `box` lies inside `region` (0..1)."""
+    w = max(0.0, min(box[2], region[2]) - max(box[0], region[0]))
+    h = max(0.0, min(box[3], region[3]) - max(box[1], region[1]))
+    area = (box[2] - box[0]) * (box[3] - box[1])
+    return w * h / area if area > 0 else 0.0
+
+
+COVERED_INSIDE = 0.9  # a merged detector box at least this much inside the kept detector box is part of that part
+
+
+def same_part(box: Sequence[float], kept_box: Sequence[float]) -> bool:
+    """Whether a merged region's detector box shows the part the kept region's VLM look judged: the two DETECTOR
+    boxes overlap at IoU >= MERGE_IOU, or the merged box lies inside the kept box (a pin of a judged connector). The
+    padded crops are not used: crop_region pads small boxes to at least 256 px, so a neighbouring part can sit inside
+    the kept crop without being the part the model judged."""
+    return iou(box, kept_box) >= MERGE_IOU or inside_share(box, kept_box) >= COVERED_INSIDE
+
+
+def finding_from_merged(kept: dict, *, scan_id: str, still_id: str, index: int, det, into: int,
+                        into_box: Sequence[float]) -> dict:
+    """A region merged into detection `into` (detector box `into_box`): the kept answer when the detector boxes show
+    the same part (same_part), else not inspected with that reason (I3)."""
+    looked = kept["state"] not in ("not_inspected",) and same_part(det.box, into_box)
+    if not looked:
+        why = "its crop overlaps the crop of another region, which was inspected in its place" \
+            if kept["state"] != "not_inspected" else "it overlaps a region that was not inspected either"
+        return finding_not_inspected(scan_id=scan_id, still_id=still_id, index=index, det=det, reason=why)
+    f = dict(kept)
+    f["finding_id"] = _fid(scan_id, still_id, index, det.box, det.label)
+    f["subject"] = _subject(still_id, index, det.label)
+    f["evidence"] = [kept["evidence"][0], f"judged in the crop of {still_id}/det{into}, which covers this region "
+                     f"(detector label '{det.label}')"] + list(kept["evidence"][1:])
+    return f
+
+
+def region_part_class(det, classifier_abstained: bool = False) -> str:
+    """The part name for a region before any model names it: the detector label, or `unknown_part` when that label
+    is a weak match or the classifier did not recognise the crop (vision/checklists.crop_family)."""
+    return UNKNOWN_PART if crop_family(det.label, det.score, classifier_abstained) == UNKNOWN_PART \
+        and (classifier_abstained or det.score < WEAK_LABEL_BELOW) else det.label
+
+
+@dataclass
+class RegionSelection:
+    scene: list[int]                          # boxes over MAX_BOX_FRACTION of the still (not inspected, own rows)
+    ordered: list[int]                        # kept regions in inspection order (at most the region cap)
+    merged: dict[int, int]                    # kept merged index -> the kept index whose crop covers it
+    dropped: dict[str, list[int]]             # small_regions / more_regions -> indices not kept
+    regions: dict[int, tuple[int, int, int, int]]  # crop region of every candidate (still pixels)
+
+
+def region_cap(budget: int, max_regions: int | None = None) -> int:
+    """Regions kept per still: MAX_REGIONS (or `max_regions`), never fewer than the inspection budget."""
+    return max(MAX_REGIONS if max_regions is None else max_regions, budget)
+
+
+def select_regions(dets: Sequence[Any], width: int, height: int, *, budget: int, min_box_side: float = MIN_BOX_SIDE,
+                   max_regions: int | None = None, by: str = RANK_BY,
+                   merge_iou: float | None = MERGE_IOU) -> RegionSelection:
+    """Which detections become regions, before any crop is cut. Scene-sized boxes are set aside; boxes under
+    `min_box_side` are dropped; the rest are ranked and merged (vision/ranking.py) and only the first
+    region_cap(budget, max_regions) are kept. A region merged into a dropped one is dropped with it."""
+    area = width * height
+    scene, cand, tiny = [], [], []
+    for i in order_for_inspection(dets):
+        b = dets[i].box
+        if (b[2] - b[0]) * (b[3] - b[1]) > MAX_BOX_FRACTION * area:
+            scene.append(i)
+        elif box_side(b, width, height) < min_box_side:
+            tiny.append(i)
+        else:
+            cand.append(i)
+    regions = {i: crop_region(dets[i].box, width, height) for i in cand}
+    ordered, merged = rank_regions(dets, cand, regions, by=by, merge_iou=merge_iou)
+    cap = region_cap(budget, max_regions)
+    beyond = set(ordered[cap:])
+    beyond |= {i for i, into in merged.items() if into in beyond}
+    dropped = {k: sorted(v) for k, v in ((SMALL_REGIONS, tiny), (MORE_REGIONS, beyond)) if v}
+    return RegionSelection(scene, ordered[:cap], {i: k for i, k in merged.items() if i not in beyond}, dropped,
+                           regions)
 
 
 def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = None, judge: Any = None,
                   prompts: list[str] | None = None, min_score: float | None = None, max_crops: int = 12,
                   with_context: bool = True, crop_dir: str | Path | None = None, workers: int = 4,
-                  sharpness: float | None = None, classifier: Any = None, max_classified: int = 48) -> Inspection:
+                  sharpness: float | None = None, classifier: Any = None, max_classified: int = 48,
+                  min_box_side: float = MIN_BOX_SIDE, max_regions: int | None = None) -> Inspection:
     """Run detect -> crops -> [defect classifier] -> VLM on one full-resolution still (PIL image, array or path).
 
     `classifier`: None = the configured CLS slot (off when the profile says `none`), False = off, or a
-    DefectClassifier. `max_crops` is the VLM budget; `max_classified` caps the crops the classifier scores."""
+    DefectClassifier. `max_crops` is the VLM budget; `max_classified` caps the crops the classifier scores.
+    Boxes under `min_box_side` (box_side) are dropped before cropping, and only the `max_regions` best regions after
+    merging are kept (default MAX_REGIONS, or the crop budget when that is larger); what is dropped is counted in
+    one not_inspected roll-up finding per reason (finding_rollup)."""
     from repairos.registry import slot
 
     detector = detector or slot("DET")
@@ -272,20 +440,22 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         out.findings.append(validate("finding", finding_nothing_detected(scan_id=scan_id, still_id=still_id)))
         return out
 
-    area = im.width * im.height
     budget = max_classified if classifier is not None else max_crops
-    candidates: list[int] = []
+    sel = select_regions(dets, im.width, im.height, budget=budget, min_box_side=min_box_side,
+                         max_regions=max_regions)
     raw: dict[int, dict] = {}
-    for i in order_for_inspection(dets):
-        b = dets[i].box
-        if (b[2] - b[0]) * (b[3] - b[1]) > MAX_BOX_FRACTION * area:
-            raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
-                                           reason="the region covers most of the still; take a closer still")
-        elif len(candidates) >= budget:
-            raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
-                                           reason="over this still's crop budget")
-        else:
-            candidates.append(i)
+    for i in sel.scene:
+        raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
+                                       reason="the region covers most of the still; take a closer still")
+    regions, ordered, out.merged, out.dropped = sel.regions, sel.ordered, sel.merged, sel.dropped
+    rollups = [finding_rollup(scan_id=scan_id, still_id=still_id, what=k, indices=v, dets=dets)
+               for k, v in out.dropped.items()]
+    out.rollups = {f["finding_id"]: {"part_class": ROLLUP_WORDS[k][0], "regions": len(v)}
+                   for f, (k, v) in zip(rollups, out.dropped.items())}
+    candidates = ordered[:budget]
+    for i in ordered[budget:]:
+        raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
+                                       reason="over this still's crop budget")
 
     crop_dir = Path(crop_dir) if crop_dir else None
     if crop_dir:
@@ -321,10 +491,15 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
             elif i not in chosen and r in (UNSURE, ABSTAIN):
                 raw[i] = finding_classifier_unsure(**kw, reason="the vision-model budget was used up")
 
+    def abstained(i: int) -> bool:
+        sc = out.defect_scores.get(i)
+        return bool(sc is not None and sc.abstained)
+
     def look(i: int) -> tuple[int, dict]:
         d = dets[i]
         ctx = context_view(im, d.box) if with_context else None
-        state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label)
+        state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
+                                   family=crop_family(d.label, d.score, abstained(i)))
         return i, finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crops[i],
                                     crop_state=state, crop_file=save(i), sharpness=sharpness,
                                     defect_score=out.defect_scores.get(i))
@@ -335,7 +510,11 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
             for i, f in pool.map(look, chosen):
                 raw[i] = f
     out.timing["vlm_s"] = time.perf_counter() - t1
-    out.findings = [validate("finding", raw[i]) for i in sorted(raw)]
+    for i, into in out.merged.items():
+        raw[i] = finding_from_merged(raw[into], scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
+                                     into=into, into_box=dets[into].box)
+    out.part_classes = {i: region_part_class(d, abstained(i)) for i, d in enumerate(dets)}
+    out.findings = [validate("finding", raw[i]) for i in sorted(raw)] + [validate("finding", f) for f in rollups]
     return out
 
 

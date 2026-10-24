@@ -12,7 +12,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 class Kind(StrEnum):
     """
-    guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a posed still taken without a target ring, e.g. a frame of an imported capture (B12); targets is empty.
+    guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a still taken without a target ring, e.g. a frame of an imported capture (B12) or a plain camera photo (tools/import_photos.py, pose_reliable false, no camera); targets is empty.
     """
 
     guided = 'guided'
@@ -22,6 +22,10 @@ class Kind(StrEnum):
 
 
 class Intrinsics(BaseModel):
+    """
+    Pinhole intrinsics in pixels of the width_px x height_px image. May be absent only when pose_reliable is false and the focal length is unknown (a plain photo without EXIF focal length).
+    """
+
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -72,7 +76,7 @@ class Target(BaseModel):
 
 class TrackingState(StrEnum):
     """
-    unknown: the capture app did not record it (an import); pose_reliable is then absent.
+    unknown: the capture app did not record it (an import); pose_reliable is then absent, or false when there is no pose at all (a plain photo).
     """
 
     normal = 'normal'
@@ -121,7 +125,7 @@ class Still(BaseModel):
     session_id: str = Field(..., min_length=1)
     kind: Kind = Field(
         ...,
-        description='guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a posed still taken without a target ring, e.g. a frame of an imported capture (B12); targets is empty.',
+        description='guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a still taken without a target ring, e.g. a frame of an imported capture (B12) or a plain camera photo (tools/import_photos.py, pose_reliable false, no camera); targets is empty.',
     )
     captured_at: AwareDatetime
     image_file: str = Field(
@@ -130,18 +134,22 @@ class Still(BaseModel):
     )
     width_px: int = Field(..., ge=1)
     height_px: int = Field(..., ge=1)
-    camera: PoseArkit = Field(
-        ...,
-        description='Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate.',
+    camera: PoseArkit | None = Field(
+        None,
+        description='Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate. May be absent only when pose_reliable is false: a plain photo has no pose, and none is made up.',
     )
     camera_design: PoseDesign | None = Field(
         None,
         description='Backend-filled pose in the design frame (mm, Z up) after alignment and depth re-registration.',
     )
     pose_reliable: bool | None = Field(
-        None, description='False for macro_detail or when tracking was limited.'
+        None,
+        description='False for macro_detail, when tracking was limited, or when the still has no pose at all (a plain photo: camera absent). Only when false may camera and intrinsics be absent.',
     )
-    intrinsics: Intrinsics
+    intrinsics: Intrinsics | None = Field(
+        None,
+        description='Pinhole intrinsics in pixels of the width_px x height_px image. May be absent only when pose_reliable is false and the focal length is unknown (a plain photo without EXIF focal length).',
+    )
     depth_file: str | None = Field(
         None, description='Nearest ARKit depth frame (256x192) for re-registration.'
     )
@@ -155,7 +163,7 @@ class Still(BaseModel):
     )
     tracking_state: TrackingState = Field(
         ...,
-        description='unknown: the capture app did not record it (an import); pose_reliable is then absent.',
+        description='unknown: the capture app did not record it (an import); pose_reliable is then absent, or false when there is no pose at all (a plain photo).',
     )
     sharpness: float | None = Field(None, description='Laplacian variance.', ge=0.0)
     torch_on: bool | None = None

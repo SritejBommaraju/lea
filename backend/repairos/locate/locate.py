@@ -164,6 +164,8 @@ def _pose_problem(still: Mapping) -> str | None:
                 "still they are attached to (attached_to_target_id)")
     if still.get("user_skipped"):
         return "the user skipped this still: nothing was photographed"
+    if "camera" not in still:
+        return "the photo has no camera pose (a plain photo, not taken in the app)"
     return None
 
 

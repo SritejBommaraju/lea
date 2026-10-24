@@ -9,8 +9,9 @@ Stdlib HTTP (urllib), no SDK dependency: the request is one documented JSON POST
               https://docs.typesafe.ai/primitives/noul.md, https://docs.typesafe.ai/primitives/choice.md
   - response  {model, answers: {<id>: {type: noul, noul} | {type: choice, choice, confidence, probabilities}},
               usage}; `model` is the versioned id that answered (e.g. jev-1.14.0)
-  - models    jev-latest -> jev-1.14.0 (text input, 64k per request / 32k per question)
-              https://docs.typesafe.ai/models.md
+  - models    jev-latest -> jev-1.14.0 (text input, 64k per request / 32k per question; the state counts once
+              against each, a request over either limit is HTTP 400 max_tokens_exceeded)
+              https://docs.typesafe.ai/models.md#context-length
   - errors    400 / 413 / 415 / 422 = our request is wrong; 401 = key; 429 / 529 = retry with backoff
               https://docs.typesafe.ai/api/errors.md
   - option order bias: https://docs.typesafe.ai/model-jaggedness/jev-1.13.md#choice-option-order
@@ -33,14 +34,15 @@ from typing import Any
 
 from repairos.config import ROOT, get_settings
 from repairos.registry import register
-from repairos.slots.fusion import (Answers, FusionBadAnswer, FusionError, FusionUnavailable, Question,
-                                   assert_words_only, check_answers)
+from repairos.slots.fusion import (Answers, ContextLimits, FusionBadAnswer, FusionError, FusionUnavailable,
+                                   Question, assert_words_only, check_answers, check_fits, question_entry)
 
 API_URL = "https://api.typesafe.ai/v1/systemone"
 MODEL = "jev-latest"          # the docs' default alias; the versioned id that answered is recorded per call
 TIMEOUT_S = 3.0               # 3 s timeout
 RETRY_STATUSES = {429, 529}   # docs: retry these with backoff
 RECORD_DIR = ROOT / "data" / "fusion" / "jev"
+CONTEXT = ContextLimits(per_request=64_000, per_question=32_000)   # docs: models.md#context-length (Jev 1.13, 1.14)
 
 log = logging.getLogger(__name__)
 
@@ -50,13 +52,7 @@ class FusionRequestRejected(FusionError):
 
 
 def request_body(model: str, state: dict[str, Any], questions: list[Question]) -> dict[str, Any]:
-    qs: dict[str, Any] = {}
-    for q in questions:
-        entry: dict[str, Any] = {"type": q.type, "instructions": q.instructions}
-        if q.options:
-            entry["criteria"] = dict(q.options)   # insertion order = the order we shuffled to
-        qs[q.id] = entry
-    return {"model": model, "state": state, "questions": qs}
+    return {"model": model, "state": state, "questions": {q.id: question_entry(q) for q in questions}}
 
 
 def parse_answers(questions: list[Question], data: dict[str, Any], latency_ms: int) -> Answers:
@@ -91,12 +87,14 @@ class JevEngine:
         self.retries = retries
         self.url = url
         self.record_dir = record_dir
+        self.context_limits = CONTEXT   # repairos.fusion.batches splits requests to fit these
         self.last_exchange: dict[str, Any] | None = None
 
     def ask(self, state: dict[str, Any], questions: list[Question]) -> Answers:
         if not questions:
             raise ValueError("ask() needs at least one question")
         assert_words_only(state, questions)                       # S5, before anything leaves the process
+        check_fits(state, questions, self.context_limits)         # too large: refused here, with the sizes named
         body = request_body(self.model, state, questions)
         payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         log.debug("Jev request %s", payload.decode("utf-8"))

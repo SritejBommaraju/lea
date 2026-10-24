@@ -6,8 +6,9 @@ https://huggingface.co/google/owlv2-base-patch16-ensemble). Download: model.safe
 and config files.
 
 Unlike Grounding DINO, each class is scored independently against every box, so the whole generic vocabulary goes in
-one call (measured on this Mac, M4/MPS: ~0.65 s per 960 px view for ~70 classes). Preprocessing (pad to square,
-resize to 960, CLIP normalisation) is done here with Pillow + numpy, matching the model's image processor, to avoid
+one call (measured on this Mac, M4/MPS: ~0.65 s per 960 px view for ~70 classes); every box also gets its best score
+over the damage prompts (`Detection.damage_score`, an ordering key for vision/ranking.py). Preprocessing (pad to
+square, resize to 960, CLIP normalisation) is done here with Pillow + numpy, matching the model's image processor, to avoid
 a scipy dependency. Full-resolution stills are tiled like every DET implementation (vision/tiling.py).
 """
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any
 
 from repairos.registry import register
 from repairos.slots.detector import Detection
+from repairos.vision.generic_classes import DAMAGE_CLASSES
 from repairos.vision.prompts import build_prompts
 from repairos.vision.tiling import tiled_detect
 
@@ -28,6 +30,7 @@ MODEL_LICENSE = "Apache-2.0"
 
 DEFAULT_MIN_SCORE = 0.20
 QUERY_TEMPLATE = "a photo of a {}"
+DAMAGE_SET = frozenset(DAMAGE_CLASSES)
 
 
 @register("DET", "owlv2")
@@ -109,6 +112,8 @@ class Owlv2Detector:
         probs = out.logits.sigmoid().float().cpu()     # (B, Q, C)
         boxes = out.pred_boxes.float().cpu()           # (B, Q, 4) cx cy w h, normalised to the padded square
         best, which = probs.max(dim=-1)
+        dmg_idx = [i for i, p in enumerate(prompts) if p in DAMAGE_SET]
+        damage = probs[:, :, dmg_idx].max(dim=-1).values if dmg_idx else None  # (B, Q): best damage-prompt score
         results = []
         for b in range(n):
             s = squares[b]
@@ -116,7 +121,7 @@ class Owlv2Detector:
             for q in (best[b] >= min_score).nonzero().flatten().tolist():
                 cx, cy, w, h = (boxes[b, q] * s).tolist()
                 res.append(((cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), prompts[which[b, q].item()],
-                            float(best[b, q])))
+                            float(best[b, q]), float(damage[b, q]) if damage is not None else None))
             results.append(res)
         return results
 
@@ -134,4 +139,5 @@ class Owlv2Detector:
             cross_label_iou=self.cross_label_iou, max_detections=self.max_detections,
             crop=lambda t: im if t == (0, 0, im.width, im.height) else im.crop(t))
         self.last_timing.update(detect_s=time.perf_counter() - t0, views=views)
-        return [Detection(box=tuple(round(v, 1) for v in b), label=lab, score=round(s, 4)) for b, lab, s in merged]
+        return [Detection(box=tuple(round(v, 1) for v in b), label=lab, score=round(s, 4),
+                          damage_score=None if d is None else round(d, 4)) for b, lab, s, d in merged]

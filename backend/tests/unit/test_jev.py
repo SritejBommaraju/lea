@@ -98,3 +98,25 @@ def test_live_fuse_on_contract_examples():
     validate("next-action", res.next_action)
     top = res.suspects[0]
     assert top["subject"]["ref"] == "J1" and top["verdict"] == "suspect"   # a vision finding is never proof (I1)
+
+
+@live
+def test_live_fuse_split_into_one_request_per_subject():
+    """The batching path against the live API: each subject in its own request, sent in parallel, merged."""
+    from repairos.fusion.batches import plan_batches
+    from repairos.fusion.questions import question_groups
+    from repairos.fusion.state import build_state
+    from repairos.slots.fusion_jev import CONTEXT
+
+    fds = [json.loads((EXAMPLES / n).read_text()) for n in ("finding.json", "finding.partly.json")]
+    fds.append({**fds[0], "finding_id": "f_other", "subject": {"kind": "part", "ref": "U3"}, "state": "ok",
+                "evidence": ["the chip sits flat and every pin is soldered"]})
+    fs = build_state("scan_7f3a", fds, symptom="The product does not power on.")
+    groups, _ = question_groups(fs)
+    alone = max(plan_batches(fs, [g], CONTEXT)[0].tokens for g in groups) + 16   # fits one, never two
+    res = fuse("scan_7f3a", fds, symptom="The product does not power on.", engine=JevEngine(), request_tokens=alone)
+    assert len(res.batches) == len(groups) >= 2
+    assert set(res.answers.by_id) == {q.id for q in res.questions}
+    for s in res.suspects:
+        validate("suspect", s)
+    validate("next-action", res.next_action)

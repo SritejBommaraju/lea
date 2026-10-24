@@ -103,6 +103,25 @@ Acceptance tests work on any product. No target is invented: MS4 measures the ba
 | MS5 | Classifier earns its slot | The classifier is selected in config only if, on held-out products, it beats the MS4 baseline on the primary metric with 0 honesty violations. | M6, M7 |
 | MS6 | Phase 1 done | On held-out products, app to report meets the MS4 targets with 0 honesty violations; first-time users go from scan to report without help (A7). | all Phase 1 tasks |
 
+## 6a. Order of work (critical review, 2026-10-24)
+
+Scope is locked to: **real scan, good findings, clear report.** Work in this order:
+
+1. **Real data first.** 5 to 10 plain iPhone Camera photos of a real broken device go through `tools/import_photos.py` and `make replay` (detection and report; no 3D location without poses); read the real report before polishing anything. Recording-app imports stay developer tools only.
+2. **Detection quality.** Per-part checklists in the crop prompt, Sonnet as the crop judge, crops ranked by defect likelihood, `unknown_part` handling; each kept only if it helps on the held-out benchmark (`eval/defects/`).
+3. **App MVP:** A1 shell, A3 guided close-ups, A4 upload, A5 report screen, with A2 as a basic LiDAR/positioning layer.
+4. **App polish:** live mesh, coverage map, coaching, drift correction (A2 full, A8).
+5. **Later:** few-shot anomaly and zero-shot scorers, broader data, the learning loop, Jev-vs-code measurement on real sessions.
+
+A labelled real test set (20 to 30 photos of real broken devices, labelled by a person) is the scorecard for steps 1 to 3.
+
+Product rules added by the same review:
+- **Honest verdict wording.** The app shows `looks_good` as "No visible problems found", never "looks good". Photos cannot see dead chips, shorts or firmware faults; for "does not power on" style symptoms the report always suggests the meter check (A6 moves into the MVP).
+- **Safety gate before inside close-ups.** Unplug, wait for capacitors to discharge, stop on a swollen battery; shown before the app asks for photos inside an enclosure.
+- **Privacy.** The phone strips location and other EXIF metadata before upload; a one-time consent screen names the AI services that see the photos (Anthropic, TypeSafe).
+- **Service down is an error, not a verdict.** If Jev or Claude is unreachable the app shows "service unavailable, retry", never a report.
+
+
 ## 7. Tasks
 
 `id` leads the PR title (`B10 Pipeline orchestrator`); a task whose id leads a commit on `main` counts as done.
@@ -132,7 +151,7 @@ and Apple samples. Never `arkit-3dgs-scanner` (non-commercial), `record3d` (LGPL
 |---|---|---|---|---|
 | M1 | Detector slot: OWLv2 default, Grounding DINO alternative, generic vocabulary, prompts, tiling | `slots/detector.py`, `slots/det_*/`, `vision/{generic_classes,prompts,tiling}.py` | **Done** | - |
 | M2 | Full-res crops from detector boxes | `vision/crops.py` | **Done** | M1 |
-| M3 | VLM crop checks (Claude Haiku, Sonnet on `cannot_tell`) and per-still inspection into findings | `slots/vlm*.py`, `slots/vlm_*/`, `vision/inspect.py` | **Done** | M2 |
+| M3 | VLM crop checks (Claude Sonnet with per-part checklists, `config/vlm.yaml`; overlapping crops merged) and per-still inspection into findings | `slots/vlm*.py`, `slots/vlm_*/`, `vision/inspect.py` | **Done** | M2 |
 | M4 | Benchmark data: labelled real sessions across product kinds, known-good units, held-out products split by object and session | `samples/sessions/**` | `make sessions-check` passes; held-out products are never used for tuning or training | - |
 | M5 | Benchmark runner `make eval` | `eval/**` | Per-split precision and recall by defect type, verdict accuracy, honesty violations, calibration of confidence words, latency per stage; one results file per run | M4, B10 |
 | M6 | Defect dataset: licence-clean public data plus our labelled crops | `training/data/**`, `licenses/datasets.json` | Every source passes L2; no held-out product in training data | M4 |
@@ -168,9 +187,9 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 - **State and blobs**: SQLite whose transitions enforce I1-I4 and S4; content-addressed local blobs.
 - **Sessions and replay**: format, reader, writer, validator, `make replay`, `make sessions-check`; the pipeline stage says `not_built` until B10.
 - **Detector slots**: OWLv2 (default) and Grounding DINO, zero-shot, tiled for 12 MP stills, one generic vocabulary.
-- **Crops and VLM**: full-res crops; Claude Haiku crop checks, Sonnet on `cannot_tell`; `vision/inspect.py` turns a still into findings.
+- **Crops and VLM**: full-res crops; Claude Sonnet crop checks with per-part checklists (`vision/checklists.py`, `config/vlm.yaml`); overlapping crops merged; `vision/inspect.py` turns a still into findings. Measured in `eval/defects/QUICKWINS.md`: held-out recall 36 % to 84 % at 95 % precision.
 - **LLM**: Claude Sonnet slot.
-- **Jev fusion**: evidence to words, questions in one place, suspect ranking, next-action truth table in code, meter override; `tools/jev_smoke.py`.
+- **Jev fusion**: evidence to words, questions in one place, suspect ranking, next-action truth table in code, meter override; not-inspected subjects decided in code; requests split to fit Jev's context limits and sent in parallel (`fusion/batches.py`); `tools/jev_smoke.py`.
 - **Contracts and codegen**: 19 schemas with examples; Pydantic and Swift generation with a drift check.
 - **Registry and config**: providers from `config/providers.yaml`; typed settings with redacted secrets; release lockout.
 - **Tooling**: proprietary guard and hook; `build/doctor.py`, `next.py`, `status.py`.
@@ -205,6 +224,10 @@ Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-
 | 2026-10-24 | Scan time: as fast as possible; more time only where quality needs it, with the target set from measurements. | Owner |
 | 2026-10-24 | Closed scanner apps (e.g. Polycam) are not used: their terms forbid integration and ML training without written consent. Imports come only from apps whose terms allow it (Stray Scanner, MIT). | Owner, terms check |
 | 2026-10-24 | This file replaces the old build and spec documents. | Owner |
+| 2026-10-24 | Defect classifier (M7) built and benchmarked; it fails the held-out bar (see `eval/defects/REPORT.md`), so Phase 1 runs with `CLS: none`. The slot, routing, OOD abstention and benchmark harness stay for later scorers. | Owner, benchmark |
+| 2026-10-24 | Detection quick wins measured on held-out data (`eval/defects/QUICKWINS.md`): per-part checklists + Sonnet for every crop + crop merging kept (recall 36 % to 84 %, precision 98 % to 95 %, about $0.68 per 20-still scan); defect-likelihood ranking built but off (no held-out gain). | Owner, benchmark |
+| 2026-10-24 | Order of work per §6a: real data, then detection quality, then app MVP (photos, upload, report), then scan polish. Scope locked. | Owner, critical review |
+| 2026-10-24 | First real-photo replay (12 iPhone photos, 1,099 detector regions) broke the fuse stage (one Jev request over the 64k-token limit). Now: subjects whose only evidence is `not_inspected` never go to Jev (code decides, I3); the rest are split into requests of at most 16k estimated tokens (75 % of each Jev limit at most), each with only its own subjects in the state, up to 4 in parallel; any failed request fails the step. Before cropping, boxes under 1 % of the still's size (sqrt of area share) are dropped and at most 12 regions per still are kept; the rest are counted in one `not_inspected` roll-up per still and reason, and the report groups a still's not-inspected regions into one row with the exact count. Held-out recall unchanged (`eval/defects/QUICKWINS.md` §5). | Owner, replay |
 
 ## 11. Open questions
 

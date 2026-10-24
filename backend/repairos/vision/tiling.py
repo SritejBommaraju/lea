@@ -83,7 +83,8 @@ def tiled_detect(image_size: tuple[int, int], run, *, tile_px: int, overlap: flo
                  max_tile_fill: float = 0.5) -> tuple[list[tuple[Box, str, float]], int]:
     """Run a detector over the whole view plus overlapping tiles and merge.
 
-    `run(images) -> per image [(box in that image's pixels, label, score)]`; `crop(tile) -> image` cuts a tile from
+    `run(images) -> per image [(box in that image's pixels, label, score, *extra)]` (extra values ride along with
+    their box, e.g. a damage score); `crop(tile) -> image` cuts a tile from
     the full-resolution still. A tile box filling more than `max_tile_fill` of its tile is dropped: large things are
     the whole-still view's job, and zero-shot detectors put tile-sized boxes on blur. Returns (merged detections in
     still pixels, number of views)."""
@@ -91,17 +92,17 @@ def tiled_detect(image_size: tuple[int, int], run, *, tile_px: int, overlap: flo
     tiles = tile_grid(W, H, tile_px, overlap) if use_tiles else []
     if len(tiles) == 1:
         tiles = []  # the whole-still view already is the only tile
-    found: list[tuple[Box, str, float]] = list(run([crop((0, 0, W, H))])[0])
+    found: list[tuple] = list(run([crop((0, 0, W, H))])[0])
     for i in range(0, len(tiles), batch_size):
         batch = tiles[i:i + batch_size]
         for tile, dets in zip(batch, run([crop(t) for t in batch])):
-            for box, label, score in dets:
+            for box, label, score, *extra in dets:
                 full = (box[0] + tile[0], box[1] + tile[1], box[2] + tile[0], box[3] + tile[1])
                 tile_area = (tile[2] - tile[0]) * (tile[3] - tile[1])
                 fill = (box[2] - box[0]) * (box[3] - box[1]) / tile_area if tile_area else 1.0
                 if fill <= max_tile_fill and not touches_inner_edge(full, tile, W, H):
-                    found.append((full, label, score))
-    found = [(clamp_box(b, W, H), lab, s) for b, lab, s in found]
+                    found.append((full, label, score, *extra))
+    found = [(clamp_box(b, W, H), lab, s, *extra) for b, lab, s, *extra in found]
     found = [f for f in found if f[0][2] - f[0][0] >= 1 and f[0][3] - f[0][1] >= 1]
     merged = nms(nms(found, nms_iou, per_label=True), cross_label_iou, per_label=False)
     return merged[:max_detections], 1 + len(tiles)

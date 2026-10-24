@@ -39,8 +39,37 @@ class FusionBadAnswer(FusionError):
     """The engine answered, but the answer breaks the contract (missing id, probabilities out of range, ...)."""
 
 
+class FusionRequestTooLarge(FusionError):
+    """A request would not fit the engine's context limits. Code splits requests (repairos.fusion.batches); this is
+    raised before anything is sent when one subject alone cannot fit, never turned into an answer."""
+
+
 class S5Violation(ValueError):
     """A number would leave code (S5: numbers are compared in code; Jev and the LLM receive words)."""
+
+
+# Token estimate for a request, from its compact JSON. Calibrated on the recorded real Jev exchanges of 2026-10-24
+# (usage.input_tokens): two requests that differ only in 108 state bytes differ by 45 tokens (2.4 bytes per token);
+# the larger requests come to 2.6-2.9 bytes per token overall; the smallest one (2 questions, 875 bytes, 564 tokens)
+# carries a fixed cost of about two hundred tokens. So: 2.4 bytes per token plus a fixed and a per-question cost,
+# which is at or above every recorded count (tests/unit/test_fusion_batches.py checks it on each recording).
+BYTES_PER_TOKEN = 2.4
+REQUEST_OVERHEAD_TOKENS = 256   # fixed framing of a request
+QUESTION_OVERHEAD_TOKENS = 8    # the question id, type and framing around each question
+
+
+def estimate_tokens(obj: Any) -> int:
+    """Conservative token estimate of a JSON value (state, a question entry) as it is sent."""
+    raw = json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return int(len(raw) / BYTES_PER_TOKEN) + 1
+
+
+@dataclass(frozen=True)
+class ContextLimits:
+    """An engine's context limits in tokens: the state plus all questions (`per_request`), and the state plus any
+    one question (`per_question`)."""
+    per_request: int
+    per_question: int
 
 
 @dataclass(frozen=True)
@@ -94,10 +123,47 @@ class FusionEngine(Protocol):
     def ask(self, state: dict[str, Any], questions: list[Question]) -> Answers: ...
 
 
+def question_entry(q: Question) -> dict[str, Any]:
+    """The JSON a question is sent as (also what its token estimate is taken from)."""
+    entry: dict[str, Any] = {"type": q.type, "instructions": q.instructions}
+    if q.options:
+        entry["criteria"] = dict(q.options)   # insertion order = the order we shuffled to
+    return entry
+
+
+def question_tokens(q: Question) -> int:
+    return estimate_tokens(question_entry(q)) + estimate_tokens(q.id) + QUESTION_OVERHEAD_TOKENS
+
+
+def request_tokens(state: Any, questions: list[Question]) -> tuple[int, int]:
+    """(estimated per-request tokens, estimated tokens of the state plus its largest question)."""
+    st = estimate_tokens(state) + REQUEST_OVERHEAD_TOKENS
+    qt = [question_tokens(q) for q in questions]
+    return st + sum(qt), st + max(qt, default=0)
+
+
+def check_fits(state: Any, questions: list[Question], limits: ContextLimits | None) -> None:
+    """Raise FusionRequestTooLarge when the estimate breaks either limit (checked before a request is sent)."""
+    if limits is None:
+        return
+    total, one = request_tokens(state, questions)
+    if total > limits.per_request or one > limits.per_question:
+        raise FusionRequestTooLarge(
+            f"request of about {total} tokens ({len(questions)} questions; state plus the largest question about "
+            f"{one}) exceeds the limits of {limits.per_request} per request / {limits.per_question} per question")
+
+
+def identifier_pattern(name: str) -> re.Pattern[str]:
+    """`name` as a whole identifier: "s8/det1" matches in "s8/det1," but not inside "s8/det11" (where removing it
+    would leave a stray "1")."""
+    return re.compile(r"(?<![A-Za-z0-9_])" + re.escape(name) + r"(?![A-Za-z0-9_])")
+
+
 def numeric_tokens(text: str, allowed: tuple[str, ...] = ()) -> list[str]:
-    """Numeric tokens in `text` after removing the `allowed` identifiers (refs and pins)."""
+    """Numeric tokens in `text` after removing the `allowed` identifiers (refs and pins), whole names only."""
     for name in sorted(allowed, key=len, reverse=True):
-        text = text.replace(name, " ")
+        if name and name in text:
+            text = identifier_pattern(name).sub(" ", text)
     return NUMERIC_TOKEN.findall(text) + UNIT_TOKEN.findall(text)
 
 

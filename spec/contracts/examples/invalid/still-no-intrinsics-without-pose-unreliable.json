@@ -1,0 +1,3 @@
+{ "schema": "still", "why": "intrinsics may be left out only when pose_reliable is false (a plain photo with no EXIF focal length)",
+  "base": "still.json",
+  "patch": { "intrinsics": null, "pose_reliable": true } }

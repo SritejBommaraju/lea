@@ -5,7 +5,13 @@
   "description": "One Mode B close-up: a high-resolution still with its camera pose and the targets the backend asked for. camera is in arkit_world (metres, Y up) from the phone; the backend adds camera_design in the design frame (model.glb: millimetres, Z up) after alignment and per-still re-registration. The backend projects each target into the still from camera_design and the target's design-frame box.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["still_id", "scan_id", "session_id", "kind", "captured_at", "image_file", "width_px", "height_px", "camera", "intrinsics", "targets", "tracking_state"],
+  "required": ["still_id", "scan_id", "session_id", "kind", "captured_at", "image_file", "width_px", "height_px", "targets", "tracking_state"],
+  "allOf": [
+    {
+      "if": { "required": ["pose_reliable"], "properties": { "pose_reliable": { "const": false } } },
+      "else": { "required": ["camera", "intrinsics"] }
+    }
+  ],
   "properties": {
     "still_id": { "type": "string", "minLength": 1 },
     "scan_id": { "type": "string", "minLength": 1, "description": "The Mode A scan this still is registered to." },
@@ -13,17 +19,18 @@
     "kind": {
       "type": "string",
       "enum": ["guided", "macro_detail", "label", "unguided"],
-      "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a posed still taken without a target ring, e.g. a frame of an imported capture (B12); targets is empty."
+      "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a still taken without a target ring, e.g. a frame of an imported capture (B12) or a plain camera photo (tools/import_photos.py, pose_reliable false, no camera); targets is empty."
     },
     "captured_at": { "type": "string", "format": "date-time" },
     "image_file": { "type": "string", "description": "JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it." },
     "width_px": { "type": "integer", "minimum": 1 },
     "height_px": { "type": "integer", "minimum": 1 },
-    "camera": { "$ref": "#/$defs/pose_arkit", "description": "Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate." },
+    "camera": { "$ref": "#/$defs/pose_arkit", "description": "Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate. May be absent only when pose_reliable is false: a plain photo has no pose, and none is made up." },
     "camera_design": { "$ref": "#/$defs/pose_design", "description": "Backend-filled pose in the design frame (mm, Z up) after alignment and depth re-registration." },
-    "pose_reliable": { "type": "boolean", "description": "False for macro_detail or when tracking was limited." },
+    "pose_reliable": { "type": "boolean", "description": "False for macro_detail, when tracking was limited, or when the still has no pose at all (a plain photo: camera absent). Only when false may camera and intrinsics be absent." },
     "intrinsics": {
       "type": "object",
+      "description": "Pinhole intrinsics in pixels of the width_px x height_px image. May be absent only when pose_reliable is false and the focal length is unknown (a plain photo without EXIF focal length).",
       "additionalProperties": false,
       "required": ["fx", "fy", "cx", "cy"],
       "properties": {
@@ -56,7 +63,7 @@
       }
     },
     "attached_to_target_id": { "type": "string", "description": "For macro_detail: the guided target this detail belongs to." },
-    "tracking_state": { "type": "string", "enum": ["normal", "limited", "unknown"], "description": "unknown: the capture app did not record it (an import); pose_reliable is then absent." },
+    "tracking_state": { "type": "string", "enum": ["normal", "limited", "unknown"], "description": "unknown: the capture app did not record it (an import); pose_reliable is then absent, or false when there is no pose at all (a plain photo)." },
     "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance." },
     "torch_on": { "type": "boolean" },
     "auto_fired": { "type": "boolean", "description": "True when the app took the shot because the ring filled, tracking was normal and sharpness was high." },
