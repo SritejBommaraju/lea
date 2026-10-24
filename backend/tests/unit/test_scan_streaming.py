@@ -121,3 +121,30 @@ def test_photos_of_an_unaligned_segment_are_not_placed_on_the_scan():
     scan = {"segments": [{"segment": 1, "reason": "continued", "aligned": False},
                          {"segment": 2, "reason": "continued"}]}
     assert unaligned_segments(scan) == {1} and "not placed on the scan" in NOT_ALIGNED
+
+
+def test_the_during_scan_replay_order_is_accepted(gw):  # noqa: F811
+    """Regression guard for the phone's streaming upload (and tools/requeue_scan.py --during-scan): every still is
+    posted before the scan package (all 201, scan_pending), then the package (201) and complete (202). A REF error
+    on a still here means the pending-scan rule (state_sqlite/rules._scan_or_pending) was lost."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tools"))
+    from requeue_scan import _copy
+
+    sid = new_session(gw)
+    pkg = make_scan(gw, sid)
+    stills = []
+    for n in range(1, 4):
+        st = make_still(gw, pkg)
+        st["still_id"] = f"{pkg['scan_id']}_s{n}"
+        stills.append(st)
+    new_pkg, copies = _copy(pkg, stills, "scan_replaycopy01")
+    assert all(c["session_id"] == sid and c["scan_id"] == "scan_replaycopy01" for c in copies)
+    for st in copies:
+        status, out, _ = gw.req("POST", "/v1/stills", st)
+        assert status == 201 and out["scan_pending"] is True, out
+    assert gw.req("POST", "/v1/scans", new_pkg)[0] == 201
+    status, out, _ = gw.req("POST", "/v1/scans/scan_replaycopy01/complete")
+    assert status == 202 and out["stills"] == 3

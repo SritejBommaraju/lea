@@ -22,6 +22,21 @@ struct CropSource: Sendable {
     }
 
     static let none = CropSource { _ in nil }
+
+    /// `<session>/crops/`: crop blobs kept on the phone, so a report (and Demo replay) shows its photos offline.
+    static func dir(_ sessionDir: URL) -> URL { sessionDir.appending(path: "crops", directoryHint: .isDirectory) }
+
+    /// The saved crop when there is one; else `fallback`, saving what it returns.
+    static func saved(in dir: URL, fallback: CropSource?) -> CropSource {
+        CropSource { sha in
+            let file = dir.appending(path: sha)
+            if let data = try? Data(contentsOf: file) { return data }
+            guard let fallback, let data = await fallback.fetch(sha) else { return nil }
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? data.write(to: file, options: .atomic)
+            return data
+        }
+    }
 }
 
 extension EnvironmentValues {

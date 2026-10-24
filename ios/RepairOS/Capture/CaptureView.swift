@@ -11,6 +11,7 @@ struct ContinueScanAction {
 
 extension EnvironmentValues {
     @Entry var continueScan: ContinueScanAction? = nil
+    @Entry var liveEvents: LiveEvents? = nil
 }
 
 /// One continuous flow for a session: capture and then upload + report. A captured session reopens at its report,
@@ -25,35 +26,52 @@ struct SessionFlowView: View {
     @State private var finished: SessionRecord?
     /// Bumped after a continuation so the report view starts over (it shows "Updating…" until the new report).
     @State private var reportVersion = 0
+    @State private var live: LiveEvents?
 
     private var current: SessionRecord { finished ?? flow?.record ?? record }
 
     var body: some View {
         Group {
             if let scan, scan.continuing {
-                ScanView(scan: scan, close: { leaveContinuation(scan) }) { r in
-                    finished = r
-                    self.scan = nil
-                    reportVersion += 1
+                ScanView(scan: scan, live: live, close: { leaveContinuation(scan) }) { r in
+                    withAnimation(Motion.reveal) {
+                        finished = r
+                        self.scan = nil
+                        reportVersion += 1
+                    }
                 }
+                .transition(.opacity)
             } else if finished != nil || record.status != .capturing, let upload {
                 ReportView(record: current, upload: upload, close: { dismiss() })
                     .id(reportVersion)
                     .environment(\.continueScan, canContinue ? ContinueScanAction(run: continueScanning) : nil)
+                    .environment(\.liveEvents, live)
+                    // The Done gather hands over to the same cloud on the report's dark stage: a plain fade, no zoom.
+                    .transition(.opacity)
+            } else if finished != nil || record.status != .capturing,
+                      FileManager.default.fileExists(atPath: CachedReport.url(current, storage: app.storage).path) {
+                // Not paired (or no address): the report saved on the phone still opens, offline.
+                ReportView(record: current, upload: nil, close: { dismiss() }, offline: true)
             } else if finished != nil || record.status != .capturing {
                 OfflineView(close: { dismiss() })
             } else if let flow {
                 ObjectCaptureFlowView(flow: flow, close: { dismiss() }) { finished = flow.record }
             } else if let scan {
-                ScanView(scan: scan, close: { dismiss() }) { finished = $0 }
+                ScanView(scan: scan, live: live, close: { dismiss() }) { r in withAnimation(Motion.reveal) { finished = r } }
+                    .transition(.opacity)
             }
         }
+        .background(Color.black.ignoresSafeArea())
+        .onDisappear { live?.stop() }
         .onAppear {
             guard upload == nil, flow == nil, scan == nil else { return }
             if let gateway = app.gateway, app.isPaired {
                 let q = UploadQueue(record: record, storage: app.storage, gateway: gateway)
                 if record.status != .capturing { q.enqueueAll(stillIDs: record.stillIDs, scanReady: true) }
                 upload = q
+                let events = LiveEvents(scanID: record.scanID, corrected: record.objectName, diag: Diag.session(app.storage.dir(record)))
+                events.start(gateway: gateway) { [weak q] in q?.state.gatewaySessionID }
+                live = events
             }
             guard record.status == .capturing else { return }
             if record.engine == .objectCapture && ObjectCaptureFlow.isSupported {
@@ -105,11 +123,30 @@ struct OfflineView: View {
 }
 
 /// The capture screen: point at the object, tap Scan, walk around while the live point cloud fills in, tap Done.
-/// One cue line and a thin progress ring; everything else (lock, photos, torch, upload) is automatic.
+/// Overlays (Design/INTEGRATION.md): the coverage dial, one cue banner, the lock brackets around the object, a tick
+/// per photo, and the backend's live guess of what the object is with a quiet "areas checked" count. Everything
+/// here reads coarse session state (≤ 10 changes a second); the close-up target is drawn by the renderer itself,
+/// anchored on the object. Done: the cloud gathers into the object, then the report.
 struct ScanView: View {
     @Bindable var scan: ScanSession
+    var live: LiveEvents?
     let close: () -> Void
     let finished: (SessionRecord) -> Void
+
+    @State private var doneTick = 0
+    @State private var warnTick = 0
+    @State private var correcting = false
+    @State private var correction = ""
+    /// "Turn it" chosen before Scan (Capture/Handheld): starts once the object is locked.
+    @State private var turnWanted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(scan: ScanSession, live: LiveEvents? = nil, close: @escaping () -> Void, finished: @escaping (SessionRecord) -> Void) {
+        self.scan = scan
+        self.live = live
+        self.close = close
+        self.finished = finished
+    }
 
     var body: some View {
         ZStack {
@@ -128,74 +165,199 @@ struct ScanView: View {
                         if let i = args.firstIndex(of: "--auto-done"), i + 1 < args.count, let secs = Double(args[i + 1]) {
                             // A cancelled sleep returns at once: only press Done if the full time passed.
                             do { try await Task.sleep(for: .seconds(secs)) } catch { return }
-                            if scan.stage == .scanning { finished(await scan.finish()) }
+                            if scan.stage == .scanning { done() }
                         }
                     }
+                brackets(in: geo.size)
             }
             .ignoresSafeArea()
 
-            VStack(spacing: 14) {
-                HStack {
-                    Button(action: { scan.stop(); close() }) {
-                        Image(systemName: "xmark").font(.headline).padding(10).background(.ultraThinMaterial, in: Circle())
-                    }
-                    Spacer()
-                    if scan.stage == .scanning {
-                        ProgressRing(value: scan.progress)
+            ShotTick(trigger: scan.shotTick)
+
+            VStack(spacing: Spacing.m) {
+                HStack(alignment: .top) {
+                    Button(action: { scan.stop(); close() }) { Image(systemName: Symbol.close) }
+                        .buttonStyle(RoundIconButtonStyle(onCamera: true))
+                        .accessibilityLabel("Close")
+                    VoiceMuteButton(onCamera: true)
+                    Spacer(minLength: Spacing.s)
+                    if scan.stage == .scanning || scan.stage == .locking {
+                        identityChip
+                        Spacer(minLength: Spacing.s)
+                        DomeDial(cells: cells, here: scan.hereSector, done: scan.dome.isDone)
+                            .transition(.opacity)
                     }
                 }
+                LeadCueBanner(lead: live?.lead)   // what the person suspects: where to look closely
                 Spacer()
-                if let words = words {
-                    Text(words)
-                        .font(.title3.bold()).foregroundStyle(.white).multilineTextAlignment(.center)
-                        .padding(.horizontal, 16).padding(.vertical, 8)
-                        .background(.black.opacity(0.6), in: Capsule())
-                        .allowsHitTesting(false)
-                }
+                CueBanner(text: cue.text, symbol: cue.symbol, tone: cue.tone)
+                    .allowsHitTesting(false)
+                // No photo / areas counters here: the shot tick confirms each photo; the report counts the rest.
+                HandheldModeChip(scan: scan, wanted: $turnWanted)
                 button
             }
-            .padding()
+            .padding(.horizontal, Spacing.l)
+            .padding(.vertical, Spacing.s)
+            .opacity(scan.stage == .finishing ? 0.0 : 1)
+            .overlay(alignment: .bottom) {
+                if scan.stage == .finishing {
+                    CueBanner(text: "Scan saved", symbol: "checkmark", tone: .good)
+                        .padding(.bottom, 80)
+                        .transition(.opacity)
+                }
+            }
         }
-        .sensoryFeedback(.selection, trigger: scan.shotTick)
-        .sensoryFeedback(.success, trigger: scan.lockTick)
+        .motion(Motion.standard, value: scan.stage)
+        .sensoryFeedback(Haptic.milestone, trigger: scan.milestoneTick)
+        .sensoryFeedback(Haptic.commit, trigger: doneTick)
+        .sensoryFeedback(Haptic.warn, trigger: warnTick)
+        .onChange(of: cue.tone) { _, tone in if tone == .stop { warnTick += 1 } }
+        .onChange(of: cue.text, initial: true) { _, text in LeaVoice.shared.cueChanged(text, diag: scan.diag) }   // Voice/VoiceCues
         .alert("Battery is low", isPresented: .constant(scan.batteryQuestion)) {
             Button("Use the light") { scan.answerBattery(true) }
             Button("No light", role: .cancel) { scan.answerBattery(false) }
         } message: { Text("The light helps in dim rooms but uses battery.") }
-        .onAppear { scan.start() }
-        .onDisappear { scan.stop() }
+        .alert("What is it?", isPresented: $correcting) {
+            TextField("Name it in a few words", text: $correction)
+            Button("Save") { live?.correct(correction); scan.nameObject(correction) }
+            Button("Cancel", role: .cancel) { }
+        } message: { Text("Helps the report. The scan carries on.") }
+        .task { await VoiceProbe.run(scan: scan) }   // `--voice-frame-probe` only
+        .onAppear { scan.start(); WakeListener.shared.capture(true) }
+        .onChange(of: scan.box != nil) { _, locked in if locked, turnWanted { scan.startHandheld() } }
+        .onDisappear { scan.stop(); LeaVoice.shared.cueChanged(nil); WakeListener.shared.capture(false) }
+        .onChange(of: live?.lead) { _, lead in   // what the person suspects, researched by the backend
+            if let lead { LeaVoice.shared.dynamicCue(lead.spoken, diag: scan.diag) }
+        }
         .statusBarHidden()
     }
 
-    private var words: String? {
+    // MARK: Pieces
+
+    private var cells: [CellState] {
+        (0..<CoverageDome.cellCount).map { scan.dome.isCovered($0) ? .covered : ($0 == scan.nextCell ? .next : .missing) }
+    }
+
+    /// The lock brackets: centred while searching, then on the object's projected box (≤ 10 Hz, eased between).
+    @ViewBuilder private func brackets(in size: CGSize) -> some View {
+        let locked = scan.box != nil
+        let searching = scan.stage == .ready || scan.stage == .locking
+        let rect = locked ? scan.boxRect : nil
+        let shown = searching || rect != nil
+        let r = rect ?? CGRect(x: size.width / 2 - 110, y: size.height / 2 - 110, width: 220, height: 220)
+        LockBrackets(phase: locked ? .locked : .searching)
+            .frame(width: r.width, height: r.height)
+            .position(x: r.midX, y: r.midY)
+            .opacity(shown && scan.stage != .finishing ? (locked ? 0.85 : 0.7) : 0)
+            .animation(reduceMotion ? nil : .linear(duration: 0.1), value: rect)
+            .animation(Motion.fade, value: shown)
+            .allowsHitTesting(false)
+    }
+
+    /// What the backend thinks the object is (live `identified`); tap to correct it.
+    @ViewBuilder private var identityChip: some View {
+        if let words = live?.corrected ?? live?.identity?.words {
+            Button { correction = live?.corrected ?? ""; correcting = true } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: live?.corrected == nil ? "sparkle.magnifyingglass" : "checkmark")
+                        .imageScale(.small)
+                    Text(live?.corrected == nil ? "Looks like: \(words)" : words).lineLimit(1)
+                }
+                .font(.pillLabel)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(Color.black.opacity(0.5), in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            }
+            .buttonStyle(PressableCardStyle())
+            .accessibilityHint("Tap to correct it")
+            .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            .padding(.top, 6)
+        }
+    }
+
+    private var counters: some View {
+        HStack(spacing: Spacing.s) {
+            if !scan.stills.isEmpty {
+                StatusPill(text: scan.stills.count == 1 ? "1 photo" : "\(scan.stills.count) photos", symbol: "camera.fill", onCamera: true)
+            }
+            if let n = live?.areasChecked, n > 0 {
+                StatusPill(text: n == 1 ? "1 area checked" : "\(n) areas checked", symbol: "checkmark.circle", onCamera: true)
+                    .transition(.opacity)
+            }
+        }
+        .motion(Motion.fade, value: live?.areasChecked)
+        .contentTransition(.numericText())
+    }
+
+    private var cue: (text: String, symbol: String, tone: CueBanner.Tone) {
         switch scan.stage {
-        case .ready: scan.cue ?? "Point at the object"
-        case .locking: "Finding the object…"
-        case .scanning: scan.cue ?? "Walk slowly around it"
-        case .finishing: "Saving…"
-        case .failed(let m): m
+        case .ready: return CueStyle.look(scan.cue ?? "Point at the object")
+        case .locking: return CueStyle.look(scan.cue ?? "Finding the object…")
+        case .scanning:
+            if let c = scan.cue { return CueStyle.look(c) }
+            return scan.dome.isDone ? ("All sides covered", "checkmark", .good) : CueStyle.look(scan.handheld == nil ? "Walk slowly around it" : "Hold it up and turn it slowly")
+        case .finishing: return ("Scan saved", "checkmark", .good)
+        case .failed(let m): return (m, "xmark", .stop)
         }
     }
 
     @ViewBuilder private var button: some View {
         switch scan.stage {
         case .ready, .locking:
-            Button(action: scan.beginScan) {
-                Text("Scan").font(.title2.bold()).frame(maxWidth: .infinity, minHeight: 56)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(scan.stage == .locking)
+            Button(action: scan.beginScan) { Label("Scan", systemImage: Symbol.scan) }
+                .buttonStyle(.primary(.light))
+                .disabled(scan.stage == .locking)
         case .scanning:
-            Button(action: { Task { finished(await scan.finish()) } }) {
-                Text("Done").font(.title2.bold()).frame(maxWidth: .infinity, minHeight: 56)
-            }
-            .buttonStyle(.borderedProminent)
+            Button(action: done) { Label("Done", systemImage: "checkmark") }
+                .buttonStyle(.primary(.light))
         case .failed:
-            Button("Close", action: close).buttonStyle(.borderedProminent)
+            Button("Close", action: close).buttonStyle(.primary(.light))
         case .finishing:
-            ProgressView().tint(.white)
+            Color.clear.frame(height: 56)
         }
     }
+
+    /// Done: the cloud gathers into the object while the scan saves; the report comes when both are finished.
+    private func done() {
+        guard scan.stage == .scanning else { return }
+        doneTick += 1
+        let start = Date()
+        Task {
+            let record = await scan.finish()
+            let left = PointCloudRenderer.finishDuration + 0.2 - Date().timeIntervalSince(start)
+            if left > 0 { try? await Task.sleep(for: .seconds(left)) }
+            finished(record)
+        }
+    }
+}
+
+/// The symbol and urgency for each capture cue (the session's own words; INTEGRATION.md's symbols).
+enum CueStyle {
+    static func look(_ text: String) -> (text: String, symbol: String, tone: CueBanner.Tone) {
+        let (symbol, tone) = table[text] ?? HandheldCues.table[text] ?? ("figure.walk", .guide)
+        return (text, symbol, tone)
+    }
+
+    static let table: [String: (String, CueBanner.Tone)] = [
+        "Point at the object": (Symbol.scan, .guide),
+        "Finding the object…": (Symbol.lock, .guide),
+        "Finding where you left off…": ("arrow.triangle.2.circlepath", .guide),
+        "Point at the object to pick up where you left off": ("arrow.triangle.2.circlepath", .guide),
+        "Walk slowly around it": ("figure.walk", .guide),
+        "Keep walking around it": ("figure.walk", .guide),
+        "Move closer here": ("plus.magnifyingglass", .guide),
+        "Hold still a moment": ("hand.raised.fill", .guide),
+        "Tap the object to focus on it": ("hand.tap.fill", .guide),
+        "Too dark: add light": ("lightbulb.fill", .caution),
+        "Add light or move closer": ("lightbulb.fill", .caution),
+        "Keep the object in frame": (Symbol.scan, .caution),
+        "Too far: move closer": ("arrow.up.forward.and.arrow.down.backward", .caution),
+        "Too close: back up": ("arrow.down.backward.and.arrow.up.forward", .stop),
+        "Blurry: hold still": ("tortoise.fill", .caution),
+        "Move slowly": ("tortoise.fill", .caution),
+    ]
 }
 
 /// The Metal view the renderer draws into (camera image + live LiDAR cloud).
@@ -212,20 +374,4 @@ struct PointCloudView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MTKView, context: Context) {}
-}
-
-/// A thin ring that fills as the scan gathers points and photos.
-struct ProgressRing: View {
-    let value: Double
-    var body: some View {
-        ZStack {
-            Circle().stroke(.white.opacity(0.25), lineWidth: 3)
-            Circle().trim(from: 0, to: value).stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .frame(width: 30, height: 30)
-        .padding(8)
-        .background(.ultraThinMaterial, in: Circle())
-        .animation(.easeOut, value: value)
-    }
 }

@@ -217,7 +217,12 @@ class Open3DFuser(_Base):
         k = o3d.core.Tensor(open3d_intrinsic_matrix(cam), o3d.core.float64)
         ext = o3d.core.Tensor(open3d_extrinsic(pose), o3d.core.float64)
         far = self.max_depth_m + 0.01
-        blocks = self._vbg.compute_unique_block_coordinates(depth, k, ext, 1.0, far, float(TSDF_TRUNC_VOXELS))
+        try:
+            blocks = self._vbg.compute_unique_block_coordinates(depth, k, ext, 1.0, far, float(TSDF_TRUNC_VOXELS))
+        except RuntimeError as e:   # Open3D: "No block is touched" (a few stray pixels): this frame adds nothing
+            if "No block is touched" not in str(e):
+                raise
+            return 0
         self._vbg.integrate(blocks, depth, color, k, k, ext, 1.0, far, float(TSDF_TRUNC_VOXELS))
         return int(ok.sum())
 

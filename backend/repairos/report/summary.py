@@ -37,6 +37,7 @@ given (low, medium, high).
 - End with the next step if the data gives one, in your own simple words."""
 
 VERDICT_WORDS = {"looks_good": "no visible problems found", "potential_issues": "potential issues",
+                 "no_problems_seen": "no problems seen in what could be checked (some areas need a closer photo)",
                  "insufficient_evidence": "not enough evidence to decide"}
 PROOF_WORDS = {"not_measured": "not measured with a meter", "confirmed_by_meter": "confirmed by a meter reading",
                "ruled_out_by_meter": "ruled out by a meter reading"}

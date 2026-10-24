@@ -112,8 +112,10 @@ def test_every_finding_lands_in_exactly_one_bucket_and_validates():
     assert rep["verdict"] == "potential_issues" and rep["verdict_reason"]["rule"] == "V6"
     assert rep["findings"][0]["location"] == NOT_COMPUTED
     assert rep["findings"][0]["proof"] == {"status": "not_measured"}
-    assert rep["capture"] == {"depth_source": "lidar", "stills": 1, "stills_inspected": 1, "keyframes": 2,
-                              "scan_points": ex("scan-package")["point_count"], "coverage_words": "well covered"}
+    assert {k: v for k, v in rep["capture"].items() if k != "views"} == {
+        "depth_source": "lidar", "stills": 1, "stills_inspected": 1, "keyframes": 2,
+        "scan_points": ex("scan-package")["point_count"], "coverage_words": "well covered"}
+    assert rep["capture"]["views"]["cells_total"] == 36     # the camera positions on the view dome (coverage.py)
     validate("report", {**rep, "summary": TEST_SUMMARY})
 
 

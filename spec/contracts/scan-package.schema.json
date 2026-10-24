@@ -65,8 +65,8 @@
     },
     "pose_source": {
       "type": "string",
-      "enum": ["arkit", "photogrammetry"],
-      "description": "Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm."
+      "enum": ["arkit", "photogrammetry", "object_tracked"],
+      "description": "Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked: the app's hand-held mode (the person turns or flips the object while the phone stays roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the OBJECT frame, which is the ARKit world frame at the moment the object was locked (it rested on the support plane then; crop_box, support_plane and gravity_arkit_world describe that moment). Camera poses are the camera relative to the object, so they may lie below the support plane (the underside, seen after a flip) and the cloud includes the underside: never cut the cloud or the depth at the support plane for such a scan. Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does not apply (the object moved), object-shape alignment does. photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm."
     },
     "voxel_mm": { "type": "number", "exclusiveMinimum": 0, "description": "Voxel pitch in millimetres when points_file is voxel-fused (3 default; 1-2 with PromptDA TSDF). Absent when the cloud keeps raw samples (the app's live LiDAR accumulation, photogrammetry)." },
     "gravity_arkit_world": {
@@ -141,7 +141,9 @@
         "tracking_state": { "type": "string", "enum": ["normal", "limited", "unknown"], "description": "ARKit tracking state of the frame. unknown: the capture app did not record it (an import)." },
         "segment": { "type": "integer", "minimum": 0, "description": "Capture segment of this keyframe (absent = 0; see segments)." },
         "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance; higher is sharper." },
-        "exposure_s": { "type": "number", "exclusiveMinimum": 0 }
+        "exposure_s": { "type": "number", "exclusiveMinimum": 0 },
+        "pose_source": { "type": "string", "enum": ["arkit", "object_tracked"], "description": "Where this keyframe's camera pose comes from (absent = the package's pose_source). object_tracked: the camera relative to the tracked, moving object, in the object frame (see the package's pose_source)." },
+        "pose_quality": { "type": "number", "minimum": 0, "maximum": 1, "description": "The object tracker's confidence in this pose, 0-1 (object_tracked only). Under 0.7 one direction of the pose may be held by prediction only (a symmetric or flat object without visible texture)." }
       }
     },
     "alignment": {

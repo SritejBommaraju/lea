@@ -14,13 +14,67 @@ struct CoverageDome: Sendable, Equatable {
     static let doneCells = 24
 
     private(set) var covered: Set<Int> = []
+    /// Close-ups of the box's faces at close-up resolution (small objects): 0 = top, 1 = +x, 2 = −x, 3 = +z, 4 = −z in
+    /// the box's own axes (the bottom stands on the support).
+    private(set) var closeFaces: Set<Int> = []
+    /// How many faces need a close-up before the scan is complete (0 = none required).
+    var requiredFaces = 0
+    static let faceCount = 5
 
     var count: Int { covered.count }
     var fraction: Double { Double(covered.count) / Double(Self.cellCount) }
-    var isDone: Bool { covered.count >= Self.doneCells }
+    var facesDone: Bool { closeFaces.count >= requiredFaces }
+    /// Complete: enough sides photographed, and every required face seen up close.
+    var isDone: Bool { covered.count >= Self.doneCells && facesDone }
 
     mutating func cover(_ cell: Int) { covered.insert(cell) }
     func isCovered(_ cell: Int) -> Bool { covered.contains(cell) }
+    mutating func coverFace(_ face: Int) { closeFaces.insert(face) }
+    func isFaceCovered(_ face: Int) -> Bool { closeFaces.contains(face) }
+
+    /// Outward normal of a face in the box's own axes.
+    static func faceNormal(_ face: Int) -> SIMD3<Float> {
+        switch face {
+        case 0: SIMD3(0, 1, 0)
+        case 1: SIMD3(1, 0, 0)
+        case 2: SIMD3(-1, 0, 0)
+        case 3: SIMD3(0, 0, 1)
+        default: SIMD3(0, 0, -1)
+        }
+    }
+
+    /// Centre of a face, world.
+    static func faceCenter(_ face: Int, box: ObjectBox) -> SIMD3<Float> {
+        let r = simd_quatf(angle: box.yaw, axis: SIMD3(0, 1, 0))
+        return box.center + r.act(faceNormal(face) * box.size / 2)
+    }
+
+    /// The face a point on (or near) the box surface lies on, box-local coordinates; nil for the bottom.
+    static func face(local p: SIMD3<Float>, half h: SIMD3<Float>) -> Int? {
+        let r = SIMD3(abs(p.x) / max(h.x, 1e-4), abs(p.y) / max(h.y, 1e-4), abs(p.z) / max(h.z, 1e-4))
+        if r.y >= r.x && r.y >= r.z { return p.y > 0 ? 0 : nil }
+        if r.x >= r.z { return p.x > 0 ? 1 : 2 }
+        return p.z > 0 ? 3 : 4
+    }
+
+    /// The face the camera's view ray enters (nil when it misses the box or comes from below).
+    static func viewFace(cameraToWorld m: simd_float4x4, box: ObjectBox) -> Int? {
+        guard let d = ScanSession.rayBoxDistance(cameraToWorld: m, box: box) else { return nil }
+        let cam = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+        let entry = cam + simd_normalize(-SIMD3(m.columns.2.x, m.columns.2.y, m.columns.2.z)) * d
+        let local = simd_quatf(angle: -box.yaw, axis: SIMD3(0, 1, 0)).act(entry - box.center)
+        return face(local: local, half: box.size / 2)
+    }
+
+    /// The face still missing a close-up that is best turned toward the camera.
+    func nearestMissingFace(camera: SIMD3<Float>, box: ObjectBox) -> Int? {
+        guard requiredFaces > 0 else { return nil }
+        let r = simd_quatf(angle: box.yaw, axis: SIMD3(0, 1, 0))
+        return (0..<min(Self.faceCount, requiredFaces)).filter { !closeFaces.contains($0) }.max { a, b in
+            simd_dot(r.act(Self.faceNormal(a)), simd_normalize(camera - Self.faceCenter(a, box: box)))
+                < simd_dot(r.act(Self.faceNormal(b)), simd_normalize(camera - Self.faceCenter(b, box: box)))
+        }
+    }
 
     static func id(_ cell: Int) -> String { String(format: "r%ds%02d", cell / sectors, cell % sectors) }
 
@@ -96,6 +150,22 @@ struct Projection: Sendable {
         let inFrame = xs.min()! >= 0 && ys.min()! >= 0 && xs.max()! <= width && ys.max()! <= height
         let w = min(width, xs.max()!) - max(0, xs.min()!), h = min(height, ys.max()!) - max(0, ys.min()!)
         return (max(0, w) * max(0, h) / (width * height), inFrame)
+    }
+
+    /// How much of the frame's shorter side the box spans: the larger of its projected width and height, clipped
+    /// to the frame. 1 when part of the box is behind the camera (so close the object fills the view).
+    func extent(_ box: ObjectBox, cameraToWorld m: simd_float4x4) -> Float {
+        guard let r = rect(box, cameraToWorld: m) else { return 1 }
+        return max(r.maxX - r.minX, r.maxY - r.minY) / min(width, height)
+    }
+
+    /// The box's projected bounds clipped to the frame, in pixels; nil when part of it is behind the camera.
+    func rect(_ box: ObjectBox, cameraToWorld m: simd_float4x4) -> (minX: Float, minY: Float, maxX: Float, maxY: Float)? {
+        let pts = box.corners.compactMap { project($0, cameraToWorld: m) }
+        guard pts.count == 8 else { return nil }
+        let x0 = max(0, pts.map(\.x).min()!), x1 = min(width, pts.map(\.x).max()!)
+        let y0 = max(0, pts.map(\.y).min()!), y1 = min(height, pts.map(\.y).max()!)
+        return (x0, y0, max(x0, x1), max(y0, y1))
     }
 }
 

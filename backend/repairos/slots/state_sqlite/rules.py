@@ -195,6 +195,10 @@ def _report(d, prev, lookup):
             raise InvariantViolation("I4", f"report {rid}: finding {f['finding_id']} needs its reason")
     if d["verdict"] == "insufficient_evidence" and not d["verdict_reason"]["text"].strip():
         raise InvariantViolation("I4", f"report {rid}: insufficient_evidence needs a reason")
+    if d["verdict"] == "no_problems_seen" and any(f.get("issue") not in (None, "none") and
+                                                  (f.get("proof") or {}).get("status") != "ruled_out_by_meter"
+                                                  for f in d.get("findings") or []):
+        raise InvariantViolation("I3", f"report {rid}: no_problems_seen while a region shows an issue")
     if d["verdict"] == "looks_good" and (d.get("not_inspected") or d.get("insufficient_evidence")):
         raise InvariantViolation("I3", f"report {rid}: looks_good while regions were not inspected or not judged")
 

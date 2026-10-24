@@ -6,6 +6,9 @@ import SwiftUI
 ///     --ui-screen home|sessions|report|report3d|detail|progress|settings|pairing|consent|overlay
 ///     --ui-fixture <dir>    a folder holding a report JSON (report*.json) and `blobs/<aa>/<sha>` crops,
 ///                           kept outside git; without it the report is spec/contracts/examples/report.json.
+///     --ui-screen stage|stage-landing|stage-wait  --ui-session <dir>
+///                           the dark-stage report (Report/Stage) from a real saved session folder copied off the
+///                           phone (report.json, crops/, scans/<id>/*.ply); `stage-landing` plays the landing moment.
 enum UIGallery {
     static var screen: String? { value("--ui-screen") }
     /// `--ui-scroll next|other|gaps`: scroll the report to that section.
@@ -51,6 +54,39 @@ enum UIGallery {
                         .background(Palette.canvas.ignoresSafeArea())
                         .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") {}.fontWeight(.semibold) } }
                 }
+            case "stage", "stage-landing":
+                NavigationStack {
+                    if let dir = session {
+                        ReportStageView(report: sessionReport(dir), symptom: "Stopped heating", model: sessionModel(dir),
+                                        sessionDir: dir, openFull: {}, fresh: screen == "stage-landing",
+                                        focus: focusFirst ? sessionReport(dir).mostLikely.first?.id : nil)
+                            .navigationTitle("").navigationBarTitleDisplayMode(.inline)
+                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") {}.fontWeight(.semibold) } }
+                    }
+                }
+                .tint(Palette.accent)
+                .environment(\.cropSource, session.map { CropSource.saved(in: CropSource.dir($0), fallback: nil) } ?? crops)
+            case "stage-old":
+                // The same real session in the previous report layout, for before/after.
+                NavigationStack {
+                    if let dir = session {
+                        ReportContent(report: sessionReport(dir), symptom: "Stopped heating", model: sessionModel(dir),
+                                      sessionDir: dir, openFull: {})
+                            .background(Palette.canvas.ignoresSafeArea())
+                            .navigationTitle("Report").navigationBarTitleDisplayMode(.inline)
+                            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") {}.fontWeight(.semibold) } }
+                    }
+                }
+                .tint(Palette.accent)
+                .environment(\.cropSource, session.map { CropSource.saved(in: CropSource.dir($0), fallback: nil) } ?? crops)
+            case "stage-wait":
+                NavigationStack {
+                    ReportStageWaiting(model: session.map(sessionModel) ?? .none,
+                                       progress: PipelineProgress(step: .inspect, stillsDone: 8, stillsTotal: 13),
+                                       uploaded: 40, pending: 0, found: 1)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") {}.fontWeight(.semibold) } }
+                }
+            case "recreation": RecreationGalleryScreen()   // Report/Recreation (photo-real 3D)
             case "settings": SettingsView()
             case "pairing": PairingView()
             case "consent": ConsentView { _ in }
@@ -64,6 +100,26 @@ enum UIGallery {
     // MARK: - Fixture
 
     static var fixture: URL? { value("--ui-fixture").map { URL(fileURLWithPath: $0, isDirectory: true) } }
+
+    /// `--ui-session <dir>`: a real saved session folder (as on the phone) for the stage screens.
+    static var session: URL? { value("--ui-session").map { URL(fileURLWithPath: $0, isDirectory: true) } }
+
+    static func sessionReport(_ dir: URL) -> ReportModel {
+        let json = (try? Data(contentsOf: dir.appending(path: "report.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        return ReportModel(json: json ?? [:])
+    }
+
+    /// The session's own 3D: the first scan folder holding a model.
+    static func sessionModel(_ dir: URL) -> ModelSource {
+        let scans = dir.appending(path: "scans")
+        let ids = ((try? FileManager.default.contentsOfDirectory(atPath: scans.path)) ?? []).sorted()
+        for id in ids {
+            let found = ModelSource.find(in: scans.appending(path: id))
+            if !found.isNone { return found }
+        }
+        return .none
+    }
 
     static func report() -> ReportModel {
         let fm = FileManager.default

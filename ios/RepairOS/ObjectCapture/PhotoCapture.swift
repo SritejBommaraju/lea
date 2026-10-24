@@ -152,7 +152,7 @@ final class PhotoCapture: NSObject {
         let still = Still(
             attachedToTargetID: nil, autoFired: false, camera: nil, cameraDesign: nil, capturedAt: Date(),
             confidenceFile: nil, depthFile: nil, depthGapMS: nil, exposureS: nil, heightPx: h, imageFile: "stills/\(id).jpg", intrinsics: k, iso: nil,
-            kind: .unguided, lowLight: nil, poseReliable: false, scanID: record.scanID, segment: nil, sessionID: record.id, sharpness: nil,
+            kind: .unguided, lowLight: nil, poseQuality: nil, poseReliable: false, poseSource: nil, scanID: record.scanID, segment: nil, sessionID: record.id, sharpness: nil,
             stillID: id, targets: [], torchLevel: nil, torchOn: nil, trackingState: .unknown, userSkipped: nil, viewCell: nil, widthPx: w)
         try JSON.encoder.encode(still).write(to: dir.appending(path: "\(id).json"), options: .atomic)
         return still

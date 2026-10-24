@@ -22,10 +22,42 @@ xcrun devicectl device install app --device <udid> <DerivedData>/Build/Products/
 xcrun devicectl device process launch --device <udid> com.rohankilaru.repairos [flags]
 ```
 
-Developer launch flags: `--gateway <url> --pairing-code <code>` (pair without typing), `--autostart-scan` (open a
+Developer launch flags: `--record-raw-frames` (Turn it: save the tracker's input at 5 Hz, ≤ 600 frames, in
+`<session>/raw/` for `tools/handheld/run.sh replay`), `--turn-it` (start the scanner in Turn it), `--handheld-no-segmentation` / `--handheld-hand-pose` (Turn it's
+person mask: Vision hand pose instead of, or with, ARKit segmentation), `--gateway <url> --pairing-code <code>` (pair without typing), `--autostart-scan` (open a
 scan at launch), `--auto-scan` (press Scan after 3 s), `--run-still-probe`, `--object-capture` /
-`--no-object-capture` (Apple Object Capture engine, off by default). Unit tests run on the simulator; shut it down
-after (`xcrun simctl shutdown all`).
+`--no-object-capture` (Apple Object Capture engine, off by default), `--open-session <session_id>` (open a saved scan
+at its report), `--show-on-object` (with it: open "Show on object" once the report is up), `--demo-replay` (with it:
+play it as a Demo replay), `--demo-replay-session <session_id>` (turn Demo replay on for that scan). Unit tests run on
+the simulator; shut it down after (`xcrun simctl shutdown all`).
+
+## The report
+
+The hero at the top follows the backend's choice (`hero` in `mesh_ready`, `/pipeline`, the report's `mesh`):
+`points` = its cleaned cloud (`GET /v1/scans/{id}/cloud`), `mesh` = its mesh (`GET /v1/scans/{id}/mesh`, cropped to the
+locked box), `photos` = the best still with the numbered crop boxes and a strip of the others; until it chooses, the
+phone's own cloud. The 3D view turns slowly until touched and shows the top three problems; "+N" lists the rest.
+**Show on object** puts the numbered problems on the real object, from whichever lands first: the saved
+`world.arworldmap` relocalising, or the object alignment (`Report/ObjectAligner.swift`: live LiDAR points around the
+view registered to the saved in-box cloud, gravity + plane start, 24-yaw search, 4-DOF point-to-plane ICP, accepted on
+inliers, RMS, coverage and visibility, and only when two attempts in a row agree within 1.5 cm). The world map, when
+it matches, takes over. Past 6 s it says so and offers the 3D view. `diag.jsonl` logs `ar_align_*` and
+`ar_markers_*` (time to land, which answer, the side it was seen from, object-vs-map offset). Live events (`GET /v1/sessions/{id}/events`) drive the scanner's "Looks like" chip
+(tap to correct; kept as `objectName` on the session) and its "areas checked" count.
+
+**Voice** (`RepairOS/Voice/`, backend `repairos/voice/`): Lea says one or two sentences when a report lands (verdict, top
+problem, first safety note), short scan cues paced by `CueLimiter` (one line per 4 s, never overlapping, never the same
+line twice in 10 s; the fixed lines are fetched at launch and cached), and talks on the report ("Talk to Lea": hold to
+talk, or tap for hands-free; answers stream sentence by sentence from `POST /v1/voice/converse`). "Hey Lea" is heard
+on the phone only (Apple on-device recognition, foreground, Settings toggle, paused during capture and while Lea
+speaks). Speech comes from the gateway (Cartesia; the key stays on the backend) or, without it, from the phone.
+Mute: the speaker button on the scan and report screens. Flags: `--voice-speak-report` (say a saved report on open,
+logs `voice_report`), `--voice-muted` / `--voice-unmuted`, `--voice-frame-probe` (a cue every 4.5 s during the scan,
+logs `voice_frame_probe` frame times), `--wake-during-scan` (keep "Hey Lea" on during capture, to measure). diag.jsonl:
+`voice_report`, `voice_cue`, `voice_turn`, `voice_ask`. "Scan with Lea" is an App Shortcut (Siri).
+
+**Demo replay** (Settings: tap the version line five times): plays a saved scan from this phone and its saved report
+with no network. Every report saves its crops in `<session>/crops/`, so any scan with a report can be replayed.
 
 ## The scan
 
@@ -33,6 +65,22 @@ Point at the object → **Scan** → walk around while the live LiDAR point clou
 the screen centre is locked automatically (the cloud brightens on it and dims elsewhere); a tap corrects it.
 Photos, torch and upload are automatic. Code: `RepairOS/Capture/` (`ScanSession`, `PointCloudRenderer` +
 `PointCloud.metal`, `BoxFitter`, `QualityGate`/`TorchRule`), stills in `RepairOS/Closeups/`.
+
+**Turn it** (`RepairOS/Capture/Handheld/`): for a small object, the person sets it down, taps "Turn it in your hand",
+taps Scan, then holds it up and turns it (or flips it for the underside) while the phone stays roughly still; the
+scanner also suggests it when a small object (< 25 cm) is scanned from one spot. `ObjectTracker` follows the object's
+6-DoF pose at 15 Hz on a background queue: LiDAR depth masked to the box (+3 cm), minus the person (ARKit
+`.personSegmentationWithDepth` alongside `.sceneDepth`, else Vision hand pose) and the table, point-to-plane ICP
+against the growing object model, plus FAST corners with steered binary descriptors lifted to 3D and a rigid
+consensus fit (they hold a symmetric or flat object where ICP slides); directions nothing pins down keep the
+prediction and lower the pose quality. Lost → "Hold it still for a moment", relocalised from the last pose, the
+features or 24 turns about the centre, accepted when two frames agree. Everything is in the OBJECT frame (= ARKit
+world at the lock): the cloud is fused there on the GPU (`Handheld.metal`) and drawn where the object is now; stills,
+keyframes and the dial use the camera relative to the object (a view from below fills the dial's ring and is
+recorded as `b<ring>s<sector>`); records carry `pose_source: object_tracked` + `pose_quality`. The backend cuts
+nothing at the support plane for such a scan. Synthetic accuracy and the Mac replay: `tools/handheld/run.sh`;
+after a phone test: `python3 -I tools/handheld/diag_summary.py <session folder>`. diag: `handheld_start`,
+`handheld_stats` (5 s), `handheld_lost`, `handheld_recovered`, `handheld_suggested`.
 
 The live cloud's unprojection and colour conversion are adapted from Apple's sample "Displaying a point cloud using
 scene depth" (licence: `RepairOS/Capture/ThirdParty/AppleScenePointCloud/LICENSE.txt`).
@@ -48,10 +96,13 @@ app), uploaded to the gateway and replayable (`samples/README.md` layout). Every
   app_session.json                     the app's own record (status, still ids, engine)
   upload.json                          upload progress (blob refs per file), for resuming
   diag.jsonl                           one JSON line per event (see below)
-  world.arworldmap                     ARWorldMap at Done (relocalise later for AR pins)
+  world.arworldmap                     ARWorldMap at Done (relocalised by "Show on object" and "Continue scanning")
+  report.json                          the latest report (opens offline)
+  crops/<sha256>                       the report's crop images, saved for offline and Demo replay
   scans/<scan_id>/
     scan_package.json                  ScanPackage (spec/contracts/scan-package.schema.json)
     points_arkit_world.ply             in-box LiDAR cloud: binary LE, xyz float32 m + rgb uint8, ARKit world (Y up)
+    mesh_gateway.ply                   the gateway's mesh of the scan, once fetched (same frame)
     kf_NNNN.jpg                        ~5 Hz keyframe: 640 px RGB, sensor orientation
     kf_NNNN_depth.png                  its LiDAR depth, 256×192 uint16 mm (0 = none)
     kf_NNNN_conf.png                   its ARKit confidence, 256×192 uint8 (0/1/2)

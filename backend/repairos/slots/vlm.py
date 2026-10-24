@@ -60,11 +60,11 @@ class VisionJudge(Protocol):
     models: tuple[str, ...]  # escalation ladder, small first
 
     def inspect_crop(self, crop: Any, context: Any | None = None, part_hint: str | None = None,
-                     family: str | None = None) -> CropState:
+                     family: str | None = None, hints: Sequence[str] | None = None) -> CropState:
         """`crop`: PIL image cut from the full-resolution still. `context`: optional downsized whole still with the
         crop's box outlined. `part_hint`: the detector's label (data, not instruction). `family`: the part family
         whose failure checklist to apply (vision/checklists.py; `unknown_part` = the general checks only), None =
-        the family the label suggests."""
+        the family the label suggests. `hints`: optional public-reference notes (untrusted data, never evidence)."""
         ...
 
     def judge_crop(self, crop: Any, render_crop: Any | None, expectation: str, options: Sequence[str]) -> Judgement:

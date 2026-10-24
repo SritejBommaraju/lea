@@ -49,6 +49,16 @@ enum Palette {
     static let caution = Color(light: 0xC76B00, dark: 0xFFB340)
     static let danger = Color(light: 0xD92D3A, dark: 0xFF5C66)
     static let cosmetic = Color(light: 0x5E6B80, dark: 0xA4B0C4)
+    /// Caution as text: `caution` is 3.8:1 on white, too light for small words; this is ≈5.2:1 (dark mode unchanged).
+    static let cautionText = Color(light: 0xA35A00, dark: 0xFFB340)
+
+    /// The report's dark stage (the scan in 3D), the same in light and dark mode, like the camera and the big
+    /// screen: a radial gradient from `stageCenter` to `stageEdge`, with a faint accent floor.
+    static let stageCenter = Color(uiColor: UIColor(hex: 0x14121F))
+    static let stageEdge = Color(uiColor: UIColor(hex: 0x050508))
+    /// A glass control on the stage (white at 12%), and its solid stand-in under Reduce Transparency.
+    static let stageGlass = Color.white.opacity(0.12)
+    static let stageGlassSolid = Color(uiColor: UIColor(hex: 0x23232B))
 }
 
 /// What a colour means. Severity, cue urgency and status all map onto these, never onto raw colours.
@@ -65,6 +75,9 @@ enum Tone: Sendable, Hashable {
         case .neutral: Color.secondary
         }
     }
+
+    /// The colour for words in this tone (caution text is darker than the caution fill in light mode).
+    var text: Color { self == .caution ? Palette.cautionText : color }
 
     /// Fill behind a tinted label or icon.
     var wash: Color { color.opacity(self == .neutral ? 0.12 : 0.14) }
@@ -119,6 +132,14 @@ enum Motion {
     static let standard = Animation.spring(response: 0.35, dampingFraction: 1)
     /// The lock box settling, the shot tick landing.
     static let settle = Animation.spring(response: 0.4, dampingFraction: 0.78)
+    /// Capture → report: a slower, calm fade after the Done moment. Entering, so ease-out (it starts moving at once).
+    static let reveal = Animation.easeOut(duration: 0.45)
+    /// Something arriving with a little life: a marker or a finding popping in (from 0.6 scale, never from 0).
+    static let pop = Animation.spring(response: 0.35, dampingFraction: 0.8)
+    /// A surface rising into place (the report sheet): critically damped, no overshoot.
+    static let rise = Animation.spring(response: 0.4, dampingFraction: 1)
+    /// Gap between items that arrive together (markers, rows). Only the first few are staggered.
+    static let stagger: Double = 0.06
     /// Colour and opacity only; also the Reduce Motion replacement.
     static let fade = Animation.easeOut(duration: 0.2)
 
@@ -157,6 +178,12 @@ enum Haptic {
     static let warn = SensoryFeedback.warning
     /// Primary button commit.
     static let commit = SensoryFeedback.impact(weight: .light, intensity: 0.7)
+    /// The report landed with likely problems (same frame as the verdict rising and Lea starting to speak).
+    static let verdictProblems = SensoryFeedback.warning
+    /// The report landed and nothing looked wrong.
+    static let verdictClear = SensoryFeedback.success
+    /// A marker or a problem row chosen (the camera flies to it).
+    static let select = SensoryFeedback.selection
 }
 
 // MARK: - Symbols
@@ -165,7 +192,7 @@ enum Haptic {
 enum Symbol {
     static let scan = "viewfinder"
     static let lock = "scope"
-    static let mac = "laptopcomputer"
+    static let mac = "server.rack"
     static let pair = "laptopcomputer.and.iphone"
     static let settings = "gearshape.fill"
     static let close = "xmark"

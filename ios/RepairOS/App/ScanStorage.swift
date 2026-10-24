@@ -18,6 +18,8 @@ struct SessionRecord: Codable, Sendable, Identifiable {
     var lastError: String?
     /// Capture segments so far (nil = 1). "Continue scanning" adds the next one.
     var segmentCount: Int?
+    /// What the person said the object is (correcting the backend's live guess), when they did.
+    var objectName: String?
 }
 
 /// Local session folders under Documents/sessions (visible in the Files app for debugging).

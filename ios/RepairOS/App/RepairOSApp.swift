@@ -8,7 +8,13 @@ struct RepairOSApp: App {
         WindowGroup {
             root
                 .environment(app)
-                .task { await app.launch() }
+                .overlay(alignment: .top) { UsageBanner() }   // a paid service on the Mac paused (spend_alert)
+                .task { UsageAlerts.shared.start(app) }
+                .task {
+                    await app.launch()
+                    LeaVoice.shared.attach(app)
+                    LeaShortcuts.updateAppShortcutParameters()   // Siri: "Scan with lea" (Voice/ScanIntent)
+                }
         }
     }
 

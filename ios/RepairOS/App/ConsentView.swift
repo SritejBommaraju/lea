@@ -34,10 +34,10 @@ struct ConsentView: View {
                         .font(.body).foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: Spacing.xl) {
-                    ConsentRow(symbol: Symbol.mac, tone: .accent, title: "First, to your Mac",
-                               text: "Photos and the scan go to the lea backend on your own Mac over your network.")
+                    ConsentRow(symbol: Symbol.mac, tone: .accent, title: "First, to the lea server",
+                               text: "Photos and the scan go to the lea server this phone is connected to.")
                     ConsentRow(symbol: "sparkle.magnifyingglass", tone: .accent, title: "Then analysed by Claude and Jev",
-                               text: "Your Mac sends the photos to Anthropic (Claude) and TypeSafe (Jev), which look for problems and help write the report.")
+                               text: "The server sends the photos to Anthropic (Claude) and TypeSafe (Jev), which look for problems and help write the report.")
                     ConsentRow(symbol: "location.slash.fill", tone: .good, title: "Location and photo details removed",
                                text: "EXIF data, including GPS location, is removed from the photos before they are analysed.")
                     ConsentRow(symbol: Symbol.privacy, tone: .good, title: "Only what you scan",

@@ -183,7 +183,7 @@ final class UploadQueue {
     }
 
     static func words(_ error: Error) -> String {
-        if error is URLError { return "Can't reach your Mac: is it on and on the same Wi-Fi?" }
+        if error is URLError { return "Can't reach the lea server: check the connection in Settings." }
         return error.localizedDescription
     }
 

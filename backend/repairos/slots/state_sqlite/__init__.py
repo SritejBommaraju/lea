@@ -157,7 +157,7 @@ class SqliteState:
         session_id = data.get("session_id")
         if session_id is None and scan_id:
             scan = self._get(c, "scan-package", scan_id)
-            session_id = scan.session_id if scan else None
+            session_id = scan.session_id if scan else self._pending_session(c, scan_id)
         if kind == "session":
             session_id = id
         rev, ts = actual + 1, now()
@@ -171,6 +171,14 @@ class SqliteState:
             c.execute("INSERT INTO events (session_id,kind,id,op,rev,json,at) VALUES (?,?,?,?,?,?,?)",
                       (session_id, kind, id, "update" if prev else "insert", rev, blob, ts))
         return Row(kind, id, rev, session_id, data, ts, status)
+
+    @staticmethod
+    def _pending_session(c: sqlite3.Connection, scan_id: str) -> str | None:
+        """A pending scan (stills before the scan package): its session from a still or the pipeline-run row of the
+        same scan_id, so the rows written meanwhile (findings) and their live events carry the session."""
+        r = c.execute("SELECT session_id FROM rows WHERE kind IN ('still', 'pipeline-run') AND scan_id=? AND "
+                      "session_id IS NOT NULL LIMIT 1", (scan_id,)).fetchone()
+        return r["session_id"] if r else None
 
     async def put(self, kind: str, data: Mapping[str, Any], *, expect_rev: int | None = None) -> int:
         return (await self._run(lambda c: self._write(c, kind, data, expect_rev), write=True)).rev
@@ -270,7 +278,8 @@ class SqliteState:
     def _pipeline(self, c, id: str, action: str, p: dict) -> Row:
         """pipeline.update: an RFC 7386 merge patch on the run row (created on first use; None deletes a key).
         pipeline.claim_still: {still_id, worker, at[, force]} marks one still `running` for one worker, atomically;
-        AlreadyClaimed when it is running or done (unless force)."""
+        AlreadyClaimed when it is running or done (unless force). `announce` (a named live event: identified,
+        progress, mesh_ready) is kept only on the write that sets it, so each event is sent once."""
         prev = self._get(c, "pipeline-run", id)
         base = prev.data if prev else {"run_id": id, "scan_id": p.get("scan_id"), "session_id": p.get("session_id"),
                                        "status": "inspecting", "attempt": 0, "stages": {}, "stills": {}}
@@ -286,6 +295,8 @@ class SqliteState:
             if data.get("status") in ("done", "failed", "closed"):   # a new still after a report: out of date
                 data["status"] = "inspecting"
         data["run_id"] = id
+        if not (action == "pipeline.update" and "announce" in p):
+            data.pop("announce", None)   # a live-event marker lives for the one write that sets it
         return self._write(c, "pipeline-run", data, prev.rev if prev else 0, status=data.get("status"))
 
     # ------------------------------------------------------------------ jobs
@@ -343,6 +354,19 @@ class SqliteState:
                              op=r["op"], rev=r["rev"], row=json.loads(r["json"]), at=r["at"])
                     for r in c.execute("SELECT * FROM events WHERE session_id=? AND event_id>? ORDER BY event_id "
                                        "LIMIT ?", (session_id, after, limit))]
+        return await self._run(fn)
+
+    async def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Sessions, the most recently active first (their newest live event): {session_id, created_at,
+        last_event_id, last_event_at}."""
+        def fn(c):
+            rows = c.execute(
+                "SELECT r.id, json_extract(r.json, '$.created_at') created, e.event_id, e.at FROM rows r "
+                "LEFT JOIN events e ON e.event_id = (SELECT MAX(event_id) FROM events WHERE session_id = r.id) "
+                "WHERE r.kind = 'session' ORDER BY COALESCE(e.event_id, 0) DESC, r.updated_at DESC LIMIT ?",
+                (limit,)).fetchall()
+            return [{"session_id": r[0], "created_at": r[1], "last_event_id": r[2] or 0, "last_event_at": r[3]}
+                    for r in rows]
         return await self._run(fn)
 
     async def subscribe(self, session_id: str, after: int = 0) -> AsyncIterator[RowEvent]:

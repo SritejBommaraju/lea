@@ -169,10 +169,16 @@ def _pose_problem(still: Mapping) -> str | None:
     return None
 
 
+OBJECT_POSE_MEDIUM = 0.7   # a hand-held still (pose_source object_tracked) below this pose quality is capped at medium
+
+
 def _pose_cap(still: Mapping) -> tuple[str, str | None]:
     """The best confidence word the still's pose allows, and why it is capped."""
     if still.get("pose_reliable") is False:
         return "low", "the still's pose is marked unreliable"
+    q = still.get("pose_quality")
+    if still.get("pose_source") == "object_tracked" and q is not None and q < OBJECT_POSE_MEDIUM:
+        return "medium", f"the object was turned in the hand and its tracked pose quality was {q:.2f}"
     ts = still.get("tracking_state")
     if ts == "limited":
         return "low", "ARKit tracking was limited when the still was taken"

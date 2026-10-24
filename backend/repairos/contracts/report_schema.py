@@ -12,17 +12,18 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 class Verdict(StrEnum):
     """
-    Picked in code (repairos.report.verdict truth table), never by a model.
+    Picked in code (repairos.report.verdict truth table), never by a model. no_problems_seen (V8): nothing judged shows an issue and the capture covered the object well (config/verdict.yaml), but some regions were not checked: they are listed in verdict_reason.caveat.
     """
 
     looks_good = 'looks_good'
     potential_issues = 'potential_issues'
     insufficient_evidence = 'insufficient_evidence'
+    no_problems_seen = 'no_problems_seen'
 
 
 class Code(StrEnum):
     """
-    issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged.
+    issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged (coverage poor). nothing_seen_wrong: the same, with the object covered well (V8).
     """
 
     issues_found = 'issues_found'
@@ -30,6 +31,7 @@ class Code(StrEnum):
     no_regions = 'no_regions'
     nothing_inspected = 'nothing_inspected'
     some_not_inspected = 'some_not_inspected'
+    nothing_seen_wrong = 'nothing_seen_wrong'
 
 
 class VerdictReason(BaseModel):
@@ -38,7 +40,7 @@ class VerdictReason(BaseModel):
     )
     code: Code = Field(
         ...,
-        description='issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged.',
+        description='issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged (coverage poor). nothing_seen_wrong: the same, with the object covered well (V8).',
     )
     rule: str = Field(
         ..., description='The truth-table row that decided, e.g. V3.', min_length=1
@@ -46,6 +48,11 @@ class VerdictReason(BaseModel):
     text: str = Field(
         ...,
         description='Why, in plain words (no numbers; it is sent to the summary writer).',
+        min_length=1,
+    )
+    caveat: str | None = Field(
+        None,
+        description="What was not checked, with counts, e.g. 'Nothing looked wrong in the 2 areas Lea could see clearly. 3 areas need a closer photo.' Shown with the verdict as its caveat list; not sent to the summary writer.",
         min_length=1,
     )
 
@@ -127,6 +134,21 @@ class DepthSource(StrEnum):
     none = 'none'
 
 
+class Views(BaseModel):
+    """
+    Where the camera was (keyframes and stills) on the view dome around the object box (repairos.report.coverage): cells of 3 rings x 12 sectors seen, distinct sectors, and the share of cells. Absent when no box or pose is known.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    cells: int = Field(..., ge=0)
+    cells_total: int = Field(..., ge=1)
+    sectors: int = Field(..., ge=0)
+    sectors_total: int = Field(..., ge=1)
+    share: float = Field(..., ge=0.0, le=1.0)
+
+
 class Capture(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -146,6 +168,10 @@ class Capture(BaseModel):
         description="The phone's coverage hint in words, or 'not measured'.",
         min_length=1,
     )
+    views: Views | None = Field(
+        None,
+        description='Where the camera was (keyframes and stills) on the view dome around the object box (repairos.report.coverage): cells of 3 rings x 12 sectors seen, distinct sectors, and the share of cells. Absent when no box or pose is known.',
+    )
 
 
 class Models(BaseModel):
@@ -163,6 +189,203 @@ class Models(BaseModel):
     summary_writer: str = Field(..., min_length=1)
     jev: str = Field(..., min_length=1)
     locate: str = Field(..., min_length=1)
+
+
+class ConfidenceWord(StrEnum):
+    low = 'low'
+    medium = 'medium'
+    high = 'high'
+
+
+class FromStillId(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class Object(BaseModel):
+    """
+    What the object is, from the first photos (one vision-model call; a label photo is read). Brand and model only as printed or recognised beyond doubt, else absent.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    category: str = Field(
+        ..., description='A short generic kind of product, or unknown.', min_length=1
+    )
+    brand: str | None = Field(None, min_length=1)
+    model: str | None = Field(None, min_length=1)
+    confidence_word: ConfidenceWord
+    label_visible: bool = Field(
+        ..., description='A model label, rating plate or printed name was readable.'
+    )
+    label_text: str | None = Field(
+        None, description='That printed text, as read.', min_length=1
+    )
+    from_still_ids: list[FromStillId] | None = Field(None, min_length=1)
+
+
+class Format(StrEnum):
+    """
+    Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists.
+    """
+
+    ply = 'ply'
+
+
+class Hero(StrEnum):
+    """
+    What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is too small or too little was captured for 3D to read as the object.
+    """
+
+    points = 'points'
+    mesh = 'mesh'
+    photos = 'photos'
+
+
+class Mesh(BaseModel):
+    """
+    The scan's 3D mesh for the 3D view: LiDAR TSDF, decimated, vertex-coloured, in the frame of every finding's location (pins sit on it as they are).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    url: str = Field(
+        ...,
+        description='Gateway path: GET it with the device token (/v1/scans/{scan_id}/mesh?rev=N).',
+        min_length=1,
+    )
+    rev: int = Field(
+        ...,
+        description='Goes up when the mesh is rebuilt (more photos added to the scan).',
+        ge=1,
+    )
+    format: Format = Field(
+        ...,
+        description='Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists.',
+    )
+    frame: Literal['arkit_world']
+    triangles: int | None = Field(None, ge=1)
+    cloud_url: str | None = Field(
+        None,
+        description="The object's part of the phone's LiDAR cloud, coloured points (binary PLY: float x y z, uchar red green blue), same frame (/v1/scans/{scan_id}/cloud?rev=N).",
+        min_length=1,
+    )
+    cloud_points: int | None = Field(None, ge=0)
+    hero: Hero | None = Field(
+        None,
+        description='What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is too small or too little was captured for 3D to read as the object.',
+    )
+    hero_reason: str | None = Field(None, min_length=1)
+
+
+class Hint(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class Source(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: str | None = None
+    link: str = Field(..., min_length=1)
+
+
+class ReferenceHints(BaseModel):
+    """
+    Optional: where to look first, from public references about the identified product (web search titles and descriptions only; no third-party image or page is kept). Never evidence: a hint never makes a finding.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    hints: list[Hint] = Field(..., max_length=3)
+    sources: list[Source] | None = Field(None, max_length=5)
+
+
+class Option(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: str = Field(..., min_length=1)
+    price: float | None = Field(
+        None,
+        description='The displayed price; absent when the result showed none (a web result, not a shopping one).',
+        gt=0.0,
+    )
+    currency: str | None = Field(None, pattern='^[A-Z]{3}$')
+    seller: str = Field(..., min_length=1)
+    link: str = Field(..., min_length=1)
+
+
+class Fix(BaseModel):
+    """
+    Optional "Fix it": where to buy the part of the top finding, from a public shopping search (repairos.references.parts). Only title, displayed price, seller and link are kept; no page, text or image. Added when the search is ready; never evidence and never delays the report.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    part: str = Field(
+        ...,
+        description="The part searched for, in generic words (the top finding's part class).",
+        min_length=1,
+    )
+    options: list[Option] = Field(..., max_length=3, min_length=1)
+    guide_link: str | None = Field(
+        None,
+        description='A public replacement guide for that part, when the search found one.',
+        min_length=1,
+    )
+    searched_at: AwareDatetime
+
+
+class Checked(StrEnum):
+    """
+    confirmed = a judged region of that area has an issue; not_seen = regions of that area were judged with no visible issue; could_not_check = no photo of it was judged (or no area was named).
+    """
+
+    confirmed = 'confirmed'
+    not_seen = 'not_seen'
+    could_not_check = 'could_not_check'
+
+
+class EvidenceFindingId(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class UserLead(BaseModel):
+    """
+    Optional: what the person said they suspected and what the photos showed about it (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only ordered the inspection; this section cites findings and never adds or changes one.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    said: str = Field(
+        ...,
+        description="The person's own words (typed or spoken).",
+        max_length=300,
+        min_length=1,
+    )
+    suspect: str | None = Field(
+        None,
+        description='The part or area they suspected, in their generic words.',
+        min_length=1,
+    )
+    checked: Checked = Field(
+        ...,
+        description='confirmed = a judged region of that area has an issue; not_seen = regions of that area were judged with no visible issue; could_not_check = no photo of it was judged (or no area was named).',
+    )
+    evidence_finding_ids: list[EvidenceFindingId] = Field(
+        ..., description='The report rows this is based on (any section).'
+    )
+    note: str = Field(
+        ...,
+        description='One or two plain sentences, written in code from the rows cited.',
+        min_length=1,
+    )
+    sources: list[Source] | None = Field(None, max_length=5)
 
 
 class Kind6(StrEnum):
@@ -226,7 +449,7 @@ class Photo(BaseModel):
     crop_ref: str | None = None
 
 
-class ConfidenceWord(StrEnum):
+class ConfidenceWord1(StrEnum):
     """
     The locator's own word (uncalibrated, I6).
     """
@@ -265,7 +488,7 @@ class Location1(BaseModel):
     distance_m: float | None = Field(
         None, description="From the still's camera to point_m.", ge=0.0
     )
-    confidence_word: ConfidenceWord = Field(
+    confidence_word: ConfidenceWord1 = Field(
         ..., description="The locator's own word (uncalibrated, I6)."
     )
     method: Method
@@ -378,7 +601,7 @@ class Issue(StrEnum):
     unexpected_wire = 'unexpected_wire'
 
 
-class ConfidenceWord1(StrEnum):
+class ConfidenceWord2(StrEnum):
     low = 'low'
     medium = 'medium'
     high = 'high'
@@ -435,7 +658,7 @@ class Finding(BaseModel):
         ...,
         description='none = a model looked and saw no issue. Every other value is Finding.state: a suspect.',
     )
-    confidence_word: ConfidenceWord1
+    confidence_word: ConfidenceWord2
     evidence: list[str] = Field(..., min_length=1)
     crop: Crop
     location: Location
@@ -535,7 +758,7 @@ class Report(BaseModel):
     created_at: AwareDatetime
     verdict: Verdict = Field(
         ...,
-        description='Picked in code (repairos.report.verdict truth table), never by a model.',
+        description='Picked in code (repairos.report.verdict truth table), never by a model. no_problems_seen (V8): nothing judged shows an issue and the capture covered the object well (config/verdict.yaml), but some regions were not checked: they are listed in verdict_reason.caveat.',
     )
     verdict_reason: VerdictReason
     summary: Summary
@@ -579,4 +802,24 @@ class Report(BaseModel):
     )
     grain: Literal['not called'] = Field(
         ..., description='Phase 1 makes no Grain calls.'
+    )
+    object: Object | None = Field(
+        None,
+        description='What the object is, from the first photos (one vision-model call; a label photo is read). Brand and model only as printed or recognised beyond doubt, else absent.',
+    )
+    mesh: Mesh | None = Field(
+        None,
+        description="The scan's 3D mesh for the 3D view: LiDAR TSDF, decimated, vertex-coloured, in the frame of every finding's location (pins sit on it as they are).",
+    )
+    reference_hints: ReferenceHints | None = Field(
+        None,
+        description='Optional: where to look first, from public references about the identified product (web search titles and descriptions only; no third-party image or page is kept). Never evidence: a hint never makes a finding.',
+    )
+    fix: Fix | None = Field(
+        None,
+        description='Optional "Fix it": where to buy the part of the top finding, from a public shopping search (repairos.references.parts). Only title, displayed price, seller and link are kept; no page, text or image. Added when the search is ready; never evidence and never delays the report.',
+    )
+    user_lead: UserLead | None = Field(
+        None,
+        description='Optional: what the person said they suspected and what the photos showed about it (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only ordered the inspection; this section cites findings and never adds or changes one.',
     )

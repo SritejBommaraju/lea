@@ -233,7 +233,7 @@ enum LockBoxSpec {
     static let cornerMin: CGFloat = 14
     static let cornerMax: CGFloat = 34
     /// 2D stroke widths in points; in 3D use a 1.5 mm (searching) / 2.5 mm (locked) tube or line, unlit.
-    static func lineWidth(_ phase: Phase) -> CGFloat { phase == .locked ? 4 : 2.5 }
+    static func lineWidth(_ phase: Phase) -> CGFloat { phase == .locked ? 4 : 3 }
     /// Unlit colours for RealityKit's `UnlitMaterial(color:)`; never lit, never with a shadow.
     static func uiColor(_ phase: Phase) -> UIColor {
         phase == .locked ? UIColor(hex: 0x9C94FF) : UIColor(white: 1, alpha: 0.8)
@@ -250,9 +250,17 @@ struct LockBrackets: View {
     @State private var settle: CGFloat = 1
 
     var body: some View {
-        Brackets()
-            .stroke(LockBoxSpec.color(phase),
-                    style: StrokeStyle(lineWidth: LockBoxSpec.lineWidth(phase), lineCap: .round, lineJoin: .round))
+        ZStack {
+            // A faint dark edge under the white searching corners so they survive light floors (a stroke, not a
+            // shadow: no blur over the camera).
+            if phase == .searching {
+                Brackets().stroke(Color.black.opacity(0.25),
+                                  style: StrokeStyle(lineWidth: LockBoxSpec.lineWidth(phase) + 1.5, lineCap: .round, lineJoin: .round))
+            }
+            Brackets()
+                .stroke(LockBoxSpec.color(phase),
+                        style: StrokeStyle(lineWidth: LockBoxSpec.lineWidth(phase), lineCap: .round, lineJoin: .round))
+        }
             .scaleEffect(settle)
             .motion(Motion.fade, value: phase)
             .sensoryFeedback(Haptic.lock, trigger: phase) { _, new in new == .locked }

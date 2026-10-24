@@ -17,8 +17,8 @@ struct PairingView: View {
                         IconBadge(symbol: Symbol.pair, tone: .accent)
                             .scaleEffect(1.4, anchor: .topLeading)
                             .frame(width: 42, height: 42, alignment: .topLeading)
-                        Text("Connect to your Mac").font(.screenTitle)
-                        Text("lea sends your scan to the backend on your Mac, which writes the report. Both need to be on the same network.")
+                        Text("Connect to lea server").font(.screenTitle)
+                        Text("lea sends your scan to the lea server, which writes the report. Enter its address and pairing code.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, Spacing.xs)
@@ -35,7 +35,7 @@ struct PairingView: View {
                         SecureField("Required", text: $code).multilineTextAlignment(.trailing)
                     }
                 } footer: {
-                    Text("On the Mac, run `make run-gateway`. The code is REPAIROS_PAIRING_CODE in backend/.env.")
+                    Text("Developer: on the server, run `make run-gateway`. The code is REPAIROS_PAIRING_CODE in backend/.env.")
                 }
                 if let error {
                     Section {
@@ -87,6 +87,8 @@ struct SettingsView: View {
     @State private var checking = false
     @State private var used: Int64?
     @State private var confirmDeleteAll = false
+    @State private var versionTaps = 0
+    @AppStorage(DemoReplay.unlockedKey) private var demoUnlocked = false
 
     var body: some View {
         NavigationStack {
@@ -95,14 +97,14 @@ struct SettingsView: View {
                     HStack(spacing: Spacing.m) {
                         IconBadge(symbol: Symbol.mac, tone: app.isPaired ? .good : .caution)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(app.isPaired ? "Mac paired" : "Not paired").font(.body.weight(.semibold))
+                            Text(app.isPaired ? "Connected" : "Not connected").font(.body.weight(.semibold))
                             Text(app.gatewayURL.isEmpty ? "No address set" : app.gatewayURL)
                                 .font(.footnote).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                         }
                         Spacer(minLength: 0)
                         if let health { healthPill(health) }
                     }
-                    Button(app.isPaired ? "Pair again" : "Pair with your Mac") { showPairing = true }
+                    Button(app.isPaired ? "Connect again" : "Connect to lea server") { showPairing = true }
                     Button { Task { await check() } } label: {
                         HStack {
                             Text("Check connection")
@@ -111,14 +113,30 @@ struct SettingsView: View {
                         }
                     }
                     .disabled(checking || app.gateway == nil)
-                } header: { Text("Mac") } footer: {
+                } header: { Text("Server") } footer: {
                     Text("Scans stay on the phone until it is paired.")
+                }
+
+                Section {
+                    Toggle("Listen for \u{201C}Hey Lea\u{201D}", isOn: Binding(get: { WakeListener.shared.enabled },
+                                                                    set: { WakeListener.shared.enabled = $0 }))
+                    Toggle("Lea speaks", isOn: Binding(get: { !LeaVoice.shared.muted }, set: { LeaVoice.shared.muted = !$0 }))
+                } header: { Text("Voice") } footer: {
+                    Text("\u{201C}Hey Lea\u{201D} is heard on this phone only, while lea is open. Nothing is sent until you say it.")
+                }
+
+                Section {
+                    NavigationLink { UsageView() } label: {
+                        SettingsRow(symbol: "gauge.with.dots.needle.33percent", tone: .accent, title: "Usage",
+                                    detail: "Calls and estimated cost today, on the server")
+                    }
+                    .disabled(app.gateway == nil || !app.isPaired)
                 }
 
                 Section("Privacy") {
                     Button { showConsent = true } label: {
                         SettingsRow(symbol: "photo.badge.checkmark.fill", tone: .accent, title: "Where photos go",
-                                    detail: "Your Mac, then Claude and Jev")
+                                    detail: "The lea server, then Claude and Jev")
                     }
                     .foregroundStyle(.primary)
                 }
@@ -126,21 +144,20 @@ struct SettingsView: View {
                 Section {
                     LabeledContent("Scans", value: "\(app.sessions.count)")
                     LabeledContent("Storage used", value: used.map(ScanLibrary.size) ?? "…")
-                    Toggle("Also delete from my Mac", isOn: .constant(false)).disabled(true)
                     Button("Delete all scans", role: .destructive) { confirmDeleteAll = true }
                         .disabled(ScanLibrary.deletableCount(app: app) == 0)
                 } header: { Text("Storage") } footer: {
-                    Text("Deleting removes only the copy on this phone. Deleting from your Mac is coming later.")
+                    Text("Deleting removes only the copy on this phone; the server keeps its copy.")
                 }
 
                 Section("This phone") {
                     let c = app.capabilities
-                    LabeledContent("Model", value: c.model)
-                    LabeledContent("iOS", value: c.ios)
                     LabeledContent("Scan method", value: c.engine == .objectCapture ? "LiDAR (Object Capture)" : "Motion-tracked")
                     LabeledContent("LiDAR depth", value: c.sceneDepth ? "Yes" : "No")
                     NavigationLink("Diagnostics") { DiagnosticsView() }
                 }
+
+                if demoUnlocked { DemoReplaySettings() }
 
                 Section {
                     NavigationLink { NoticesView() } label: {
@@ -148,6 +165,12 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("lea \(Self.version)").frame(maxWidth: .infinity).padding(.top, Spacing.l)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            // Five taps on the version show the hidden Demo section.
+                            versionTaps += 1
+                            if versionTaps >= 5 { withAnimation(Motion.standard) { demoUnlocked = true } }
+                        }
                 }
             }
             .scrollContentBackground(.hidden)
@@ -165,7 +188,7 @@ struct SettingsView: View {
                     Task { used = await ScanLibrary.usedBytes(app.storage) }
                 }
             } message: {
-                Text("Removes every scan, photo and report from this phone\(used.map { " and frees \(ScanLibrary.size($0))" } ?? ""). Copies on your Mac stay.")
+                Text("Removes every scan, photo and report from this phone\(used.map { " and frees \(ScanLibrary.size($0))" } ?? ""). Copies on the server stay.")
             }
             .task { used = await ScanLibrary.usedBytes(app.storage) }
         }
@@ -223,6 +246,10 @@ struct DiagnosticsView: View {
 
     var body: some View {
         Form {
+            Section("Device") {
+                LabeledContent("Model", value: app.capabilities.model)
+                LabeledContent("iOS", value: app.capabilities.ios)
+            }
             Section("Cameras") {
                 let c = app.capabilities
                 LabeledContent("Scene mesh", value: c.meshReconstruction ? "Yes" : "No")

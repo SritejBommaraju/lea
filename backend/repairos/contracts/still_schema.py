@@ -84,6 +84,15 @@ class TrackingState(StrEnum):
     unknown = 'unknown'
 
 
+class PoseSource(StrEnum):
+    """
+    Where camera comes from. arkit (also when absent): ARKit world tracking. object_tracked: the app's hand-held mode: the camera relative to the tracked, moving object, in the scan's object frame (the ARKit world frame at the moment the object was locked; see scan-package pose_source).
+    """
+
+    arkit = 'arkit'
+    object_tracked = 'object_tracked'
+
+
 class PoseArkit(BaseModel):
     """
     Camera-to-world pose in ARKit's world frame: metres, Y up. Camera axes as ARKit (x right, y up, looking along -z).
@@ -201,8 +210,18 @@ class Still(BaseModel):
     )
     view_cell: str | None = Field(
         None,
-        description='The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object). Lets the backend see which sides were photographed.',
+        description="The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object; in a hand-held scan, pose_source object_tracked, b1s05 is a view of the underside, ring 1-2 below the object's middle, in the object frame). Lets the backend see which sides were photographed.",
         min_length=1,
+    )
+    pose_source: PoseSource | None = Field(
+        None,
+        description="Where camera comes from. arkit (also when absent): ARKit world tracking. object_tracked: the app's hand-held mode: the camera relative to the tracked, moving object, in the scan's object frame (the ARKit world frame at the moment the object was locked; see scan-package pose_source).",
+    )
+    pose_quality: float | None = Field(
+        None,
+        description="The object tracker's confidence in camera, 0-1 (object_tracked only). Below 0.55 the app marks pose_reliable false; below 0.7 locate caps its confidence at medium.",
+        ge=0.0,
+        le=1.0,
     )
     low_light: bool | None = Field(
         None,

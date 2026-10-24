@@ -1,0 +1,4 @@
+dist/
+spacetime.local.json
+*.token
+*identity*.json

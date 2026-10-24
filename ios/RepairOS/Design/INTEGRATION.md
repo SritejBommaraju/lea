@@ -1,5 +1,10 @@
 # Capture overlay integration
 
+Status: wired into `Capture/CaptureView.swift` (`ScanView`): DomeDial (from `ScanSession.dome`/`hereSector`/
+`nextCell`), CueBanner (`CueStyle` maps each cue to a symbol and tone), ShotTick, LockBrackets (on
+`ScanSession.boxRect`, ≤ 10 Hz), `.primary(.light)` buttons. The close-up cue is also an anchored marker drawn by
+`PointCloudRenderer` (`marker`), and Done plays the renderer's gather moment (`beginFinish`).
+
 For the capture screen (`Capture/**`, `ObjectCapture/**`). The pieces live in `Design/CaptureOverlays.swift` and
 `Design/Components.swift`; tokens in `Design/Theme.swift`. Previews: "Capture overlay", "Cue tones", "Dome dial".
 

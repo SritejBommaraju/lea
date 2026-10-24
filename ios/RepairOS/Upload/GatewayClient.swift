@@ -8,9 +8,9 @@ enum GatewayError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .message(let m): m
-        case .http(422, let body): "Your Mac rejected the scan: \(Self.firstProblem(body))"
-        case .http(401, _), .http(403, _): "Your Mac doesn't recognise this phone: pair again in Settings."
-        case .http(let code, let body): "Your Mac answered \(code): \(Self.firstProblem(body))"
+        case .http(422, let body): "The server rejected the scan: \(Self.firstProblem(body))"
+        case .http(401, _), .http(403, _): "The server doesn't recognise this phone: connect again in Settings."
+        case .http(let code, let body): "The server answered \(code): \(Self.firstProblem(body))"
         }
     }
 
@@ -103,6 +103,49 @@ struct GatewayClient: Sendable {
         let (data, http) = try await send("GET", "v1/scans/\(scanID)/report", expect: [200])
         let rev = (http.value(forHTTPHeaderField: "X-Report-Rev")).flatMap(Int.init)
         return ((try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:], rev)
+    }
+
+    /// GET /v1/scans/{id}/mesh: the scan's mesh (binary PLY, the scan's ARKit frame). 404 until it is built.
+    func mesh(scanID: String) async throws -> Data {
+        try await send("GET", "v1/scans/\(scanID)/mesh", expect: [200]).0
+    }
+
+    /// GET /v1/scans/{id}/cloud: the object's points, cleaned by the backend (binary PLY, the scan's ARKit frame).
+    func cloud(scanID: String) async throws -> Data {
+        try await send("GET", "v1/scans/\(scanID)/cloud", expect: [200]).0
+    }
+
+    /// GET /v1/scans/{id}/recreation: the photo-real recreation (Report/Recreation), its kind, revision, file format
+    /// and the object's centre + radius for framing (`X-Recreation-*`). 404 until it is built.
+    func recreation(scanID: String) async throws -> (data: Data, kind: String, rev: Int, format: String, focusCenter: [Float]?, focusRadius: Float?) {
+        let (data, http) = try await send("GET", "v1/scans/\(scanID)/recreation", expect: [200])
+        let focus = http.value(forHTTPHeaderField: "X-Recreation-Focus")?.split(separator: ",").compactMap { Float($0) }
+        return (data, http.value(forHTTPHeaderField: "X-Recreation-Kind") ?? "", Int(http.value(forHTTPHeaderField: "X-Recreation-Rev") ?? "") ?? 0,
+                http.value(forHTTPHeaderField: "X-Recreation-Format") ?? "", focus.map { Array($0.prefix(3)) },
+                focus.flatMap { $0.count == 4 ? $0[3] : nil })
+    }
+
+    /// GET /v1/sessions/{id}/events (server-sent events), resuming after `lastEventID`.
+    func eventsRequest(sessionID: String, lastEventID: String?) -> URLRequest {
+        var req = request("GET", "v1/sessions/\(sessionID)/events", auth: true)
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let lastEventID { req.setValue(lastEventID, forHTTPHeaderField: "Last-Event-ID") }
+        req.timeoutInterval = 40
+        return req
+    }
+
+    /// GET /v1/events (server-sent events that belong to no session: `spend_alert`).
+    func globalEventsRequest() -> URLRequest {
+        var req = request("GET", "v1/events", auth: true)
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        req.timeoutInterval = 40
+        return req
+    }
+
+    /// GET /v1/usage: paid-service usage on the Mac (per service: calls, estimated USD, caps, pauses).
+    func usage() async throws -> [String: Any] {
+        let (data, _) = try await send("GET", "v1/usage", expect: [200])
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 
     func reportHTMLRequest(scanID: String) -> URLRequest {

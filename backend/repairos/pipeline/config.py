@@ -9,8 +9,10 @@ from repairos.config import ROOT
 
 PIPELINE_CONFIG = ROOT / "config" / "pipeline.yaml"
 INT_KEYS = ("worker_jobs", "stills_at_once", "vlm_calls_at_once", "max_stills", "max_crops_per_still",
-            "detector_tile_px", "continuation_timeout_s")
+            "detector_tile_px", "continuation_timeout_s",
+            "mesh_max_triangles")
 FLOAT_KEYS = ("same_region_m",)
+BOOL_KEYS = ("detector_half",)
 
 
 def load_pipeline_config(path: Path | None = None) -> dict:
@@ -23,6 +25,11 @@ def load_pipeline_config(path: Path | None = None) -> dict:
         v = data.get(k)
         if not isinstance(v, int) or isinstance(v, bool) or v < 1:
             raise ValueError(f"{path}: {k} must be a whole number of at least 1")
+        out[k] = v
+    for k in BOOL_KEYS:
+        v = data.get(k)
+        if not isinstance(v, bool):
+            raise ValueError(f"{path}: {k} must be true or false")
         out[k] = v
     for k in FLOAT_KEYS:
         v = data.get(k)

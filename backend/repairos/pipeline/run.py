@@ -43,6 +43,7 @@ from repairos.report import build_report, honesty_violations, report_id_for, wri
 from repairos.sessions.layout import EXT_BY_TYPE, ext_for, map_files
 from repairos.slots.blob import REF_PREFIX
 from repairos.slots.state import AlreadyClaimed, RevConflict
+from repairos.spend import PAUSED, SpendLimit
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +51,12 @@ STILL_WAIT_S = 900.0     # how long a run waits for a still another worker is in
 POLL_S = 0.5
 OCR_NOT_BUILT = "reading label text needs OCR, which is not built yet (task M8)"
 SKIPPED = "the user skipped this close-up"
+PAUSED_LIMIT = ("Some areas were not checked: the vision model was paused because a usage limit was reached. "
+                "Scan again later to check them.")
+PAUSED_SUMMARY = {"text": "This report was built without its plain-words summary: a usage limit was reached, so the "
+                          "writer was paused. The findings below are what was checked before the pause; areas marked "
+                          "not inspected were not looked at.",
+                  "written_by": "repairos (usage limit reached)", "from_words_only": True}
 DETECTIONS_KEPT = 256    # detector answers kept in memory per worker (by blob), for stills that arrive later
 
 
@@ -104,6 +111,36 @@ class Context:
         self._vlm_pool: ThreadPoolExecutor | None = None
         self._shares: dict[str, Any] = {}
         self._scan_locks: dict[str, asyncio.Lock] = {}
+        self._background: set[asyncio.Task] = set()
+        self._side_gate: asyncio.Semaphore | None = None
+        self._prewarmed: dict[str, set] = {}
+
+    def spawn(self, coro: Any) -> asyncio.Task:
+        """Run side work (identity, mesh) in the background, one item at a time, never holding a job slot: the
+        report path (stills, fuse, locate, report) never waits on it."""
+        if self._side_gate is None:
+            self._side_gate = asyncio.Semaphore(1)
+
+        async def gated():
+            async with self._side_gate:
+                return await coro
+        task = asyncio.create_task(gated())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
+
+    def start(self, coro: Any) -> asyncio.Task:
+        """Run network-bound side work (web searches) in the background, outside the one-at-a-time gate of spawn,
+        so a slow search never holds back the mesh or the identity."""
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
+
+    async def settle(self) -> None:
+        """Wait for background side work (tests, shutdown)."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
 
     def scan_lock(self, scan_id: str) -> asyncio.Lock:
         """Still-selection decisions of one scan, one at a time (this worker process; one event loop)."""
@@ -118,6 +155,8 @@ class Context:
                 inst = self.registry.slot(name)
                 if name == "DET" and hasattr(inst, "tile_px"):
                     inst.tile_px = self.config["detector_tile_px"]
+                if name == "DET" and hasattr(inst, "half"):
+                    inst.half = self.config["detector_half"]
                 self._slots[name] = inst
             return self._slots[name]
 
@@ -256,7 +295,17 @@ async def record_capture(ctx: Context, scan_id: str) -> dict:
     their own jobs; the scan package has no detection stage in Phase 1."""
     scan = await _scan(ctx, scan_id)
     await _update(ctx, scan, {"stages": {"capture": capture_facts(scan)}})
-    return {"stage": "capture", "scan_id": scan_id}
+    ctx.spawn(_mesh_quietly(ctx, scan_id))   # the 3D view, built beside the report path, never in front of it
+    return {"stage": "capture", "scan_id": scan_id, "mesh": "building"}
+
+
+async def _mesh_quietly(ctx: Context, scan_id: str) -> None:
+    try:
+        await ensure_mesh(ctx, scan_id)
+    except Exception as e:  # noqa: BLE001 - ensure_mesh records its own failures; this only guards the task
+        log.warning("mesh for scan %s: %s", scan_id, e)
+    from repairos.recreation.service import recreation_quietly
+    ctx.spawn(recreation_quietly(ctx, scan_id))   # the photo-real recreation, after the mesh, also never in front
 
 
 # ---------------------------------------------------------------------------------------------- stage: inspect
@@ -319,8 +368,8 @@ async def _store_findings(ctx: Context, findings: list[dict]) -> tuple[list[str]
     return ids, kept
 
 
-def _inspect_sync(ctx: Context, scan_id: str, still: dict
-                  ) -> tuple[list[dict], list[dict], str, str, dict, dict]:
+def _inspect_sync(ctx: Context, scan_id: str, still: dict, hints: list[str] | None = None,
+                  focus: list[str] | None = None) -> tuple[list[dict], list[dict], str, str, dict, dict]:
     from repairos.vision.crops import load_still
     from repairos.vision.inspect import inspect_still
 
@@ -334,7 +383,7 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict
     crop_dir = ctx.workdir(scan_id) / "crops" / still["still_id"]
     res = inspect_still(im, still_id=still["still_id"], scan_id=scan_id, detector=detector, judge=judge,
                         crop_dir=crop_dir, sharpness=still.get("sharpness"), detections=dets, pool=ctx.vlm_pool,
-                        share=share, max_crops=ctx.config["max_crops_per_still"])
+                        share=share, max_crops=ctx.config["max_crops_per_still"], hints=hints, focus=focus)
     timing = {"load_s": round(t1 - t0, 3), "detect_s": round(t2 - t1, 3), "detections_ready": cached,
               "vlm_s": round(res.timing.get("vlm_s", 0.0), 3), "vlm_calls": int(res.timing.get("vlm_calls", 0)),
               "reused_regions": int(res.timing.get("reused_regions", 0))}
@@ -374,7 +423,11 @@ async def _inspect_one(ctx: Context, scan: dict, still: dict, covered: str | Non
         findings = [not_inspected_finding(scan_id, sid, "label", OCR_NOT_BUILT, "repairos.ocr")]
         regions = {findings[0]["finding_id"]: {"part_class": "label", "inspected_by": []}}
     else:
-        findings, dets, det_id, vlm, rollups, timing = await asyncio.to_thread(_inspect_sync, ctx, scan_id, still)
+        run_row = (await _run_row(ctx, scan_id)) or {}
+        hints = (run_row.get("hints") or {}).get("hints") or None
+        focus = [x["area"] for x in (run_row.get("leads") or {}).get("items") or [] if x.get("area")] or None
+        findings, dets, det_id, vlm, rollups, timing = await asyncio.to_thread(_inspect_sync, ctx, scan_id, still,
+                                                                               hints, focus)
         regions = regions_for(findings, dets, "whole photo", rollups)
         stage.update(detections=dets, detector=det_id, vlm=vlm, timing=timing)
     ids, kept = await _store_findings(ctx, findings)
@@ -423,6 +476,11 @@ async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) ->
                                                         "finished_at": _now()}}})
         raise
     await _update(ctx, scan, {"stills": {still_id: stage}})
+    try:
+        await announce_progress(ctx, scan)
+    except Exception as e:  # noqa: BLE001 - a live count is never worth failing an inspection
+        log.warning("progress event for scan %s failed: %s", scan["scan_id"], e)
+    ctx.start(_quietly(prewarm_fix(ctx, scan), f"parts prewarm for scan {scan['scan_id']}"))   # as findings come in
     return stage
 
 
@@ -453,6 +511,16 @@ async def inspect_still_stage(ctx: Context, still_id: str, covered: str | None =
         raise PipelineError(f"no still {still_id}")
     still = row.data
     scan = await _scan_or_pending(ctx, still)
+    if decide or still.get("kind") == "label":   # a still that just arrived: identify the object in the background
+        ctx.spawn(_identify_quietly(ctx, scan, still))
+    if decide:   # the person's story (if any): its leads onto this scan, announced once each
+        from repairos.pipeline.story import apply_story
+        ctx.start(_quietly(apply_story(ctx, scan), f"leads for scan {scan['scan_id']}"))
+    return await _stage_for(ctx, scan, still, covered, decide)
+
+
+async def _stage_for(ctx: Context, scan: dict, still: dict, covered: str | None, decide: bool) -> dict:
+    still_id = still["still_id"]
     if decide and covered is None and is_photo(still):
         async with ctx.scan_lock(scan["scan_id"]):
             claimed = ((await _run_row(ctx, scan["scan_id"])) or {}).get("stills") or {}
@@ -472,6 +540,234 @@ async def inspect_still_stage(ctx: Context, still_id: str, covered: str | None =
     if how == "wait":
         return await _wait_for_still(ctx, scan, still_id)
     return await _finish(ctx, scan, still, covered)
+
+
+# ------------------------------------------------------------------------- identity, hints, progress, mesh (demo)
+IDENTIFY_CALLS_MAX = 3   # per scan: the first photo, a second photo when the first answer was not sure, a label
+
+
+async def _identify_quietly(ctx: Context, scan: dict, still: dict) -> None:
+    try:
+        await maybe_identify(ctx, scan, still)
+    except Exception as e:  # noqa: BLE001 - identity is a nicety: it never fails the still; the row says why
+        log.warning("identifying scan %s from still %s failed: %s", scan["scan_id"], still["still_id"], e)
+        status = "limited" if isinstance(e, SpendLimit) else "failed"   # at the spend cap: skipped, no retry
+        await _update(ctx, scan, {"identity": {"status": status, "error": f"{type(e).__name__}: {e}"[:500]}})
+
+
+def load_preview(path: Path, side: int = 1568) -> Any:
+    """A still decoded at reduced size (JPEG draft mode: a fraction of a full 12 MP decode), EXIF orientation applied,
+    for whole-photo calls (identity) that never need full resolution."""
+    from PIL import Image, ImageOps
+
+    with Image.open(path) as im:
+        im.draft("RGB", (side, side))
+        im = ImageOps.exif_transpose(im).convert("RGB")
+    im.thumbnail((side, side))
+    return im
+
+
+def _identify_plan(identity: dict | None, still: dict) -> list[str] | None:
+    """Still ids to send now, or None: the first photo still; once more with a second photo when the answer was
+    not sure; a label still always (read what is printed), up to IDENTIFY_CALLS_MAX calls."""
+    ident = identity or {}
+    calls = int(ident.get("calls") or 0)
+    used = list(ident.get("from_still_ids") or [])
+    if calls >= IDENTIFY_CALLS_MAX or still["still_id"] in used or ident.get("status") == "running":
+        return None
+    if still.get("kind") == "label":
+        return used[-1:] + [still["still_id"]]
+    if still.get("user_skipped"):
+        return None
+    if calls == 0:
+        return [still["still_id"]]
+    if calls == 1 and ident.get("confidence") != "high" and not ident.get("label_visible"):
+        return used[:1] + [still["still_id"]]
+    return None
+
+
+async def maybe_identify(ctx: Context, scan: dict, still: dict) -> dict | None:
+    """Identify the object from this still (and an earlier one) when _identify_plan says so: one Claude call, the
+    answer on the run row (`identity`) and the live event `identified`; then reference hints (maybe_hints)."""
+    async with ctx.scan_lock(scan["scan_id"]):
+        run = await _run_row(ctx, scan["scan_id"]) or {}
+        plan = _identify_plan(run.get("identity"), still)
+        if plan is None:
+            return None
+        prev = run.get("identity") or {}
+        await _update(ctx, scan, {"identity": {"status": "running", "calls": int(prev.get("calls") or 0) + 1}})
+    t0 = time.monotonic()
+    rows = [await ctx.state.get("still", sid) for sid in plan]
+    paths = [ctx.local_file(scan["scan_id"], r.data["image_file"]) for r in rows if r]
+    images = await asyncio.to_thread(lambda: [load_preview(p) for p in paths])
+    ans = await asyncio.to_thread(ctx.slot("VLM").identify, images)
+    ident = {**ans, "status": "done", "calls": int(prev.get("calls") or 0) + 1, "from_still_ids": plan,
+             "seconds": round(time.monotonic() - t0, 3), "at": _now()}
+    await _update(ctx, scan, {"identity": ident, "announce": "identified"})
+    ctx.start(_quietly(maybe_hints(ctx, scan, ident), f"reference hints for scan {scan['scan_id']}"))
+    ctx.start(_quietly(prewarm_fix(ctx, scan), f"parts prewarm for scan {scan['scan_id']}"))
+    return ident
+
+
+async def _quietly(coro: Any, what: str) -> None:
+    try:
+        await coro
+    except Exception as e:  # noqa: BLE001 - optional side work never fails a still or a report
+        log.warning("%s failed: %s", what, e)
+
+
+async def maybe_hints(ctx: Context, scan: dict, identity: dict) -> None:
+    """Reference hints for an identified product when Bright Data is configured (repairos.references): one search,
+    one Claude call turning result titles and descriptions into at most three "where to look first" hints. Only
+    the hints and the result links are kept. Without a key, or without a brand or model, nothing happens."""
+    from repairos.references import brightdata as bd
+
+    creds = bd.credentials()
+    query = bd.query_for(identity)
+    if creds is None or query is None:
+        return
+    run = await _run_row(ctx, scan["scan_id"]) or {}
+    if (run.get("hints") or {}).get("query") == query:
+        return
+    t0 = time.monotonic()
+    kept = bd.cached_hints(query)
+    if kept is not None:   # the same product within a day: no search and no Claude call
+        await _update(ctx, scan, {"hints": {"status": "done", "query": query, "hints": kept["hints"],
+                                            "sources": kept["sources"], "cached": True,
+                                            "seconds": round(time.monotonic() - t0, 3)}})
+        return
+    await _update(ctx, scan, {"hints": {"status": "searching", "query": query}})
+    try:
+        results = await asyncio.to_thread(bd.search, query, *creds)
+        hints = await asyncio.to_thread(ctx.slot("VLM").reference_hints, identity, results)
+    except Exception as e:  # noqa: BLE001 - hints are optional; the row says why there are none
+        status = "limited" if bd.is_spend_limit(e) else "failed"   # at the spend cap: skipped, no retry
+        await _update(ctx, scan, {"hints": {"status": status, "query": query, "error": f"{type(e).__name__}"}})
+        return
+    sources = [{"title": r["title"], "link": r["link"]} for r in results[:5]]
+    await asyncio.to_thread(bd.remember_hints, query, hints, sources)
+    await _update(ctx, scan, {"hints": {"status": "done", "query": query, "hints": hints, "sources": sources,
+                                        "seconds": round(time.monotonic() - t0, 3)}})
+
+
+PREWARM_MAX = 3   # distinct (object, part) searches started during one scan
+
+
+def live_top_part(findings: list[dict], run: dict) -> str | None:
+    """The part class of the most pressing issue found so far in the scan (safety, then functional, then not
+    judged; then confidence), from the regions the stills recorded: the same part class the report will show."""
+    from repairos.references.parts import NOT_A_PART
+
+    regions = {fid: r for st in (run.get("stills") or {}).values() for fid, r in (st.get("regions") or {}).items()}
+    rank = {"safety": 0, "functional": 1}
+    best = None
+    for f in findings:
+        if f["state"] in ("ok", "not_inspected", "not_seen_in_photo", "insufficient_evidence", "unsure") or \
+                f.get("severity") == "cosmetic" or f["finding_id"] not in regions:
+            continue
+        part = str(regions[f["finding_id"]].get("part_class") or "").replace("_", " ").strip()
+        if part.lower() in NOT_A_PART:
+            continue
+        key = (rank.get(f.get("severity") or "", 2), -float(f.get("confidence") or 0.0))
+        if best is None or key < best[0]:
+            best = (key, part)
+    return best[1] if best else None
+
+
+async def prewarm_fix(ctx: Context, scan: dict) -> bool:
+    """During the scan: start the "Fix it" search for the object and the most pressing part found so far (cache and
+    in-flight sharing in repairos.references.parts), so it is ready, or nearly, when the report is. Off without a
+    Bright Data key, before the object is identified, and after PREWARM_MAX pairs for one scan."""
+    from repairos.references import parts
+    from repairos.report.build import object_header
+
+    creds = parts.credentials()
+    if creds is None:
+        return False
+    run = await _run_row(ctx, scan["scan_id"]) or {}
+    obj = parts.object_words(object_header(run.get("identity")))
+    if obj is None:
+        return False
+    findings = [r.data for r in await ctx.state.list("finding", scan_id=scan["scan_id"])]
+    part = live_top_part(findings, run)
+    if part is None:
+        return False
+    tried = ctx._prewarmed.setdefault(scan["scan_id"], set())
+    if (obj, part) in tried or len(tried) >= PREWARM_MAX:
+        return False
+    tried.add((obj, part))
+    started = parts.prewarm(obj, part, creds)
+    if started:
+        log.info("parts search for scan %s started during the scan", scan["scan_id"])
+    return started
+
+
+def progress_counts(findings: list[dict], run: dict, stills_received: int) -> dict:
+    """Live counts while the scan goes on: places a model judged (each place once: a region judged in another
+    still counts there), places it could not judge, and places to look at (a possible problem)."""
+    seen: dict[tuple, str] = {}
+    for f in findings:
+        if f["state"] in ("not_inspected", "not_seen_in_photo"):
+            continue
+        refs = f.get("evidence_refs") or {}
+        key = ((refs.get("still_ids") or [""])[0], tuple(refs.get("crop_box_px") or ()), f["subject"]["ref"]
+               if not refs.get("crop_box_px") else "")
+        seen.setdefault(key, f["state"])
+    states = list(seen.values())
+    done = [st for st in (run.get("stills") or {}).values() if st.get("status") == "done"]
+    return {"stills_received": stills_received, "stills_done": len(done),
+            "stills_inspected": sum(1 for st in done if st.get("timing")),
+            "areas_checked": sum(1 for x in states if x not in ("insufficient_evidence", "unsure")),
+            "could_not_judge": sum(1 for x in states if x in ("insufficient_evidence", "unsure")),
+            "to_look_at": sum(1 for x in states if x not in ("ok", "insufficient_evidence", "unsure"))}
+
+
+async def announce_progress(ctx: Context, scan: dict) -> dict:
+    """Recount the scan's findings and publish the live event `progress` (after every still)."""
+    sid = scan["scan_id"]
+    findings = [r.data for r in await ctx.state.list("finding", scan_id=sid)]
+    stills = await ctx.state.list("still", scan_id=sid)
+    counts = progress_counts(findings, await _run_row(ctx, sid) or {}, len(stills))
+    await _update(ctx, scan, {"progress": {**counts, "at": _now()}, "announce": "progress"})
+    return counts
+
+
+async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
+    """The scan's mesh for this revision of the scan package (pipeline/mesh.py), built once per revision: a blob,
+    recorded on the run row (`mesh`) with the live event `mesh_ready`. A scan with no usable depth records why."""
+    from repairos.pipeline.mesh import MeshUnavailable, build_scan_mesh
+
+    row = await ctx.state.get("scan-package", scan_id)
+    if row is None:
+        raise PipelineError(f"no scan-package {scan_id}")
+    scan, rev = row.data, row.rev
+    have = (await _run_row(ctx, scan_id) or {}).get("mesh") or {}
+    if have.get("scan_rev") == rev and have.get("status") in ("done", "unavailable"):
+        return have
+    t0 = time.monotonic()
+    try:
+        local = await asyncio.to_thread(_local_scan, ctx, scan)
+        m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"])
+    except Exception as e:  # noqa: BLE001 - the 3D view never fails the capture or the report; the row says why
+        unavailable = isinstance(e, MeshUnavailable)
+        if not unavailable:
+            log.warning("mesh for scan %s failed: %s", scan_id, e)
+        reason = str(e) if unavailable else f"building the mesh failed ({type(e).__name__}: {e})"[:500]
+        if have.get("status") == "done":   # a rebuild that failed: the earlier mesh stays served
+            rec = {**have, "rebuild_error": reason, "rebuild_scan_rev": rev}
+        else:
+            rec = {"status": "unavailable" if unavailable else "failed", "reason": reason, "scan_rev": rev}
+        await _update(ctx, scan, {"mesh": rec})
+        return rec
+    ref = await asyncio.to_thread(ctx.blobs.put, m.ply, "application/x-ply")
+    cloud_ref = await asyncio.to_thread(ctx.blobs.put, m.cloud_ply, "application/x-ply") if m.cloud_ply else None
+    rec = {"status": "done", "ref": ref, "format": "ply", "scan_rev": rev, "rev": int(have.get("rev") or 0) + 1,
+           "vertices": m.vertices, "triangles": m.triangles, "keyframes": m.keyframes, "frame": "arkit_world",
+           "bytes": len(m.ply), "cloud_ref": cloud_ref, "cloud_points": m.cloud_points, "hero": m.hero,
+           "hero_reason": m.hero_reason, "size_m": m.size_m, "method": m.method,
+           "seconds": {**m.seconds, "with_io_s": round(time.monotonic() - t0, 3)}, "built_at": _now()}
+    await _update(ctx, scan, {"mesh": rec, "announce": "mesh_ready"})
+    return rec
 
 
 async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
@@ -586,8 +882,9 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
         findings = [r.data for r in await ctx.state.list("finding", scan_id=scan_id)]
         readings = [r.data for r in await ctx.state.list("meter-reading", scan_id=scan_id)]
         engine = ctx.slot("FUSION") if findings or readings else None
+        hints = (((await _run_row(ctx, scan_id)) or {}).get("hints") or {}).get("hints") or None
         result = await asyncio.to_thread(fuse, scan_id, findings, readings, scan.get("symptom"), engine=engine,
-                                         still_words=still_words(stills))
+                                         still_words=still_words(stills), hints=hints)
         for s in result.suspects:
             await ctx.state.transition("suspect", s["suspect_id"], "suspect.update_from_fusion", s)
         await ctx.state.transition("next-action", result.next_action["action_id"], "next_action.issue",
@@ -636,23 +933,99 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
         from repairos.fusion.questions import band
 
         before = await ctx.state.get("report", report_id_for(scan_id))   # more photos were added to the scan
+        extra = (await _run_row(ctx, scan_id)) or {}   # identity and mesh when they are ready; never waited for
         draft = build_report(scan=scan, stills=stills, findings=findings, suspects=suspects,
                              next_action=result.next_action, regions=regions, locations=locations, models=models,
                              explains={k: band(j.explains) for k, j in result.judgments.items()},
-                             previous=before.data if before else None)
-        draft["summary"] = await asyncio.to_thread(write_summary, draft, llm, symptom=scan.get("symptom"))
+                             previous=before.data if before else None,
+                             identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"))
+        from repairos.pipeline.story import STORY_KIND
+        from repairos.references.leads import user_lead
+
+        story = await ctx.state.get(STORY_KIND, scan["session_id"])
+        if story is not None and (ul := user_lead(story.data, draft)):
+            draft["user_lead"] = ul   # what the photos showed about the person's guess (cites findings, adds none)
+        fix_task = await start_fix(ctx, scan, draft)   # the top finding is known: look for the part meanwhile
+        try:
+            draft["summary"] = await asyncio.to_thread(write_summary, draft, llm, symptom=scan.get("symptom"))
+        except SpendLimit:   # the Claude cap: the report still goes out with what was done, and says so
+            draft["summary"] = dict(PAUSED_SUMMARY)
+        if any(PAUSED in " ".join(f.get("evidence") or []) for f in findings):
+            draft["limits"] = [*(draft.get("limits") or []), PAUSED_LIMIT]
+        if fix_task is not None and fix_task.done():   # ready before the report (cached): it goes out with it
+            fix, rec = _fix_result(fix_task)
+            if fix:
+                draft["fix"] = fix
+            else:   # nothing, or the spend cap: say so before the report is out, so the app never waits for it
+                await _update(ctx, scan, {"fix": {**rec, "finished_at": _now()}})
         validate("report", draft)
         problems = honesty_violations(draft, findings)
         if problems:
             raise PipelineError("honesty check failed: " + "; ".join(problems))
-        await ctx.state.transition("report", draft["report_id"], "report.publish", draft)
+        published = await ctx.state.transition("report", draft["report_id"], "report.publish", draft)
     except Exception as e:
         raise await _fail(ctx, scan, "report", e) from e
     await _update(ctx, scan, {"status": "done", "report_id": draft["report_id"], "finished_at": _now(),
                               "stages": {"report": {"status": "done", "finished_at": _now(),
                                                     "verdict": draft["verdict"],
                                                     "seconds": round(time.monotonic() - t0, 3)}}})
+    if fix_task is not None:
+        task = asyncio.create_task(attach_fix(ctx, scan, published, fix_task))
+        ctx._background.add(task)
+        task.add_done_callback(ctx._background.discard)
+    from repairos.recreation.service import recreation_quietly
+    ctx.spawn(recreation_quietly(ctx, scan["scan_id"]))   # stills that landed after Done: rebuilt only if new
     return draft
+
+
+# ------------------------------------------------------------------------------------- "Fix it" (parts, demo)
+async def start_fix(ctx: Context, scan: dict, draft: dict) -> asyncio.Task | None:
+    """Start the "Fix it" search for the draft report's top finding (repairos.references.parts) and return its task,
+    or None when it is off (no Bright Data key) or there is nothing to search. It runs beside the summary call and
+    is bounded by parts.BUDGET_S; the report never waits for it (attach_fix)."""
+    from repairos.references import parts
+
+    creds = parts.credentials()
+    if creds is None or parts.part_for(draft) is None:
+        return None
+    await _update(ctx, scan, {"fix": None})   # an earlier run's record goes
+    await _update(ctx, scan, {"fix": {"status": "searching", "started_at": _now()}})
+    return asyncio.create_task(asyncio.wait_for(asyncio.to_thread(parts.find_fix, draft, creds), parts.BUDGET_S))
+
+
+def _fix_result(task: asyncio.Task) -> tuple[dict | None, dict]:
+    try:
+        return task.result()
+    except (asyncio.TimeoutError, TimeoutError):
+        from repairos.references import parts
+        return None, {"status": "timeout", "seconds": parts.BUDGET_S}
+    except Exception as e:  # noqa: BLE001 - optional; the run row says why
+        return None, {"status": "failed", "error": type(e).__name__}
+
+
+async def attach_fix(ctx: Context, scan: dict, published: Any, task: asyncio.Task) -> dict | None:
+    """When the search is ready: the published report gains `fix` (one more revision of the same report, only if no
+    newer report replaced it), and the run row records it with the live event `fix_ready`. No result, a timeout, an
+    error or the spend cap: the report is left as it is, and `fix_ready` carries only the status (no offers)."""
+    from repairos.references import parts
+
+    if not task.done():
+        await asyncio.wait([task])
+    fix, rec = _fix_result(task)
+    report = published.data
+    if fix and report.get("fix") != fix:
+        try:
+            await ctx.state.put("report", {**report, "fix": fix}, expect_rev=published.rev)
+        except RevConflict:   # a newer report (more photos) is out: this search was for the old one
+            await _update(ctx, scan, {"fix": {**rec, "status": "stale", "finished_at": _now()}})
+            return None
+    if not fix:   # the live event ends the app's "Searching for parts…" (`limited`: "not available right now")
+        await _update(ctx, scan, {"fix": {**rec, "finished_at": _now()}, "announce": "fix_ready"})
+        return None
+    await _update(ctx, scan, {"fix": {**rec, **fix, "finished_at": _now()}, "announce": "fix_ready"})
+    log.info("fix for scan %s: %d option(s) (%s, %.1f s)", scan["scan_id"], len(fix["options"]),
+             "cached" if rec.get("cached") else "searched", float(rec.get("seconds") or 0.0))
+    return parts.payload(scan["scan_id"], fix)
 
 
 NOT_ALIGNED = ("this photo's capture segment could not be aligned with the scan (ARKit relocalisation failed), so it "

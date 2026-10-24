@@ -20,20 +20,38 @@ final class PointCloudRenderer: NSObject, MTKViewDelegate {
     struct Particle { var positionConf: SIMD4<Float>; var color: SIMD4<Float> }
     struct BoxUniforms { var center: SIMD4<Float>; var halfSize: SIMD4<Float> }
     struct GridUniforms { var fine: SIMD4<Float>; var coarse: SIMD4<Float> }
+    struct FinishUniforms { var params: SIMD4<Float> }
+    struct MarkerUniforms { var point: SIMD4<Float>; var params: SIMD4<Float> }
+
+    /// The close-up target to draw (world point), set at ≤ 10 Hz; nil hides it.
+    var marker: SIMD3<Float>?
+    /// When the "Done" moment started (CACurrentMediaTime), nil while live.
+    private var finishStart: CFTimeInterval?
+    static let finishDuration: CFTimeInterval = 0.9
+
+    /// Starts the "Done" moment: the cloud gathers into the locked box over `finishDuration`.
+    func beginFinish() {
+        guard finishStart == nil else { return }
+        finishStart = CACurrentMediaTime()
+        marker = nil
+    }
 
     let device: MTLDevice
     private let queue: MTLCommandQueue
     private let accumulate: MTLComputePipelineState
     private let particlePipeline: MTLRenderPipelineState
     private let cameraPipeline: MTLRenderPipelineState
+    private let markerPipeline: MTLRenderPipelineState
     private let depthOn: MTLDepthStencilState
     private let depthOff: MTLDepthStencilState
     private var cache: CVMetalTextureCache?
     let particles: MTLBuffer
-    private let counter: MTLBuffer
-    private let keys: MTLBuffer
-    private let scores: MTLBuffer
-    private var grid = GridUniforms(fine: .zero, coarse: .zero)
+    let counter: MTLBuffer
+    let keys: MTLBuffer
+    let scores: MTLBuffer
+    private(set) var grid = GridUniforms(fine: .zero, coarse: .zero)
+    /// "Turn it" (Capture/Handheld): fusion in the object frame and drawing where the object is now, when set.
+    var handheld: HandheldFusion?
     private var coarseSet = false
     private var fineSet = false
     private weak var session: ARSession?
@@ -80,9 +98,11 @@ final class PointCloudRenderer: NSObject, MTKViewDelegate {
             return try? device.makeRenderPipelineState(descriptor: d)
         }
         guard let pp = pipeline("particleVertex", "particleFragment", blend: true),
-              let cp = pipeline("cameraVertex", "cameraFragment", blend: false) else { return nil }
+              let cp = pipeline("cameraVertex", "cameraFragment", blend: false),
+              let mp = pipeline("markerVertex", "markerFragment", blend: true) else { return nil }
         particlePipeline = pp
         cameraPipeline = cp
+        markerPipeline = mp
         let on = MTLDepthStencilDescriptor()
         on.depthCompareFunction = .less
         on.isDepthWriteEnabled = true
@@ -174,7 +194,9 @@ final class PointCloudRenderer: NSObject, MTKViewDelegate {
         var boxU = boxUniforms()
 
         // Accumulate when the camera moved ≥ 1 cm or turned ≥ 1.5° (or on the first frame).
-        if let depth = frame.smoothedSceneDepth ?? frame.sceneDepth, let conf = depth.confidenceMap,
+        if let handheld, let box {
+            handheld.encodeFusion(cmd, renderer: self, box: box)
+        } else if let depth = frame.smoothedSceneDepth ?? frame.sceneDepth, let conf = depth.confidenceMap,
            moved(frame.camera.transform),
            let dTex = texture(depth.depthMap, .r32Float, plane: 0, cache: cache),
            let kTex = texture(conf, .r8Unorm, plane: 0, cache: cache),
@@ -221,24 +243,43 @@ final class PointCloudRenderer: NSObject, MTKViewDelegate {
             SIMD4(-1, -1, uv(0, 1).x, uv(0, 1).y), SIMD4(1, -1, uv(1, 1).x, uv(1, 1).y),
             SIMD4(-1, 1, uv(0, 0).x, uv(0, 0).y), SIMD4(1, 1, uv(1, 0).x, uv(1, 0).y),
         ]
+        let progress = finishStart.map { Float(min(1, (now - $0) / Self.finishDuration)) } ?? 0
+        var finish = FinishUniforms(params: SIMD4(progress, 0, 0, 0))
         enc.setRenderPipelineState(cameraPipeline)
         enc.setDepthStencilState(depthOff)
         enc.setVertexBytes(&quad, length: MemoryLayout<SIMD4<Float>>.stride * 4, index: 0)
         enc.setFragmentTexture(yTex, index: 0)
         enc.setFragmentTexture(cTex, index: 1)
+        enc.setFragmentBytes(&finish, length: MemoryLayout<FinishUniforms>.stride, index: 0)
         enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
 
         var vp = frame.camera.projectionMatrix(for: .portrait, viewportSize: size, zNear: 0.01, zFar: 10)
             * frame.camera.viewMatrix(for: .portrait)
         var scale = Float(view.drawableSize.height) * 0.006
-        enc.setRenderPipelineState(particlePipeline)
+        var objectToWorld = handheld?.objectToWorld(frame.timestamp) ?? matrix_identity_float4x4
+        enc.setRenderPipelineState(handheld?.particlePipeline ?? particlePipeline)
+        enc.setVertexBytes(&objectToWorld, length: MemoryLayout<simd_float4x4>.stride, index: 5)
         enc.setDepthStencilState(depthOn)
         enc.setVertexBuffer(particles, offset: 0, index: 0)
         enc.setVertexBytes(&vp, length: MemoryLayout<simd_float4x4>.stride, index: 1)
         enc.setVertexBytes(&boxU, length: MemoryLayout<BoxUniforms>.stride, index: 2)
         enc.setVertexBytes(&scale, length: MemoryLayout<Float>.stride, index: 3)
+        enc.setVertexBytes(&finish, length: MemoryLayout<FinishUniforms>.stride, index: 4)
         // Every slot: empty ones are dropped in the vertex shader.
         enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: Self.maxPoints)
+        if let marker {
+            let px = Float(view.drawableSize.width) * 0.2
+            var mu = MarkerUniforms(point: SIMD4(marker, 1),
+                                    params: SIMD4(Float(now.truncatingRemainder(dividingBy: 1000)), px,
+                                                  Float(view.drawableSize.width), Float(view.drawableSize.height)))
+            enc.setRenderPipelineState(markerPipeline)
+            enc.setDepthStencilState(depthOff)
+            var mvp = vp * objectToWorld   // the marker is on the object (object frame while turning it)
+            enc.setVertexBytes(&mvp, length: MemoryLayout<simd_float4x4>.stride, index: 0)
+            enc.setVertexBytes(&mu, length: MemoryLayout<MarkerUniforms>.stride, index: 1)
+            enc.setFragmentBytes(&mu, length: MemoryLayout<MarkerUniforms>.stride, index: 0)
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
         enc.endEncoding()
         cmd.present(drawable)
         // The Metal textures wrap ARKit's buffers: keep them until the GPU is done with this frame.

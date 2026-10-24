@@ -17,6 +17,11 @@ struct RootView: View {
     @State private var starts = 0
     @State private var showAll = false
     @State private var pendingDelete: SessionRecord?
+    @State private var replay: SessionRecord?
+    /// "Hey Lea" (or the Talk button) on the home screen: Voice/HomeConversationSheet.
+    @State private var talking = false
+    @AppStorage(DemoReplay.enabledKey) private var demoReplay = false
+    @AppStorage(DemoReplay.sessionKey) private var demoSession = ""
     private static let recentCount = 3
     @FocusState private var symptomFocused: Bool
 
@@ -70,12 +75,29 @@ struct RootView: View {
             .fullScreenCover(item: $active, onDismiss: app.reloadSessions) { record in
                 SessionFlowView(record: record)
             }
+            .fullScreenCover(item: $replay) { record in DemoReplayFlowView(record: record) }
             .alert("Can't start", isPresented: .constant(error != nil)) {
                 Button("OK") { error = nil }
             } message: { Text(error ?? "") }
             .task {
                 try? await Task.sleep(for: .milliseconds(300))
                 if app.autostart, active == nil { newScan() }
+                if let id = app.openSessionID, active == nil {
+                    app.openSessionID = nil
+                    let r = app.sessions.first { $0.id == id }
+                    if CommandLine.arguments.contains("--demo-replay") { replay = r } else { active = r }
+                }
+            }
+            // "Hey Siri, scan with Lea" (Voice/ScanIntent): start a scan with the spoken description.
+            .onChange(of: IntentInbox.shared.requests, initial: true) { scanFromIntent() }
+            .onChange(of: WakeListener.shared.wakes) { if active == nil, replay == nil, app.gateway != nil { talking = true } }
+            .sheet(isPresented: $talking) {
+                if let gateway = app.gateway {
+                    HomeConversationSheet(gateway: gateway) { said in
+                        symptom = said
+                        newScan()
+                    }
+                }
             }
             .onAppear {
                 if !Consent.accepted && !devAutostart {
@@ -91,14 +113,36 @@ struct RootView: View {
     private var startBar: some View {
         VStack(spacing: Spacing.m) {
             FieldWell(symbol: "text.bubble") {
-                TextField("What's wrong? (optional)", text: $symptom)
+                TextField("What happened? (optional)", text: $symptom)
                     .focused($symptomFocused)
                     .submitLabel(.go)
                     .onSubmit(newScan)
+                StoryMicButton(text: $symptom, gateway: app.isPaired ? app.gateway : nil)   // Voice/: hold to dictate
             }
-            Button(action: newScan) { Label("Start scan", systemImage: Symbol.scan) }
-                .buttonStyle(.primary)
-                .sensoryFeedback(Haptic.commit, trigger: starts)
+            HStack(spacing: Spacing.s) {
+                Button(action: newScan) { Label("Start scan", systemImage: Symbol.scan) }
+                    .buttonStyle(.primary)
+                    .sensoryFeedback(Haptic.commit, trigger: starts)
+                if app.isPaired, app.gateway != nil {
+                    Button { talking = true } label: { Image(systemName: "waveform") }
+                        .buttonStyle(RoundIconButtonStyle())
+                        .accessibilityLabel("Talk to Lea")
+                    WakeIndicator()
+                }
+            }
+            if !app.isPaired {
+                // The only plumbing on Home, and only when it blocks a report.
+                Button { showPairing = true } label: {
+                    Text("Not connected · Set up").font(.footnote.weight(.semibold)).foregroundStyle(Palette.cautionText)
+                }
+                .frame(minHeight: 32)
+            }
+            if demoReplay, !demoSession.isEmpty, let saved = DemoReplay.chosen(app: app) {
+                // Demo only: a quiet text button, never as heavy as Start scan.
+                Button { replay = saved } label: { Label("Replay saved scan", systemImage: "play.fill") }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 32)
+            }
         }
         .padding(.horizontal, Spacing.gutter)
         .padding(.top, Spacing.m)
@@ -113,6 +157,12 @@ struct RootView: View {
             .ignoresSafeArea(edges: .bottom)
             .allowsHitTesting(false)
         }
+    }
+
+    private func scanFromIntent() {
+        guard active == nil, replay == nil, let story = IntentInbox.shared.take() else { return }
+        symptom = story
+        newScan()
     }
 
     private func afterConsent() {
@@ -148,7 +198,9 @@ struct RootView: View {
             return
         }
         do {
-            active = try app.storage.newSession(symptom: symptom, engine: app.capabilities.engine)
+            // After talking with Lea first (Voice/PreScan): the same gateway session and scan id carry on.
+            active = try PreScan.shared.takeRecord(storage: app.storage, symptom: symptom, engine: app.capabilities.engine)
+                ?? app.storage.newSession(symptom: symptom, engine: app.capabilities.engine)
             symptom = ""
         } catch {
             self.error = error.localizedDescription
@@ -188,25 +240,33 @@ private struct HomeHeader: View {
                     .buttonStyle(RoundIconButtonStyle())
                     .accessibilityLabel("Settings")
             }
-            DomeDial(cells: HomeHeader.art, size: 132, style: .app)
+            DomeDial(cells: HomeHeader.art.enumerated().map { $0.offset % 12 < sectorsShown ? $0.element : .missing }, size: 132, style: .app)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, Spacing.s)
+                .task { await drawIn() }
             VStack(alignment: .leading, spacing: Spacing.s) {
                 Text("Find what's broken").font(.heroTitle)
-                Text("Point at it, walk around it, and lea writes up what looks wrong, with photos of each problem.")
+                Text("Walk around it with your phone. Lea shows you what looks wrong, and where.")
                     .font(.body).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            FlowLayout(spacing: 6) {
-                StatusPill(text: engine == .objectCapture ? "LiDAR scan" : "No LiDAR: motion-tracked",
-                           symbol: engine == .objectCapture ? "cube.transparent" : "move.3d", tone: .neutral)
-                Button(action: pair) {
-                    StatusPill(text: paired ? "Mac paired" : "Mac not paired", symbol: paired ? Symbol.mac : "bolt.horizontal.circle",
-                               tone: paired ? .good : .caution)
-                }
-                .buttonStyle(PressableCardStyle())
-                .accessibilityHint(paired ? "Pair again" : "Pair with your Mac to get reports")
-            }
+            // Capability and pairing live in Settings; Home shows a line under Start only when a scan can't be reported.
+        }
+    }
+
+    /// Sectors drawn so far: the dome fills in once per launch, sector by sector (about a second), then stays still.
+    @State private var sectorsShown = Self.played ? 12 : 0
+    @MainActor private static var played = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private func drawIn() async {
+        guard !Self.played else { return }
+        Self.played = true
+        if reduceMotion { sectorsShown = 12; return }
+        // Around the dome, all three rings of a sector together, 80 ms apart; never loops.
+        for step in 1...12 {
+            try? await Task.sleep(for: .milliseconds(80))
+            sectorsShown = step
         }
     }
 

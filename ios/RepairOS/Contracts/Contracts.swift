@@ -1460,7 +1460,7 @@ public struct FixElement: Codable, Sendable {
     /// The part's buy row plus ref and qty.
     public let buy: [String: JSONAny]?
     /// A word: low, medium or high. Never compared with /look's numeric confidence.
-    public let confidence: ConfidenceEnum
+    public let confidence: ConfidenceWordEnum
     public let coverage: Double?
     public let detail: String?
     public let how: String?
@@ -1477,7 +1477,7 @@ public struct FixElement: Codable, Sendable {
     public let seenBy: String?
     public let shiftMm: [Double]?
     /// Target T3: which evidence produced the fix.
-    public let sources: [SourceElement]?
+    public let sources: [FixSource]?
     /// Target T3: structured subject; keep part as the display string.
     public let subject: FixSubject?
 
@@ -1499,7 +1499,7 @@ public struct FixElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(action: Action, buy: [String: JSONAny]?, confidence: ConfidenceEnum, coverage: Double?, detail: String?, how: String?, missingRegionMm: MissingRegionMmClass?, note: String?, part: String?, problem: String, remake: Remake?, seenBy: String?, shiftMm: [Double]?, sources: [SourceElement]?, subject: FixSubject?) {
+    public init(action: Action, buy: [String: JSONAny]?, confidence: ConfidenceWordEnum, coverage: Double?, detail: String?, how: String?, missingRegionMm: MissingRegionMmClass?, note: String?, part: String?, problem: String, remake: Remake?, seenBy: String?, shiftMm: [Double]?, sources: [FixSource]?, subject: FixSubject?) {
         self.action = action
         self.buy = buy
         self.confidence = confidence
@@ -1531,7 +1531,7 @@ public enum Action: String, Codable, Sendable {
 /// A word: low, medium or high. Never compared with /look's numeric confidence.
 ///
 /// The locator's own word (uncalibrated, I6).
-public enum ConfidenceEnum: String, Codable, Sendable {
+public enum ConfidenceWordEnum: String, Codable, Sendable {
     case high = "high"
     case low = "low"
     case medium = "medium"
@@ -1567,7 +1567,7 @@ public struct Remake: Codable, Sendable {
     }
 }
 
-public enum SourceElement: String, Codable, Sendable {
+public enum FixSource: String, Codable, Sendable {
     case design = "design"
     case meter = "meter"
     case photo = "photo"
@@ -3409,7 +3409,7 @@ public struct Substitute: Codable, Sendable {
 // MARK: - RootCause
 public struct RootCause: Codable, Sendable {
     public let evidenceSummary: [String]?
-    public let fix: Fix
+    public let fix: FixEnum
     public let pFaultWord: Word?
     /// Null means unproven; the plan must say so.
     public let proofReadingID: String?
@@ -3427,7 +3427,7 @@ public struct RootCause: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(evidenceSummary: [String]?, fix: Fix, pFaultWord: Word?, proofReadingID: String?, subject: RootCauseSubject, suspectID: String, verdict: RootCauseVerdict) {
+    public init(evidenceSummary: [String]?, fix: FixEnum, pFaultWord: Word?, proofReadingID: String?, subject: RootCauseSubject, suspectID: String, verdict: RootCauseVerdict) {
         self.evidenceSummary = evidenceSummary
         self.fix = fix
         self.pFaultWord = pFaultWord
@@ -3438,7 +3438,7 @@ public struct RootCause: Codable, Sendable {
     }
 }
 
-public enum Fix: String, Codable, Sendable {
+public enum FixEnum: String, Codable, Sendable {
     case check = "check"
     case none = "none"
     case recrimp = "recrimp"
@@ -3517,6 +3517,11 @@ public struct Report: Codable, Sendable {
     /// code, most likely problem first (repairos.report.build.rank_key); cosmetic issues are in
     /// `cosmetic`.
     public let findings: [CosmeticElement]
+    /// Optional "Fix it": where to buy the part of the top finding, from a public shopping
+    /// search (repairos.references.parts). Only title, displayed price, seller and link are
+    /// kept; no page, text or image. Added when the search is ready; never evidence and never
+    /// delays the report.
+    public let fix: FixClass?
     /// Phase 1 makes no Grain calls.
     public let grain: GrainEnum
     /// Regions looked at that could not be judged (I4), each with the reason.
@@ -3524,6 +3529,9 @@ public struct Report: Codable, Sendable {
     /// What photos cannot tell (always shown), plus a meter suggestion when a reported symptom
     /// is not explained.
     public let limits: [String]?
+    /// The scan's 3D mesh for the 3D view: LiDAR TSDF, decimated, vertex-coloured, in the frame
+    /// of every finding's location (pins sit on it as they are).
+    public let mesh: Mesh?
     /// Provenance: which model (and version) did each step, or why a step did not run.
     public let models: Models
     /// The finding_ids of the top rows of `findings` with an issue (at most three), ranked in
@@ -3535,6 +3543,13 @@ public struct Report: Codable, Sendable {
     public let nextStep: NextStep?
     /// Regions nobody looked at (I3), each with the reason. Never shown as ok.
     public let notInspected: [NotInspectedElement]
+    /// What the object is, from the first photos (one vision-model call; a label photo is read).
+    /// Brand and model only as printed or recognised beyond doubt, else absent.
+    public let object: Object?
+    /// Optional: where to look first, from public references about the identified product (web
+    /// search titles and descriptions only; no third-party image or page is kept). Never
+    /// evidence: a hint never makes a finding.
+    public let referenceHints: ReferenceHints?
     public let reportID: String
     /// Safety notes chosen by code from the findings (repairos.report.safety); shown before
     /// anything else.
@@ -3542,7 +3557,14 @@ public struct Report: Codable, Sendable {
     public let scanID: String
     public let sessionID: String
     public let summary: Summary
-    /// Picked in code (repairos.report.verdict truth table), never by a model.
+    /// Optional: what the person said they suspected and what the photos showed about it
+    /// (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only
+    /// ordered the inspection; this section cites findings and never adds or changes one.
+    public let userLead: UserLead?
+    /// Picked in code (repairos.report.verdict truth table), never by a model. no_problems_seen
+    /// (V8): nothing judged shows an issue and the capture covered the object well
+    /// (config/verdict.yaml), but some regions were not checked: they are listed in
+    /// verdict_reason.caveat.
     public let verdict: ReportVerdict
     public let verdictReason: VerdictReason
 
@@ -3551,39 +3573,49 @@ public struct Report: Codable, Sendable {
         case cosmetic = "cosmetic"
         case createdAt = "created_at"
         case findings = "findings"
+        case fix = "fix"
         case grain = "grain"
         case insufficientEvidence = "insufficient_evidence"
         case limits = "limits"
+        case mesh = "mesh"
         case models = "models"
         case mostLikely = "most_likely"
         case nextStep = "next_step"
         case notInspected = "not_inspected"
+        case object = "object"
+        case referenceHints = "reference_hints"
         case reportID = "report_id"
         case safety = "safety"
         case scanID = "scan_id"
         case sessionID = "session_id"
         case summary = "summary"
+        case userLead = "user_lead"
         case verdict = "verdict"
         case verdictReason = "verdict_reason"
     }
 
-    public init(capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt
         self.findings = findings
+        self.fix = fix
         self.grain = grain
         self.insufficientEvidence = insufficientEvidence
         self.limits = limits
+        self.mesh = mesh
         self.models = models
         self.mostLikely = mostLikely
         self.nextStep = nextStep
         self.notInspected = notInspected
+        self.object = object
+        self.referenceHints = referenceHints
         self.reportID = reportID
         self.safety = safety
         self.scanID = scanID
         self.sessionID = sessionID
         self.summary = summary
+        self.userLead = userLead
         self.verdict = verdict
         self.verdictReason = verdictReason
     }
@@ -3602,6 +3634,10 @@ public struct Capture: Codable, Sendable {
     public let stills: Int
     /// Stills with at least one region a model judged.
     public let stillsInspected: Int
+    /// Where the camera was (keyframes and stills) on the view dome around the object box
+    /// (repairos.report.coverage): cells of 3 rings x 12 sectors seen, distinct sectors, and the
+    /// share of cells. Absent when no box or pose is known.
+    public let views: Views?
 
     public enum CodingKeys: String, CodingKey {
         case coverageWords = "coverage_words"
@@ -3610,15 +3646,17 @@ public struct Capture: Codable, Sendable {
         case scanPoints = "scan_points"
         case stills = "stills"
         case stillsInspected = "stills_inspected"
+        case views = "views"
     }
 
-    public init(coverageWords: String, depthSource: DepthSource, keyframes: Int, scanPoints: Int?, stills: Int, stillsInspected: Int) {
+    public init(coverageWords: String, depthSource: DepthSource, keyframes: Int, scanPoints: Int?, stills: Int, stillsInspected: Int, views: Views?) {
         self.coverageWords = coverageWords
         self.depthSource = depthSource
         self.keyframes = keyframes
         self.scanPoints = scanPoints
         self.stills = stills
         self.stillsInspected = stillsInspected
+        self.views = views
     }
 }
 
@@ -3634,9 +3672,37 @@ public enum DepthSource: String, Codable, Sendable {
     case none = "none"
 }
 
+/// Where the camera was (keyframes and stills) on the view dome around the object box
+/// (repairos.report.coverage): cells of 3 rings x 12 sectors seen, distinct sectors, and the
+/// share of cells. Absent when no box or pose is known.
+// MARK: - Views
+public struct Views: Codable, Sendable {
+    public let cells: Int
+    public let cellsTotal: Int
+    public let sectors: Int
+    public let sectorsTotal: Int
+    public let share: Double
+
+    public enum CodingKeys: String, CodingKey {
+        case cells = "cells"
+        case cellsTotal = "cells_total"
+        case sectors = "sectors"
+        case sectorsTotal = "sectors_total"
+        case share = "share"
+    }
+
+    public init(cells: Int, cellsTotal: Int, sectors: Int, sectorsTotal: Int, share: Double) {
+        self.cells = cells
+        self.cellsTotal = cellsTotal
+        self.sectors = sectors
+        self.sectorsTotal = sectorsTotal
+        self.share = share
+    }
+}
+
 // MARK: - CosmeticElement
 public struct CosmeticElement: Codable, Sendable {
-    public let confidenceWord: ConfidenceEnum
+    public let confidenceWord: ConfidenceWordEnum
     public let crop: CosmeticCrop
     /// The crops of the other findings in a collapsed row (`crop` is the first).
     public let crops: [CosmeticCrop]?
@@ -3692,7 +3758,7 @@ public struct CosmeticElement: Codable, Sendable {
         case supersededIDS = "superseded_ids"
     }
 
-    public init(confidenceWord: ConfidenceEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: CosmeticSubject, supersededIDS: [String]?) {
+    public init(confidenceWord: ConfidenceWordEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: CosmeticSubject, supersededIDS: [String]?) {
         self.confidenceWord = confidenceWord
         self.crop = crop
         self.crops = crops
@@ -3810,7 +3876,7 @@ public enum JudgmentVerdict: String, Codable, Sendable {
 // MARK: - Location
 public struct Location: Codable, Sendable {
     /// The locator's own word (uncalibrated, I6).
-    public let confidenceWord: ConfidenceEnum?
+    public let confidenceWord: ConfidenceWordEnum?
     /// From the still's camera to point_m.
     public let distanceM: Double?
     /// The scan's frame: metres, Y up.
@@ -3842,7 +3908,7 @@ public struct Location: Codable, Sendable {
         case reason = "reason"
     }
 
-    public init(confidenceWord: ConfidenceEnum?, distanceM: Double?, frame: LocationFrame?, method: LocationMethod?, normal: [Double]?, notes: [String]?, pointM: [Double]?, regionMaxM: [Double]?, regionMinM: [Double]?, status: LocationStatus, reason: String?) {
+    public init(confidenceWord: ConfidenceWordEnum?, distanceM: Double?, frame: LocationFrame?, method: LocationMethod?, normal: [Double]?, notes: [String]?, pointM: [Double]?, regionMaxM: [Double]?, regionMinM: [Double]?, status: LocationStatus, reason: String?) {
         self.confidenceWord = confidenceWord
         self.distanceM = distanceM
         self.frame = frame
@@ -3921,6 +3987,61 @@ public struct CosmeticSubject: Codable, Sendable {
     }
 }
 
+/// Optional "Fix it": where to buy the part of the top finding, from a public shopping
+/// search (repairos.references.parts). Only title, displayed price, seller and link are
+/// kept; no page, text or image. Added when the search is ready; never evidence and never
+/// delays the report.
+// MARK: - FixClass
+public struct FixClass: Codable, Sendable {
+    /// A public replacement guide for that part, when the search found one.
+    public let guideLink: String?
+    public let options: [Option]
+    /// The part searched for, in generic words (the top finding's part class).
+    public let part: String
+    public let searchedAt: Date
+
+    public enum CodingKeys: String, CodingKey {
+        case guideLink = "guide_link"
+        case options = "options"
+        case part = "part"
+        case searchedAt = "searched_at"
+    }
+
+    public init(guideLink: String?, options: [Option], part: String, searchedAt: Date) {
+        self.guideLink = guideLink
+        self.options = options
+        self.part = part
+        self.searchedAt = searchedAt
+    }
+}
+
+// MARK: - Option
+public struct Option: Codable, Sendable {
+    public let currency: String?
+    public let link: String
+    /// The displayed price; absent when the result showed none (a web result, not a shopping
+    /// one).
+    public let price: Double?
+    public let seller: String
+    public let title: String
+
+    public enum CodingKeys: String, CodingKey {
+        case currency = "currency"
+        case link = "link"
+        case price = "price"
+        case seller = "seller"
+        case title = "title"
+    }
+
+    public init(currency: String?, link: String, price: Double?, seller: String, title: String) {
+        self.currency = currency
+        self.link = link
+        self.price = price
+        self.seller = seller
+        self.title = title
+    }
+}
+
 public enum GrainEnum: String, Codable, Sendable {
     case notCalled = "not called"
 }
@@ -3978,6 +4099,65 @@ public struct InsufficientEvidencePhoto: Codable, Sendable {
         self.cropRef = cropRef
         self.stillID = stillID
     }
+}
+
+/// The scan's 3D mesh for the 3D view: LiDAR TSDF, decimated, vertex-coloured, in the frame
+/// of every finding's location (pins sit on it as they are).
+// MARK: - Mesh
+public struct Mesh: Codable, Sendable {
+    public let cloudPoints: Int?
+    /// The object's part of the phone's LiDAR cloud, coloured points (binary PLY: float x y z,
+    /// uchar red green blue), same frame (/v1/scans/{scan_id}/cloud?rev=N).
+    public let cloudURL: String?
+    /// Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists.
+    public let format: Format
+    public let frame: LocationFrame
+    /// What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is
+    /// too small or too little was captured for 3D to read as the object.
+    public let hero: Hero?
+    public let heroReason: String?
+    /// Goes up when the mesh is rebuilt (more photos added to the scan).
+    public let rev: Int
+    public let triangles: Int?
+    /// Gateway path: GET it with the device token (/v1/scans/{scan_id}/mesh?rev=N).
+    public let url: String
+
+    public enum CodingKeys: String, CodingKey {
+        case cloudPoints = "cloud_points"
+        case cloudURL = "cloud_url"
+        case format = "format"
+        case frame = "frame"
+        case hero = "hero"
+        case heroReason = "hero_reason"
+        case rev = "rev"
+        case triangles = "triangles"
+        case url = "url"
+    }
+
+    public init(cloudPoints: Int?, cloudURL: String?, format: Format, frame: LocationFrame, hero: Hero?, heroReason: String?, rev: Int, triangles: Int?, url: String) {
+        self.cloudPoints = cloudPoints
+        self.cloudURL = cloudURL
+        self.format = format
+        self.frame = frame
+        self.hero = hero
+        self.heroReason = heroReason
+        self.rev = rev
+        self.triangles = triangles
+        self.url = url
+    }
+}
+
+/// Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists.
+public enum Format: String, Codable, Sendable {
+    case ply = "ply"
+}
+
+/// What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is
+/// too small or too little was captured for 3D to read as the object.
+public enum Hero: String, Codable, Sendable {
+    case mesh = "mesh"
+    case photos = "photos"
+    case points = "points"
 }
 
 /// Provenance: which model (and version) did each step, or why a step did not run.
@@ -4077,6 +4257,77 @@ public struct NotInspectedElement: Codable, Sendable {
     }
 }
 
+/// What the object is, from the first photos (one vision-model call; a label photo is read).
+/// Brand and model only as printed or recognised beyond doubt, else absent.
+// MARK: - Object
+public struct Object: Codable, Sendable {
+    public let brand: String?
+    /// A short generic kind of product, or unknown.
+    public let category: String
+    public let confidenceWord: ConfidenceWordEnum
+    public let fromStillIDS: [String]?
+    /// That printed text, as read.
+    public let labelText: String?
+    /// A model label, rating plate or printed name was readable.
+    public let labelVisible: Bool
+    public let model: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case brand = "brand"
+        case category = "category"
+        case confidenceWord = "confidence_word"
+        case fromStillIDS = "from_still_ids"
+        case labelText = "label_text"
+        case labelVisible = "label_visible"
+        case model = "model"
+    }
+
+    public init(brand: String?, category: String, confidenceWord: ConfidenceWordEnum, fromStillIDS: [String]?, labelText: String?, labelVisible: Bool, model: String?) {
+        self.brand = brand
+        self.category = category
+        self.confidenceWord = confidenceWord
+        self.fromStillIDS = fromStillIDS
+        self.labelText = labelText
+        self.labelVisible = labelVisible
+        self.model = model
+    }
+}
+
+/// Optional: where to look first, from public references about the identified product (web
+/// search titles and descriptions only; no third-party image or page is kept). Never
+/// evidence: a hint never makes a finding.
+// MARK: - ReferenceHints
+public struct ReferenceHints: Codable, Sendable {
+    public let hints: [String]
+    public let sources: [ReferenceHintsSource]?
+
+    public enum CodingKeys: String, CodingKey {
+        case hints = "hints"
+        case sources = "sources"
+    }
+
+    public init(hints: [String], sources: [ReferenceHintsSource]?) {
+        self.hints = hints
+        self.sources = sources
+    }
+}
+
+// MARK: - ReferenceHintsSource
+public struct ReferenceHintsSource: Codable, Sendable {
+    public let link: String
+    public let title: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case link = "link"
+        case title = "title"
+    }
+
+    public init(link: String, title: String?) {
+        self.link = link
+        self.title = title
+    }
+}
+
 // MARK: - Safety
 public struct Safety: Codable, Sendable {
     public let code: SafetyCode
@@ -4123,20 +4374,92 @@ public struct Summary: Codable, Sendable {
     }
 }
 
-/// Picked in code (repairos.report.verdict truth table), never by a model.
+/// Optional: what the person said they suspected and what the photos showed about it
+/// (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only
+/// ordered the inspection; this section cites findings and never adds or changes one.
+// MARK: - UserLead
+public struct UserLead: Codable, Sendable {
+    /// confirmed = a judged region of that area has an issue; not_seen = regions of that area
+    /// were judged with no visible issue; could_not_check = no photo of it was judged (or no
+    /// area was named).
+    public let checked: Checked
+    /// The report rows this is based on (any section).
+    public let evidenceFindingIDS: [String]
+    /// One or two plain sentences, written in code from the rows cited.
+    public let note: String
+    /// The person's own words (typed or spoken).
+    public let said: String
+    public let sources: [UserLeadSource]?
+    /// The part or area they suspected, in their generic words.
+    public let suspect: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case checked = "checked"
+        case evidenceFindingIDS = "evidence_finding_ids"
+        case note = "note"
+        case said = "said"
+        case sources = "sources"
+        case suspect = "suspect"
+    }
+
+    public init(checked: Checked, evidenceFindingIDS: [String], note: String, said: String, sources: [UserLeadSource]?, suspect: String?) {
+        self.checked = checked
+        self.evidenceFindingIDS = evidenceFindingIDS
+        self.note = note
+        self.said = said
+        self.sources = sources
+        self.suspect = suspect
+    }
+}
+
+/// confirmed = a judged region of that area has an issue; not_seen = regions of that area
+/// were judged with no visible issue; could_not_check = no photo of it was judged (or no
+/// area was named).
+public enum Checked: String, Codable, Sendable {
+    case confirmed = "confirmed"
+    case couldNotCheck = "could_not_check"
+    case notSeen = "not_seen"
+}
+
+// MARK: - UserLeadSource
+public struct UserLeadSource: Codable, Sendable {
+    public let link: String
+    public let title: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case link = "link"
+        case title = "title"
+    }
+
+    public init(link: String, title: String?) {
+        self.link = link
+        self.title = title
+    }
+}
+
+/// Picked in code (repairos.report.verdict truth table), never by a model. no_problems_seen
+/// (V8): nothing judged shows an issue and the capture covered the object well
+/// (config/verdict.yaml), but some regions were not checked: they are listed in
+/// verdict_reason.caveat.
 public enum ReportVerdict: String, Codable, Sendable {
     case insufficientEvidence = "insufficient_evidence"
     case looksGood = "looks_good"
+    case noProblemsSeen = "no_problems_seen"
     case potentialIssues = "potential_issues"
 }
 
 // MARK: - VerdictReason
 public struct VerdictReason: Codable, Sendable {
+    /// What was not checked, with counts, e.g. 'Nothing looked wrong in the 2 areas Lea could
+    /// see clearly. 3 areas need a closer photo.' Shown with the verdict as its caveat list; not
+    /// sent to the summary writer.
+    public let caveat: String?
     /// issues_found: at least one region shows a potential issue (or a meter reading confirmed
     /// one). all_inspected_ok: every region was judged and none shows an issue. no_regions:
     /// nothing was captured or detected to judge. nothing_inspected: regions exist but no model
     /// could judge any. some_not_inspected: nothing judged shows an issue, but some regions were
-    /// not inspected or could not be judged.
+    /// not inspected or could not be judged (coverage poor). nothing_seen_wrong: the same, with
+    /// the object covered well (V8).
     public let code: VerdictReasonCode
     /// The truth-table row that decided, e.g. V3.
     public let rule: String
@@ -4144,12 +4467,14 @@ public struct VerdictReason: Codable, Sendable {
     public let text: String
 
     public enum CodingKeys: String, CodingKey {
+        case caveat = "caveat"
         case code = "code"
         case rule = "rule"
         case text = "text"
     }
 
-    public init(code: VerdictReasonCode, rule: String, text: String) {
+    public init(caveat: String?, code: VerdictReasonCode, rule: String, text: String) {
+        self.caveat = caveat
         self.code = code
         self.rule = rule
         self.text = text
@@ -4160,12 +4485,14 @@ public struct VerdictReason: Codable, Sendable {
 /// one). all_inspected_ok: every region was judged and none shows an issue. no_regions:
 /// nothing was captured or detected to judge. nothing_inspected: regions exist but no model
 /// could judge any. some_not_inspected: nothing judged shows an issue, but some regions were
-/// not inspected or could not be judged.
+/// not inspected or could not be judged (coverage poor). nothing_seen_wrong: the same, with
+/// the object covered well (V8).
 public enum VerdictReasonCode: String, Codable, Sendable {
     case allInspectedOk = "all_inspected_ok"
     case issuesFound = "issues_found"
     case noRegions = "no_regions"
     case nothingInspected = "nothing_inspected"
+    case nothingSeenWrong = "nothing_seen_wrong"
     case someNotInspected = "some_not_inspected"
 }
 
@@ -4206,12 +4533,21 @@ public struct ScanPackage: Codable, Sendable {
     /// Binary little-endian PLY, xyz float32 + rgb uint8, optional confidence/views uint8.
     public let pointsFile: String?
     /// Where keyframe poses and points_file come from. arkit (also when absent): ARKit world
-    /// tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry:
-    /// Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses
-    /// and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when
+    /// tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked:
+    /// the app's hand-held mode (the person turns or flips the object while the phone stays
+    /// roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the
+    /// OBJECT frame, which is the ARKit world frame at the moment the object was locked (it
+    /// rested on the support plane then; crop_box, support_plane and gravity_arkit_world
+    /// describe that moment). Camera poses are the camera relative to the object, so they may
+    /// lie below the support plane (the underside, seen after a flip) and the cloud includes the
+    /// underside: never cut the cloud or the depth at the support plane for such a scan.
+    /// Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does
+    /// not apply (the object moved), object-shape alignment does. photogrammetry: Apple
+    /// PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and
+    /// points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when
     /// depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is
     /// no voxel_mm.
-    public let poseSource: PoseSource?
+    public let poseSource: ScanPackagePoseSource?
     public let productID: String
     public let scanID: String
     /// Later capture segments of the same session: the object flipped for its underside (reason
@@ -4259,7 +4595,7 @@ public struct ScanPackage: Codable, Sendable {
         case voxelMm = "voxel_mm"
     }
 
-    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: PoseSource?, productID: String, scanID: String, segments: [Segment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
+    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: ScanPackagePoseSource?, productID: String, scanID: String, segments: [Segment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
         self.alignment = alignment
         self.capturedAt = capturedAt
         self.coverageHint = coverageHint
@@ -4404,6 +4740,14 @@ public struct ScanPackageSchema: Codable, Sendable {
     public let imageFile: String
     public let intrinsics: KeyframeIntrinsics
     public let keyframeID: String
+    /// The object tracker's confidence in this pose, 0-1 (object_tracked only). Under 0.7 one
+    /// direction of the pose may be held by prediction only (a symmetric or flat object without
+    /// visible texture).
+    public let poseQuality: Double?
+    /// Where this keyframe's camera pose comes from (absent = the package's pose_source).
+    /// object_tracked: the camera relative to the tracked, moving object, in the object frame
+    /// (see the package's pose_source).
+    public let poseSource: KeyframePoseSource?
     /// Capture segment of this keyframe (absent = 0; see segments).
     public let segment: Int?
     /// Laplacian variance; higher is sharper.
@@ -4422,13 +4766,15 @@ public struct ScanPackageSchema: Codable, Sendable {
         case imageFile = "image_file"
         case intrinsics = "intrinsics"
         case keyframeID = "keyframe_id"
+        case poseQuality = "pose_quality"
+        case poseSource = "pose_source"
         case segment = "segment"
         case sharpness = "sharpness"
         case timestampS = "timestamp_s"
         case trackingState = "tracking_state"
     }
 
-    public init(camera: KeyframeCamera, confidenceFile: String?, depthEncoding: DepthEncoding?, depthFile: String?, exposureS: Double?, imageFile: String, intrinsics: KeyframeIntrinsics, keyframeID: String, segment: Int?, sharpness: Double?, timestampS: Double, trackingState: TrackingState) {
+    public init(camera: KeyframeCamera, confidenceFile: String?, depthEncoding: DepthEncoding?, depthFile: String?, exposureS: Double?, imageFile: String, intrinsics: KeyframeIntrinsics, keyframeID: String, poseQuality: Double?, poseSource: KeyframePoseSource?, segment: Int?, sharpness: Double?, timestampS: Double, trackingState: TrackingState) {
         self.camera = camera
         self.confidenceFile = confidenceFile
         self.depthEncoding = depthEncoding
@@ -4437,6 +4783,8 @@ public struct ScanPackageSchema: Codable, Sendable {
         self.imageFile = imageFile
         self.intrinsics = intrinsics
         self.keyframeID = keyframeID
+        self.poseQuality = poseQuality
+        self.poseSource = poseSource
         self.segment = segment
         self.sharpness = sharpness
         self.timestampS = timestampS
@@ -4497,6 +4845,19 @@ public struct KeyframeIntrinsics: Codable, Sendable {
     }
 }
 
+/// Where this keyframe's camera pose comes from (absent = the package's pose_source).
+/// object_tracked: the camera relative to the tracked, moving object, in the object frame
+/// (see the package's pose_source).
+///
+/// Where camera comes from. arkit (also when absent): ARKit world tracking. object_tracked:
+/// the app's hand-held mode: the camera relative to the tracked, moving object, in the
+/// scan's object frame (the ARKit world frame at the moment the object was locked; see
+/// scan-package pose_source).
+public enum KeyframePoseSource: String, Codable, Sendable {
+    case arkit = "arkit"
+    case objectTracked = "object_tracked"
+}
+
 /// ARKit tracking state of the frame. unknown: the capture app did not record it (an
 /// import).
 ///
@@ -4509,13 +4870,23 @@ public enum TrackingState: String, Codable, Sendable {
 }
 
 /// Where keyframe poses and points_file come from. arkit (also when absent): ARKit world
-/// tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry:
-/// Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses
-/// and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when
+/// tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked:
+/// the app's hand-held mode (the person turns or flips the object while the phone stays
+/// roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the
+/// OBJECT frame, which is the ARKit world frame at the moment the object was locked (it
+/// rested on the support plane then; crop_box, support_plane and gravity_arkit_world
+/// describe that moment). Camera poses are the camera relative to the object, so they may
+/// lie below the support plane (the underside, seen after a flip) and the cloud includes the
+/// underside: never cut the cloud or the depth at the support plane for such a scan.
+/// Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does
+/// not apply (the object moved), object-shape alignment does. photogrammetry: Apple
+/// PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and
+/// points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when
 /// depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is
 /// no voxel_mm.
-public enum PoseSource: String, Codable, Sendable {
+public enum ScanPackagePoseSource: String, Codable, Sendable {
     case arkit = "arkit"
+    case objectTracked = "object_tracked"
     case photogrammetry = "photogrammetry"
 }
 
@@ -4868,9 +5239,17 @@ public struct Still: Codable, Sendable {
     /// True when the app took the still in low light (it never blocks on light): judge dark
     /// detail with care.
     public let lowLight: Bool?
+    /// The object tracker's confidence in camera, 0-1 (object_tracked only). Below 0.55 the app
+    /// marks pose_reliable false; below 0.7 locate caps its confidence at medium.
+    public let poseQuality: Double?
     /// False for macro_detail, when tracking was limited, or when the still has no pose at all
     /// (a plain photo: camera absent). Only when false may camera and intrinsics be absent.
     public let poseReliable: Bool?
+    /// Where camera comes from. arkit (also when absent): ARKit world tracking. object_tracked:
+    /// the app's hand-held mode: the camera relative to the tracked, moving object, in the
+    /// scan's object frame (the ARKit world frame at the moment the object was locked; see
+    /// scan-package pose_source).
+    public let poseSource: KeyframePoseSource?
     /// The Mode A scan this still is registered to.
     public let scanID: String
     /// Capture segment (absent = 0). The app starts segment 1 after the person flips the object
@@ -4893,8 +5272,9 @@ public struct Still: Codable, Sendable {
     /// True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected.
     public let userSkipped: Bool?
     /// The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2
-    /// above the support plane, azimuth sector 0-11 around the object). Lets the backend see
-    /// which sides were photographed.
+    /// above the support plane, azimuth sector 0-11 around the object; in a hand-held scan,
+    /// pose_source object_tracked, b1s05 is a view of the underside, ring 1-2 below the object's
+    /// middle, in the object frame). Lets the backend see which sides were photographed.
     public let viewCell: String?
     public let widthPx: Int
 
@@ -4914,7 +5294,9 @@ public struct Still: Codable, Sendable {
         case iso = "iso"
         case kind = "kind"
         case lowLight = "low_light"
+        case poseQuality = "pose_quality"
         case poseReliable = "pose_reliable"
+        case poseSource = "pose_source"
         case scanID = "scan_id"
         case segment = "segment"
         case sessionID = "session_id"
@@ -4929,7 +5311,7 @@ public struct Still: Codable, Sendable {
         case widthPx = "width_px"
     }
 
-    public init(attachedToTargetID: String?, autoFired: Bool?, camera: StillCamera?, cameraDesign: CameraDesign?, capturedAt: Date, confidenceFile: String?, depthFile: String?, depthGapMS: Int?, exposureS: Double?, heightPx: Int, imageFile: String, intrinsics: StillIntrinsics?, iso: Double?, kind: StillKind, lowLight: Bool?, poseReliable: Bool?, scanID: String, segment: Int?, sessionID: String, sharpness: Double?, stillID: String, targets: [TargetElement], torchLevel: Double?, torchOn: Bool?, trackingState: TrackingState, userSkipped: Bool?, viewCell: String?, widthPx: Int) {
+    public init(attachedToTargetID: String?, autoFired: Bool?, camera: StillCamera?, cameraDesign: CameraDesign?, capturedAt: Date, confidenceFile: String?, depthFile: String?, depthGapMS: Int?, exposureS: Double?, heightPx: Int, imageFile: String, intrinsics: StillIntrinsics?, iso: Double?, kind: StillKind, lowLight: Bool?, poseQuality: Double?, poseReliable: Bool?, poseSource: KeyframePoseSource?, scanID: String, segment: Int?, sessionID: String, sharpness: Double?, stillID: String, targets: [TargetElement], torchLevel: Double?, torchOn: Bool?, trackingState: TrackingState, userSkipped: Bool?, viewCell: String?, widthPx: Int) {
         self.attachedToTargetID = attachedToTargetID
         self.autoFired = autoFired
         self.camera = camera
@@ -4945,7 +5327,9 @@ public struct Still: Codable, Sendable {
         self.iso = iso
         self.kind = kind
         self.lowLight = lowLight
+        self.poseQuality = poseQuality
         self.poseReliable = poseReliable
+        self.poseSource = poseSource
         self.scanID = scanID
         self.segment = segment
         self.sessionID = sessionID
@@ -5214,7 +5598,7 @@ public struct FaultKind: Codable, Sendable {
 // MARK: - GrainFix
 public struct GrainFix: Codable, Sendable {
     public let action: Action
-    public let confidence: ConfidenceEnum
+    public let confidence: ConfidenceWordEnum
     /// Grain's display string, as sent.
     public let part: String?
 
@@ -5224,7 +5608,7 @@ public struct GrainFix: Codable, Sendable {
         case part = "part"
     }
 
-    public init(action: Action, confidence: ConfidenceEnum, part: String?) {
+    public init(action: Action, confidence: ConfidenceWordEnum, part: String?) {
         self.action = action
         self.confidence = confidence
         self.part = part

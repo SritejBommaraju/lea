@@ -65,11 +65,12 @@ class SupportPlane(BaseModel):
 
 class PoseSource(StrEnum):
     """
-    Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.
+    Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked: the app's hand-held mode (the person turns or flips the object while the phone stays roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the OBJECT frame, which is the ARKit world frame at the moment the object was locked (it rested on the support plane then; crop_box, support_plane and gravity_arkit_world describe that moment). Camera poses are the camera relative to the object, so they may lie below the support plane (the underside, seen after a flip) and the cloud includes the underside: never cut the cloud or the depth at the support plane for such a scan. Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does not apply (the object moved), object-shape alignment does. photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.
     """
 
     arkit = 'arkit'
     photogrammetry = 'photogrammetry'
+    object_tracked = 'object_tracked'
 
 
 class Pose(BaseModel):
@@ -128,6 +129,15 @@ class TrackingState(StrEnum):
     unknown = 'unknown'
 
 
+class PoseSource1(StrEnum):
+    """
+    Where this keyframe's camera pose comes from (absent = the package's pose_source). object_tracked: the camera relative to the tracked, moving object, in the object frame (see the package's pose_source).
+    """
+
+    arkit = 'arkit'
+    object_tracked = 'object_tracked'
+
+
 class Keyframe(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -158,6 +168,16 @@ class Keyframe(BaseModel):
         None, description='Laplacian variance; higher is sharper.', ge=0.0
     )
     exposure_s: float | None = Field(None, gt=0.0)
+    pose_source: PoseSource1 | None = Field(
+        None,
+        description="Where this keyframe's camera pose comes from (absent = the package's pose_source). object_tracked: the camera relative to the tracked, moving object, in the object frame (see the package's pose_source).",
+    )
+    pose_quality: float | None = Field(
+        None,
+        description="The object tracker's confidence in this pose, 0-1 (object_tracked only). Under 0.7 one direction of the pose may be held by prediction only (a symmetric or flat object without visible texture).",
+        ge=0.0,
+        le=1.0,
+    )
 
 
 class DesignPointsUnits(StrEnum):
@@ -263,7 +283,7 @@ class ScanPackage(BaseModel):
     )
     pose_source: PoseSource | None = Field(
         None,
-        description='Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.',
+        description="Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked: the app's hand-held mode (the person turns or flips the object while the phone stays roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the OBJECT frame, which is the ARKit world frame at the moment the object was locked (it rested on the support plane then; crop_box, support_plane and gravity_arkit_world describe that moment). Camera poses are the camera relative to the object, so they may lie below the support plane (the underside, seen after a flip) and the cloud includes the underside: never cut the cloud or the depth at the support plane for such a scan. Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does not apply (the object moved), object-shape alignment does. photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.",
     )
     voxel_mm: float | None = Field(
         None,

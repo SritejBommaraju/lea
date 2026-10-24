@@ -22,6 +22,9 @@ enum StillBuilder {
         var sameFrame = false
         /// JPEG quality: orbit stills 0.65 (the backend keeps ~10 of them), close-ups 0.8 (where the detail is).
         var jpegQuality = 0.65
+        /// "Turn it" (Capture/Handheld): the camera relative to the tracked object (object frame) and the tracker's
+        /// pose quality; the still then carries pose_source object_tracked.
+        var objectPose: (camera: simd_float4x4, quality: Float)?
         /// The nearest streamed depth, used when the high-res frame carries none, and its time gap.
         let nearestDepth: DepthCopy?
         let depthGapMs: Int?
@@ -63,7 +66,7 @@ enum StillBuilder {
         var scale = 1.0
         let cx = Double(k[2][0])
         if cx > 0, abs(cx * 2 - Double(w)) / Double(w) > 0.2 { scale = Double(w) / (cx * 2) }
-        let t = frame.camera.transform
+        let t = i.objectPose?.camera ?? frame.camera.transform
         let q = simd_quatf(t)
         let normal: Bool = { if case .normal = frame.camera.trackingState { return true } else { return false } }()
         let target = i.targetID.map { TargetElement(boxMm: nil, harnessRows: nil, partRefs: nil, reason: i.targetReason, targetID: $0) }
@@ -79,7 +82,10 @@ enum StillBuilder {
             intrinsics: StillIntrinsics(cx: cx * scale, cy: Double(k[2][1]) * scale,
                                         fx: Double(k[0][0]) * scale, fy: Double(k[1][1]) * scale),
             iso: i.iso, kind: target == nil ? .unguided : .guided, lowLight: i.lowLight ? true : nil,
-            poseReliable: normal && (i.segment == 0 || i.sameFrame),
+            poseQuality: i.objectPose.map { (Double($0.quality) * 100).rounded() / 100 },
+            poseReliable: normal && (i.segment == 0 || i.sameFrame)
+                && (i.objectPose.map { $0.quality >= HandheldController.recordQuality } ?? true),
+            poseSource: i.objectPose == nil ? nil : .objectTracked,
             scanID: i.scanID, segment: i.segment == 0 ? nil : i.segment, sessionID: i.sessionID, sharpness: SharpnessMeter.laplacianVariance(image),
             stillID: i.stillID, targets: target.map { [$0] } ?? [], torchLevel: Double(i.torchLevel), torchOn: i.torchLevel > 0,
             trackingState: normal ? .normal : .limited, userSkipped: nil, viewCell: i.viewCell, widthPx: w)

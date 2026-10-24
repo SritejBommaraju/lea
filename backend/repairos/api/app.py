@@ -20,12 +20,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import jsonschema
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from repairos import contracts
 from repairos.config import ROOT, get_settings
@@ -52,15 +52,92 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def identified_payload(scan_id: str, ident: dict) -> dict:
+    return {"scan_id": scan_id, "category": ident.get("category") or "unknown", "brand": ident.get("brand") or None,
+            "model": ident.get("model") or None, "confidence": ident.get("confidence") or "low",
+            "label_visible": bool(ident.get("label_visible")), "label_text": ident.get("label_text") or None}
+
+
+def mesh_payload(scan_id: str, mesh: dict) -> dict:
+    out = {"scan_id": scan_id, "mesh_url": f"/v1/scans/{scan_id}/mesh?rev={mesh['rev']}", "mesh_rev": mesh["rev"],
+           "format": mesh["format"], "triangles": mesh["triangles"], "frame": "arkit_world",
+           "hero": mesh.get("hero") or "mesh", "hero_reason": mesh.get("hero_reason")}
+    if mesh.get("cloud_ref"):
+        out.update(cloud_url=f"/v1/scans/{scan_id}/cloud?rev={mesh['rev']}", cloud_points=mesh.get("cloud_points"))
+    return out
+
+
 def _named_event(ev) -> tuple[str, dict] | None:
     """The app-level SSE event a row change means, besides its `<kind>.<op>` event: `report_ready` when a report is
-    published, `pipeline_failed` when a run fails (the stage and the error)."""
+    published, `pipeline_failed` when a run fails (the stage and the error), and from the run row's one-write
+    `announce` marker: `identified` (what the object is), `progress` (live counts after each still), `mesh_ready`
+    (the 3D mesh was built or rebuilt), `fix_ready` (where to buy the top finding's part: repairos.references.parts)."""
+    if ev.kind == RUN_KIND and ev.row.get("announce"):
+        sid, what = ev.row["scan_id"], ev.row["announce"]
+        if what == "identified" and ev.row.get("identity"):
+            return "identified", identified_payload(sid, ev.row["identity"])
+        if what == "progress" and ev.row.get("progress"):
+            return "progress", {"scan_id": sid, **{k: v for k, v in ev.row["progress"].items() if k != "at"}}
+        if what == "mesh_ready" and (ev.row.get("mesh") or {}).get("status") == "done":
+            return "mesh_ready", mesh_payload(sid, ev.row["mesh"])
+        if what == "recreation_ready" and (ev.row.get("recreation") or {}).get("status") == "done":
+            from repairos.recreation.service import payload as recreation_payload
+            return "recreation_ready", recreation_payload(sid, ev.row["recreation"])
+        if what == "lead":
+            from repairos.pipeline.story import lead_payload
+            p = lead_payload(sid, ev.row)
+            if p:
+                return "lead", p
+        if what == "fix_ready" and ev.row.get("fix"):
+            from repairos.references.parts import payload
+            fix = ev.row["fix"]
+            if fix.get("options"):
+                return "fix_ready", {**payload(sid, fix), "status": "done"}
+            return "fix_ready", {"scan_id": sid, "status": fix.get("status") or "none", "options": []}
+    if ev.kind == "story" and ev.row.get("announce") == "product_brief":
+        from repairos.pipeline.story import brief_payload
+        p = brief_payload(ev.row["session_id"], ev.row)
+        if p:
+            return "product_brief", p
     if ev.kind == REPORT_KIND:
         return "report_ready", {"scan_id": ev.row["scan_id"], "report_id": ev.row["report_id"],
                                 "verdict": ev.row["verdict"], "rev": ev.rev}
     if ev.kind == RUN_KIND and ev.row.get("status") == "failed":
         return "pipeline_failed", {"scan_id": ev.row["scan_id"], "error": ev.row.get("error")}
     return None
+
+
+SPEND_POLL_S = 1.0          # how often an event stream looks for new spend alerts (one small SQLite read)
+SPEND_REPLAY_S = 300.0      # a new stream first gets the spend alerts of the last few minutes (a pause still on)
+
+
+class SpendAlerts:
+    """New rows of repairos.spend's alert table as SSE `spend_alert` chunks, for one event stream. Alerts carry no
+    `id:` field, so a client's Last-Event-ID (the session's row cursor) is never moved by them; `alert_id` in the
+    payload lets a client drop one it has already shown."""
+
+    def __init__(self):
+        self.cursor: int | None = None
+        self.next_at = 0.0
+
+    async def poll(self) -> list[bytes]:
+        if time.monotonic() < self.next_at:
+            return []
+        self.next_at = time.monotonic() + SPEND_POLL_S
+        try:
+            from repairos import spend
+            # Indexed reads of a few rows (well under a millisecond), so they run inline: no thread hop that a busy
+            # pool could delay, which would hold back the row events behind them.
+            if self.cursor is None:
+                rows = spend.alerts_since(0, within_s=SPEND_REPLAY_S)
+                self.cursor = spend.last_alert_id()
+            else:
+                rows = spend.alerts_since(self.cursor)
+        except Exception:  # noqa: BLE001 - alerts are a side channel: a broken spend file never cuts the stream
+            return []
+        if rows:
+            self.cursor = max(self.cursor or 0, rows[-1]["alert_id"])
+        return [f"event: spend_alert\ndata: {json.dumps(spend.event_payload(a))}\n\n".encode() for a in rows]
 
 
 def _token_hash(token: str) -> str:
@@ -72,6 +149,18 @@ class NewSession(BaseModel):
     product_id: str | None = None
     make_model: str | None = None
     symptom: str | None = None
+
+
+class Story(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=4000)
+    source: Literal["typed", "voice"] = "typed"
+    scan_id: str | None = None
+
+
+class IdentifyPhoto(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    image: str = Field(pattern=r"^blob://sha256:[0-9a-f]{64}$")
 
 
 class Pair(BaseModel):
@@ -312,15 +401,16 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             raise HTTPException(404, f"no session {session_id} (POST /v1/sessions first)")
         return row
 
-    async def _jobs(request: Request, kind: str, data: dict) -> list[str]:
+    async def _jobs(request: Request, kind: str, data: dict, rev: int | None = None) -> list[str]:
         """Queue the stages for a new object. Job ids are derived from the object, so a retried upload queues
         nothing new (enqueue is idempotent per job_id)."""
         oid = data.get("still_id") or data["scan_id"]
+        key = f"{kind}:{oid}" + (f":rev{rev}" if rev and rev > 1 else "")   # a re-posted package is new work
         out = []
         for job_kind in JOBS_ON.get(kind, []):
             if kind == "still" and data.get("kind") == "label":
                 job_kind = "ocr"
-            job_id = f"job_{job_kind}_{hashlib.sha256(f'{kind}:{oid}'.encode()).hexdigest()[:16]}"
+            job_id = f"job_{job_kind}_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
             out.append(await store(request).enqueue(Job(kind=job_kind, job_id=job_id, session_id=data.get("session_id"),
                                                         scan_id=data.get("scan_id"), inputs={"kind": kind, "id": oid})))
         return out
@@ -333,6 +423,39 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         row = await store(request).transition("session", sid, "session.create", data)
         recorder(request, sid).write_session({**data, "source": "gateway", "split": "unassigned"})
         return row.data
+
+    @app.post("/v1/sessions/{session_id}/story", status_code=202)
+    async def post_story(session_id: str, body: Story, request: Request, _d: Device):
+        """What the person thinks is wrong, typed or spoken (the voice agent posts each utterance). Kept on the
+        session as a lead, never a fact: the worker reads it into a hypothesis, sends the live event `lead` per
+        place worth a close look, and the report's `user_lead` says what the photos showed. 202: queued."""
+        from repairos.pipeline.story import record_story
+
+        await _session(request, session_id)
+        rev, row = await record_story(store(request), session_id, body.text, body.source, body.scan_id)
+        n = len(row.get("said") or [])
+        key = f"{session_id}:{n}" + (f":{len(row['photos'])}" if row.get("photos") else "")
+        job_id = f"job_story_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+        job = await store(request).enqueue(Job(kind="story", job_id=job_id, session_id=session_id,
+                                               scan_id=body.scan_id, inputs={"kind": "story", "id": session_id}))
+        return {"session_id": session_id, "rev": rev, "said": n, "job": job}
+
+    @app.post("/v1/sessions/{session_id}/identify", status_code=202)
+    async def post_identify(session_id: str, body: IdentifyPhoto, request: Request, _d: Device):
+        """One photo of the product or its label, before scanning (upload it first: PUT /v1/blobs/{sha256}). The
+        worker reads the label to identify the product, researches it and sends the live event `product_brief`.
+        No pose or scan is needed. 202: queued."""
+        from repairos.pipeline.story import record_photo
+
+        await _session(request, session_id)
+        if not blob_store(request).exists(body.image):
+            raise HTTPException(422, f"no blob {body.image}: PUT it to /v1/blobs/{{sha256}} first")
+        rev, row = await record_photo(store(request), session_id, body.image)
+        key = f"{session_id}:{len(row.get('said') or [])}:{len(row.get('photos') or [])}"
+        job_id = f"job_story_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+        job = await store(request).enqueue(Job(kind="story", job_id=job_id, session_id=session_id,
+                                               inputs={"kind": "story", "id": session_id}))
+        return {"session_id": session_id, "rev": rev, "photos": len(row.get("photos") or []), "job": job}
 
     @app.post("/v1/scans", status_code=201)
     async def post_scan(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
@@ -352,7 +475,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             existing = None   # an identical retry: the same row and jobs, answered like the first post
         action = "scan.update" if existing is not None else "scan.create"
         row = await store(request).transition("scan-package", body["scan_id"], action, body)
-        jobs = await _jobs(request, "scan-package", body)
+        jobs = await _jobs(request, "scan-package", body, row.rev)
         w = recorder(request, body["session_id"])
         await asyncio.to_thread(w.write_scan, body, _fetch(b))
         w.write_session({"device": body["device"], "symptom": body.get("symptom")})
@@ -391,6 +514,12 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
     async def _list(request: Request, kind: str, **by) -> list[dict]:
         return [r.data for r in await store(request).list(kind, **by)]
+
+    @app.get("/v1/sessions")
+    async def list_sessions(request: Request, _d: Device, limit: Annotated[int, Query(ge=1, le=100)] = 20):
+        """Sessions, the most recently active first (newest live event): `{sessions: [{session_id, created_at,
+        last_event_id, last_event_at}]}`. The live mirror (repairos.live.spacetime_bridge) finds sessions here."""
+        return {"sessions": await store(request).recent_sessions(limit)}
 
     @app.get("/v1/sessions/{session_id}")
     async def get_session(session_id: str, request: Request, _d: Device):
@@ -461,6 +590,20 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         stills added since that report (`new_stills`, `inspected` of them) while it is not current."""
         run = await _run(request, scan_id)
         view = _run_view(run)
+        mesh = (run or {}).get("mesh") or {}
+        if mesh.get("status") == "done":
+            p = mesh_payload(scan_id, mesh)
+            view.update(mesh_url=p["mesh_url"], mesh_rev=p["mesh_rev"], hero=p["hero"])
+            if p.get("cloud_url"):
+                view["cloud_url"] = p["cloud_url"]
+        elif mesh.get("status") == "unavailable":
+            view["mesh_unavailable"] = mesh.get("reason")
+        if ((run or {}).get("identity") or {}).get("status") == "done":
+            view["identity"] = {k: v for k, v in identified_payload(scan_id, run["identity"]).items() if k != "scan_id"}
+        if (run or {}).get("progress"):
+            view["progress"] = {k: v for k, v in run["progress"].items() if k != "at"}
+        if ((run or {}).get("fix") or {}).get("status"):
+            view["fix_status"] = run["fix"]["status"]   # searching | done | none | timeout | failed | stale
         row = await store(request).get(REPORT_KIND, f"rep_{scan_id}")
         status = (run or {}).get("status")
         if row is None:
@@ -491,6 +634,68 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                 raise HTTPException(409, {"error": "pipeline_failed", "pipeline": view})
             raise HTTPException(404, {"error": "no_report", "pipeline": view})
         return row.data, row.rev, view
+
+    async def _ply(request: Request, scan_id: str, rev: int | None, field: str, what: str):
+        await _get(request, "scan-package", scan_id)
+        run = await _run(request, scan_id)
+        mesh = (run or {}).get("mesh") or {}
+        if mesh.get("status") != "done" or not mesh.get(field):
+            raise HTTPException(404, {"error": f"no_{what}", "reason": mesh.get("reason") or
+                                      ("not built yet" if mesh.get("status") != "done" else f"the scan has no {what}")})
+        b = blob_store(request)
+        f = b.open(mesh[field])
+
+        def chunks():
+            with f:
+                while data := f.read(1 << 20):
+                    yield data
+        return StreamingResponse(chunks(), media_type="application/x-ply", headers={
+            "Content-Length": str(b.size(mesh[field])), "X-Mesh-Rev": str(mesh["rev"]),
+            "X-Hero": str(mesh.get("hero") or "mesh"),
+            "Content-Disposition": f'inline; filename="{scan_id}_{what}_rev{mesh["rev"]}.ply"',
+            "Cache-Control": "private, max-age=31536000" if rev == mesh["rev"] else "no-cache"})
+
+    @app.get("/v1/scans/{scan_id}/cloud", responses={200: {"content": {"application/x-ply": {}}}})
+    async def scan_cloud(scan_id: str, request: Request, _d: Device, rev: int | None = None):
+        """The object's part of the phone's LiDAR cloud: binary PLY points (float x y z, uchar red green blue), the
+        same frame and revision as the mesh. `X-Hero` says which 3D view reads best (points, mesh or photos)."""
+        return await _ply(request, scan_id, rev, "cloud_ref", "cloud")
+
+    @app.get("/v1/scans/{scan_id}/mesh", responses={200: {"content": {"application/x-ply": {}}}})
+    async def scan_mesh(scan_id: str, request: Request, _d: Device, rev: int | None = None):
+        """The scan's 3D mesh (binary PLY: float x y z + uchar red green blue per vertex, triangle lists; metres,
+        arkit_world, the frame of every finding's location). `X-Mesh-Rev` = its revision (up when more photos are
+        added). 404 while there is none (not built yet, or the scan has no usable depth: `reason`). `rev` is a
+        cache key only: the latest mesh is always served."""
+        return await _ply(request, scan_id, rev, "ref", "mesh")
+
+    @app.get("/v1/scans/{scan_id}/recreation", responses={200: {"content": {"model/vnd.usdz+zip": {},
+                                                                          "application/octet-stream": {}}}})
+    async def scan_recreation(scan_id: str, request: Request, _d: Device, rev: int | None = None):
+        """The photo-real recreation of the scanned object (repairos.recreation): a USDZ textured mesh
+        (`X-Recreation-Kind: textured_mesh`) or a `.splat` Gaussian splat (`splat`), in the scan's ARKit world frame
+        (metres, Y up: the frame of every finding's location). `X-Recreation-Rev` = its revision (up when the scan
+        gains photos); `X-Recreation-Focus` = the object's centre x,y,z and radius. 404 while there is none (`reason`).
+        The live event `recreation_ready` announces each revision. `rev` is a cache key only."""
+        await _get(request, "scan-package", scan_id)
+        rec = ((await _run(request, scan_id)) or {}).get("recreation") or {}
+        if rec.get("status") != "done" or not rec.get("ref"):
+            raise HTTPException(404, {"error": "no_recreation", "reason": rec.get("reason") or "not built yet"})
+        b = blob_store(request)
+        f = b.open(rec["ref"])
+
+        def chunks():
+            with f:
+                while data := f.read(1 << 20):
+                    yield data
+        focus = ",".join(str(x) for x in [*(rec.get("focus_center") or []), rec.get("focus_radius") or 0])
+        media = "model/vnd.usdz+zip" if rec.get("format") == "usdz" else "application/octet-stream"
+        return StreamingResponse(chunks(), media_type=media, headers={
+            "Content-Length": str(b.size(rec["ref"])), "X-Recreation-Rev": str(rec["rev"]),
+            "X-Recreation-Kind": str(rec.get("kind")), "X-Recreation-Format": str(rec.get("format")),
+            "X-Recreation-Focus": focus,
+            "Content-Disposition": f'inline; filename="{scan_id}_recreation_rev{rec["rev"]}.{rec.get("format")}"',
+            "Cache-Control": "private, max-age=31536000" if rev == rec["rev"] else "no-cache"})
 
     @app.get("/v1/scans/{scan_id}/report")
     async def scan_report(scan_id: str, request: Request, _d: Device):
@@ -546,8 +751,12 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
         async def stream() -> AsyncIterator[bytes]:
             cursor, last_sent = start, time.monotonic()
+            alerts = SpendAlerts()
             yield b"retry: 1000\n\n"
             while not await request.is_disconnected():
+                for chunk in await alerts.poll():   # spend_alert: global, no `id:` (the row cursor is untouched)
+                    yield chunk
+                    last_sent = time.monotonic()
                 batch = await st.events_since(session_id, cursor)
                 for ev in batch:
                     cursor = ev.event_id
@@ -566,6 +775,39 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.get("/v1/events", response_class=StreamingResponse, responses={200: {"content": {"text/event-stream": {}}}})
+    async def global_events(request: Request, _d: Device):
+        """Server-sent events that belong to no session: `spend_alert` (repairos.spend), the alerts of the last
+        few minutes first, then each new one as it is stored."""
+        async def stream() -> AsyncIterator[bytes]:
+            alerts, last_sent = SpendAlerts(), time.monotonic()
+            yield b"retry: 1000\n\n"
+            while not await request.is_disconnected():
+                chunks = await alerts.poll()
+                for chunk in chunks:
+                    yield chunk
+                    last_sent = time.monotonic()
+                if not chunks:
+                    if time.monotonic() - last_sent > SSE_KEEPALIVE_S:
+                        yield b": keepalive\n\n"
+                        last_sent = time.monotonic()
+                    await asyncio.sleep(SPEND_POLL_S)
+
+        return StreamingResponse(stream(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # --------------------------------------------------------------- usage (repairos.spend)
+    @app.get("/v1/usage")
+    async def usage_view(_d: Device):
+        """Paid-service usage: per service the calls in the last minute, hour and day, the estimated USD for the
+        day, the caps, the breaker and the last alert (repairos.spend.usage)."""
+        from repairos import spend
+        return await asyncio.to_thread(spend.usage)
+
+    # --------------------------------------------------------------- voice (repairos/voice: TTS, STT, Ask Lea)
+    from repairos.voice import register_voice_routes
+    register_voice_routes(app, Device)
 
     return app
 

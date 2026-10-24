@@ -100,24 +100,34 @@ struct RunningMedian: Sendable {
     }
 }
 
-/// Automatic torch decision (code decides; the device layer applies it). On at `onLevel` after `onAfter` seconds
-/// of dim light (ambient or mean luma), off after `offAfter` seconds of good light; glare on the object steps the
-/// level down (0.5 → 0.3 → 0.15 → off); heat caps it at 0.3.
+/// Automatic torch decision (code decides; the device layer applies it). On after `onAfter` seconds of dim light
+/// (ambient, mean luma or high ISO), off after `offAfter` seconds of good light. Its level follows the subject
+/// distance: `levels[0]` from afar, full (`nearLevel`) when the object is under `nearDistance` (close-ups and the
+/// orbit of small objects), where the light falls off fastest and noise costs the most. Glare on the object (its
+/// own projected box, never the whole frame) steps the level down one notch of `ladder` at a time down to off; ten
+/// seconds without glare lets it back up a notch. Heat caps it at 0.3.
 struct TorchRule: Sendable, Equatable {
     enum Mode: String, Codable, Sendable { case auto, on, off }
 
     static let onAmbient = 400.0, offAmbient = 650.0
     static let onLuma = 0.25, offLuma = 0.35
     static let onAfter: TimeInterval = 1, offAfter: TimeInterval = 2
+    /// The level from afar, then the glare steps below it.
     static let levels: [Float] = [0.5, 0.3, 0.15]
+    static let nearLevel: Float = 1.0
+    /// Under this distance (m) the torch runs at `nearLevel`.
+    static let nearDistance: Float = 0.30
+    /// Every level, brightest first; glare steps down this ladder, a quiet spell steps back up.
+    static let ladder: [Float] = [1.0, 0.7, 0.5, 0.3, 0.15]
     static let glareFraction = 0.03
     static let hotCap: Float = 0.3
 
     var mode: Mode = .auto
     private(set) var level: Float = 0          // 0 = off
+    /// The highest level glare allows right now (1 = no limit).
+    private(set) var cap: Float = 1
     private var dimSince: TimeInterval?
     private var brightSince: TimeInterval?
-    private var step = 0                        // index into levels
     private var onAt: TimeInterval?
     /// Brightness measured with the torch on (it lights the scene itself): switching off needs clearly more than this,
     /// or the torch would flicker off and on in a dim room.
@@ -137,35 +147,40 @@ struct TorchRule: Sendable, Equatable {
     /// - Parameters:
     ///   - ambient: ARKit ambient intensity (nil when unknown). With the torch on it includes the torch's light,
     ///     so "bright enough to switch off" also needs time.
-    ///   - saturated: fraction of the object's pixels at luma > 0.97.
-    /// - Parameter isoHigh: the fast-shutter exposure needs high ISO (noisy stills): counts as dim, so the torch
-    ///   comes on sooner, and keeps it from switching off.
+    ///   - saturated: fraction of the object's pixels at luma > 0.97 (inside its projected box).
+    ///   - isoHigh: the fast-shutter exposure needs high ISO (noisy stills): counts as dim, so the torch comes on
+    ///     sooner, and keeps it from switching off.
+    ///   - near: the object is under `nearDistance`: full level.
+    ///   - noisy: ISO is above the clean range; up close that alone turns the torch on (it is cheap light there).
     mutating func update(time t: TimeInterval, ambient: Double?, meanLuma: Double, saturated: Double, hot: Bool,
-                         isoHigh: Bool = false) -> Float {
+                         isoHigh: Bool = false, near: Bool = false, noisy: Bool = false) -> Float {
+        let base = near ? Self.nearLevel : Self.levels[0]
         switch mode {
         case .off:
             level = 0
             return level
         case .on:
-            level = hot ? min(Self.levels[0], Self.hotCap) : Self.levels[0]
+            level = hot ? min(base, Self.hotCap) : base
             return level
         case .auto:
             break
         }
-        let dim = (ambient.map { $0 < Self.onAmbient } ?? false) || meanLuma < Self.onLuma || isoHigh
-        let bright = (ambient.map { $0 > Self.offAmbient } ?? true) && meanLuma > Self.offLuma && !isoHigh
+        let wantsLight = isoHigh || (near && noisy)
+        let dim = (ambient.map { $0 < Self.onAmbient } ?? false) || meanLuma < Self.onLuma || wantsLight
+        let bright = (ambient.map { $0 > Self.offAmbient } ?? true) && meanLuma > Self.offLuma && !wantsLight
         if level == 0 {
             brightSince = nil
             if dim, holdOffUntil.map({ t >= $0 }) ?? true {
                 if dimSince == nil { dimSince = t }
                 if t - dimSince! >= Self.onAfter {
-                    step = 0
-                    level = Self.levels[0]
+                    cap = 1
+                    level = base
                     dimSince = nil
                     onAt = t
                     litAmbient = nil
                     litLuma = nil
-                    lastChange = "dim"
+                    lastGlareStep = nil
+                    lastChange = near ? "dim_near" : "dim"
                 }
             } else {
                 dimSince = nil
@@ -181,9 +196,10 @@ struct TorchRule: Sendable, Equatable {
                 return meanLuma > lit * Self.brighterThanLit
             } ?? false
             if saturated > Self.glareFraction, lastGlareStep.map({ t - $0 >= Self.glareStepEvery }) ?? true {
-                step += 1
+                // One notch below what is lit now.
+                cap = Self.ladder.first { $0 < level - 1e-4 } ?? 0
                 lastGlareStep = t
-                level = step < Self.levels.count ? Self.levels[step] : 0
+                level = cap
                 if level == 0 { holdOffUntil = t + Self.glareHold }
                 lastChange = "glare"
                 brightSince = nil
@@ -196,9 +212,95 @@ struct TorchRule: Sendable, Equatable {
                 }
             } else {
                 brightSince = nil
+                if cap < 1, let g = lastGlareStep, t - g >= Self.glareHold, saturated < Self.glareFraction / 2 {
+                    cap = Self.ladder.last { $0 > cap + 1e-4 } ?? 1
+                    lastGlareStep = t
+                }
+                let want = min(base, cap)
+                if want != level, want > 0 {
+                    level = want
+                    lastChange = near ? "near" : "far"
+                }
             }
         }
         if hot, level > Self.hotCap { level = Self.hotCap }
         return level
+    }
+}
+
+/// How big and how sharp the object must be in a photo for a real inspection (pure, unit-tested). Resolution is
+/// measured as pixels per millimetre on the object (the still's focal length in pixels over the distance); framing
+/// as the object's projected box against the frame's shorter side.
+enum DetailTarget {
+    /// Objects whose longest side is under this (m) are "small": shot from close and given close-ups of every side.
+    static let smallObject: Float = 0.20
+    /// An orbit still needs the object's projected box to span this share of the frame's shorter side.
+    static let orbitFill: Float = 0.5
+    /// Orbit stills of small objects: no farther than this (m).
+    static let smallOrbitFar: Float = 0.25
+    static let orbitNear: Float = 0.15
+    /// Resolution that counts as "detail captured".
+    static let orbitPxPerMm: Float = 8
+    static let closePxPerMm: Float = 15
+    /// Close-ups span this much beyond the nearest sharp distance (m).
+    static let closeSpan: Float = 0.06
+    /// Without the camera's own figure, the closest it focuses (m).
+    static let defaultMinFocus: Float = 0.12
+    /// In-box sharpness (Laplacian variance of 2 × 2 binned luma) below this is never kept, whatever the median.
+    static let sharpnessFloor = 30.0
+
+    static func isSmall(_ box: ObjectBox) -> Bool { max(box.size.x, box.size.y, box.size.z) < smallObject }
+
+    static func pxPerMm(fx: Float, distance: Float) -> Float { distance > 0 ? fx / (distance * 1000) : 0 }
+
+    /// The nearest distance the camera focuses, with a 5 % margin.
+    static func nearestSharp(minFocus: Float?) -> Float { (minFocus ?? defaultMinFocus) * 1.05 }
+
+    /// Close-up distances: from the nearest sharp distance out by `closeSpan` (small objects); larger objects keep
+    /// a 15–25 cm band, never nearer than the camera focuses.
+    static func closeBand(box: ObjectBox?, minFocus: Float?) -> ClosedRange<Float> {
+        let near = nearestSharp(minFocus: minFocus)
+        if let box, isSmall(box) {
+            let lo = max(0.10, near)
+            return lo...(lo + closeSpan)
+        }
+        let lo = max(0.15, near)
+        return lo...max(lo + closeSpan, 0.25)
+    }
+
+    /// Orbit distances: small objects from the nearest sharp distance (≥ 15 cm) to 25 cm; larger ones out to the
+    /// coverage band's far end.
+    static func orbitBand(box: ObjectBox, minFocus: Float?) -> ClosedRange<Float> {
+        let near = max(orbitNear, nearestSharp(minFocus: minFocus))
+        if isSmall(box) { return near...max(near + 0.04, smallOrbitFar) }
+        return near...max(near + 0.05, CoverageDome.band(box).upperBound)
+    }
+
+    /// Orbit resolution target: `orbitPxPerMm`, or what the object spanning `orbitFill` of the shorter side gives
+    /// when that is less (a large object cannot reach 8 px/mm in one photo of all of it).
+    static func orbitTarget(box: ObjectBox, shortSidePx: Float) -> Float {
+        let longest = max(box.size.x, box.size.y, box.size.z) * 1000
+        guard longest > 0 else { return orbitPxPerMm }
+        return min(orbitPxPerMm, orbitFill * shortSidePx / longest)
+    }
+
+    /// Close-up resolution target: `closePxPerMm`, or 90 % of what this camera gives at its nearest sharp distance
+    /// when that is less (a camera that cannot focus close enough must still be able to finish).
+    static func closeTarget(fx: Float, minFocus: Float?) -> Float {
+        min(closePxPerMm, 0.9 * pxPerMm(fx: fx, distance: nearestSharp(minFocus: minFocus)))
+    }
+
+    /// Where to stand for an orbit still, from here: the projected size grows as 1/distance, so the distance that
+    /// gives the fill target with 10 % to spare, kept inside the band. Metres.
+    static func approachDistance(current d: Float, fill: Float, band: ClosedRange<Float>) -> Float {
+        let byFill = fill > 0 ? d * fill / (orbitFill * 1.1) : band.lowerBound
+        let inBand = min(band.upperBound * 0.9, byFill)
+        return max(band.lowerBound, min(inBand, d))
+    }
+
+    /// The on-screen cue for "come closer", with the distance to aim for.
+    static func approachCue(current d: Float, fill: Float, band: ClosedRange<Float>) -> String {
+        let cm = Int((approachDistance(current: d, fill: fill, band: band) * 100).rounded())
+        return "Move closer: about \(cm) cm away"
     }
 }

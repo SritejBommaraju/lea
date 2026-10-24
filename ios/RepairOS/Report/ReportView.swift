@@ -8,10 +8,17 @@ import WebKit
 struct ReportView: View {
     @Environment(AppState.self) private var app
     let record: SessionRecord
-    let upload: UploadQueue
+    /// nil for an offline replay (Demo replay): only what is on the phone is shown.
+    let upload: UploadQueue?
     let close: () -> Void
+    /// Demo replay: never touches the network; the cached report, the scan's own files and saved crops only.
+    var offline = false
 
     @State private var report: ReportModel?
+    /// The report on screen was just fetched (play the landing moment); false for one read from the phone.
+    @State private var landedFresh = false
+    /// Bumped on the frame Lea's first sound plays for a landed report, so the verdict lands with her voice.
+    @State private var voiceStarted = 0
     /// The revision on screen and whether a newer one is being built (the "Updating…" chip).
     @State private var showingRev: Int?
     @State private var updating = false
@@ -19,14 +26,49 @@ struct ReportView: View {
     @State private var error: String?
     @State private var showFull = false
     @State private var pendingDelete: SessionRecord?
+    @State private var model: ModelSource = .none
+    /// The gateway mesh revision cached beside the scan (nil: none fetched in this view yet).
+    @State private var meshRev: Int?
+    /// The hero the pipeline reports (points, mesh, photos), when it has chosen.
+    @State private var pipelineHero: String?
+    /// The backend is still looking for the top finding's part ("Fix it"): until `fix_ready`, or FixSearch.giveUpS.
+    @State private var fixSearching = false
+    /// The parts search hit the spend cap (pipeline `fix_status` or live `fix_ready`): "not available right now".
+    @State private var fixLimited = false
     @Environment(\.continueScan) private var continueScan
+    @Environment(\.liveEvents) private var live
+
+    private var gateway: GatewayClient? { offline ? nil : app.gateway }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let report {
-                    ReportContent(report: report, symptom: record.symptom, model: ModelSource.find(in: app.storage.scanDir(record)),
-                                  openFull: app.gateway == nil ? nil : { showFull = true })
+                if let report, RedesignFlags.reportStage {
+                    ReportStageView(report: report, symptom: record.symptom, model: model, sessionDir: app.storage.dir(record),
+                                    space: ObjectSpace.load(sessionDir: app.storage.dir(record), scanPackage: app.storage.scanPackageURL(record)),
+                                    openFull: gateway == nil ? nil : { showFull = true },
+                                    fix: live?.fix ?? report.fix,
+                                    fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
+                                    fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil,
+                                    fresh: landedFresh, voiceStarted: voiceStarted)
+                        .transition(.opacity)
+                        .overlay(alignment: .top) {
+                            if updating {
+                                Label("Updating…", systemImage: "arrow.triangle.2.circlepath")
+                                    .font(.footnote.weight(.semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 12).padding(.vertical, 6)
+                                    .background(Color.black.opacity(0.55), in: Capsule())
+                                    .padding(.top, 52)
+                                    .transition(.opacity)
+                            }
+                        }
+                } else if let report {
+                    ReportContent(report: report, symptom: record.symptom, model: model, sessionDir: app.storage.dir(record),
+                                  space: ObjectSpace.load(sessionDir: app.storage.dir(record), scanPackage: app.storage.scanPackageURL(record)),
+                                  openFull: gateway == nil ? nil : { showFull = true },
+                                  fix: live?.fix ?? report.fix,
+                                  fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
+                                  fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil)
                         .transition(.opacity)
                         .overlay(alignment: .top) {
                             if updating {
@@ -38,34 +80,48 @@ struct ReportView: View {
                                     .transition(.opacity)
                             }
                         }
+                } else if RedesignFlags.reportStage, error == nil {
+                    // While the Mac works: the person's own scan on the dark stage, one line of progress.
+                    ReportStageWaiting(model: model, progress: progress, uploaded: upload?.uploadedFiles ?? 0,
+                                       pending: upload?.pending.count ?? 0, found: live?.areasChecked)
                 } else {
-                    ReportProgressView(progress: progress, uploaded: upload.uploadedFiles,
-                                       pending: upload.pending.count, error: error, retry: retry)
+                    ReportProgressView(progress: progress, uploaded: upload?.uploadedFiles ?? 0,
+                                       pending: upload?.pending.count ?? 0, error: error, retry: retry)
                 }
             }
             .motion(Motion.standard, value: report == nil)
+            .safeAreaInset(edge: .bottom) {
+                // Voice/: hold to ask Lea about this scan (needs the gateway: the answer is grounded in its report).
+                if report != nil, let gateway, app.isPaired {
+                    ConversationPanel(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
+                                      sessionID: { [upload] in upload?.state.gatewaySessionID }) { kind in
+                        if kind == "continue_scan" { continueScan?() }
+                    }
+                }
+            }
             .background(Palette.canvas.ignoresSafeArea())
-            .navigationTitle(report == nil ? "" : "Report")
+            .navigationTitle(report == nil || RedesignFlags.reportStage ? "" : "Report")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done", action: close).fontWeight(.semibold) }
+                ToolbarItem(placement: .primaryAction) { VoiceMuteToolbarButton() }
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         if report != nil, let continueScan {
                             Button("Continue scanning", systemImage: Symbol.scan) { continueScan() }
                         }
-                        if report != nil, app.gateway != nil {
+                        if report != nil, gateway != nil {
                             Button("Full report with photos", systemImage: "doc.richtext") { showFull = true }
                         }
                         Button("Delete scan", systemImage: "trash", role: .destructive) { pendingDelete = record }
-                            .disabled(!ScanLibrary.canDelete(record, app: app))
+                            .disabled(offline || !ScanLibrary.canDelete(record, app: app))
                     } label: { Image(systemName: "ellipsis") }
                     .accessibilityLabel("More")
                 }
             }
             .confirmDeleteScan($pendingDelete, deleted: close)
             .sheet(isPresented: $showFull) {
-                if let gateway = app.gateway {
+                if let gateway {
                     NavigationStack {
                         WebView(request: gateway.reportHTMLRequest(scanID: record.scanID))
                             .ignoresSafeArea(edges: .bottom)
@@ -75,33 +131,116 @@ struct ReportView: View {
                 }
             }
             .task { await run() }
+            .task(id: report == nil) { await fetchMesh(rev: nil) }
+            .task(id: live?.meshRev) { if let rev = live?.meshRev { await fetchMesh(rev: rev) } }
+            .task(id: heroChoice) { await fetchMesh(rev: nil) }
+            .task(id: report?.cropSHAs.count) { await saveCrops() }
+            .task(id: fixSearching) {
+                guard fixSearching else { return }
+                try? await Task.sleep(for: .seconds(FixSearch.giveUpS))
+                withAnimation(Motion.standard) { fixSearching = false }
+            }
+            .onChange(of: live?.fix) { _, fix in if let fix { keepFix(fix) } }
         }
-        .environment(\.cropSource, app.gateway.map(CropSource.gateway) ?? .none)
+        .environment(\.cropSource, CropSource.saved(in: CropSource.dir(app.storage.dir(record)), fallback: gateway.map(CropSource.gateway)))
+    }
+
+    /// A report arrived: Lea says the verdict, the top problem and the first safety note (Voice/ReportSpeech),
+    /// once per revision; the time to the first sound goes to diag.jsonl as `voice_report`.
+    private func speakLanded(_ json: [String: Any], rev: Int, force: Bool = false) {
+        let diag = Diag.session(app.storage.dir(record))
+        let started = $voiceStarted
+        let caveat = (json["verdict_reason"] as? [String: Any])?["caveat"] as? String
+        LeaVoice.shared.reportLanded(ReportModel(json: json), key: "\(record.scanID)#\(rev)", force: force, caveat: caveat) { ms, source in
+            started.wrappedValue += 1   // the stage lands its verdict on this frame (ReportStageView.land)
+            diag.log("voice_report", ["landed_to_audio_ms": ms, "source": source, "rev": rev])
+        }
     }
 
     private func retry() {
         error = nil
-        upload.retry()
+        upload?.retry()
         Task { await run() }
+    }
+
+    /// The gateway's mesh of the scan (GET /v1/scans/{id}/mesh), once, cached beside the scan; until it exists the
+    /// local LiDAR cloud is shown.
+    /// Every crop of the report, saved beside the session (once each), so it reopens offline (and Demo replay works).
+    private func saveCrops() async {
+        guard let shas = report?.cropSHAs, !shas.isEmpty, let gateway else { return }
+        let source = CropSource.saved(in: CropSource.dir(app.storage.dir(record)), fallback: .gateway(gateway))
+        for sha in shas {
+            if Task.isCancelled { return }
+            _ = await source.fetch(sha)
+        }
+    }
+
+    /// The backend's hero choice: the live `mesh_ready`, else the pipeline's, else the cached report's.
+    private var heroChoice: String? { live?.hero ?? pipelineHero ?? report?.hero }
+
+    /// Follows the backend's hero choice: fetches its cleaned cloud (`points`) or its mesh (`mesh`), cached beside the
+    /// scan; `photos` needs nothing. `rev`: a newer revision was announced (live `mesh_ready` or the pipeline's
+    /// `mesh_rev`): fetch again even when cached. nil: fetch only what is missing. Until the backend has chosen, the
+    /// phone's own cloud is the placeholder.
+    private func fetchMesh(rev: Int?) async {
+        let dir = app.storage.scanDir(record)
+        let hero = heroChoice
+        model = ModelSource.find(in: dir, hero: hero)
+        guard report != nil, let gateway, !offline, hero != "photos" else { return }
+        let wantCloud = hero == "points"
+        let name = wantCloud ? ModelSource.backendCloudName : ModelSource.backendMeshName
+        let cached = FileManager.default.fileExists(atPath: dir.appending(path: name).path)
+        if let rev { guard rev != meshRev || !cached else { return } } else if cached { return }
+        let data = try? await (wantCloud ? gateway.cloud(scanID: record.scanID) : gateway.mesh(scanID: record.scanID))
+        guard let data, data.starts(with: Data("ply".utf8)) else { return }
+        meshRev = rev ?? meshRev
+        guard (try? data.write(to: dir.appending(path: name), options: .atomic)) != nil else { return }
+        Diag.session(app.storage.dir(record)).log(wantCloud ? "cloud_fetched" : "mesh_fetched", ["kb": data.count / 1024, "hero": hero ?? ""])
+        withAnimation(Motion.standard) { model = ModelSource.find(in: dir, hero: hero) }
+    }
+
+    /// A fix that arrived live goes into the cached report too, so it is there when the report is opened again.
+    private func keepFix(_ fix: FixIt) {
+        withAnimation(Motion.standard) { fixSearching = false }
+        guard var cached = CachedReport.load(record, storage: app.storage) else { return }
+        cached["fix"] = fix.json
+        CachedReport.save(cached, record: record, storage: app.storage)
     }
 
     private func run() async {
         guard report == nil else { return }
+        if offline {
+            if let cached = CachedReport.load(record, storage: app.storage) {
+                report = ReportModel(json: cached)
+            } else {
+                error = "This scan has no saved report on the phone."
+            }
+            return
+        }
         // Whatever report the phone has goes on screen at once: a continued scan keeps it while the new one is built.
         if let cached = CachedReport.load(record, storage: app.storage) {
             report = ReportModel(json: cached)
             showingRev = cached[Self.revKey] as? Int ?? 0
+            // Developer hook (`--voice-speak-report`): say a saved report on opening, to time the voice.
+            if CommandLine.arguments.contains("--voice-speak-report") {
+                speakLanded(cached, rev: showingRev ?? 0, force: true)
+            }
             if record.status == .reported { return }
             updating = true
         }
         do {
-            guard let gateway = app.gateway else { throw GatewayError.message("No Mac paired. Pair in Settings, then try again.") }
+            guard let gateway, let upload else { throw GatewayError.message("Not connected to the lea server. Connect in Settings, then try again.") }
             progress.step = .upload
             try await upload.complete()
             progress.step = .inspect
             while true {
                 let p = try await gateway.pipeline(scanID: record.scanID)
                 progress.update(p)
+                if let h = p["hero"] as? String, h != pipelineHero { pipelineHero = h }
+                let searching = (p["fix_status"] as? String) == "searching"
+                if searching != fixSearching { withAnimation(Motion.standard) { fixSearching = searching } }
+                fixLimited = (p["fix_status"] as? String) == "limited"
+                if report != nil, let rev = p["mesh_rev"] as? Int, rev != meshRev { await fetchMesh(rev: rev) }
                 let action = ReportPoll.decide(showingRev: showingRev, status: p["status"] as? String,
                                                reportRev: p["report_rev"] as? Int, rebuilding: p["rebuilding"] as? Bool ?? false,
                                                error: (p["error"] as? String) ?? (p["error"].map { "\($0)" }))
@@ -113,7 +252,9 @@ struct ReportView: View {
                         let shown = rev ?? (p["report_rev"] as? Int) ?? (showingRev ?? 0) + 1
                         stored[Self.revKey] = shown
                         CachedReport.save(stored, record: record, storage: app.storage)
+                        landedFresh = true
                         withAnimation(Motion.standard) { report = ReportModel(json: json) }
+                        speakLanded(json, rev: shown)
                         showingRev = shown
                         updating = p["rebuilding"] as? Bool ?? false
                         if !updating { markReported() ; return }
@@ -152,6 +293,11 @@ struct ReportView: View {
     }
 }
 
+/// How long the "Searching for parts…" line waits for `fix_ready` (the backend's search budget plus slack).
+enum FixSearch {
+    static let giveUpS: Double = 75
+}
+
 // MARK: - Progress
 
 /// Where the scan is on its way to a report, from the upload queue and GET /v1/scans/{id}/pipeline.
@@ -161,7 +307,7 @@ struct PipelineProgress: Equatable {
 
         var title: String {
             switch self {
-            case .upload: "Sending photos to your Mac"
+            case .upload: "Sending photos"
             case .inspect: "Inspecting each photo"
             case .weigh: "Weighing the evidence"
             case .write: "Writing the report"
@@ -199,7 +345,7 @@ struct ReportProgressView: View {
                 VStack(spacing: Spacing.s) {
                     Text(error == nil ? "Getting your report" : "Something went wrong")
                         .font(.screenTitle).multilineTextAlignment(.center)
-                    Text(error == nil ? "Your Mac looks at every photo, then writes up what it found." : (error ?? ""))
+                    Text(error == nil ? "Lea looks at every photo, then writes up what it found." : (error ?? ""))
                         .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         .textSelection(.enabled)
                 }
@@ -315,23 +461,42 @@ struct ReportContent: View {
     let report: ReportModel
     var symptom: String?
     var model: ModelSource = .none
+    /// The session folder (its stills, for the photo hero).
+    var sessionDir: URL?
+    /// The scan's saved world map: "Show on object" relocalises into it.
+    var space: ObjectSpace?
     var openFull: (() -> Void)?
+    var fix: FixIt?
+    var fixSearching = false
+    var fixUnavailable = false
     @Environment(\.continueScan) private var continueScan
+    @Environment(\.cropSource) private var cropSource
     @State var focus: String?
     @State private var sheet: ReportModel.Problem?
+    @State private var showOnObject = false
+    @State private var showOthers = false
 
-    /// Located findings: the top three numbered, the rest as small dots.
+    /// The top three located findings, numbered; the rest are behind the "+N" chip, not drawn as dots.
     private var pins: [ModelPin] {
-        let top = report.mostLikely.enumerated().compactMap { i, p in
+        report.mostLikely.enumerated().compactMap { i, p in
             p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.severity.tone) }
         }
-        let rest = (report.otherIssues + report.cosmetic).compactMap { p in
-            p.point.map { ModelPin(id: p.id, number: nil, point: $0, tone: p.severity.tone) }
-        }
-        return top + rest
     }
 
+    /// The top three with a photo crop, numbered (the photo hero).
+    private var numberedPhotos: [PhotoHero.Mark] {
+        report.mostLikely.enumerated().compactMap { i, p in
+            guard let still = p.cropStill else { return nil }
+            return PhotoHero.Mark(id: p.id, number: i + 1, still: still, box: p.cropBox, tone: p.severity.tone)
+        }
+    }
+
+    /// Findings beyond the top three (lower-ranked and cosmetic).
+    private var others: [ReportModel.Problem] { report.otherIssues + report.cosmetic }
+
     private var showsModel: Bool { !model.isNone || !pins.isEmpty }
+    private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
+    private var canShowOnObject: Bool { space != nil && !pins.isEmpty }
     private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.cosmetic }
 
     var body: some View {
@@ -344,6 +509,26 @@ struct ReportContent: View {
                     proxy.scrollTo(anchor, anchor: .top)
                 }
             #endif
+        }
+        .task {
+            // Developer hook (`--show-on-object`): open the AR view once the report is up (unattended measurements).
+            guard CommandLine.arguments.contains("--show-on-object"), canShowOnObject else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            showOnObject = true
+        }
+        .fullScreenCover(isPresented: $showOnObject) {
+            if let space {
+                ObjectMarkersView(space: space, markers: pins.map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },
+                                  problems: all, others: others, show3D: { showOnObject = false }, close: { showOnObject = false })
+                    .environment(\.cropSource, cropSource)
+            }
+        }
+        .sheet(isPresented: $showOthers) {
+            OtherFindingsSheet(problems: others) { p in
+                showOthers = false
+                Task { try? await Task.sleep(for: .milliseconds(350)); sheet = p }
+            }
+            .environment(\.cropSource, cropSource)
         }
         .sheet(item: $sheet) { p in
             NavigationStack {
@@ -358,14 +543,15 @@ struct ReportContent: View {
     private func content(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
+                if showsModel { modelCard.id("model") }
                 VerdictHeader(report: report, symptom: symptom)
+                if let lead = report.userLead { UserLeadCard(lead: lead) }
                 if !report.safety.isEmpty { SafetyCard(notes: report.safety) }
                 if !report.mostLikely.isEmpty {
                     VStack(alignment: .leading, spacing: Spacing.m) {
                         SectionHeader("Most likely problems")
-                        if showsModel { modelCard.id("model") }
                         ForEach(Array(report.mostLikely.enumerated()), id: \.element.id) { i, p in
-                            if showsModel, p.point != nil {
+                            if showsModel, isPhotoHero ? p.cropStill != nil : p.point != nil {
                                 Button {
                                     withAnimation(Motion.standard) { proxy.scrollTo("model", anchor: .top) }
                                     focus = p.id
@@ -380,6 +566,9 @@ struct ReportContent: View {
                             }
                         }
                     }
+                }
+                if fix != nil || fixSearching || fixUnavailable {
+                    FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable).id("fix")
                 }
                 if let next = report.nextStep { NextStepCard(step: next).id("next") }
                 if let summary = report.summary, !summary.isEmpty {
@@ -425,14 +614,53 @@ struct ReportContent: View {
 
     @Environment(\.dynamicTypeSize) private var typeSize
 
+    /// "+N": the findings not drawn on the hero, as a list.
+    @ViewBuilder private var othersChip: some View {
+        if !others.isEmpty {
+            Button { showOthers = true } label: {
+                Text("+\(others.count)")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold)).monospacedDigit()
+                    .foregroundStyle(Palette.accent)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Palette.surface, in: Capsule())
+                    .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 0.5))
+            }
+            .buttonStyle(PressableCardStyle())
+            .padding(Spacing.m)
+            .accessibilityLabel("\(others.count) more findings")
+        }
+    }
+
     /// The scan in 3D with the problem pins, and the selected problem under it.
     private var modelCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ModelView(source: model, pins: pins, focus: focus) { id in
-                focus = id
-                sheet = all.first { $0.id == id }
+            Group {
+                if case .photos = model, let sessionDir {
+                    PhotoHero(stillsDir: sessionDir.appending(path: "stills"), numbered: numberedPhotos, focus: focus) { id in
+                        focus = id
+                        sheet = all.first { $0.id == id }
+                    }
+                } else {
+                    ModelView(source: model, pins: pins, focus: focus, spin: true, showHint: !canShowOnObject) { id in
+                        focus = id
+                        sheet = all.first { $0.id == id }
+                    }
+                    .frame(height: 340)
+                }
             }
-            .frame(height: 300)
+            .overlay(alignment: .bottomLeading) {
+                if canShowOnObject {
+                    Button { showOnObject = true } label: { Label("Show on object", systemImage: "arkit") }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 9)
+                        .background(Palette.accentFill, in: Capsule())
+                        .buttonStyle(PressableCardStyle())
+                        .padding(Spacing.m)
+                        .accessibilityHint("Places the numbered problems on the real object with the camera")
+                }
+            }
+            .overlay(alignment: .bottomTrailing) { othersChip }
             if let id = focus, let p = all.first(where: { $0.id == id }) {
                 Divider()
                 let row = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.s))
@@ -452,7 +680,7 @@ struct ReportContent: View {
                 .transition(.opacity)
             }
             let unplaced = report.mostLikely.filter { $0.point == nil }.count
-            if unplaced > 0 {
+            if unplaced > 0, !isPhotoHero {
                 Divider()
                 Label(unplaced == report.mostLikely.count ? "These problems have no 3D position yet."
                       : "\(unplaced) of these problems \(unplaced == 1 ? "has" : "have") no 3D position.",
@@ -485,6 +713,9 @@ private struct VerdictHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
+            if let object = report.objectWords {
+                Text(object).font(.pillLabel).foregroundStyle(.secondary).textCase(nil)
+            }
             let row = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.s))
                 : AnyLayout(HStackLayout(alignment: .center, spacing: Spacing.m))
             row {
@@ -519,7 +750,7 @@ private struct VerdictHeader: View {
     private var tone: Tone {
         switch report.verdict {
         case .potentialIssues: report.mostLikely.contains { $0.severity == .safety } ? .danger : .caution
-        case .looksGood: .good
+        case .looksGood, .noProblemsSeen: .good
         default: .cosmetic
         }
     }
@@ -527,7 +758,7 @@ private struct VerdictHeader: View {
     private var symbol: String {
         switch report.verdict {
         case .potentialIssues: Symbol.safety
-        case .looksGood: Symbol.good
+        case .looksGood, .noProblemsSeen: Symbol.good
         default: Symbol.unknown
         }
     }
@@ -776,6 +1007,35 @@ private struct LimitsCard: View {
         }
         .card()
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// The findings beyond the top three, from the hero's "+N" chip (and the AR view's).
+struct OtherFindingsSheet: View {
+    let problems: [ReportModel.Problem]
+    let open: (ReportModel.Problem) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List(problems) { p in
+                Button { open(p) } label: {
+                    HStack(spacing: Spacing.m) {
+                        CropThumb(sha: p.crops.first, cornerRadius: Radius.small).frame(width: 48, height: 48)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                            Text([p.issue, p.confidence].compactMap { $0 }.joined(separator: " · "))
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .navigationTitle("Other findings").navigationBarTitleDisplayMode(.inline)
+            .toolbar { Button("Done") { dismiss() }.fontWeight(.semibold) }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

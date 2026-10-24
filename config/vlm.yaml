@@ -16,3 +16,5 @@ effort:
 # Per-part-family failure checklists in the crop prompt (vision/checklists.py). Measured the same day: recall up,
 # precision slightly down, on held-out crops.
 checklists: true
+# Short text-only calls (the user's story -> a hypothesis, search results -> leads); its effort is above.
+quick_model: claude-haiku-5-5

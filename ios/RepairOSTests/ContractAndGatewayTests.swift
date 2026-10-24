@@ -10,7 +10,7 @@ struct ContractTests {
             camera: KeyframeCamera(frame: .arkitWorld, positionM: [0, 0, 0], quaternionXyzw: [0, 0, 0, 1]),
             confidenceFile: nil, depthEncoding: nil, depthFile: nil, exposureS: 0.008, imageFile: "scans/scan_a/kf_000.jpg",
             intrinsics: KeyframeIntrinsics(cx: 960, cy: 720, fx: 1400, fy: 1400, heightPx: 1440, widthPx: 1920),
-            keyframeID: "kf_000", segment: nil, sharpness: 120, timestampS: 0, trackingState: .normal)
+            keyframeID: "kf_000", poseQuality: nil, poseSource: nil, segment: nil, sharpness: 120, timestampS: 0, trackingState: .normal)
         let pkg = ScanPackage(
             alignment: nil, capturedAt: Date(timeIntervalSince1970: 1_793_000_000), coverageHint: nil,
             cropBox: ObjectBox(center: SIMD3(0, 0.03, -0.5), size: SIMD3(0.06, 0.06, 0.06), yaw: 0.3).contract, depthSource: DepthSource.none,
