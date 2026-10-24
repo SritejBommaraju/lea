@@ -4,6 +4,7 @@ import SwiftUI
 /// is installed. Partial words show while you speak; Lea's last reply shows after.
 struct VoiceBar: View {
     @ObservedObject var voice: VoiceCoordinator
+    var expand: (() -> Void)?
     @State private var pressing = false
 
     var body: some View {
@@ -27,6 +28,10 @@ struct VoiceBar: View {
                     .onChanged { _ in if !pressing { pressing = true; voice.pushToTalkBegan() } }
                     .onEnded { _ in pressing = false; voice.pushToTalkEnded() })
                 .accessibilityLabel("Hold to talk to Lea")
+            if let expand {
+                Button(action: expand) { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .accessibilityLabel("Open voice mode")
+            }
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))

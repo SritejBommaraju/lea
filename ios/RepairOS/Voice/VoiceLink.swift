@@ -11,7 +11,8 @@ struct VoiceReply: Decodable, Sendable {
     let actions: [VoiceAction]
 }
 
-/// Something the gateway asked the phone to do: `scan` (start a new scan) or `report` (open a scan's report).
+/// Something the gateway asked the phone to do: `offer_scan` (show a scan button), `scan` (start a new scan now) or
+/// `report` (open a scan's report).
 struct VoiceAction: Decodable, Sendable, Equatable {
     let type: String
     let scanID: String?

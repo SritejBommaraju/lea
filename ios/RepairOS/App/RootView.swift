@@ -19,6 +19,9 @@ struct RootView: View {
     @State private var showAll = false
     @State private var pendingDelete: SessionRecord?
     @StateObject private var voice = VoiceCoordinator()
+    @State private var showVoiceMode = false
+    @State private var scanOffered = false
+    @State private var scanAfterVoiceMode = false
     private static let recentCount = 3
     @FocusState private var symptomFocused: Bool
 
@@ -51,7 +54,7 @@ struct RootView: View {
             .background(Palette.canvas.ignoresSafeArea())
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: Spacing.s) {
-                    VoiceBar(voice: voice).padding(.horizontal, Spacing.m)
+                    VoiceBar(voice: voice, expand: { showVoiceMode = true }).padding(.horizontal, Spacing.m)
                     startBar
                 }
             }
@@ -77,6 +80,9 @@ struct RootView: View {
             .fullScreenCover(item: $active, onDismiss: app.reloadSessions) { record in
                 SessionFlowView(record: record)
             }
+            .fullScreenCover(isPresented: $showVoiceMode, onDismiss: afterVoiceMode) {
+                VoiceModeView(voice: voice, scanOffered: scanOffered, startScan: scanFromVoice, close: { showVoiceMode = false })
+            }
             .alert("Lea", isPresented: Binding(get: { voice.message != nil }, set: { if !$0 { voice.message = nil } })) {
                 Button("OK") { voice.message = nil }
             } message: { Text(voice.message ?? "") }
@@ -88,11 +94,11 @@ struct RootView: View {
                 if app.autostart, active == nil { newScan() }
             }
             .onReceive(NotificationCenter.default.publisher(for: VoiceLaunch.requested)) { _ in
-                if VoiceLaunch.take() { voice.greetAndListen() }
+                if VoiceLaunch.take() { openVoiceMode() }
             }
             .onAppear {
                 connectVoice()
-                if VoiceLaunch.take() { voice.greetAndListen() }   // Siri opened the app before this screen existed
+                if VoiceLaunch.take() { openVoiceMode() }   // Siri opened the app before this screen existed
                 if !Consent.accepted && !devAutostart {
                     showConsent = true
                 } else {
@@ -164,11 +170,40 @@ struct RootView: View {
         voice.onActions = { actions in
             for action in actions {
                 switch action.type {
-                case "scan": newScan()
-                case "report": active = app.sessions.first { $0.scanID == action.scanID } ?? app.sessions.first
+                case "offer_scan": scanOffered = true
+                case "scan": scanFromVoice()
+                case "report":
+                    showVoiceMode = false
+                    active = app.sessions.first { $0.scanID == action.scanID } ?? app.sessions.first
                 default: break
                 }
             }
+        }
+    }
+
+    /// Siri's "Hey lea": voice mode opens and Lea asks what's up.
+    private func openVoiceMode() {
+        showVoiceMode = true
+        voice.greetAndListen()
+    }
+
+    /// A scan Lea started (or the person accepted) opens once voice mode has closed; two full-screen covers can't
+    /// show at once.
+    private func scanFromVoice() {
+        scanOffered = false
+        if showVoiceMode {
+            scanAfterVoiceMode = true
+            showVoiceMode = false
+        } else {
+            newScan()
+        }
+    }
+
+    private func afterVoiceMode() {
+        scanOffered = false
+        if scanAfterVoiceMode {
+            scanAfterVoiceMode = false
+            newScan()
         }
     }
 

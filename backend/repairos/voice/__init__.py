@@ -28,12 +28,16 @@ Latency-sensitive; begin your visible answer immediately.
 Findings and suspects come from the vision pipeline and are candidates, never proof; only a meter reading proves a fault.
 Use the suspect's own probability word. Never state voltages, polarity or ratings from appearance.
 Safety: only low-voltage products; continuity checks are done unplugged.
-Use tools to read what the scan found and to act on the phone (start a scan, open the report)."""
+Use tools to read what the scan found and to act on the phone.
+When the person describes a problem and there is no scan yet, ask them to scan the object and call offer_scan (it shows
+a scan button they can accept). Call start_scan only when they ask for a scan or say yes to one you offered."""
 
 TOOLS = [
     {"name": "session_state", "description": "What this session has: scans, findings, suspects (ranked) and next actions.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
-    {"name": "start_scan", "description": "Open a new guided scan on the phone (\"make a render of this\").",
+    {"name": "offer_scan", "description": "Show a scan button the person can accept, after asking them to scan the object.",
+     "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
+    {"name": "start_scan", "description": "Open a new guided scan now: they asked for one, or said yes to the offer.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
     {"name": "open_report", "description": "Show the report for the latest scan on the phone.",
      "input_schema": {"type": "object", "properties": {}, "additionalProperties": False}},
@@ -89,6 +93,9 @@ def agent_turn(transcript: str, snap: dict, history: list[tuple[str, str]], clie
         for u in uses:
             if u.name == "session_state":
                 out = json.dumps(_brief(snap))
+            elif u.name == "offer_scan":
+                actions.append({"type": "offer_scan"})
+                out = "The scan button is showing; it opens the scan when they tap it or say yes."
             elif u.name == "start_scan":
                 actions.append({"type": "scan"})
                 out = "The scan screen is opening on the phone."

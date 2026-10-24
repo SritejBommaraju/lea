@@ -22,6 +22,8 @@ final class VoiceCoordinator: ObservableObject {
     @Published private(set) var state: State = .idle
     @Published private(set) var partial = ""
     @Published private(set) var lastReply: String?
+    /// The last final thing the person said, for the voice mode's caption.
+    @Published private(set) var lastHeard: String?
     @Published private(set) var handsFree = false
     @Published private(set) var wakeOn = false
     @Published private(set) var listenerName = "Apple on-device"
@@ -283,6 +285,7 @@ final class VoiceCoordinator: ObservableObject {
         let mine = turn
         state = .thinking
         partial = text
+        lastHeard = text
 
         // Ask the bridge now; react at once; hold the turn with a thinking sound if the answer is slow.
         let id = "vt_\(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())"
