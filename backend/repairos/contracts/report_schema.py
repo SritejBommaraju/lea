@@ -415,6 +415,10 @@ class MergedBy(StrEnum):
     same_place_on_scan = 'same_place_on_scan'
 
 
+class SupersededId(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
 class Finding(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -462,6 +466,11 @@ class Finding(BaseModel):
     merged_by: MergedBy | None = Field(
         None, description='Why the findings of a collapsed row are one issue.'
     )
+    superseded_ids: list[SupersededId] | None = Field(
+        None,
+        description="Findings of the same place on the scan that could not be judged in another photo (insufficient_evidence) and are judged in this row's photo instead, e.g. a closer photo added later to the same scan. They appear in no other row (MS1).",
+        min_length=1,
+    )
 
 
 class NotInspected(BaseModel):
@@ -505,6 +514,11 @@ class Insufficient(BaseModel):
     location: Location | None = None
     reason: str = Field(..., min_length=1)
     inspected_by: list[InspectedByEnum] = Field(..., min_length=1)
+    finding_ids: list[FindingId] | None = Field(
+        None,
+        description='A collapsed row: findings of the same place on the scan that could not be judged in any of their photos, finding_id first. Each finding appears in no other row (MS1).',
+        min_length=2,
+    )
 
 
 class Report(BaseModel):

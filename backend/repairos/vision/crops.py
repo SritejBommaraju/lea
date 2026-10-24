@@ -133,3 +133,15 @@ def jpeg_bytes(image: Any, quality: int = 90) -> bytes:
     buf = io.BytesIO()
     as_pil(image).save(buf, format="JPEG", quality=quality)
     return buf.getvalue()
+
+
+def outline(view: Any, box: Box, scale: float) -> Any:
+    """A copy of a downsized whole-still `view` (context_view without a box) with `box` (still pixels) outlined:
+    the same picture context_view draws, without resizing the full-resolution still again for every crop."""
+    from PIL import ImageDraw
+
+    out = view.copy()
+    d = ImageDraw.Draw(out)
+    lw = max(2, round(max(out.size) / 300))
+    d.rectangle([box[0] * scale, box[1] * scale, box[2] * scale, box[3] * scale], outline=(255, 0, 255), width=lw)
+    return out

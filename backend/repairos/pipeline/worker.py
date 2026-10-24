@@ -3,9 +3,20 @@
     python -m repairos.pipeline.worker [--once] [--poll 0.5] [--name w1]
 
 Jobs (queued by the gateway, repairos.api.app):
-  detect   on a scan package: record the capture facts; on a still: inspect it now, while the upload goes on
+  detect   on a scan package: record the capture facts; on a still: decide (still selection against the stills of
+           its scan kept so far) and inspect it now, while the scan goes on, also before the scan package exists
   ocr      on a label still: the inspect stage (label stills are not_inspected until OCR exists, M8)
   pipeline on `POST /v1/scans/{scan_id}/complete` (the upload is complete): the whole run, then the report
+Every SWEEP_S the worker also closes continuations nobody finished (run.close_abandoned).
+Shutdown (SIGTERM from the pod, SIGINT): no new job is claimed and no new model call starts; running jobs get GRACE_S
+to end; what is still running is cancelled, its still claims are released to pending (their stills queued again) and
+its jobs go back to the queue untried. Startup and every sweep release claims whose worker is gone
+(run.release_claims). Every still claim carries a heartbeat while it is held, in every mode (Context.hold), and every
+claim change (take over, beat, result, release) is a compare-and-set in one transaction, so two workers never both
+own a still and a released claim is never written over.
+One worker runs up to `worker_jobs` (config/pipeline.yaml) jobs at once in one event loop, sharing one Context: one
+detector model, one Claude call pool. A pipeline job is claimed before any other kind, so a finished scan's report
+is not queued behind the next scan's stills.
 A failed job is retried by the queue (up to its attempt limit) when the error is transient (Jev or Claude
 unreachable); the run row shows `failed` with the stage and the error either way. Never a silent default.
 """
@@ -19,11 +30,15 @@ import socket
 import sys
 from typing import Any
 
-from repairos.pipeline.run import Context, PipelineFailed, inspect_still_stage, record_capture, run_scan
+from repairos.pipeline.run import (Context, PipelineFailed, close_abandoned, inspect_still_stage, record_capture,
+                                   release_claims, run_scan)
+from repairos.pipeline.stopping import is_stopping
 from repairos.slots.state import Job
 
 KINDS = ["detect", "ocr", "pipeline"]
 HEARTBEAT_S = 30.0
+SWEEP_S = 30.0
+GRACE_S = 20.0   # on SIGTERM / SIGINT: how long running jobs may finish before their claims are released   # how often an idle or busy worker closes continuations nobody finished (close_abandoned)
 log = logging.getLogger("repairos.pipeline.worker")
 
 
@@ -44,7 +59,7 @@ def transient(e: BaseException) -> bool:
 async def handle(ctx: Context, job: Job) -> dict[str, Any]:
     kind, inputs = job.kind, job.inputs or {}
     if kind in ("detect", "ocr") and inputs.get("kind") == "still":
-        stage = await inspect_still_stage(ctx, inputs["id"])
+        stage = await inspect_still_stage(ctx, inputs["id"], decide=kind == "detect")
         return {"stage": "inspect", "still_id": inputs["id"], "findings": len(stage.get("finding_ids", []))}
     if kind == "detect" and inputs.get("kind") == "scan-package":
         return await record_capture(ctx, inputs["id"])
@@ -56,10 +71,19 @@ async def handle(ctx: Context, job: Job) -> dict[str, Any]:
 
 class Worker:
     def __init__(self, state: Any, blobs: Any, registry: Any = None, name: str | None = None,
-                 kinds: list[str] | None = None, poll_s: float = 0.5):
+                 kinds: list[str] | None = None, poll_s: float = 0.5, jobs_at_once: int | None = None):
         self.name = name or f"{socket.gethostname()}:{os.getpid()}"
         self.ctx = Context(state=state, blobs=blobs, registry=registry, worker=self.name)
         self.state, self.kinds, self.poll_s = state, kinds or KINDS, poll_s
+        self.jobs_at_once = jobs_at_once or self.ctx.config["worker_jobs"]
+        self.active: dict[asyncio.Task, Job] = {}
+
+    async def _claim(self) -> Job | None:
+        """Pipeline jobs first (a report waiting is worth more than one more still), then the rest in queue order."""
+        first = [k for k in self.kinds if k == "pipeline"]
+        job = await self.state.claim(self.name, first) if first else None
+        rest = [k for k in self.kinds if k != "pipeline"]
+        return job or (await self.state.claim(self.name, rest) if rest else None)
 
     async def _beat(self, job_id: str) -> None:
         while True:
@@ -68,13 +92,20 @@ class Worker:
 
     async def run_once(self) -> Job | None:
         """Claim and run one job; None when the queue is empty."""
-        job = await self.state.claim(self.name, self.kinds)
+        job = await self._claim()
         if job is None:
             return None
+        return await self._run(job)
+
+    async def _run(self, job: Job) -> Job | None:
         beat = asyncio.create_task(self._beat(job.job_id))
         try:
             result = await handle(self.ctx, job)
         except Exception as e:
+            if is_stopping(e):   # shutting down: the job goes back to the queue untried, never failed
+                await self.state.release(job.job_id)
+                log.info("job %s (%s) released: the worker is stopping", job.job_id, job.kind)
+                return await self.state.get_job(job.job_id)
             retry = transient(e)
             log.error("job %s (%s) failed%s: %s", job.job_id, job.kind, ", will retry" if retry else "", e)
             await self.state.fail(job.job_id, f"{type(e).__name__}: {e}"[:4000], retry=retry)
@@ -93,14 +124,54 @@ class Worker:
             done.append(job)
         return done
 
-    async def run_forever(self, stop: asyncio.Event | None = None) -> None:
+    async def run_forever(self, stop: asyncio.Event | None = None, grace_s: float = GRACE_S) -> None:
+        """Up to `jobs_at_once` jobs at a time; an idle worker polls every `poll_s`."""
         stop = stop or asyncio.Event()
+        running: set[asyncio.Task] = set()
+        swept = 0.0
+        loop = asyncio.get_running_loop()
         while not stop.is_set():
-            if await self.run_once() is None:
+            if loop.time() - swept >= SWEEP_S:
+                swept = loop.time()
                 try:
-                    await asyncio.wait_for(stop.wait(), self.poll_s)
-                except TimeoutError:
-                    pass
+                    await release_claims(self.ctx)          # claims of workers that are gone (also at startup)
+                    await close_abandoned(self.ctx)
+                except Exception as e:  # noqa: BLE001 - the sweep never stops the worker; it is retried next time
+                    log.error("sweep failed: %s", e)
+            while len(running) < self.jobs_at_once and not stop.is_set() and (job := await self._claim()) is not None:
+                task = asyncio.create_task(self._run(job))
+                self.active[task] = job
+                task.add_done_callback(lambda t: self.active.pop(t, None))
+                running.add(task)
+            waiters = [asyncio.create_task(stop.wait())]
+            try:
+                await asyncio.wait(running | set(waiters), timeout=self.poll_s, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for w in waiters:
+                    w.cancel()
+            running = {t for t in running if not t.done()}
+        await self.shutdown(running, grace_s)
+
+    async def shutdown(self, running: set[asyncio.Task], grace_s: float = GRACE_S) -> None:
+        """Stop new model work at once (Context.stopping: an inspection thread stops before its next detector or
+        vision-model call), let running jobs end within `grace_s`, then cancel the rest, release this worker's still
+        claims and put its unfinished jobs back in the queue. A thread still in a model call when its claim is
+        released cannot write over the claim afterwards: every still result is owner-checked (finish_still)."""
+        self.ctx.stopping.set()
+        if running:
+            log.info("stopping: %d job(s) running, %.0f s to finish", len(running), grace_s)
+            _, late = await asyncio.wait(running, timeout=grace_s)
+            unfinished = [self.active.get(t) for t in late]
+            for t in late:
+                t.cancel()
+            await asyncio.gather(*late, return_exceptions=True)
+            for job in unfinished:
+                if job is not None:
+                    await self.state.release(job.job_id)
+                    log.info("job %s (%s) back in the queue", job.job_id, job.kind)
+        released = await release_claims(self.ctx, worker=self.name)
+        if released:
+            log.info("released %d still claim(s) on shutdown", len(released))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,24 +179,33 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--once", action="store_true", help="run every queued job, then exit")
     ap.add_argument("--poll", type=float, default=0.5, help="seconds between polls of an empty queue")
     ap.add_argument("--name", default=None, help="worker name recorded on claimed jobs")
+    ap.add_argument("--jobs", type=int, default=None, help="jobs at once (default: worker_jobs in config/pipeline.yaml)")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     from repairos.registry import default_registry
 
     reg = default_registry()
-    w = Worker(reg.slot("STATE"), reg.slot("BLOB"), reg, name=a.name, poll_s=a.poll)
-    log.info("worker %s on kinds %s (STATE=%s, BLOB=%s)", w.name, w.kinds, reg.selected("STATE"),
-             reg.selected("BLOB"))
+    w = Worker(reg.slot("STATE"), reg.slot("BLOB"), reg, name=a.name, poll_s=a.poll, jobs_at_once=a.jobs)
+    log.info("worker %s on kinds %s, %d jobs at once (STATE=%s, BLOB=%s)", w.name, w.kinds, w.jobs_at_once,
+             reg.selected("STATE"), reg.selected("BLOB"))
     if a.once:
         jobs = asyncio.run(w.drain())
         failed = [j for j in jobs if j and j.status == "failed"]
         print(f"{len(jobs)} job(s) run, {len(failed)} failed")
         return 1 if failed else 0
-    try:
-        asyncio.run(w.run_forever())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(serve(w))
     return 0
+
+
+async def serve(w: Worker, grace_s: float = GRACE_S) -> None:
+    """run_forever until SIGTERM or SIGINT, then a graceful shutdown (Worker.shutdown)."""
+    import signal
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    await w.run_forever(stop, grace_s)
 
 
 if __name__ == "__main__":

@@ -3666,6 +3666,10 @@ public struct CosmeticElement: Codable, Sendable {
     /// treated as functional). Cosmetic issues are listed in `cosmetic`, never in `findings`.
     public let severity: FindingSeverity?
     public let subject: CosmeticSubject
+    /// Findings of the same place on the scan that could not be judged in another photo
+    /// (insufficient_evidence) and are judged in this row's photo instead, e.g. a closer photo
+    /// added later to the same scan. They appear in no other row (MS1).
+    public let supersededIDS: [String]?
 
     public enum CodingKeys: String, CodingKey {
         case confidenceWord = "confidence_word"
@@ -3685,9 +3689,10 @@ public struct CosmeticElement: Codable, Sendable {
         case regions = "regions"
         case severity = "severity"
         case subject = "subject"
+        case supersededIDS = "superseded_ids"
     }
 
-    public init(confidenceWord: ConfidenceEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: CosmeticSubject) {
+    public init(confidenceWord: ConfidenceEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: CosmeticSubject, supersededIDS: [String]?) {
         self.confidenceWord = confidenceWord
         self.crop = crop
         self.crops = crops
@@ -3705,6 +3710,7 @@ public struct CosmeticElement: Codable, Sendable {
         self.regions = regions
         self.severity = severity
         self.subject = subject
+        self.supersededIDS = supersededIDS
     }
 }
 
@@ -3922,6 +3928,9 @@ public enum GrainEnum: String, Codable, Sendable {
 // MARK: - InsufficientEvidenceElement
 public struct InsufficientEvidenceElement: Codable, Sendable {
     public let findingID: String
+    /// A collapsed row: findings of the same place on the scan that could not be judged in any
+    /// of their photos, finding_id first. Each finding appears in no other row (MS1).
+    public let findingIDS: [String]?
     public let inspectedBy: [InspectedBy]
     public let location: Location?
     public let partClass: String
@@ -3931,6 +3940,7 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
 
     public enum CodingKeys: String, CodingKey {
         case findingID = "finding_id"
+        case findingIDS = "finding_ids"
         case inspectedBy = "inspected_by"
         case location = "location"
         case partClass = "part_class"
@@ -3939,8 +3949,9 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(findingID: String, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: InsufficientEvidencePhoto?, reason: String, subject: CosmeticSubject) {
+    public init(findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: InsufficientEvidencePhoto?, reason: String, subject: CosmeticSubject) {
         self.findingID = findingID
+        self.findingIDS = findingIDS
         self.inspectedBy = inspectedBy
         self.location = location
         self.partClass = partClass
@@ -4194,15 +4205,33 @@ public struct ScanPackage: Codable, Sendable {
     public let pointCount: Int?
     /// Binary little-endian PLY, xyz float32 + rgb uint8, optional confidence/views uint8.
     public let pointsFile: String?
+    /// Where keyframe poses and points_file come from. arkit (also when absent): ARKit world
+    /// tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry:
+    /// Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses
+    /// and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when
+    /// depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is
+    /// no voxel_mm.
+    public let poseSource: PoseSource?
     public let productID: String
     public let scanID: String
+    /// Later capture segments of the same session: the object flipped for its underside (reason
+    /// flipped: it moved, so registering the segment is a separate step on the Mac), or more
+    /// photos of the same, unmoved object continued from the report (reason continued). Each has
+    /// its own locked box and LiDAR cloud in the same ARKit world frame unless aligned is false.
+    /// points_file/crop_box above are segment 0.
+    public let segments: [Segment]?
     /// One repair session; groups scans, stills and readings.
     public let sessionID: String
+    /// The table the object stood on (segment 0), as ARKit detected it: a horizontal plane
+    /// anchor.
+    public let supportPlane: SupportPlane?
     public let supportingPlaneRemoved: Bool?
     /// One line from the user. Goes into model state, never instructions (A9).
     public let symptom: String?
     public let units: ScanPackageUnits
-    /// Voxel pitch of the fused cloud in millimetres (3 default; 1-2 with PromptDA TSDF).
+    /// Voxel pitch in millimetres when points_file is voxel-fused (3 default; 1-2 with PromptDA
+    /// TSDF). Absent when the cloud keeps raw samples (the app's live LiDAR accumulation,
+    /// photogrammetry).
     public let voxelMm: Double?
 
     public enum CodingKeys: String, CodingKey {
@@ -4218,16 +4247,19 @@ public struct ScanPackage: Codable, Sendable {
         case meshFile = "mesh_file"
         case pointCount = "point_count"
         case pointsFile = "points_file"
+        case poseSource = "pose_source"
         case productID = "product_id"
         case scanID = "scan_id"
+        case segments = "segments"
         case sessionID = "session_id"
+        case supportPlane = "support_plane"
         case supportingPlaneRemoved = "supporting_plane_removed"
         case symptom = "symptom"
         case units = "units"
         case voxelMm = "voxel_mm"
     }
 
-    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, productID: String, scanID: String, sessionID: String, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
+    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: PoseSource?, productID: String, scanID: String, segments: [Segment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
         self.alignment = alignment
         self.capturedAt = capturedAt
         self.coverageHint = coverageHint
@@ -4240,9 +4272,12 @@ public struct ScanPackage: Codable, Sendable {
         self.meshFile = meshFile
         self.pointCount = pointCount
         self.pointsFile = pointsFile
+        self.poseSource = poseSource
         self.productID = productID
         self.scanID = scanID
+        self.segments = segments
         self.sessionID = sessionID
+        self.supportPlane = supportPlane
         self.supportingPlaneRemoved = supportingPlaneRemoved
         self.symptom = symptom
         self.units = units
@@ -4369,6 +4404,8 @@ public struct ScanPackageSchema: Codable, Sendable {
     public let imageFile: String
     public let intrinsics: KeyframeIntrinsics
     public let keyframeID: String
+    /// Capture segment of this keyframe (absent = 0; see segments).
+    public let segment: Int?
     /// Laplacian variance; higher is sharper.
     public let sharpness: Double?
     /// Seconds since scan start.
@@ -4385,12 +4422,13 @@ public struct ScanPackageSchema: Codable, Sendable {
         case imageFile = "image_file"
         case intrinsics = "intrinsics"
         case keyframeID = "keyframe_id"
+        case segment = "segment"
         case sharpness = "sharpness"
         case timestampS = "timestamp_s"
         case trackingState = "tracking_state"
     }
 
-    public init(camera: KeyframeCamera, confidenceFile: String?, depthEncoding: DepthEncoding?, depthFile: String?, exposureS: Double?, imageFile: String, intrinsics: KeyframeIntrinsics, keyframeID: String, sharpness: Double?, timestampS: Double, trackingState: TrackingState) {
+    public init(camera: KeyframeCamera, confidenceFile: String?, depthEncoding: DepthEncoding?, depthFile: String?, exposureS: Double?, imageFile: String, intrinsics: KeyframeIntrinsics, keyframeID: String, segment: Int?, sharpness: Double?, timestampS: Double, trackingState: TrackingState) {
         self.camera = camera
         self.confidenceFile = confidenceFile
         self.depthEncoding = depthEncoding
@@ -4399,6 +4437,7 @@ public struct ScanPackageSchema: Codable, Sendable {
         self.imageFile = imageFile
         self.intrinsics = intrinsics
         self.keyframeID = keyframeID
+        self.segment = segment
         self.sharpness = sharpness
         self.timestampS = timestampS
         self.trackingState = trackingState
@@ -4467,6 +4506,80 @@ public enum TrackingState: String, Codable, Sendable {
     case limited = "limited"
     case normal = "normal"
     case unknown = "unknown"
+}
+
+/// Where keyframe poses and points_file come from. arkit (also when absent): ARKit world
+/// tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry:
+/// Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses
+/// and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when
+/// depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is
+/// no voxel_mm.
+public enum PoseSource: String, Codable, Sendable {
+    case arkit = "arkit"
+    case photogrammetry = "photogrammetry"
+}
+
+// MARK: - Segment
+public struct Segment: Codable, Sendable {
+    /// False when ARKit could not relocalise this segment into the scan's world frame: its
+    /// stills' poses are not comparable with the scan, and the backend does not place their
+    /// findings on it. Absent = aligned.
+    public let aligned: Bool?
+    public let cropBox: CropBox?
+    public let pointCount: Int?
+    /// Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world).
+    public let pointsFile: String?
+    /// flipped: the object was turned over for its underside (it moved: not in segment 0's
+    /// object frame). continued: more photos of the same object, unmoved, taken later from the
+    /// report (POST /v1/scans again with the same scan_id).
+    public let reason: SegmentReason
+    public let segment: Int
+
+    public enum CodingKeys: String, CodingKey {
+        case aligned = "aligned"
+        case cropBox = "crop_box"
+        case pointCount = "point_count"
+        case pointsFile = "points_file"
+        case reason = "reason"
+        case segment = "segment"
+    }
+
+    public init(aligned: Bool?, cropBox: CropBox?, pointCount: Int?, pointsFile: String?, reason: SegmentReason, segment: Int) {
+        self.aligned = aligned
+        self.cropBox = cropBox
+        self.pointCount = pointCount
+        self.pointsFile = pointsFile
+        self.reason = reason
+        self.segment = segment
+    }
+}
+
+/// flipped: the object was turned over for its underside (it moved: not in segment 0's
+/// object frame). continued: more photos of the same object, unmoved, taken later from the
+/// report (POST /v1/scans again with the same scan_id).
+public enum SegmentReason: String, Codable, Sendable {
+    case continued = "continued"
+    case flipped = "flipped"
+}
+
+/// The table the object stood on (segment 0), as ARKit detected it: a horizontal plane
+/// anchor.
+// MARK: - SupportPlane
+public struct SupportPlane: Codable, Sendable {
+    /// Plane size along its local X and Z, metres.
+    public let extentM: [Double]
+    /// Row-major 4x4 plane-to-arkit_world transform; the plane is its local XZ, normal +Y.
+    public let transform: [Double]
+
+    public enum CodingKeys: String, CodingKey {
+        case extentM = "extent_m"
+        case transform = "transform"
+    }
+
+    public init(extentM: [Double], transform: [Double]) {
+        self.extentM = extentM
+        self.transform = transform
+    }
 }
 
 public enum ScanPackageUnits: String, Codable, Sendable {
@@ -4733,6 +4846,11 @@ public struct Still: Codable, Sendable {
     public let confidenceFile: String?
     /// Nearest ARKit depth frame (256x192) for re-registration.
     public let depthFile: String?
+    /// Time between the still and the regular ARKit frame its depth_file came from (high-res
+    /// frames carry no depth).
+    public let depthGapMS: Int?
+    /// Exposure duration of the still (ARKit camera).
+    public let exposureS: Double?
     public let heightPx: Int
     /// JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it.
     public let imageFile: String
@@ -4740,28 +4858,44 @@ public struct Still: Codable, Sendable {
     /// pose_reliable is false and the focal length is unknown (a plain photo without EXIF focal
     /// length).
     public let intrinsics: StillIntrinsics?
+    /// ISO of the still, from the frame's EXIF when ARKit gives it.
+    public let iso: Double?
     /// guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session,
     /// no reliable pose, evidence-only. label: product label for identification. unguided: a
     /// still taken without a target ring, e.g. a frame of an imported capture (B12) or a plain
     /// camera photo (tools/import_photos.py, pose_reliable false, no camera); targets is empty.
     public let kind: StillKind
+    /// True when the app took the still in low light (it never blocks on light): judge dark
+    /// detail with care.
+    public let lowLight: Bool?
     /// False for macro_detail, when tracking was limited, or when the still has no pose at all
     /// (a plain photo: camera absent). Only when false may camera and intrinsics be absent.
     public let poseReliable: Bool?
     /// The Mode A scan this still is registered to.
     public let scanID: String
+    /// Capture segment (absent = 0). The app starts segment 1 after the person flips the object
+    /// for the underside: the object moved, so poses from different segments are not in the same
+    /// object frame. Stills of segment ≥ 1 are pose_reliable false until the segments are
+    /// registered (on the Mac); their camera pose stays in the session's world frame.
+    public let segment: Int?
     public let sessionID: String
     /// Laplacian variance.
     public let sharpness: Double?
     public let stillID: String
     /// What the backend asked this still to cover. Empty for a label still.
     public let targets: [TargetElement]
+    /// Torch level during the still (0 = off); torch_on is level > 0.
+    public let torchLevel: Double?
     public let torchOn: Bool?
     /// unknown: the capture app did not record it (an import); pose_reliable is then absent, or
     /// false when there is no pose at all (a plain photo).
     public let trackingState: TrackingState
     /// True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected.
     public let userSkipped: Bool?
+    /// The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2
+    /// above the support plane, azimuth sector 0-11 around the object). Lets the backend see
+    /// which sides were photographed.
+    public let viewCell: String?
     public let widthPx: Int
 
     public enum CodingKeys: String, CodingKey {
@@ -4772,23 +4906,30 @@ public struct Still: Codable, Sendable {
         case capturedAt = "captured_at"
         case confidenceFile = "confidence_file"
         case depthFile = "depth_file"
+        case depthGapMS = "depth_gap_ms"
+        case exposureS = "exposure_s"
         case heightPx = "height_px"
         case imageFile = "image_file"
         case intrinsics = "intrinsics"
+        case iso = "iso"
         case kind = "kind"
+        case lowLight = "low_light"
         case poseReliable = "pose_reliable"
         case scanID = "scan_id"
+        case segment = "segment"
         case sessionID = "session_id"
         case sharpness = "sharpness"
         case stillID = "still_id"
         case targets = "targets"
+        case torchLevel = "torch_level"
         case torchOn = "torch_on"
         case trackingState = "tracking_state"
         case userSkipped = "user_skipped"
+        case viewCell = "view_cell"
         case widthPx = "width_px"
     }
 
-    public init(attachedToTargetID: String?, autoFired: Bool?, camera: StillCamera?, cameraDesign: CameraDesign?, capturedAt: Date, confidenceFile: String?, depthFile: String?, heightPx: Int, imageFile: String, intrinsics: StillIntrinsics?, kind: StillKind, poseReliable: Bool?, scanID: String, sessionID: String, sharpness: Double?, stillID: String, targets: [TargetElement], torchOn: Bool?, trackingState: TrackingState, userSkipped: Bool?, widthPx: Int) {
+    public init(attachedToTargetID: String?, autoFired: Bool?, camera: StillCamera?, cameraDesign: CameraDesign?, capturedAt: Date, confidenceFile: String?, depthFile: String?, depthGapMS: Int?, exposureS: Double?, heightPx: Int, imageFile: String, intrinsics: StillIntrinsics?, iso: Double?, kind: StillKind, lowLight: Bool?, poseReliable: Bool?, scanID: String, segment: Int?, sessionID: String, sharpness: Double?, stillID: String, targets: [TargetElement], torchLevel: Double?, torchOn: Bool?, trackingState: TrackingState, userSkipped: Bool?, viewCell: String?, widthPx: Int) {
         self.attachedToTargetID = attachedToTargetID
         self.autoFired = autoFired
         self.camera = camera
@@ -4796,19 +4937,26 @@ public struct Still: Codable, Sendable {
         self.capturedAt = capturedAt
         self.confidenceFile = confidenceFile
         self.depthFile = depthFile
+        self.depthGapMS = depthGapMS
+        self.exposureS = exposureS
         self.heightPx = heightPx
         self.imageFile = imageFile
         self.intrinsics = intrinsics
+        self.iso = iso
         self.kind = kind
+        self.lowLight = lowLight
         self.poseReliable = poseReliable
         self.scanID = scanID
+        self.segment = segment
         self.sessionID = sessionID
         self.sharpness = sharpness
         self.stillID = stillID
         self.targets = targets
+        self.torchLevel = torchLevel
         self.torchOn = torchOn
         self.trackingState = trackingState
         self.userSkipped = userSkipped
+        self.viewCell = viewCell
         self.widthPx = widthPx
     }
 }
@@ -4912,7 +5060,7 @@ public struct TargetElement: Codable, Sendable {
     /// Grain part names (model.glb nodes, diagnose parts[].name) expected in view, e.g. J1,
     /// LOAD1.
     public let partRefs: [String]?
-    public let reason: Reason?
+    public let reason: TargetReason?
     public let targetID: String
 
     public enum CodingKeys: String, CodingKey {
@@ -4923,7 +5071,7 @@ public struct TargetElement: Codable, Sendable {
         case targetID = "target_id"
     }
 
-    public init(boxMm: BoxMm?, harnessRows: [String]?, partRefs: [String]?, reason: Reason?, targetID: String) {
+    public init(boxMm: BoxMm?, harnessRows: [String]?, partRefs: [String]?, reason: TargetReason?, targetID: String) {
         self.boxMm = boxMm
         self.harnessRows = harnessRows
         self.partRefs = partRefs
@@ -4950,7 +5098,7 @@ public struct BoxMm: Codable, Sendable {
     }
 }
 
-public enum Reason: String, Codable, Sendable {
+public enum TargetReason: String, Codable, Sendable {
     case connector = "connector"
     case nonOkPart = "non_ok_part"
     case reshoot = "reshoot"

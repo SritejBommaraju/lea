@@ -830,6 +830,16 @@
             "same_place_on_scan"
           ],
           "description": "Why the findings of a collapsed row are one issue."
+        },
+        "superseded_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Findings of the same place on the scan that could not be judged in another photo (insufficient_evidence) and are judged in this row's photo instead, e.g. a closer photo added later to the same scan. They appear in no other row (MS1)."
         }
       },
       "allOf": [
@@ -945,6 +955,16 @@
           },
           "minItems": 1,
           "uniqueItems": true
+        },
+        "finding_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "uniqueItems": true,
+          "description": "A collapsed row: findings of the same place on the scan that could not be judged in any of their photos, finding_id first. Each finding appears in no other row (MS1)."
         }
       }
     }

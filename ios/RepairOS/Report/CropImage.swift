@@ -1,0 +1,93 @@
+import ImageIO
+import SwiftUI
+import UIKit
+
+/// Where crop images come from: the paired gateway (GET /v1/blobs/<sha256>, the device token) or, in DEBUG
+/// previews, a local folder laid out like the gateway's blob store (`<root>/<aa>/<sha256>`).
+struct CropSource: Sendable {
+    let fetch: @Sendable (String) async -> Data?
+
+    static func gateway(_ gateway: GatewayClient) -> CropSource {
+        CropSource { sha in
+            var req = URLRequest(url: gateway.baseURL.appending(path: "v1/blobs/\(sha)"))
+            if let token = gateway.token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+            guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                  (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return data
+        }
+    }
+
+    static func folder(_ root: URL) -> CropSource {
+        CropSource { sha in try? Data(contentsOf: root.appending(path: String(sha.prefix(2))).appending(path: sha)) }
+    }
+
+    static let none = CropSource { _ in nil }
+}
+
+extension EnvironmentValues {
+    @Entry var cropSource: CropSource = .none
+}
+
+/// Decoded thumbnails, keyed by sha and pixel size. Decoding happens off the main actor with ImageIO's
+/// thumbnailer, so a 12 MP crop never decodes at full size for an 80 pt tile.
+final class CropCache: @unchecked Sendable {
+    static let shared = CropCache()
+    private let cache = NSCache<NSString, UIImage>()
+
+    init() { cache.countLimit = 120 }
+
+    func cached(_ sha: String, pixels: Int) -> UIImage? { cache.object(forKey: "\(sha)@\(pixels)" as NSString) }
+
+    func image(_ sha: String, pixels: Int, source: CropSource) async -> UIImage? {
+        if let hit = cached(sha, pixels: pixels) { return hit }
+        guard let data = await source.fetch(sha), let image = await Self.decode(data, pixels: pixels) else { return nil }
+        cache.setObject(image, forKey: "\(sha)@\(pixels)" as NSString)
+        return image
+    }
+
+    @concurrent
+    private static func decode(_ data: Data, pixels: Int) async -> UIImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: pixels,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
+    }
+}
+
+/// A crop tile: the image when it arrives (a short fade), a quiet well with a photo glyph until then.
+struct CropThumb: View {
+    let sha: String?
+    var cornerRadius: CGFloat = Radius.thumb
+    @Environment(\.cropSource) private var source
+    @Environment(\.displayScale) private var scale
+    @State private var image: UIImage?
+
+    var body: some View {
+        GeometryReader { geo in
+            let pixels = Int(max(geo.size.width, geo.size.height) * scale)
+            ZStack {
+                Palette.well
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: geo.size.width, height: geo.size.height)
+                        .transition(.opacity)
+                } else {
+                    Image(systemName: Symbol.photo).font(.title3).foregroundStyle(.tertiary)
+                }
+            }
+            .task(id: "\(sha ?? "")@\(pixels)") {
+                guard let sha, pixels > 0 else { return }
+                if let hit = CropCache.shared.cached(sha, pixels: pixels) { image = hit; return }
+                let loaded = await CropCache.shared.image(sha, pixels: pixels, source: source)
+                withAnimation(Motion.fade) { image = loaded }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
+        .accessibilityHidden(true)
+    }
+}

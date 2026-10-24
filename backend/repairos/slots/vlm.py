@@ -22,6 +22,10 @@ from repairos.vision.generic_classes import CONFIDENCE_WORDS, CROP_STATES
 CANNOT_TELL = "cannot_tell"
 assert CANNOT_TELL in CROP_STATES
 SEVERITIES = ("none", "cosmetic", "functional", "safety")
+# How clearly the crop shows the place the state is about (the VLM's own word; code decides what it allows):
+# clear = sharp and large enough to see the detail the state depends on; partial = visible but soft, small or partly
+# hidden; poor = blurred, too small, too dark or hidden. "" = not reported (an older recorded answer).
+VISIBILITY = ("clear", "partial", "poor")
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,9 @@ class CropState:
     attempts: tuple[dict, ...] = field(default_factory=tuple)  # every model's raw answer, for the record
     severity: str = "none"   # one of SEVERITIES: how much a fault would matter; none = ok or cannot_tell
     part_words: str = ""     # a few plain words to find the part in the photo (colour, what it connects to, where)
+    visibility: str = ""     # one of VISIBILITY, or "" when the answer did not report it
+    open_for_access: bool = False  # what the state describes is only the device being open (cover off, panel open,
+                                   # wiring exposed), with nothing broken: the normal state of an inspected device
 
 
 @dataclass(frozen=True)

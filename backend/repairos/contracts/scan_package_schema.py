@@ -28,6 +28,50 @@ class DepthSource(StrEnum):
     none = 'none'
 
 
+class Reason(StrEnum):
+    """
+    flipped: the object was turned over for its underside (it moved: not in segment 0's object frame). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id).
+    """
+
+    flipped = 'flipped'
+    continued = 'continued'
+
+
+class ExtentMItem(RootModel[float]):
+    root: float = Field(..., ge=0.0)
+
+
+class SupportPlane(BaseModel):
+    """
+    The table the object stood on (segment 0), as ARKit detected it: a horizontal plane anchor.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    transform: list[float] = Field(
+        ...,
+        description='Row-major 4x4 plane-to-arkit_world transform; the plane is its local XZ, normal +Y.',
+        max_length=16,
+        min_length=16,
+    )
+    extent_m: list[ExtentMItem] = Field(
+        ...,
+        description='Plane size along its local X and Z, metres.',
+        max_length=2,
+        min_length=2,
+    )
+
+
+class PoseSource(StrEnum):
+    """
+    Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.
+    """
+
+    arkit = 'arkit'
+    photogrammetry = 'photogrammetry'
+
+
 class Pose(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -51,7 +95,7 @@ class Intrinsics(BaseModel):
     height_px: int = Field(..., ge=1)
 
 
-class ExtentMItem(RootModel[float]):
+class ExtentMItem1(RootModel[float]):
     root: float = Field(..., gt=0.0)
 
 
@@ -65,7 +109,7 @@ class Box(BaseModel):
     )
     frame: Literal['arkit_world']
     center_m: list[float] = Field(..., max_length=3, min_length=3)
-    extent_m: list[ExtentMItem] = Field(..., max_length=3, min_length=3)
+    extent_m: list[ExtentMItem1] = Field(..., max_length=3, min_length=3)
     quaternion_xyzw: list[float] = Field(..., max_length=4, min_length=4)
 
 
@@ -104,6 +148,11 @@ class Keyframe(BaseModel):
     tracking_state: TrackingState = Field(
         ...,
         description='ARKit tracking state of the frame. unknown: the capture app did not record it (an import).',
+    )
+    segment: int | None = Field(
+        None,
+        description='Capture segment of this keyframe (absent = 0; see segments).',
+        ge=0,
     )
     sharpness: float | None = Field(
         None, description='Laplacian variance; higher is sharper.', ge=0.0
@@ -153,6 +202,27 @@ class Alignment(BaseModel):
     )
 
 
+class Segment(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    segment: int = Field(..., ge=1)
+    reason: Reason = Field(
+        ...,
+        description="flipped: the object was turned over for its underside (it moved: not in segment 0's object frame). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id).",
+    )
+    aligned: bool | None = Field(
+        None,
+        description="False when ARKit could not relocalise this segment into the scan's world frame: its stills' poses are not comparable with the scan, and the backend does not place their findings on it. Absent = aligned.",
+    )
+    crop_box: Box | None = None
+    points_file: str | None = Field(
+        None,
+        description="Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world).",
+    )
+    point_count: int | None = Field(None, ge=0)
+
+
 class ScanPackage(BaseModel):
     """
     Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.
@@ -183,9 +253,21 @@ class ScanPackage(BaseModel):
         None,
         description="Where the scan's geometry comes from. lidar (also when absent, as in every package before this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8): ARKit world-tracking poses and images only, so there is no points_file or point_count and nothing metric can be read off the scan itself.",
     )
+    segments: list[Segment] | None = Field(
+        None,
+        description='Later capture segments of the same session: the object flipped for its underside (reason flipped: it moved, so registering the segment is a separate step on the Mac), or more photos of the same, unmoved object continued from the report (reason continued). Each has its own locked box and LiDAR cloud in the same ARKit world frame unless aligned is false. points_file/crop_box above are segment 0.',
+    )
+    support_plane: SupportPlane | None = Field(
+        None,
+        description='The table the object stood on (segment 0), as ARKit detected it: a horizontal plane anchor.',
+    )
+    pose_source: PoseSource | None = Field(
+        None,
+        description='Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm.',
+    )
     voxel_mm: float | None = Field(
         None,
-        description='Voxel pitch of the fused cloud in millimetres (3 default; 1-2 with PromptDA TSDF).',
+        description="Voxel pitch in millimetres when points_file is voxel-fused (3 default; 1-2 with PromptDA TSDF). Absent when the cloud keeps raw samples (the app's live LiDAR accumulation, photogrammetry).",
         gt=0.0,
     )
     gravity_arkit_world: list[float] = Field(

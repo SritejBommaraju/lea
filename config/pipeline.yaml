@@ -1,0 +1,26 @@
+# Pipeline speed knobs (task B10): how much of a scan is inspected and how much runs at once. Read by
+# backend/repairos/pipeline/config.py (load_pipeline_config); every key is required. Point elsewhere for an experiment
+# with REPAIROS_PIPELINE_CONFIG=<file>. Measured 2026-10-24 on a 22-still opened-appliance scan (README in
+# backend/repairos/pipeline/run.py): about 5 min before these knobs, under a minute after.
+
+version: 1
+# Jobs one worker process runs at once (pipeline jobs are claimed before detection prefetches).
+worker_jobs: 4
+# Stills one pipeline run inspects at once. The detector runs one still at a time on the GPU; the rest overlap.
+stills_at_once: 4
+# Claude crop calls in flight at once, across every still of every run in the worker (rate limits, Mac memory).
+vlm_calls_at_once: 6
+# Stills inspected per scan at most (near-duplicate views are covered by one first; close-ups are always kept).
+max_stills: 10
+# Claude crop calls per still at most; regions past it are not_inspected with that reason.
+max_crops_per_still: 6
+# Detector tile size in full-resolution pixels for pipeline runs (larger = fewer views, faster; parts smaller than
+# about a centimetre at arm's length are left to close-ups, which the honesty gate asks for anyway).
+detector_tile_px: 2400
+# A scan whose report exists and that got new stills (Continue scanning) but no POST .../complete for this many
+# seconds is closed: the latest report stays the report, the new stills keep their inspections and are folded in on
+# the next complete.
+continuation_timeout_s: 600
+# A region seen in two stills is judged once when their 3D centres are this close (metres) or within half the
+# smaller region's size, whichever is larger, and the regions are of similar size.
+same_region_m: 0.02

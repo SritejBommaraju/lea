@@ -31,7 +31,7 @@ INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha2
 
 TRANSITIONS = (
     "session.create", "device.pair",
-    "scan.create", "scan.set_alignment",
+    "scan.create", "scan.update", "scan.set_alignment",
     "still.create", "still.mark_not_inspected",
     "finding.create",
     "suspect.update_from_fusion", "suspect.confirm", "suspect.clear",
@@ -39,7 +39,8 @@ TRANSITIONS = (
     "reading.record",
     "part.add",
     "plan.create", "plan.confirm", "plan.reopen",
-    "pipeline.update", "pipeline.claim_still",
+    "pipeline.update", "pipeline.claim_still", "pipeline.beat_still", "pipeline.finish_still",
+    "pipeline.release_still",
     "report.publish",
 )
 
@@ -135,6 +136,10 @@ class JobQueue(Protocol):
     async def heartbeat(self, job_id: str) -> None: ...
     async def complete(self, job_id: str, result: dict[str, Any]) -> None: ...
     async def fail(self, job_id: str, error: str, retry: bool) -> None: ...
+    async def release(self, job_id: str) -> None:
+        """Put a running job back in the queue untried (its worker is shutting down): status queued, no worker,
+        the attempt not counted."""
+        ...
     async def get_job(self, job_id: str) -> Job | None: ...
 
 

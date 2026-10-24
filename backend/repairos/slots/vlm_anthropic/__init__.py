@@ -21,8 +21,8 @@ from typing import Any
 
 from repairos.config import ROOT, get_settings
 from repairos.registry import register
-from repairos.slots.vlm import (CANNOT_TELL, SEVERITIES, CropState, Judgement, check_confidence_word, escalate,
-                                with_cannot_tell)
+from repairos.slots.vlm import (CANNOT_TELL, SEVERITIES, VISIBILITY, CropState, Judgement, check_confidence_word,
+                                escalate, with_cannot_tell)
 from repairos.vision import checklists as CL
 from repairos.vision.generic_classes import CONFIDENCE_WORDS, CROP_STATES
 
@@ -56,6 +56,12 @@ def load_vlm_config(path: Path | None = None) -> dict:
 SYSTEM = """You inspect close-up photos of hardware for a repair assistant. The product can be anything: electronics, \
 appliances, tools, toys, vehicles. You judge only what is visible in the photo.
 
+The device is normally open: people open it so the inside can be inspected. A removed or missing cover, an open, \
+swung-out or hanging panel or door, an exposed board and exposed or free-lying wiring are the expected state of an \
+inspected device, never a fault by themselves. Judge the internals themselves: burnt, scorched or melted parts, bad \
+solder joints, swollen or leaking parts, damaged insulation, corrosion, and connectors or wire ends clearly out of \
+place in a sharp view.
+
 Rules:
 - Image 1 is a full-resolution crop around one detected region. Judge the main part in Image 1.
 - If a second image is given, it is the whole photo, downsized, with the crop region outlined in magenta. Use it only \
@@ -67,16 +73,26 @@ never a brand or model name.
 - state: exactly one of the allowed states.
   ok = clearly visible and no visible fault. damaged = physically damaged in another way (bent, bulging, leaking, \
 torn, deformed). burnt = scorch, soot, discolouration from heat, melted. cracked = a visible crack or break. \
-corroded = corrosion, rust, green or white deposits. loose = partly seated, gap visible, hanging, not fastened. \
-unplugged = a connector or wire end that is clearly disconnected. missing = an empty place where a part should be \
-(empty footprint, empty socket, empty screw hole). cannot_tell = blurred, too dark, occluded, too small, or no clear \
-part in the crop.
-- Prefer cannot_tell over a guess. Say ok only when the part is sharp enough to see a fault if there were one.
+corroded = corrosion, rust, green or white deposits. loose = a part that should sit in or on another part and is \
+clearly partly seated, with a gap visible (not a cover, panel or door that was opened, and not wiring that simply \
+lies free inside an open device). unplugged = a connector or wire end that is clearly out of the terminal it belongs \
+in, with that terminal visible. missing = an empty place where a part should be (empty footprint, empty socket, \
+empty screw hole inside the device; a cover taken off for inspection is not missing). cannot_tell = blurred, too \
+dark, occluded, too small, or no clear part in the crop.
+- Prefer cannot_tell over a guess. Say ok only when the part is sharp enough to see a fault if there were one. A \
+fault on something only a few pixels wide, or in a blurred or distant view, is cannot_tell: say what a closer, \
+sharper photo should show.
+- visibility: how clearly Image 1 shows the exact place your state is about. clear = sharp and large enough to see \
+that detail. partial = visible but soft, small or partly hidden. poor = blurred, too small, too dark or hidden.
+- open_for_access: true when what you see is only the device being open for inspection (a cover off, a panel or \
+door open, a board or wiring exposed) and nothing is broken; the state is then ok when the parts look intact. \
+false otherwise.
 - evidence_text: one or two short sentences naming what you see that supports the state. No numbers you cannot see.
 - severity: how much the fault would matter. none = state ok or cannot_tell. cosmetic = looks worn but would not \
 stop the device working (scuffs, scratches, dirt, a chipped or slightly bent housing that still holds). functional = \
-could stop the device working or working right. safety = could hurt someone (exposed live parts, a damaged \
-battery, heat damage, a damaged plug or cord).
+could stop the device working or working right. safety = could hurt someone (a damaged battery, heat damage, a \
+damaged plug or cord, damaged insulation on a wire that carries power), and only for a fault you see clearly. Parts \
+exposed because the device is open are not a safety fault.
 - part_words: a few plain words that let a person find the part in the photo (colour, what it connects to, where it \
 sits), for example "black wire to the motor" or "left prong of the plug". No numbers, no reference designators.
 - confidence: low, medium or high."""
@@ -109,8 +125,11 @@ CROP_SCHEMA: dict[str, Any] = {
         "severity": {"type": "string", "enum": list(SEVERITIES)},
         "part_words": {"type": "string"},
         "confidence": {"type": "string", "enum": list(CONFIDENCE_WORDS)},
+        "visibility": {"type": "string", "enum": list(VISIBILITY)},
+        "open_for_access": {"type": "boolean"},
     },
-    "required": ["part_class", "state", "evidence_text", "severity", "part_words", "confidence"],
+    "required": ["part_class", "state", "evidence_text", "severity", "part_words", "confidence", "visibility",
+                 "open_for_access"],
     "additionalProperties": False,
 }
 
@@ -247,7 +266,9 @@ class AnthropicVisionJudge:
                          confidence_word=check_confidence_word(ans["confidence"]), model=final["model"],
                          latency_ms=sum(a["latency_ms"] for a in attempts), escalated=idx > 0,
                          attempts=tuple(attempts), severity=ans.get("severity", "none"),
-                         part_words=(ans.get("part_words") or "").strip())
+                         part_words=(ans.get("part_words") or "").strip(),
+                         visibility=ans.get("visibility") if ans.get("visibility") in VISIBILITY else "",
+                         open_for_access=bool(ans.get("open_for_access", False)))
 
     def judge_crop(self, crop: Any, render_crop: Any | None, expectation: str, options: Sequence[str]) -> Judgement:
         opts = with_cannot_tell(options)

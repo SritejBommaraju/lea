@@ -41,6 +41,9 @@ def map_files(kind: str, data: dict[str, Any], fn: FileFn) -> dict[str, Any]:
                 kf["depth_file"] = fn(kf["depth_file"], f"{root}/{k}_depth")
             if kf.get("confidence_file"):
                 kf["confidence_file"] = fn(kf["confidence_file"], f"{root}/{k}_conf")
+        for seg in d.get("segments", []):  # later capture segments (object flipped), each with its own cloud
+            if seg.get("points_file"):
+                seg["points_file"] = fn(seg["points_file"], f"{root}/points_segment{seg['segment']}_arkit_world")
         al = d.get("alignment")
         if al and al.get("design_points_file"):
             al["design_points_file"] = fn(al["design_points_file"], f"{root}/points_design")
