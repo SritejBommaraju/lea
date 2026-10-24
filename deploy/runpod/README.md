@@ -57,8 +57,8 @@ Then it execs `deploy/runpod/start.sh` from that checkout. A restart only checks
 | Field | Value |
 |---|---|
 | Container image | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` |
-| Container disk | 30 GB |
-| Volume disk | **50 GB** at **`/workspace`**: venv ~7 GB (the uv cache is hard-linked into it, so no second copy), weights 0.6 GB, data |
+| Container disk | **40 GB**: during an install, uv's cache (~8 GB) sits in `/tmp/lea-uv-cache` on this disk. It is deleted after the install |
+| Volume disk | **50 GB** at **`/workspace`**: venv ~7 GB, weights 0.6 GB, data |
 | Expose HTTP ports | **`8000,8790`**: 8000 = gateway; 8790 = live-mirror media, used when the checked-out `start.sh` runs the bridge (`SPACETIME_DB` set) |
 | Expose TCP ports | `22` (optional: SSH with your account key, through the image's own start script) |
 | Start Jupyter notebook | off (not needed) |
@@ -126,6 +126,20 @@ Checked in the same tests:
 - `LEA_RUNPOD_SERVICES=0` skips the image's `/start.sh` (nginx on 8001/3001/…, SSH, Jupyter). It binds neither 8000
   nor 8790.
 - `LEA_PREPARE_ONLY=1` installs everything and exits. Use it to warm a volume the night before.
+
+**Why the uv cache is not on the volume.** The first real pod (`u8bcbzd1b1e2o0`, 2026-10-24) failed two boots. uv
+could not rename a file from its cache temp dir into `archive-v0` on `/workspace`: `Cross-device link (os error
+18)`, even though both paths were under `/workspace/.cache/uv`. The pod restarted the container itself and the
+third boot worked.
+
+`bootstrap.sh` now handles this itself:
+- It keeps the cache on the container disk (`UV_CACHE_DIR=/tmp/lea-uv-cache`).
+- It copies packages into the venv (`UV_LINK_MODE=copy`), because the cache and the venv are on different
+  filesystems.
+- If an install attempt fails, it retries once with an emptied cache, then falls back to pip.
+- The lock marker is written only after an install succeeds. If every attempt fails, the script exits with an error
+  and the next boot starts over.
+- Both variables can be overridden in the pod env.
 - To replay a scan inside the pod: `bash /workspace/lea/deploy/smoke.sh http://127.0.0.1:8000 --requeue <scan_id>`.
   It finds `/workspace/venv` by itself.
 

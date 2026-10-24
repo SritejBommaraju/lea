@@ -30,10 +30,16 @@ set -euo pipefail
 : "${LEA_RUNPOD_SERVICES:=1}"
 : "${LEA_PREPARE_ONLY:=0}"
 : "${HF_HOME:=$LEA_HOME/hf}"
-: "${UV_CACHE_DIR:=$LEA_HOME/.cache/uv}"
+# The uv cache lives on the container disk, not the volume: on Runpod's /workspace, uv's rename from its cache temp
+# dir into archive-v0 failed with "Cross-device link (os error 18)" (pod u8bcbzd1b1e2o0, 2026-10-24) even though both
+# paths were under /workspace/.cache/uv. /tmp is one plain filesystem. Cache and venv are then on different
+# filesystems, so packages are copied into the venv (UV_LINK_MODE=copy), and the cache is deleted after a good
+# install (the container disk is wiped on every stop anyway; the venv on the volume is what persists).
+: "${UV_CACHE_DIR:=/tmp/lea-uv-cache}"
+: "${UV_LINK_MODE:=copy}"
 : "${REPAIROS_DATA_DIR:=$LEA_HOME/lea-data}"
-export HF_HOME UV_CACHE_DIR REPAIROS_DATA_DIR
-export UV_LINK_MODE=hardlink GIT_TERMINAL_PROMPT=0 PIP_DISABLE_PIP_VERSION_CHECK=1
+export HF_HOME UV_CACHE_DIR UV_LINK_MODE REPAIROS_DATA_DIR
+export GIT_TERMINAL_PROMPT=0 PIP_DISABLE_PIP_VERSION_CHECK=1
 
 T_ALL=$SECONDS
 log() { echo "[bootstrap] $*"; }
@@ -117,15 +123,33 @@ else
   rm -f "$LEA_VENV/.lea-lock-sha256"
   hashes=(); grep -q -- '--hash=sha256:' "$LOCK" && hashes=(--require-hashes)
   index=(); [ -n "$TORCH_INDEX" ] && index=(--extra-index-url "$TORCH_INDEX")
+  pip_install() { "$LEA_VENV/bin/python" -m pip install --quiet --no-deps --cache-dir "$UV_CACHE_DIR/pip" \
+                    ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} -r "$LOCK"; }
+  ok=0
   if command -v uv >/dev/null; then
-    [ -x "$LEA_VENV/bin/python" ] || uv venv --quiet --python "$PY_BASE" "$LEA_VENV"
-    log "venv: $("$LEA_VENV/bin/python" -V)"
-    # sync = exactly the lock: packages a previous lock had and this one does not are removed
-    uv pip sync --quiet --python "$LEA_VENV/bin/python" ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} --index-strategy unsafe-best-match "$LOCK"
+    # --seed puts pip in the venv too, for the last-resort fallback below
+    [ -x "$LEA_VENV/bin/python" ] || uv venv --quiet --seed --python "$PY_BASE" "$LEA_VENV"
+    log "venv: $("$LEA_VENV/bin/python" -V), uv cache $UV_CACHE_DIR (link mode $UV_LINK_MODE)"
+    # sync = exactly the lock: packages a previous lock had and this one does not are removed. Two tries, the second
+    # with an empty cache (a half-written cache entry from a failed try is not reused), then pip.
+    for attempt in 1 2; do
+      mkdir -p "$UV_CACHE_DIR"
+      if uv pip sync --quiet --python "$LEA_VENV/bin/python" ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} \
+           --index-strategy unsafe-best-match "$LOCK"; then ok=1; break; fi
+      log "WARNING: uv install attempt $attempt failed; clearing $UV_CACHE_DIR and retrying"
+      rm -rf "$UV_CACHE_DIR"
+    done
+    if [ "$ok" = 0 ] && "$LEA_VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+      log "WARNING: uv failed twice; installing with pip instead"
+      mkdir -p "$UV_CACHE_DIR"; pip_install && ok=1
+    fi
   else
     [ -x "$LEA_VENV/bin/python" ] || "$PY_BASE" -m venv "$LEA_VENV"
-    "$LEA_VENV/bin/python" -m pip install --quiet --no-deps ${hashes[@]+"${hashes[@]}"} ${index[@]+"${index[@]}"} -r "$LOCK"
+    mkdir -p "$UV_CACHE_DIR"
+    pip_install || { log "WARNING: pip install failed; retrying once"; rm -rf "$UV_CACHE_DIR"; mkdir -p "$UV_CACHE_DIR"; pip_install; } && ok=1
   fi
+  rm -rf "$UV_CACHE_DIR"   # ~4-11 GB of wheels on the container disk; the venv on the volume is what persists
+  [ "$ok" = 1 ] || { log "ERROR: installing $LEA_LOCK failed (see above); the pod will restart the container"; exit 1; }
   echo "$WANT" > "$LEA_VENV/.lea-lock-sha256"   # written last: an interrupted install is redone on the next boot
 fi
 took "venv" "$T"
