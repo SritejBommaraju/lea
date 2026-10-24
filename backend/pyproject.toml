@@ -52,6 +52,9 @@ train = [
 geometry = [
     "open3d==0.20.0",
 ]
+# Mac reconstruction merge (repairos.recon) needs no extra: it uses Apple's joint reconstruction plus ICP. The
+# optional SIFT bridge runs only if cv2 is already importable; we do not depend on it because the
+# opencv-python(-headless) wheels bundle LGPL dylibs (FFmpeg, GnuTLS), which fail the licence allowlist.
 
 [tool.hatch.build.targets.wheel]
 packages = ["repairos"]
