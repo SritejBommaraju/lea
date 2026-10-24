@@ -4,6 +4,9 @@ This runs the gateway and the pipeline worker in one container on Runpod, so the
 laptop. It is one pod: one GPU, one volume for `REPAIROS_DATA_DIR` (SQLite plus files), and port 8000 behind
 Runpod's HTTPS proxy.
 
+Two routes: **Route A** builds our own image (Steps 0-2 below). **Route B** needs no image build: an official Runpod
+PyTorch pod runs `deploy/runpod/bootstrap.sh` from the repo (next section).
+
 | File | What |
 |---|---|
 | `deploy/runpod/Dockerfile` | the image. It holds pinned deps, the OWLv2 weights baked in, and the gateway plus the worker |
@@ -13,6 +16,135 @@ Runpod's HTTPS proxy.
 | `.dockerignore` (repo root) | an allowlist. Only the files the image copies are sent to the builder, so `.env`, `private/` and `data/` never are |
 | `.github/workflows/build-runpod-image.yml` | a manual build and push of the image to GHCR. It never deploys |
 | `deploy/smoke.sh` | the end-to-end smoke test with step latencies |
+| `deploy/runpod/bootstrap.sh` | Route B (no image build): on an official Runpod PyTorch pod, clones the repo, installs the lock into a venv on the volume, caches the weights, then runs `start.sh` |
+
+## Route B (no image build): official Runpod PyTorch pod plus `bootstrap.sh`
+
+Use this route when no image can be built. That was the case on 2026-10-24: GitHub Actions refused the job over the
+owner account's billing, and the Mac has about 10 GB of free disk. The pod runs Runpod's own PyTorch image. The pod
+start command fetches `deploy/runpod/bootstrap.sh` from the repo, and that script puts everything on the volume:
+
+1. the checkout in `/workspace/lea`;
+2. the venv in `/workspace/venv`, installed from `requirements.linux.lock`;
+3. the OWLv2 weights in `/workspace/hf`.
+
+Then it execs `deploy/runpod/start.sh` from that checkout. A restart only checks those three things and starts.
+
+**Image.** Official template **Runpod Pytorch 2.8.0**, id `runpod-torch-v280`.
+- Pin the image tag **`runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404`**: Ubuntu 24.04, Python 3.12.3, CUDA 12.8.1,
+  host CUDA 12.8 to 13.4. This is from the live official catalog (`GET /v2/catalog/templates?source=official`), read
+  2026-10-24.
+- The bootstrap does not use the image's torch 2.8. The venv gets the lock's torch `2.14.1+cu126`, which runs on
+  those hosts, so the cloud runs the same versions as the Mac.
+- No older official template has Python 3.12. The 2.4 template is 3.11 and the 2.2 template is 3.10.
+
+**The read-only GitHub token** goes in a Runpod secret named `github_token_readonly`.
+- Make it a **fine-grained PAT** with repository access only to `SritejBommaraju/lea` and **Contents: Read-only**.
+- Only the repo owner (Sritej) can create one for this repo; a collaborator's fine-grained PAT cannot select another
+  user's repo. A classic PAT with `repo` scope works too, but it is read-write on every repo of its owner, so avoid
+  it.
+- The token is used only for git and the loader's one API call. It is sent as a header, never put in a URL and
+  never written to `.git/config`. A credential helper cannot store it, it is never printed, and it is unset before
+  the app starts.
+
+**Pod settings (console)**
+
+1. Create the secrets as in Step 1, plus `github_token_readonly`.
+2. Go to **Pods > Deploy**, choose **Secure Cloud** and **RTX A5000** ($0.27/hr), and pick the template **Runpod
+   Pytorch 2.8.0**.
+3. Click **Edit Template** and set the fields below.
+
+| Field | Value |
+|---|---|
+| Container image | `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` |
+| Container disk | **40 GB**: during an install, uv's cache (~8 GB) sits in `/tmp/lea-uv-cache` on this disk. It is deleted after the install |
+| Volume disk | **50 GB** at **`/workspace`**: venv ~7 GB, weights 0.6 GB, data |
+| Expose HTTP ports | **`8000,8790`**: 8000 = gateway; 8790 = live-mirror media, used when the checked-out `start.sh` runs the bridge (`SPACETIME_DB` set) |
+| Expose TCP ports | `22` (optional: SSH with your account key, through the image's own start script) |
+| Start Jupyter notebook | off (not needed) |
+| Container Start Command | the loader below, on one line |
+
+Environment variables:
+```
+GITHUB_TOKEN_READONLY  = {{ RUNPOD_SECRET_github_token_readonly }}
+LEA_REF                = main            # or the branch / tag / commit sha to demo
+ANTHROPIC_API_KEY      = {{ RUNPOD_SECRET_anthropic_api_key }}
+TYPESAFE_KEY           = {{ RUNPOD_SECRET_typesafe_key }}
+REPAIROS_PAIRING_CODE  = {{ RUNPOD_SECRET_repairos_pairing_code }}
+REPAIROS_DATA_DIR      = /workspace/lea-data
+# optional, as in Step 2: BRIGHTDATA_API_KEY, BRIGHTDATA_SERP_ZONE, and the live-mirror variables
+# (SPACETIME_DB etc.) when the checked-out ref has the bridge
+```
+
+Container Start Command (the loader):
+```
+bash -c 'umask 077; printf "Authorization: Bearer %s\n" "$GITHUB_TOKEN_READONLY" > /tmp/.lea-gh.h; curl -fsS --retry 3 -H @/tmp/.lea-gh.h -H "Accept: application/vnd.github.raw+json" -o /workspace/.bootstrap.new "https://api.github.com/repos/SritejBommaraju/lea/contents/deploy/runpod/bootstrap.sh?ref=${LEA_REF:-main}" && mv /workspace/.bootstrap.new /workspace/bootstrap.sh || echo "[loader] fetch failed; using the copy on the volume"; rm -f /tmp/.lea-gh.h; exec bash /workspace/bootstrap.sh'
+```
+- It fetches `bootstrap.sh` at `LEA_REF` through the GitHub contents API. The token goes in a header file that only
+  root can read and that is deleted right after the call.
+- If GitHub is unreachable, it runs the copy saved on the volume from the last boot.
+- `bootstrap.sh` must exist at `LEA_REF`. Merge this branch first, or point `LEA_REF` at a branch that has it.
+
+**API route** (REST `POST https://rest.runpod.io/v1/pods`). Use the same fields as `create_pod.sh` builds, with
+these changes:
+- `"imageName": "runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404"`
+- `"ports": ["8000/http", "8790/http", "22/tcp"]`
+- `"volumeInGb": 50`
+- `"allowedCudaVersions": ["12.8", "12.9", "13.0"]`
+- in `env`: `"GITHUB_TOKEN_READONLY": "{{ RUNPOD_SECRET_github_token_readonly }}"` and `"LEA_REF": "main"`
+- `"dockerStartCmd": ["bash", "-c", "<the loader's text between the single quotes>"]`
+
+**Expected boot times**
+
+| Boot | Time | What happens |
+|---|---|---|
+| First | **about 4-8 min** after the pod is scheduled | Runpod pulls its own PyTorch image, usually cached on its hosts. Then clone ~2 s; apt `libgl1 libgomp1` for open3d ~15 s; venv download ~3.8 GB plus install ~2-4 min; weights 620 MB ~0.5 min |
+| Restart | **about 20-30 s** to a serving gateway | git fetch ~1 s, lock unchanged, weights cached, the apt step again (the container disk is wiped on every stop) |
+
+The first job then loads the detector onto the GPU in a few seconds. Run `deploy/smoke.sh` once to do that.
+
+Measured on the Mac on 2026-10-24, with no GPU and a temp dir as `/workspace`, using the Mac lock because the Linux
+wheels cannot install there:
+
+| Run | Time | Notes |
+|---|---|---|
+| First run | **54 s** | clone 1 s; venv 17 s from a warm uv cache (no torch download); OWLv2 download 36 s on home broadband |
+| Second run | **1.3 s** | repo fetch, lock-hash skip, weights marker |
+| Full boot | under 2 s to `exec start.sh`, then `/healthz` up | `deploy/smoke.sh` then **PASSED** end to end, 17.6 s from complete to report on the CPU |
+
+Checked in the same tests:
+- no secret appeared in the boot log;
+- `GITHUB_TOKEN_READONLY` was absent from the gateway's environment;
+- `.git/config` held only the plain `https://github.com/SritejBommaraju/lea.git`;
+- with a bad token, the fetch failed and the boot continued on the existing checkout.
+
+**Logs.** Pods > the pod > Logs. Lines are prefixed `[bootstrap]` (step timings), then `[start]`, `[gateway]`,
+`[worker]` (and `[bridge]` when it runs). The image's own start script logs to `/workspace/.runpod-start.log`.
+
+**Knobs** (pod env, all optional):
+- `LEA_UPDATE=0` keeps the checkout instead of fetching `LEA_REF`. Use it to freeze the demo.
+- `LEA_RUNPOD_SERVICES=0` skips the image's `/start.sh` (nginx on 8001/3001/…, SSH, Jupyter). It binds neither 8000
+  nor 8790.
+- `LEA_PREPARE_ONLY=1` installs everything and exits. Use it to warm a volume the night before.
+
+**Why the uv cache is not on the volume.** The first real pod (`u8bcbzd1b1e2o0`, 2026-10-24) failed two boots. uv
+could not rename a file from its cache temp dir into `archive-v0` on `/workspace`: `Cross-device link (os error
+18)`, even though both paths were under `/workspace/.cache/uv`. The pod restarted the container itself and the
+third boot worked.
+
+`bootstrap.sh` now handles this itself:
+- It keeps the cache on the container disk (`UV_CACHE_DIR=/tmp/lea-uv-cache`).
+- It copies packages into the venv (`UV_LINK_MODE=copy`), because the cache and the venv are on different
+  filesystems.
+- If an install attempt fails, it retries once with an emptied cache, then falls back to pip. The pip fallback
+  always rebuilds the venv empty first, for two reasons:
+  - pip never removes packages that an older lock had and the new one dropped;
+  - venvs made by the first version of this script have no pip.
+- The lock marker is written only after an install succeeds. If every attempt fails, the script exits with an error
+  and the next boot starts over.
+- Both variables can be overridden in the pod env.
+- To replay a scan inside the pod: `bash /workspace/lea/deploy/smoke.sh http://127.0.0.1:8000 --requeue <scan_id>`.
+  It finds `/workspace/venv` by itself.
 
 ## Cost (runpod.io/pricing, read 2026-10-24)
 
