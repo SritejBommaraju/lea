@@ -54,8 +54,9 @@ electrical fault. Your own guess steers where she looks but never becomes a find
   how sure she is in words, admits what she couldn't check, never talks down. Confirmed 2026-10-24.
 - The coverage dome (rings of cells that fill as you walk around) is the app icon and the capture dial: it is the
   product's own mark.
-- The moodboard is binding: the "inspector's codex" (Leonardo's notebook as a working instrument: line art, exploded
-  views, the astrolabe dial, leader lines, specimen labels). Confirmed 2026-10-24.
+- Final visual direction: violet actions, lavender/deep-purple neutrals and restrained frosted glass. The
+  coverage dial, leader lines and evidence markers retain LEA's identity. The former green/brass and flat-only
+  direction is superseded by the latest user feedback; see DESIGN.md §§2–6.
 - Rejected 2026-10-24: draft 2's rendition of it (cream paper, walnut brown, EB Garamond, italic margin notes, tracked
   mono labels). It read as a generated report, not as Lea. See DESIGN.md §12 and §13, review 3.
 
@@ -72,8 +73,11 @@ electrical fault. Your own guess steers where she looks but never becomes a find
 2. Honest by construction. Unknown never looks like fine; a guess never looks like a finding.
 3. Your object is the hero. The photos and the scan keep their true colour and lead every screen they are on.
 4. One next thing. Every screen ends in the one action that moves the repair on.
+5. Motion creates the wow factor. The actual scan, lock, coverage, voice and evidence respond visibly to real
+   activity. Each moving part has a stopping condition and an accessible alternative (DESIGN.md §6).
 
 ## Accessibility & Inclusion
 
 Dynamic Type everywhere off the camera; VoiceOver hears the same words Lea says; status is never colour alone;
-Reduce Motion turns movement into fades; text passes 4.5:1 in both modes.
+Reduce Motion settles movement immediately or uses a short opacity change; Reduce Transparency uses opaque
+surfaces. Design contrast checks pass; native accessibility and real-user validation remain NOT RUN.
