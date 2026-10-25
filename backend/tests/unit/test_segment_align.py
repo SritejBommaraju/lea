@@ -154,14 +154,19 @@ def test_too_little_overlap_is_rejected_with_the_reason():
     assert not res.aligned and res.reason and res.transform is None
 
 
-def _render(pose: Pose, cam: Pinhole, boxes) -> np.ndarray:
-    """Analytic depth along the view axis of axis-aligned boxes on the plane y = 0 (the support)."""
+def _render(pose: Pose, cam: Pinhole, boxes, table_half=None) -> np.ndarray:
+    """Analytic depth along the view axis of axis-aligned boxes on the plane y = 0 (the support; with `table_half`
+    (x, z) only |x|, |z| up to it: a small stand)."""
     u, v = np.meshgrid(np.arange(cam.width) + 0.5, np.arange(cam.height) + 0.5)
     o, d = pixel_rays(np.stack([u.ravel(), v.ravel()], 1), pose, cam)
     t = np.full(len(d), np.inf)
     with np.errstate(divide="ignore", invalid="ignore"):
         tp = -o[1] / d[:, 1]
-        t = np.where(tp > 0, tp, t)
+        on = tp > 0
+        if table_half is not None:
+            hit = o + tp[:, None] * d
+            on &= (np.abs(hit[:, 0]) <= table_half[0]) & (np.abs(hit[:, 2]) <= table_half[1])
+        t = np.where(on, tp, t)
         for lo, hi in boxes:
             t0, t1 = (lo - o) / d, (hi - o) / d
             tn, tf = np.minimum(t0, t1).max(1), np.maximum(t0, t1).min(1)
@@ -419,6 +424,40 @@ def test_an_anchored_floor_under_a_stool_is_replaced_by_the_measured_support():
     assert plane_height(near, frames, box) == 0.012
     assert abs(plane_height({}, frames, box)) < 0.003         # no anchor: the measured one
     assert plane_height({**floor, "pose_source": "object_tracked"}, frames, box) is None
+
+
+def test_a_flat_top_seen_from_above_never_replaces_a_right_anchor():
+    """Seen mostly from above, a flat enclosure's top gives more depth than the strip of table around it, so the
+    lowest well-supported layer over the whole box is the top. A measured layer must be confirmed outside the
+    object's footprint: the strip of table confirms the anchor instead, and with no table seen around the object the
+    anchor stays."""
+    from repairos.locate.camera import backproject
+    from repairos.pipeline.mesh import plane_height
+    from repairos.recon.tsdf import ObjectBox, find_support_plane
+
+    cam = Pinhole(120.0, 120.0, 64.0, 48.0, 128, 96)
+    lid = [(np.array([-0.08, 0.0, -0.06]), np.array([0.08, 0.04, 0.06]))]      # 16 x 4 x 12 cm, top at 4 cm
+    box = ObjectBox.from_contract({"center_m": [0, 0.02, 0], "extent_m": [0.16, 0.04, 0.12],
+                                   "quaternion_xyzw": [0, 0, 0, 1]})
+    anchor = {"support_plane": {"transform": list(np.eye(4).reshape(-1)), "extent_m": [1.0, 1.0]}}
+
+    def frames(table_half):
+        out = []
+        for k in range(8):
+            a = 2 * np.pi * k / 8
+            pose = look_at([0.08 * np.cos(a), 0.35, 0.08 * np.sin(a)], [0.0, 0.02, 0.0])
+            out.append(DepthFrame(f"f{k}", pose, cam, _render(pose, cam, lid, table_half),
+                                  np.full((96, 128), 2, np.uint8)))
+        return out
+
+    strip = frames((0.095, 0.075))                  # a 1.5 cm strip of stand around the lid
+    pts = np.concatenate([f.pose.to_world(backproject(f.depth_m, f.depth_cam))[f.depth_m > 0] for f in strip])
+    whole = find_support_plane(pts[box.contains(pts, 0.3)])
+    assert whole is not None and abs(whole.height_m - 0.04) < 0.003   # over the whole box the top wins
+    assert plane_height(anchor, strip, box) == 0.0
+    assert plane_height(anchor, frames((0.08, 0.06)), box) == 0.0     # nothing around it: the anchor stays
+    floor = {"support_plane": {"transform": [1, 0, 0, 0, 0, 1, 0, -0.62, 0, 0, 1, 0, 0, 0, 0, 1]}}
+    assert abs(plane_height(floor, strip, box)) < 0.003               # a floor anchor is still replaced by the stand
 
 
 def test_an_object_laid_on_its_side_is_registered():

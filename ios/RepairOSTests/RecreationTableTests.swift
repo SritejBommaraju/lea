@@ -54,6 +54,30 @@ struct RecreationTableTests {
         #expect(ShellSurface.cutTable(v, t, groundY: nil) == t)
     }
 
+    /// After the table cut, a cable lying beside the body (joined to it only through the table) is a piece of its own.
+    /// It stays with the body like on the gateway (keep_central); a speck and a neighbour beyond the gap go.
+    @Test func keepsTheObjectsNearbyPiecesAndDropsSpecksAndNeighbours() {
+        var v: [SIMD3<Float>] = [], t: [UInt32] = []
+        func patch(_ o: SIMD3<Float>, _ du: SIMD3<Float>, _ dv: SIMD3<Float>, _ n: Int) {   // n x n quads, one piece
+            let base = UInt32(v.count)
+            for i in 0...n { for j in 0...n { v.append(o + du * (Float(i) / Float(n)) + dv * (Float(j) / Float(n))) } }
+            for i in 0..<n { for j in 0..<n {
+                let a = base + UInt32(i * (n + 1) + j), b = a + UInt32(n + 1)
+                t += [a, b, b + 1, a, b + 1, a + 1]
+            } }
+        }
+        func lid(_ x: Float) { patch([x - 0.03, 0.02, -0.02], [0.06, 0, 0], [0, 0, 0.04], 20) }
+        lid(0)                                                                  // the body: 800 triangles
+        patch([0.035, 0.016, -0.0025], [0.08, 0, 0], [0, 0, 0.005], 6)          // a cable about 8 mm off it: 72
+        patch([-0.045, 0.003, 0], [0.003, 0, 0], [0, 0, 0.003], 1)              // a speck 1.5 cm off: 2
+        lid(0.25)                                                               // a neighbour 19 cm off: 800
+        let box = ShellBox(center: [0, 0.01, 0], extent: [0.07, 0.025, 0.05], rotation: matrix_identity_float3x3)
+        let (kv, kt) = ShellSurface.keepCentral(v, t, box: box)
+        #expect(kt.count / 3 == 800 + 72)
+        #expect(kv.contains { $0.x > 0.1 && $0.x < 0.12 })                     // the cable's far end
+        #expect(kv.allSatisfy { $0.x > -0.035 && $0.x < 0.12 })                 // no speck, no neighbour
+    }
+
     @Test func aRegisteredBottomLetsTheViewerTurnTheModelOver() {
         var m = RecreationManifest(kind: "textured_mesh", origin: "gateway", rev: 2, file: "model.usdz", texture: nil,
                                    focusCenter: nil, focusRadius: nil)

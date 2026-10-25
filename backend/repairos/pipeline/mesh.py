@@ -117,6 +117,8 @@ PLANE_MIN_MARGIN_M = 0.002  # never cut closer to the plane than this
 PLANE_AGREE_M = 0.03        # the anchored plane is the object's support when the depth around the box finds a plane
                             # this close to it (ARKit drifts 1-2 cm vertically; a floor under a stool is tens of cm)
 SUPPORT_GROW = 0.3          # the support is measured in the box grown by this share of each side (a ring of table)
+SUPPORT_CLEAR = 0.05        # ... and confirmed outside the box footprint grown by this share (never the object's top)
+SUPPORT_AGREE_M = 0.01      # the box's layer is the support when the ring around the object finds one this close
 CENTRAL = 0.3               # a kept mesh piece reaches within this share of the box's half-width of its centre
 MIN_PIECE_SHARE = 0.02      # pieces smaller than this share of the triangles are dropped (specks)
 
@@ -126,8 +128,9 @@ def plane_height(pkg: Mapping[str, Any], frames: list[Any] | None = None, box: A
     anchor). None for a hand-held scan (pose_source object_tracked): its points and poses are in the object frame,
     which includes the underside the person flipped into view, so nothing may be cut at the table's height.
     With `frames` and `box`, the anchor is checked against the depth around the box: ARKit anchors the largest plane
-    it found, which under a small table, a stool or a cushion is the floor. When the depth's own support plane is
-    more than PLANE_AGREE_M away from the anchor (or there is no anchor), the measured height is used."""
+    it found, which under a small table, a stool or a cushion is the floor. When the depth's own support plane
+    (measured_plane_height, confirmed outside the object's footprint) is more than PLANE_AGREE_M away from the anchor
+    (or there is no anchor), the measured height is used; no table seen around the object keeps the anchor."""
     if pkg.get("pose_source") == "object_tracked":
         return None
     sp = pkg.get("support_plane")
@@ -142,20 +145,31 @@ def plane_height(pkg: Mapping[str, Any], frames: list[Any] | None = None, box: A
 
 def measured_plane_height(frames: list[Any], box: Any) -> float | None:
     """The support plane's height measured from high-confidence depth in the box grown by SUPPORT_GROW (tsdf.
-    find_support_plane: the lowest well-supported horizontal layer). None when no layer is well supported."""
+    find_support_plane: the lowest well-supported horizontal layer), confirmed by the ring around the object (outside
+    its footprint grown by SUPPORT_CLEAR): seen mostly from above, a flat object's top gives more points than the
+    table and is the box's layer, so a layer the ring does not find within SUPPORT_AGREE_M gives way to the ring's.
+    None when the ring finds no layer (no table seen around the object)."""
     from repairos.locate.camera import backproject
     from repairos.recon.tsdf import find_support_plane
 
-    pts = []
+    pts, ring = [], []
     for f in frames[:: max(1, len(frames) // 12)]:
         p = f.pose.to_world(backproject(f.depth_m, f.depth_cam))
-        ok = np.isfinite(f.depth_m) & (f.depth_m > 0) & box.contains(p, SUPPORT_GROW)
+        a = np.abs(box.local(p))
+        ok = np.isfinite(f.depth_m) & (f.depth_m > 0) & np.all(a <= 0.5 + SUPPORT_GROW, axis=-1)
         if f.confidence is not None:
             ok &= f.confidence >= 2
         pts.append(p[ok])
+        ring.append((a[..., 0] > 0.5 + SUPPORT_CLEAR)[ok] | (a[..., 2] > 0.5 + SUPPORT_CLEAR)[ok])
     pts = np.concatenate(pts) if pts else np.zeros((0, 3))
-    plane = find_support_plane(pts) if len(pts) >= 200 else None
-    return plane.height_m if plane else None
+    ring = np.concatenate(ring) if ring else np.zeros(0, bool)
+    around = find_support_plane(pts[ring]) if ring.sum() >= 200 else None
+    if around is None:
+        return None
+    whole = find_support_plane(pts)
+    if whole is not None and abs(whole.height_m - around.height_m) <= SUPPORT_AGREE_M:
+        return whole.height_m      # the support under the object itself (a cushion sags a few mm under it)
+    return around.height_m
 
 
 def voxel_for(box: Any) -> float:

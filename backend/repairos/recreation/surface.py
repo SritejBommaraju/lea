@@ -18,7 +18,8 @@ with the cut, so the model shows the object alone, as the report needs.
 The bottom: a flipped segment the server registered (pipeline/segments.py, `segment_transforms`) joins the TSDF with
 its poses moved into segment 0's frame. Then every segment's depth is first cut to its own object box and above its
 own table (pipeline.mesh.object_depths), because the bottom segment's table lies across the object's top in segment
-0's frame, and segment 0's table would meet the bottom where it touches.
+0's frame, and segment 0's table would meet the bottom where it touches. A hand-held scan (pose_source object_tracked)
+already holds the underside in the object frame, where its flat bottom lies at the table's height: no table cut.
 """
 from __future__ import annotations
 
@@ -336,9 +337,10 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
     box = ObjectBox.from_contract(pkg["crop_box"])
     ground = ground_height(frames, box, GROW)
     region = make_region(box, ground, voxel_m)
+    tracked = pkg_local.get("pose_source") == "object_tracked"   # the underside is in the frame: never cut at the table
     bottom = moved_segment_frames(pkg_local, segment_transforms or {})
     if bottom:   # every segment cut to its object first (see the module docstring)
-        depths, _ = object_depths(frames, box, ground)
+        depths, _ = object_depths(frames, box, None if tracked else ground)
         frames = [replace(f, depth_m=d) for f, d in zip(frames, depths, strict=True)]
         for moved, mdepths, _, _, _ in bottom:
             frames += [replace(f, depth_m=d) for f, d in zip(moved, mdepths, strict=True)]
@@ -353,7 +355,7 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
         raise MeshUnavailable("no surface in the object's region")
     v = region.world(vi)  # fractional voxel index -> world (voxel centres at index + 0.5 of lo)
     cut = None
-    if not bottom:
+    if not bottom and not tracked:
         f, cut = cut_table(v, f, ground)
         if not len(f):
             raise MeshUnavailable("no object surface above the table")

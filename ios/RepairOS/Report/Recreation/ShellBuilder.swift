@@ -43,7 +43,8 @@ enum ShellBuilder {
         let frames: [DepthFrameData] = keyframes.compactMap { depthFrame($0, base: sessionDir) }
         guard !frames.isEmpty else { throw Failure.noDepth }
         seconds["load_depth_s"] = Date().timeIntervalSince(t0)
-        guard let surface = ShellSurface.build(frames: frames, box: box) else { throw Failure.noSurface }
+        let handHeld = (pkg["pose_source"] as? String) == "object_tracked"   // hand-held: the underside is in the object frame
+        guard let surface = ShellSurface.build(frames: frames, box: box, handHeld: handHeld) else { throw Failure.noSurface }
         for (k, v) in surface.seconds { seconds["surface_" + k] = v }
         t0 = Date()
 
