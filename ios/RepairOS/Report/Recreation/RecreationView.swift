@@ -15,10 +15,14 @@ import UIKit
 //         ModelView(...)                                   // the LiDAR cloud / mesh, as today
 //     }
 //
-// and, once per report, the Tier 2 fetch (the live event and the report opening):
+// and, once per report, the Tier 2 fetch (the live event and the report opening) and the Tier 3 splat, which is
+// announced on its own after the mesh (ReportView does both):
 //
 //     .task(id: live?.recreationRev) {
 //         if let gateway { await RecreationCenter.shared.fetchGateway(gateway, sessionDir: dir, scanID: id, rev: live?.recreationRev) }
+//     }
+//     .task(id: live?.splatRev) {
+//         if let gateway, let rev = live?.splatRev { await RecreationCenter.shared.fetchGatewaySplat(gateway, sessionDir: dir, scanID: id, rev: rev) }
 //     }
 //
 // `markers` are the hero's `ModelPin`s (the findings' `location.point_m`, the scan frame); no transform is needed.
@@ -321,15 +325,25 @@ private struct RecreationHost: UIViewRepresentable {
         /// radius at that depth. nil when the centre misses the object.
         func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
             guard let view else { return nil }
-            let hits = view.hitTest(center, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue,
-                                                      .rootNode: stage.modelNode])
-            guard let hit = hits.first else { return nil }
-            let world = SIMD3<Float>(hit.worldCoordinates)
-            let z = view.projectPoint(hit.worldCoordinates).z
-            let edge = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
             // The markers' frame is the scan frame (findings' point_m), so the target uses it too.
-            let local = stage.markerRoot.presentation.simdConvertPosition(world, from: nil)
-            return (local, max(0.01, simd_distance(world, edge)))
+            let frame = stage.markerRoot.presentation
+            let world: SIMD3<Float>
+            if let hit = view.hitTest(center, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue,
+                                                        .rootNode: stage.modelNode]).first {
+                world = SIMD3<Float>(hit.worldCoordinates)
+            } else if splatView != nil {
+                // A splat has no geometry to hit: its centre nearest the camera on the ray under the circle's centre.
+                let near = view.unprojectPoint(SCNVector3(Float(center.x), Float(center.y), 0))
+                let far = view.unprojectPoint(SCNVector3(Float(center.x), Float(center.y), 1))
+                guard let p = stage.surfacePoint(rayFrom: frame.simdConvertPosition(SIMD3<Float>(near), from: nil),
+                                                 toward: frame.simdConvertPosition(SIMD3<Float>(far), from: nil)) else { return nil }
+                world = frame.simdConvertPosition(p, to: nil)
+            } else {
+                return nil
+            }
+            let z = view.projectPoint(SCNVector3(world)).z
+            let edge = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
+            return (frame.simdConvertPosition(world, from: nil), max(0.01, simd_distance(world, edge)))
         }
 
         @objc func tap(_ g: UITapGestureRecognizer) {

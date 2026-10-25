@@ -220,6 +220,22 @@ final class RecreationStage {
         return best
     }
 
+    /// The drawn surface's point nearest the camera along a ray (scan frame, `origin` towards `toward`), within
+    /// 5 % of the focus radius of it; nil when the ray misses. For content SceneKit cannot hit-test: a splat draws
+    /// no geometry, only its centres are known (20k of them, about 2.5 % of the radius apart).
+    func surfacePoint(rayFrom origin: SIMD3<Float>, toward: SIMD3<Float>) -> SIMD3<Float>? {
+        let dir = simd_normalize(toward - origin)
+        let tol = max(0.003, focusRadius * 0.05)
+        var best: SIMD3<Float>?, bestT = Float.infinity
+        for q in surface {
+            let t = simd_dot(q - origin, dir)
+            guard t > 0, t < bestT, simd_distance_squared(q, origin + t * dir) <= tol * tol else { continue }
+            best = q
+            bestT = t
+        }
+        return best
+    }
+
     /// Every vertex of the geometry under `node`, in the node's own frame (the scan frame for a recreation file).
     static func points(of node: SCNNode) -> [SIMD3<Float>] {
         var out: [SIMD3<Float>] = []

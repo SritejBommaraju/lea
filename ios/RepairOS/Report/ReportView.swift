@@ -146,13 +146,20 @@ struct ReportView: View {
                 }
             }
             .task { await run() }
-            // A shell for older scans that have none (built off the main actor, once), and the server's better
-            // recreation whenever it announces a new revision.
+            // A shell for older scans that have none (built off the main actor, once), the server's better
+            // recreation whenever it announces a new revision, and its splat, which lands after the mesh (often
+            // with the report already open).
             .task { RecreationCenter.shared.buildShell(sessionDir: app.storage.dir(record), scanID: record.scanID) }
             .task(id: live?.recreationRev) {
                 if let gateway {
                     await RecreationCenter.shared.fetchGateway(gateway, sessionDir: app.storage.dir(record), scanID: record.scanID,
                                                                rev: live?.recreationRev)
+                }
+            }
+            .task(id: live?.splatRev) {
+                if let gateway, let rev = live?.splatRev {
+                    await RecreationCenter.shared.fetchGatewaySplat(gateway, sessionDir: app.storage.dir(record), scanID: record.scanID,
+                                                                    rev: rev)
                 }
             }
             .task(id: report == nil) { await fetchMesh(rev: nil) }
