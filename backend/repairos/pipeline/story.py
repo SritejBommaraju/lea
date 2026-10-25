@@ -62,17 +62,40 @@ async def record_story(state: Any, session_id: str, text: str, source: str = "ty
         if said and said[-1].get("text") == text:   # the same words again (a retried post)
             return d
         said.append({"text": text, "source": source, "at": _now(), **({"scan_id": scan_id} if scan_id else {})})
-        return {**d, "said": said[-MAX_SAID:], "updated_at": _now()}
+        return {**d, "said": said[-MAX_SAID:], "said_seq": said_seq(d) + 1, "updated_at": _now()}
     return await _patch(state, session_id, add)
+
+
+def said_seq(row: dict) -> int:
+    """Utterances ever added (the list keeps only the last MAX_SAID, so its length stops changing). Rows from before
+    the counter count their list."""
+    return int(row.get("said_seq", len(row.get("said") or [])))
+
+
+def photo_seq(row: dict) -> int:
+    """Identification photos ever added (only the last three are kept)."""
+    return int(row.get("photo_seq", len(row.get("photos") or [])))
+
+
+def already_read(row: dict) -> bool:
+    """The hypothesis was made from everything said so far (by count of utterances ever added, not the kept list)."""
+    read = row.get("hypothesis") or {}
+    return read.get("said_seq", read.get("said_count")) == said_seq(row)
+
+
+def job_key(session_id: str, row: dict) -> str:
+    """A story job per change in what was said or shown: the same words or photo again maps to the same job."""
+    return f"{session_id}:{said_seq(row)}:{photo_seq(row)}"
 
 
 async def record_photo(state: Any, session_id: str, image_ref: str) -> tuple[int, dict]:
     """A photo of the product (or its label) shown before scanning, for identifying it."""
     def add(d: dict) -> dict:
         photos = list(d.get("photos") or [])
-        if image_ref not in [p["image"] for p in photos]:
-            photos.append({"image": image_ref, "at": _now()})
-        return {**d, "photos": photos[-3:], "updated_at": _now()}
+        if image_ref in [p["image"] for p in photos]:   # the same photo again (a retried post)
+            return d
+        photos.append({"image": image_ref, "at": _now()})
+        return {**d, "photos": photos[-3:], "photo_seq": photo_seq(d) + 1, "updated_at": _now()}
     return await _patch(state, session_id, add)
 
 
@@ -100,7 +123,8 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
     if row is None or not (row.data.get("said") or row.data.get("photos")):
         return {"stage": "story", "skipped": "nothing said"}
     said = row.data.get("said") or []
-    if (row.data.get("hypothesis") or {}).get("said_count") == len(said) or not said:
+    seq = said_seq(row.data)
+    if already_read(row.data) or not said:
         brief = await maybe_brief(ctx, session_id)
         return {"stage": "story", "skipped": "already read", "brief": brief} if brief else \
             {"stage": "story", "skipped": "already read"}
@@ -114,9 +138,9 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
         status = "limited" if type(e).__name__ == "SpendLimit" else "failed"
         error = type(e).__name__   # the patch callback may run after this block, when `e` is unbound
         await _patch(ctx.state, session_id, lambda d: {**d, "hypothesis": {
-            "status": status, "error": error, "said_count": len(said)}})
+            "status": status, "error": error, "said_count": len(said), "said_seq": seq}})
         return {"stage": "story", "hypothesis": status}
-    hyp = {**hyp, "status": "done", "said_count": len(said), "seconds": round(time.monotonic() - t0, 3),
+    hyp = {**hyp, "status": "done", "said_count": len(said), "said_seq": seq, "seconds": round(time.monotonic() - t0, 3),
            "at": _now()}
     own = L.own_lead(hyp)
     first = [own] if own else []
@@ -124,7 +148,7 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
     announced = await announce(ctx, session_id)
     brief = await maybe_brief(ctx, session_id)   # before the scan: what this exact product is (seeds leads too)
     if identity is None:
-        identity = await _brief_identity(ctx, session_id)
+        identity = await story_identity(ctx.state, session_id)
     web, rec = await asyncio.to_thread(L.research, hyp, identity, vlm, parts.credentials())
     def merge(d: dict) -> dict:
         have = list(d.get("leads") or first)
@@ -142,13 +166,23 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
     return out
 
 
-async def _brief_identity(ctx: Any, session_id: str) -> dict | None:
-    row = await ctx.state.get(STORY_KIND, session_id)
+async def story_identity(state: Any, session_id: str, *, detail: bool = False) -> dict | None:
+    """What was identified before the scan, from the story row: the product brief when its research is done, else
+    the label photo's identity. `detail` (Lea's conversation) adds the product name and up to three issues public
+    sources report (reports, never findings), and drops an identity that did not finish."""
+    row = await state.get(STORY_KIND, session_id)
     d = row.data if row else {}
     b = d.get("brief") or {}
     if b.get("status") == "done":
-        return {k: b[k] for k in ("brand", "model", "category") if b.get(k)} | {"confidence": "medium"}
-    return d.get("identity")
+        out = {k: b[k] for k in ("brand", "model", "category") if b.get(k)} | {"confidence": "medium"}
+        if detail:
+            known = [x.get("area") for x in b.get("known_issues") or [] if isinstance(x, dict) and x.get("area")][:3]
+            out |= ({"name": b["name"]} if b.get("name") else {}) | ({"known_issues": known} if known else {})
+        return out
+    ident = d.get("identity")
+    if detail:
+        return ident if (ident or {}).get("status") == "done" else None
+    return ident
 
 
 async def maybe_brief(ctx: Any, session_id: str) -> str | None:

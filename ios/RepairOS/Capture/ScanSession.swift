@@ -60,6 +60,8 @@ final class ScanSession: NSObject {
     let diag: Diag
     let hasLiDAR: Bool
     let session = ARSession()
+    /// What Lea sees and points at during this scan (Voice/LeaSight).
+    let sight = LeaSight()
     private(set) var renderer: PointCloudRenderer?
     private(set) var torch: Torch
     private let analyzer = FrameAnalyzer()
@@ -154,6 +156,14 @@ final class ScanSession: NSObject {
 
     // "Continue scanning": the same scan, a new segment, relocalised into the saved world map when possible.
     let continuing: Bool
+
+    /// The package's pose source. A continuation runs with hand-held mode off, but the keyframes and cloud it keeps
+    /// from the original capture are still object-tracked, so the original's source stands (the backend must not cut
+    /// a hand-held scan's underside at the support plane).
+    private func poseSource(previous: ScanPackage?) -> ScanPackagePoseSource {
+        if continuing, let original = previous?.poseSource { return original }
+        return handheld == nil ? .arkit : .objectTracked
+    }
     private var previous: ScanPackage?
     private var stillOffset = 0
     /// Relocalising against the saved map (continuation only); `aligned` once it matched.
@@ -221,6 +231,7 @@ final class ScanSession: NSObject {
                 // Not recognised in time: carry on in a frame of its own (aligned false; the Mac registers it).
                 self.relocalizing = false
                 self.session.run(fresh, options: [.resetTracking, .removeExistingAnchors])
+                self.sight.trackingReset()   // Voice/LeaSight: pins of the old origin would point elsewhere
                 self.cue = nil
                 self.diag.log("relocalize", ["ok": false, "after_s": Self.relocalizeTimeout, "segment": self.segment])
                 if self.scanWanted { self.autoLock() }
@@ -286,6 +297,7 @@ final class ScanSession: NSObject {
     /// The saved map matched: reuse the scan's box and show its cloud, so new points refine it.
     private func relocalized() {
         relocalizing = false
+        sight.trackingReset()   // the world just moved onto the saved map's origin
         aligned = true
         if let cb = previous?.cropBox {
             let q = simd_quatf(ix: Float(cb.quaternionXyzw[0]), iy: Float(cb.quaternionXyzw[1]),
@@ -331,7 +343,7 @@ final class ScanSession: NSObject {
         let res = frame.camera.imageResolution
         let k = frame.camera.intrinsics
         let u = Float(n.x * res.width), v = Float(n.y * res.height)
-        let dirCam = simd_normalize(SIMD3((u - k[2][0]) / k[0][0], -(v - k[2][1]) / k[1][1], -1))
+        let dirCam = simd_normalize(cameraRay(fx: k[0][0], fy: k[1][1], cx: k[2][0], cy: k[2][1], x: u, y: v))
         let m = frame.camera.transform
         let origin = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
         let d4 = m * SIMD4(dirCam, 0)
@@ -453,7 +465,7 @@ final class ScanSession: NSObject {
                 alignment: nil, capturedAt: previous?.capturedAt ?? started, coverageHint: nil, cropBox: cropBox,
                 depthSource: pointsFile == nil ? DepthSource.none : .lidar, device: DeviceCapabilities.current().contract,
                 frame: .arkitWorld, gravityArkitWorld: [0, -1, 0], keyframes: keyframes, meshFile: nil, pointCount: count,
-                pointsFile: pointsFile, poseSource: handheld == nil ? .arkit : .objectTracked, productID: record.productID,
+                pointsFile: pointsFile, poseSource: poseSource(previous: previous), productID: record.productID,
                 scanID: record.scanID, segments: segments.isEmpty ? nil : segments, sessionID: record.id, supportPlane: plane,
                 supportingPlaneRemoved: box != nil ? true : nil, symptom: record.symptom, units: .m,
                 voxelMm: nil)
@@ -596,6 +608,10 @@ final class ScanSession: NSObject {
     private func apply(_ a: FrameAnalyzer.Output, time t: TimeInterval, cameraToWorld m: simd_float4x4, tracking: Bool,
                        limitedForLight: Bool, angularSpeed: Float, projection: Projection) {
         let cam = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+        // Voice/LeaSight: a keyframe for Lea while a conversation is open (sharp, new, at most one per 2 s).
+        if sight.looking, let frame = session.currentFrame {
+            sight.offer(frame, sharpness: a.sharpness, medianSharpness: a.medianSharpness)
+        }
         // Framed: the box centre or ≥ 30 % of its visible area in the middle of the view, and the centre ray on it
         // (anything counts before a lock).
         let framing = box.map { FramingGate.evaluate(box: $0, cameraToWorld: m, projection: projection, centerDepth: centerDepth) }

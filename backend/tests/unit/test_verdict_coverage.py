@@ -75,6 +75,73 @@ def test_view_coverage_places_cameras_on_the_dome():
     assert view_coverage({"crop_box": {"center_m": centre}}, [{"camera": {}}]) is None   # no pose
 
 
+def test_coverage_counts_only_poses_in_the_original_frame():
+    centre = [0.0, 0.0, 0.0]
+    half = [{"camera": {"position_m": [0.4 * math.cos(math.radians(a)), 0.1, 0.4 * math.sin(math.radians(a))]}}
+            for a in range(15, 180, 30)]
+    other = [{"segment": s, "camera": {"position_m": [0.4 * math.cos(math.radians(a)), 0.1, 0.4 * math.sin(math.radians(a))]}}
+             for s in (1, 2, 3) for a in range(195, 360, 30)]
+    base = {"crop_box": {"center_m": centre}, "gravity_arkit_world": [0, -1, 0], "keyframes": half + other}
+    segments = [{"segment": 1, "reason": "continued", "aligned": False}, {"segment": 2, "reason": "flipped"},
+                {"segment": 3, "reason": "continued"}]
+    # 1 (other world origin) and 2 (object moved) add nothing; 3 (relocalised continuation) adds its views
+    assert view_coverage({**base, "segments": segments[:2]}, [])["sectors"] == 6
+    assert view_coverage({**base, "segments": segments}, [])["sectors"] == 12
+    stills = [{"segment": 1, "camera": {"position_m": [0.01, 0.5, 0.0]}}]
+    assert view_coverage({**base, "segments": segments[:2]}, stills)["cells"] == 6
+    # hand-held: a flip the app tracked relative to the object counts; an unaligned continuation never does
+    tracked = [{**k, "pose_source": "object_tracked"} if k.get("segment") == 2 else k for k in half + other]
+    handheld = {**base, "keyframes": tracked, "pose_source": "object_tracked", "segments": segments[:2]}
+    assert view_coverage(handheld, [])["sectors"] == 12
+    # --turn-it: hand-held first capture, then a continuation with fresh ARKit poses (aligned false, no world map)
+    turn_it = {**base, "keyframes": half + [k for k in other if k["segment"] == 1], "pose_source": "object_tracked",
+               "segments": [{"segment": 1, "reason": "continued", "aligned": False}]}
+    assert view_coverage(turn_it, [])["sectors"] == 6
+
+
+def test_the_caveat_counts_every_region_a_grouped_row_stands_for():
+    from repairos.live.spacetime_bridge import verdict_line
+    from repairos.report.verdict import caveat
+
+    rep = {"findings": [], "insufficient_evidence": [{}], "not_inspected": [
+        {"part_class": "connector", "regions": 11}, {"part_class": "switch"}, {"part_class": "whole photo", "regions": 4}]}
+    assert caveat(rep) == "13 areas need a closer photo."   # 1 + 11 + 1; a left-out whole photo is not an area
+    line = verdict_line({"verdict_reason": {"text": "Nothing looks wrong.", "caveat": caveat(rep)}})
+    assert line == "Nothing looks wrong. 13 areas need a closer photo."
+    assert verdict_line({"verdict_reason": {"text": "Nothing looks wrong."}}) == "Nothing looks wrong."
+
+
+def test_one_frame_rule_for_mesh_and_coverage():
+    from repairos.pipeline.mesh import keyframes_in_frame
+    from repairos.pipeline.segments import same_frame_segments
+
+    pkg = {"segments": [{"segment": 1, "reason": "continued"}, {"segment": 2, "reason": "continued", "aligned": False},
+                        {"segment": 3, "reason": "flipped"}, {"segment": 4, "reason": "continued", "object_moved": True}],
+           "keyframes": [{"keyframe_id": str(i), "segment": i} for i in range(5)]}
+    assert same_frame_segments(pkg) == {0, 1}
+    assert [k["keyframe_id"] for k in keyframes_in_frame(pkg)] == ["0", "1"]
+
+
+def test_texture_views_follow_the_same_frame_rule(tmp_path):
+    import json
+    from pathlib import Path
+
+    from PIL import Image
+
+    from repairos.recreation.texture import scan_views
+
+    example = json.loads((Path(__file__).resolve().parents[3] / "spec/contracts/examples/still.json").read_text())
+    stills = []
+    for i, seg in enumerate([0, 0, 1, 4]):
+        img = tmp_path / f"s{i}.jpg"
+        Image.new("RGB", (64, 48), (40 * i, 90, 140)).save(img)
+        stills.append({**example, "still_id": f"s{i}", "segment": seg, "image_file": str(img), "depth_file": None,
+                       "width_px": 64, "height_px": 48, "pose_reliable": True})
+    pkg = {"segments": [{"segment": 1, "reason": "continued"},
+                        {"segment": 4, "reason": "continued", "object_moved": True}], "keyframes": []}
+    assert [v.name for v in scan_views(pkg, stills)] == ["s0", "s1", "s2"]   # the moved segment's photo is out
+
+
 def test_the_new_verdict_has_words_everywhere_and_validates():
     assert export.TITLE["no_problems_seen"] == "No problems seen"
     assert "no_problems_seen" in summary.VERDICT_WORDS

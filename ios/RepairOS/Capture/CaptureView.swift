@@ -64,6 +64,15 @@ struct SessionFlowView: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .safeAreaInset(edge: .top) {
+            // Voice/ScanTalkBar: talk with Lea while scanning; the conversation carries on at the report.
+            if capturing, let gateway = app.gateway, app.isPaired {
+                ScanTalkBar(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
+                            sessionID: { [upload] in upload?.state.gatewaySessionID }, live: { liveScan },
+                            eyes: eyesForLea(gateway))
+                    .padding(.horizontal, Spacing.m)
+            }
+        }
         .onDisappear { live?.stop() }
         .onAppear {
             guard upload == nil, flow == nil, scan == nil else { return }
@@ -82,6 +91,58 @@ struct SessionFlowView: View {
                 scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
             }
         }
+    }
+
+    /// Our ARKit scanner lets Lea see: each turn carries the camera's photos (Voice/LeaSight). Object Capture keeps
+    /// its camera to itself, so there Lea talks without seeing. The scan is read at each turn (a continued scan is a
+    /// new ScanSession).
+    private func eyesForLea(_ gateway: GatewayClient) -> LeaEyes? {
+        guard scan != nil else { return nil }
+        return ScanEyes(scan: { self.scan }, gateway: gateway)
+    }
+
+    /// A capture is on screen (not the report).
+    private var capturing: Bool {
+        if let scan, scan.continuing { return true }
+        return finished == nil && record.status == .capturing && (flow != nil || scan != nil)
+    }
+
+    /// What Lea is told at each turn while scanning: the stage, the on-screen cue, progress and close-ups.
+    private var liveScan: [String: String] {
+        var live = ["screen": "scan"]
+        if let scan {
+            live["stage"] = switch scan.stage {
+            case .ready: "ready: they point at the object and tap it to lock on"
+            case .locking: "locking on"
+            case .scanning: "scanning: walking around it; photos and close-ups take themselves"
+            case .finishing: "saving"
+            case .failed(let why): "stopped: \(why)"
+            }
+            live["progress"] = "\(Int(scan.progress * 100))%"
+            live["close-ups taken"] = "\(scan.stills.count)"
+            if let cue = scan.cue { live["on-screen cue"] = cue }
+            if scan.relocalizing { live["tracking"] = "lost; finding its place again" }
+            if scan.flip != nil { live["part"] = "the bottom: the object is turned over for its underside" }
+            if scan.enough { live["enough"] = "yes: they can tap Done" }
+            if let circled = scan.sight.circled { live["circled on screen"] = circled }
+        } else if let flow {
+            live["stage"] = switch flow.step {
+            case .starting: "starting the camera"
+            case .ready, .detecting: "framing the object"
+            case .capturing: "capturing: walking around it"
+            case .closeups: "close-ups: they tap anything that looks damaged or important"
+            case .finishing: "saving"
+            case .photosOnly: "photos only"
+            case .reconstructing(let s): "building the model: \(s)"
+            case .done: "done"
+            case .failed(let why): "stopped: \(why)"
+            }
+            live["photos"] = "\(flow.shots)"
+            live["close-ups taken"] = "\(flow.closeupShots)"
+            if let cue = flow.cue { live["on-screen cue"] = cue }
+            if flow.lightBlocked { live["light"] = "too dark to continue" }
+        }
+        return live
     }
 
     /// Our scanner, a finished scan, and its package on the phone.
@@ -167,6 +228,21 @@ struct ScanView: View {
                     .onAppear { scan.setViewSize(geo.size) }
                     .onChange(of: geo.size) { scan.setViewSize($1) }
                     .gesture(SpatialTapGesture().onEnded { scan.tap(at: $0.location) })
+                    // Voice/LeaSight: Lea's circles on the object, and a long press to point at something for her.
+                    .overlay { LeaSightOverlay(scan: scan) }
+                    .simultaneousGesture(LongPressGesture(minimumDuration: 0.45)
+                        .sequenced(before: DragGesture(minimumDistance: 0))
+                        .onEnded { value in
+                            guard case .second(true, let drag?) = value, let frame = scan.session.currentFrame,
+                                  scan.sight.point(at: drag.location, viewSize: geo.size, frame: frame, session: scan.session) else { return }
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            WakeListener.shared.listenForFollowUp()   // point, then ask: "what's this?"
+                        })
+                    .task {
+                        // Continuing a finished scan: its top findings are circled where they are on the object.
+                        guard scan.continuing, let json = CachedReport.load(scan.record, storage: scan.storage) else { return }
+                        scan.sight.show(findings: ReportModel(json: json).mostLikely.compactMap { p in p.point.map { ($0, p.part) } })
+                    }
                     .task {
                         // Developer hook (`--auto-scan`): press Scan once tracking has had a moment (smoke tests).
                         guard CommandLine.arguments.contains("--auto-scan") else { return }

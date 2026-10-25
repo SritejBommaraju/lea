@@ -30,6 +30,18 @@ def is_moved(seg: Mapping[str, Any]) -> bool:
     return seg.get("object_moved") is True or seg.get("reason") in MOVED_REASONS
 
 
+def in_scan_frame(seg: Mapping[str, Any]) -> bool:
+    """A later segment whose poses share segment 0's frame as recorded: more photos `continued` from the report,
+    relocalised by ARKit (`aligned` not false), the object not moved. Used by every place that reads poses
+    (mesh, recreation, registration, coverage)."""
+    return seg.get("reason") == "continued" and seg.get("aligned") is not False and not is_moved(seg)
+
+
+def same_frame_segments(pkg: Mapping[str, Any]) -> set[int]:
+    """Segment 0 and every later segment in its frame (`in_scan_frame`)."""
+    return {0} | {int(s["segment"]) for s in pkg.get("segments") or [] if in_scan_frame(s)}
+
+
 def moved_segments(pkg: Mapping[str, Any]) -> list[dict]:
     return [dict(s) for s in pkg.get("segments") or [] if is_moved(s)]
 

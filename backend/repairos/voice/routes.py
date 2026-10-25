@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,8 +30,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from repairos.voice.audio import TTSCache, line_key, wav
 from repairos.voice.cartesia import Cartesia, CartesiaError
-from repairos.voice.conversation import (ACTIONS, NEEDS_REPORT, ConversationStore, SentenceSplitter, Talker, context_block,
-                                         history_view, limit_reached, messages_for)
+from repairos.voice.conversation import (ACTIONS, MAX_LOOK_IMAGES, NEEDS_REPORT, ConversationStore, SentenceSplitter,
+                                         Talker, context_block, history_view, limit_reached, live_note, look_content,
+                                         messages_for, parse_live)
 from repairos.voice.settings import SAMPLE_RATE, VoiceSettings, get_voice_settings
 from repairos.voice.spend_guard import VoicePaused
 
@@ -368,7 +370,10 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
                              audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
                              held: bool = False,
-                             commit: Annotated[str | None, Query(max_length=64)] = None):
+                             commit: Annotated[str | None, Query(max_length=64)] = None,
+                             live: Annotated[str | None, Query(max_length=2000)] = None,
+                             session_id: Annotated[str | None, Query(max_length=128)] = None,
+                             image: Annotated[list[str] | None, Query(max_length=MAX_LOOK_IMAGES)] = None):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
@@ -376,10 +381,19 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
         paused it, or `audio=none`) is for the phone to say in its own voice. `held=1`: an answer started before the
         person finished (Ink-2's eager end); it stays out of the conversation (later answers, the caps) until the
         phone commits the `held_id` its `done` event carries. `commit=<held_id>`: that confirmed early answer joins
-        before this one is answered (the phone's commit request failed)."""
+        before this one is answered (the phone's commit request failed). `live`: JSON of what the screen shows
+        now (a scan's stage, cue, progress), read for this turn only; during a scan no scan is offered. `session_id`:
+        before a scan exists, the session whose story row holds what the label photo identified and the product
+        brief, so Lea can talk about that product. `image` (repeated, up to MAX_LOOK_IMAGES, oldest first): blobs (JPEG,
+        PUT /v1/blobs first, uploaded while the person talks) of what the camera showed, the last one now; Lea sees
+        them and can point (J events {type: mark, x, y, label}) or ask the phone to measure (J event {type: measure,
+        x1, y1, x2, y2}), fractions of the last photo. A turn with photos uses `lea_voice_look_model`; after
+        `lea_voice_look_turns_per_scan` such turns in one conversation, photos are dropped (words only)."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
+        shown = parse_live(live)
+        seen = [p for p in (_look_image(request, ref) for ref in _look_refs(image)) if p]
         question, stt_ms, paused_line = "", 0, None
         ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
         if ctype == "application/json":
@@ -395,7 +409,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             except VoicePaused:
                 paused_line = PAUSED_LINE
             stt_ms = round((time.perf_counter() - t0) * 1000)
-        report, story, identity = await _grounding(request, scan_id)
+        report, story, identity = await _grounding(request, scan_id, session_id)
         convo = rt.conversations.load(scope)
         if commit and (convo.get("held") or {}).get("id") == commit:
             # An early answer the phone confirmed but could not commit (its request failed): it joins first, so this
@@ -407,6 +421,15 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             paused_line = limit_reached(convo, rt.settings, time.time())
             if talker is None:
                 paused_line = "Answers are off on the Mac right now."
+        if seen:
+            if int(convo.get("looks") or 0) >= rt.settings.lea_voice_look_turns_per_scan:
+                seen = []   # the per-scan cap on looking turns: this one goes on words alone, and Lea is told why
+                shown["camera"] = "not sent: the looking limit for this scan is reached; say you can't see it now"
+            elif question and paused_line is None:
+                convo["looks"] = int(convo.get("looks") or 0) + 1
+                rt.conversations.save(scope, convo)
+                for k, v in (await _inspected(request, scan_id) if scan_id and not report else {}).items():
+                    shown.setdefault(k, v)
         speak = audio == "stream" and rt.cartesia_on
 
         async def tts_frames(sentence: str):
@@ -441,8 +464,11 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
 
             async def produce():
                 try:
-                    msgs = messages_for(convo, context_block(report, identity, story), question)
-                    async for delta in talker.stream(scope, msgs):
+                    msgs = messages_for(convo, context_block(report, identity, story), live_note(shown) + question)
+                    if seen:   # the camera, for this turn only (the history keeps words)
+                        msgs[-1]["content"] = look_content(seen, msgs[-1]["content"])
+                    model = rt.settings.lea_voice_look_model if seen else None
+                    async for delta in talker.stream(scope, msgs, model=model):
                         for sentence in splitter.feed(delta):
                             await queue.put(sentence)
                     for sentence in splitter.flush():
@@ -480,6 +506,12 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 if producer is not None and not producer.done():
                     producer.cancel()
             action = next((a for a in splitter.actions if report or a not in NEEDS_REPORT), None)
+            if shown.get("screen") == "scan" and action == "start_scan":   # a scan is open: never a second one
+                action = None
+            for mark in splitter.marks if seen else []:   # only a turn that came with a photo can point at it
+                yield jframe({"type": "mark", **mark})
+            if seen and splitter.measure:   # the phone measures it with LiDAR and says the number
+                yield jframe({"type": "measure", **splitter.measure})
             if action and action in ACTIONS:
                 yield jframe({"type": "action", "action": action, "label": ACTIONS[action]})
             answer = " ".join(spoken)
@@ -501,7 +533,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 turns = _user_turns(latest)
             else:
                 turns = _user_turns(convo)
-            log.info("voice converse %s timings %s", scope, timings)
+            log.info("voice converse %s timings %s photos %d", scope, timings, len(seen))
             yield jframe({"type": "done", "answer_text": answer, "action": action, "timings_ms": timings,
                           "turns": turns, **({"held_id": held_id} if held_id else {})})
 
@@ -526,26 +558,65 @@ def _user_turns(convo: dict) -> int:
     return sum(1 for t in convo.get("turns", []) if t.get("role") == "user")
 
 
-async def _grounding(request: Request, scan_id: str | None) -> tuple[dict | None, str | None, dict | None]:
-    """(the scan's report or None, the person's story, the identified object) for a conversation turn."""
-    if not scan_id:
+async def _grounding(request: Request, scan_id: str | None,
+                     session_id: str | None = None) -> tuple[dict | None, str | None, dict | None]:
+    """(the scan's report or None, the person's story, the identified object) for a conversation turn. Before a scan
+    exists (the home conversation), the session's story row says what the label photo identified and what public
+    sources report about the product (its brief)."""
+    if not scan_id and not session_id:
         return None, None, None
     from repairos.report import report_id_for
 
     st = request.app.state.store
-    row = await st.get("report", report_id_for(scan_id))
+    row = await st.get("report", report_id_for(scan_id)) if scan_id else None
     report = row.data if row else None
-    run = await st.get("pipeline-run", f"run_{scan_id}")
+    run = await st.get("pipeline-run", f"run_{scan_id}") if scan_id else None
     identity = ((run.data if run else {}) or {}).get("identity") or (report or {}).get("object")
     story = None
-    pkg = await st.get("scan-package", scan_id)
-    sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None)
+    pkg = await st.get("scan-package", scan_id) if scan_id else None
+    sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None) or session_id
+    if sid and not identity:
+        from repairos.pipeline.story import story_identity
+
+        identity = await story_identity(st, sid, detail=True)
     if sid:
         sess = await st.get("session", sid)
         story = (sess.data.get("symptom") if sess else None) or None
     if not story and pkg:
         story = pkg.data.get("symptom") or None
     return report, story, identity
+
+
+MAX_LOOK_BYTES = 2_000_000
+_BLOB_REF = re.compile(r"^blob://sha256:[0-9a-f]{64}$")
+
+
+def _look_refs(refs: list[str] | None) -> list[str]:
+    """The turn's photo refs, oldest first: well-formed blob refs only, the last MAX_LOOK_IMAGES (the newest)."""
+    return [r for r in refs or [] if _BLOB_REF.match(r)][-MAX_LOOK_IMAGES:]
+
+
+async def _inspected(request: Request, scan_id: str) -> dict[str, str]:
+    """While a scan has no report yet: the last few parts the pipeline looked at, in its own words, for a looking
+    turn's <phone> line (nothing when none were looked at yet)."""
+    rows = await request.app.state.store.list("finding", scan_id=scan_id)
+    looked = sorted((r.data for r in rows if (r.data or {}).get("state") not in (None, "not_inspected")),
+                    key=lambda f: str(f.get("created_at") or ""), reverse=True)[:3]
+    words = [f"{f.get('part_words') or (f.get('subject') or {}).get('kind') or 'a part'}: "
+             f"{str(f.get('state')).replace('_', ' ')}" for f in looked]
+    return {"inspected so far": "; ".join(words)[:200]} if words else {}
+
+
+def _look_image(request: Request, ref: str | None) -> str | None:
+    """The look photo as base64 JPEG, or None (no photo, not uploaded, too big, or not a JPEG): the turn goes ahead
+    on words alone."""
+    import base64
+
+    blobs = request.app.state.blobs
+    if not ref or not blobs.exists(ref) or blobs.size(ref) > MAX_LOOK_BYTES:
+        return None
+    data = blobs.get(ref)
+    return base64.b64encode(data).decode() if data[:3] == b"\xff\xd8\xff" else None
 
 
 async def _report_and_story(request: Request, scan_id: str) -> tuple[dict, str | None]:

@@ -111,6 +111,10 @@ enum ConverseEvent: Sendable {
     case audio(Data)
     case audioOff
     case action(String, label: String)
+    /// Lea points at something in the turn's photo (fractions of it, 0,0 top left).
+    case mark(LeaMark)
+    /// Lea asks the phone to measure between two points of the turn's last photo (fractions of it), with LiDAR.
+    case measure(CGPoint, CGPoint)
     /// `heldID`: a held answer's id, for `commitHeld` once the person's final words confirm it.
     case done(answer: String, timings: [String: Int], heldID: String? = nil)
 }
@@ -119,11 +123,22 @@ extension GatewayClient {
     /// `held`: an answer started before the person finished (Ink-2's eager end); the gateway keeps it out of the
     /// conversation until `commitHeld`.
     func converseRequest(scanID: String?, audio: Data?, text: String?, speech: Bool, held: Bool = false,
-                         commit: String? = nil) -> URLRequest {
+                         commit: String? = nil, live: [String: String] = [:], sessionID: String? = nil,
+                         images: [String] = []) -> URLRequest {
         var q = "audio=\(speech ? "stream" : "none")"
         if held { q += "&held=1" }
         if let commit { q += "&commit=\(commit)" }
         if let scanID { q += "&scan_id=\(scanID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? scanID)" }
+        // Before the scan exists, the session tells the gateway what the label photo identified (the brief).
+        if let sessionID { q += "&session_id=\(sessionID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionID)" }
+        // What the camera showed (blobs uploaded while the person talked, oldest first, the last one now): Lea sees
+        // them and can point at things in the last one.
+        for image in images.suffix(3) { q += "&image=\(image.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? image)" }
+        // What the screen shows now (a scan's stage, cue, progress): for this turn only.
+        if !live.isEmpty, let json = try? JSONSerialization.data(withJSONObject: live, options: .sortedKeys),
+           let encoded = String(decoding: json, as: UTF8.self).addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
+            q += "&live=\(encoded)"
+        }
         var req = voiceRequest("POST", "v1/voice/converse", query: q)
         req.timeoutInterval = 25
         if let audio {
@@ -138,8 +153,10 @@ extension GatewayClient {
 
     /// The turn's frames as they arrive (1 byte kind, 4 bytes big-endian length, payload).
     func converse(scanID: String?, audio: Data?, text: String?, speech: Bool, held: Bool = false,
-                  commit: String? = nil) -> AsyncThrowingStream<ConverseEvent, Error> {
-        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, held: held, commit: commit)
+                  commit: String? = nil, live: [String: String] = [:], sessionID: String? = nil,
+                  images: [String] = []) -> AsyncThrowingStream<ConverseEvent, Error> {
+        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, held: held, commit: commit,
+                                  live: live, sessionID: sessionID, images: images)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -181,7 +198,7 @@ extension GatewayClient {
         }
     }
 
-    private static func event(_ kind: UInt8, _ payload: Data) -> ConverseEvent? {
+    static func event(_ kind: UInt8, _ payload: Data) -> ConverseEvent? {
         if kind == UInt8(ascii: "A") { return payload.isEmpty ? nil : .audio(payload) }
         guard let o = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
         switch o["type"] as? String {
@@ -189,6 +206,13 @@ extension GatewayClient {
         case "sentence": return .sentence(o["text"] as? String ?? "", audio: o["audio"] as? Bool ?? false)
         case "audio_off": return .audioOff
         case "action": return .action(o["action"] as? String ?? "", label: o["label"] as? String ?? "")
+        case "mark":
+            guard let x = o["x"] as? Double, let y = o["y"] as? Double else { return nil }
+            return .mark(LeaMark(x: x, y: y, label: o["label"] as? String ?? ""))
+        case "measure":
+            guard let x1 = o["x1"] as? Double, let y1 = o["y1"] as? Double, let x2 = o["x2"] as? Double,
+                  let y2 = o["y2"] as? Double else { return nil }
+            return .measure(CGPoint(x: x1, y: y1), CGPoint(x: x2, y: y2))
         case "done": return .done(answer: o["answer_text"] as? String ?? "", timings: o["timings_ms"] as? [String: Int] ?? [:],
                                   heldID: o["held_id"] as? String)
         default: return nil

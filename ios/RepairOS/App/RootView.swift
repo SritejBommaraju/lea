@@ -20,6 +20,7 @@ struct RootView: View {
     @State private var replay: SessionRecord?
     /// "Hey Lea" (or the Talk button) on the home screen: Voice/HomeConversationSheet.
     @State private var talking = false
+    @State private var talksSeen = 0
     @AppStorage(DemoReplay.enabledKey) private var demoReplay = false
     @AppStorage(DemoReplay.sessionKey) private var demoSession = ""
     private static let recentCount = 3
@@ -90,6 +91,12 @@ struct RootView: View {
             }
             // "Hey Siri, scan with Lea" (Voice/ScanIntent): start a scan with the spoken description.
             .onChange(of: IntentInbox.shared.requests, initial: true) { scanFromIntent() }
+            // "Hey Siri, hey lea" (Voice/ScanIntent): the conversation opens listening, and Lea asks what's up.
+            .onChange(of: IntentInbox.shared.talks, initial: true) { _, talks in
+                guard talks > talksSeen else { return }
+                talksSeen = talks
+                talkToLea()
+            }
             .onChange(of: WakeListener.shared.wakes) { if active == nil, replay == nil, app.gateway != nil { talking = true } }
             .sheet(isPresented: $talking) {
                 if let gateway = app.gateway {
@@ -112,6 +119,11 @@ struct RootView: View {
 
     private var startBar: some View {
         VStack(spacing: Spacing.m) {
+            if app.isPaired, app.gateway != nil {
+                Label("Swipe up to talk to Lea", systemImage: "chevron.up")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
             FieldWell(symbol: "text.bubble") {
                 TextField("What happened? (optional)", text: $symptom)
                     .focused($symptomFocused)
@@ -157,6 +169,18 @@ struct RootView: View {
             .ignoresSafeArea(edges: .bottom)
             .allowsHitTesting(false)
         }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkToLea() } })
+        .accessibilityAction(named: "Talk to Lea") { talkToLea() }
+    }
+
+    /// Swipe up on the start bar: Lea's conversation opens already listening, hands-free, and keeps listening after
+    /// each answer (no "Hey Lea" needed; the ear button turns that off).
+    private func talkToLea() {
+        guard app.isPaired, app.gateway != nil, active == nil else { return }
+        WakeListener.shared.continuous = true
+        WakeListener.shared.listenForFollowUp()
+        talking = true
     }
 
     private func scanFromIntent() {

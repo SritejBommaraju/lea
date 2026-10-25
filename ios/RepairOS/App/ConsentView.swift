@@ -3,7 +3,7 @@ import SwiftUI
 /// First-run consent: where the photos go before anyone scans. Shown once (and again from Settings, read-only).
 /// Bump `Consent.version` when what it says changes, so everyone sees the new wording.
 enum Consent {
-    static let version = 1
+    static let version = 2
     static let key = "consent.accepted.version"
 
     static var accepted: Bool { UserDefaults.standard.integer(forKey: key) >= version }
@@ -40,6 +40,8 @@ struct ConsentView: View {
                                text: "The server sends the photos to Anthropic (Claude) and TypeSafe (Jev), which look for problems and help write the report.")
                     ConsentRow(symbol: "location.slash.fill", tone: .good, title: "Location and photo details removed",
                                text: "EXIF data, including GPS location, is removed from the photos before they are analysed.")
+                    ConsentRow(symbol: "eye", tone: .accent, title: "Lea sees the camera when you talk to her",
+                               text: "While you scan and talk to Lea, a few camera frames go with your question so she can see what you mean. Only while you are talking with her (\"Lea is looking\" shows), never before \"Hey Lea\".")
                     ConsentRow(symbol: Symbol.privacy, tone: .good, title: "Only what you scan",
                                text: "Nothing is captured until you start a scan. Keep faces, papers and screens out of the frame.")
                 }

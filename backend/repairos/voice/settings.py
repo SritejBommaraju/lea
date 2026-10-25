@@ -36,6 +36,11 @@ SAMPLE_RATE = 24000
 # to start playing within 3 s of the button's release (STT and TTS included), so Haiku is the default here;
 # LEA_VOICE_ANSWER_MODEL=claude-opus-5-5 trades that for the larger model.
 ANSWER_MODEL = "claude-haiku-5-5"
+# The model for a looking turn (one with camera photos). Chosen by eval/live_vision (RESULTS.md, 39 real stills):
+# honesty first, then latency. Haiku made no overclaim (Sonnet 1) at $0.0004 a turn (Sonnet $0.0059); Sonnet read
+# a little more right (31 vs 29 correct) and starts sooner at the median (1.37 vs 2.35 s to the first sentence,
+# p95 4.07 vs 3.49 s). LEA_VOICE_LOOK_MODEL=claude-sonnet-5-5 switches.
+LOOK_MODEL = "claude-haiku-5-5"
 
 
 class VoiceSettings(BaseSettings):
@@ -56,6 +61,10 @@ class VoiceSettings(BaseSettings):
     # Conversation guards: turns kept per scan, and turns allowed per minute per scan.
     lea_voice_turns_per_scan: int = 30
     lea_voice_turns_per_minute: int = 8
+    # Looking turns (camera photos with the question): the model, and how many per scan carry photos (later turns
+    # go on words alone). At most MAX_LOOK_IMAGES photos per turn (conversation.py).
+    lea_voice_look_model: str = LOOK_MODEL
+    lea_voice_look_turns_per_scan: int = 40
 
     @property
     def cartesia_key(self) -> str | None:

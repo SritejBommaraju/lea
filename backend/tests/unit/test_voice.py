@@ -431,6 +431,166 @@ def test_converse_without_a_scan_is_a_home_conversation(gw):
     assert c.get("/v1/voice/conversation").json()["turns"][0]["text"] == "what should I check first"
 
 
+def test_converse_during_a_scan_sees_the_screen_and_never_offers_a_scan(gw):
+    import urllib.parse
+
+    from repairos.voice.conversation import parse_live
+    c = gw()
+    live = {"screen": "scan", "stage": "scanning", "on-screen cue": "Move closer", "progress": "40%"}
+    c.claude.deltas = ["Get the back where the cord goes in. <start", "_scan/>"]
+    q = "?audio=none&live=" + urllib.parse.quote(json.dumps(live))
+    r = c.post("/v1/voice/converse" + q, json={"text": "should I get the back"})
+    events = [p for k, p in frames(r.content) if k == "J"]
+    assert not [e for e in events if e["type"] == "action"]                    # a scan is open: no second one
+    asked = c.claude.bodies[0]["messages"][-1]["content"]
+    assert "<phone>screen: scan; stage: scanning; on-screen cue: Move closer; progress: 40%</phone>" in asked
+    assert c.get("/v1/voice/conversation").json()["turns"][0]["text"] == "should I get the back"   # not stored
+    # On the home screen the same marker is still an offer.
+    home = c.post("/v1/voice/converse?audio=none", json={"text": "it stopped spinning"})
+    assert {"type": "action", "action": "start_scan", "label": "Start a scan"} in [p for k, p in frames(home.content) if k == "J"]
+    assert parse_live("not json") == {} and parse_live('["a"]') == {}
+    assert len(parse_live(json.dumps({f"k{i}": "v" for i in range(20)}))) == 16
+
+
+def test_before_a_scan_lea_knows_the_product_the_label_photo_identified(gw):
+    import asyncio
+
+    c = gw()
+    sid = c.post("/v1/sessions", json={"symptom": "it stopped spinning"}).json()["session_id"]
+    asyncio.run(c.state.put("story", {"session_id": sid, "said": [], "brief": {
+        "status": "done", "name": "Desk fan 40", "brand": "Breeze", "model": "DF-40",
+        "known_issues": [{"area": "speed switch", "why": "Owners report it wears out."}]}}))
+    c.post(f"/v1/voice/converse?audio=none&scan_id=scan_future&session_id={sid}", json={"text": "what is it again"})
+    first = c.claude.bodies[0]["messages"][0]["content"]
+    assert '"name": "Desk fan 40"' in first and '"brand": "Breeze"' in first and "speed switch" in first
+    assert "<story>it stopped spinning</story>" in first
+    # Without the session id the future scan has nothing to ground on.
+    c.post("/v1/voice/converse?audio=none&scan_id=scan_other", json={"text": "what is it"})
+    assert "not identified" in c.claude.bodies[1]["messages"][0]["content"]
+
+
+def test_marks_are_parsed_out_of_speech_and_never_split():
+    from repairos.voice.conversation import SentenceSplitter
+    sp = SentenceSplitter()
+    out = sp.feed("The cord enters at the back. Look at the strain relief there. <mark x=\"0.4")
+    out += sp.feed('2" y="0.61" label="cord entry. back"/><mark x="1.7" y="0.2" label="off photo"/>')
+    out += sp.flush()
+    assert out == ["The cord enters at the back.", "Look at the strain relief there."]
+    assert sp.marks == [{"x": 0.42, "y": 0.61, "label": "cord entry. back"}]   # 1.7 is outside the photo
+
+
+def test_a_look_turn_sends_the_photo_and_returns_marks_but_keeps_words(gw):
+    import urllib.parse
+    c = gw()
+    jpeg = b"\xff\xd8\xff\xe0" + b"look" * 50
+    ref = c.app.state.blobs.put(jpeg, "image/jpeg")
+    c.claude.deltas = ["That looks like the cord entry. ", 'Get a close-up there. <mark x="0.42" y="0.61" label="cord entry"/>']
+    live = urllib.parse.quote(json.dumps({"screen": "scan"}))
+    r = c.post(f"/v1/voice/converse?audio=none&live={live}&image={urllib.parse.quote(ref)}", json={"text": "what is this"})
+    events = [p for k, p in frames(r.content) if k == "J"]
+    assert {"type": "mark", "x": 0.42, "y": 0.61, "label": "cord entry"} in events
+    assert [e["text"] for e in events if e["type"] == "sentence"] == ["That looks like the cord entry.", "Get a close-up there."]
+    last = c.claude.bodies[0]["messages"][-1]["content"]
+    assert last[0]["type"] == "image" and last[0]["source"]["media_type"] == "image/jpeg"
+    assert last[1]["type"] == "text" and last[1]["text"].endswith("what is this")
+    turns = c.get("/v1/voice/conversation").json()["turns"]
+    assert turns[0]["text"] == "what is this" and "mark" not in turns[1]["text"]   # words only
+    # No photo: markers are ignored (nothing to point at), and a non-JPEG blob is not sent.
+    png = c.app.state.blobs.put(b"\x89PNG" + b"x" * 40, "image/png")
+    r = c.post(f"/v1/voice/converse?audio=none&image={urllib.parse.quote(png)}", json={"text": "and this"})
+    assert not [p for k, p in frames(r.content) if k == "J" and p["type"] == "mark"]
+    assert isinstance(c.claude.bodies[1]["messages"][-1]["content"], str)
+
+
+def _jpeg(c, tag: bytes) -> str:
+    return c.app.state.blobs.put(b"\xff\xd8\xff\xe0" + tag * 40, "image/jpeg")
+
+
+def test_a_look_turn_takes_up_to_three_photos_the_last_is_now_and_uses_the_look_model(gw):
+    import base64
+    import urllib.parse
+    c = gw(lea_voice_look_model="claude-sonnet-5-5")
+    refs = [_jpeg(c, t) for t in (b"old1", b"old2", b"now!")]
+    q = "&".join(f"image={urllib.parse.quote(r)}" for r in refs)
+    c.post(f"/v1/voice/converse?audio=none&{q}", json={"text": "which one is the fuse"})
+    body = c.claude.bodies[0]
+    assert body["model"] == "claude-sonnet-5-5"
+    last = body["messages"][-1]["content"]
+    assert [b["type"] for b in last] == ["text", "image", "text", "image", "text", "image", "text"]
+    assert last[4]["text"].startswith("Now") and base64.b64decode(last[5]["source"]["data"]).endswith(b"now!")
+    assert last[0]["text"].startswith("A few seconds ago") and last[-1]["text"].endswith("which one is the fuse")
+    # A turn without photos keeps the answer model; more than three photos is refused.
+    c.post("/v1/voice/converse?audio=none", json={"text": "thanks"})
+    assert c.claude.bodies[1]["model"] == "claude-haiku-5-5"
+    four = "&".join(f"image={urllib.parse.quote(r)}" for r in refs + [_jpeg(c, b"more")])
+    assert c.post(f"/v1/voice/converse?audio=none&{four}", json={"text": "and"}).status_code == 422
+    # Refs that are not blob refs are ignored (the turn goes on with the good ones).
+    c.post(f"/v1/voice/converse?audio=none&image=file%3A%2F%2Fx&image={urllib.parse.quote(refs[2])}", json={"text": "x"})
+    assert [b["type"] for b in c.claude.bodies[2]["messages"][-1]["content"]] == ["image", "text"]
+
+
+def test_looking_turns_are_capped_per_scan(gw):
+    import urllib.parse
+    c = gw(lea_voice_look_turns_per_scan=1)
+    ref = urllib.parse.quote(_jpeg(c, b"cap"))
+    c.post(f"/v1/voice/converse?audio=none&scan_id=scan_cap&image={ref}", json={"text": "what is this"})
+    c.post(f"/v1/voice/converse?audio=none&scan_id=scan_cap&image={ref}", json={"text": "and this"})
+    assert isinstance(c.claude.bodies[0]["messages"][-1]["content"], list)
+    second = c.claude.bodies[1]["messages"][-1]["content"]
+    assert isinstance(second, str) and "looking limit" in second and second.endswith("and this")
+    # Another scan has its own allowance.
+    c.post(f"/v1/voice/converse?audio=none&scan_id=scan_other&image={ref}", json={"text": "what is this"})
+    assert isinstance(c.claude.bodies[2]["messages"][-1]["content"], list)
+
+
+def test_measure_marker_asks_the_phone_to_measure_only_on_a_look_turn(gw):
+    import urllib.parse
+    from repairos.voice.conversation import SentenceSplitter
+    sp = SentenceSplitter()
+    out = sp.feed('I\'ll measure that for you. <measure x1="0.3" y1="0.4')
+    out += sp.feed('" x2="0.62" y2="0.44"/><measure x1="2" y1="0" x2="0" y2="0"/>') + sp.flush()
+    assert out == ["I'll measure that for you."] and sp.measure == {"x1": 0.3, "y1": 0.4, "x2": 0.62, "y2": 0.44}
+    c = gw()
+    c.claude.deltas = ['I\'ll measure it. <measure x1="0.1" y1="0.2" x2="0.3" y2="0.4"/>']
+    ref = urllib.parse.quote(_jpeg(c, b"ms"))
+    events = [p for k, p in frames(c.post(f"/v1/voice/converse?audio=none&image={ref}",
+                                          json={"text": "how wide is it"}).content) if k == "J"]
+    assert {"type": "measure", "x1": 0.1, "y1": 0.2, "x2": 0.3, "y2": 0.4} in events
+    events = [p for k, p in frames(c.post("/v1/voice/converse?audio=none", json={"text": "how wide"}).content)
+              if k == "J"]
+    assert not [e for e in events if e["type"] == "measure"]   # no photo: nothing to measure on
+
+
+def test_a_look_turn_during_a_scan_hears_what_was_inspected_so_far(gw):
+    import urllib.parse
+    c = gw()
+    sid = c.post("/v1/sessions", json={"symptom": "it rattles"}).json()["session_id"]
+    up = Uploader(c)
+    pkg = make_scan(up, sid)
+    assert c.post("/v1/scans", json=pkg).status_code == 201
+    st = make_still(up, pkg)
+    assert c.post("/v1/stills", json=st).status_code == 201
+    f = json.loads((EXAMPLES / "finding.json").read_text(encoding="utf-8"))
+    f.update(finding_id="f_live_a", scan_id=pkg["scan_id"], state="loose", part_words="the cord's strain relief")
+    f["evidence_refs"]["still_ids"] = [st["still_id"]]
+    asyncio.run(c.state.transition("finding", f["finding_id"], "finding.create", f))
+    ref = urllib.parse.quote(_jpeg(c, b"insp"))
+    c.post(f"/v1/voice/converse?audio=none&scan_id={pkg['scan_id']}&image={ref}", json={"text": "anything yet"})
+    asked = c.claude.bodies[0]["messages"][-1]["content"][-1]["text"]
+    assert "inspected so far: the cord's strain relief: loose" in asked
+    # Words-only turns stay lean (no store read for them).
+    c.post(f"/v1/voice/converse?audio=none&scan_id={pkg['scan_id']}", json={"text": "ok"})
+    assert "inspected so far" not in c.claude.bodies[1]["messages"][-1]["content"]
+
+
+def test_persona_keeps_looking_turns_honest():
+    p = " ".join(PERSONA.split())
+    for words in ("blurry, too dark", "move closer", "never guess", "polarity", "from its colour",
+                  "Repeat a number only as given", "never work out, estimate or compare", "the last one is what it shows now",
+                  "<measure", "Count only what you can clearly see"):
+        assert words in p, words
+
+
 def test_converse_turn_caps(gw):
     c = gw(lea_voice_turns_per_minute=1)
     scan_id = publish_report(c)
