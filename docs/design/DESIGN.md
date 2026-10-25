@@ -2,12 +2,12 @@
 
 Final visual direction, synchronized from Figma. The latest user decisions replace the green/brass palette and
 flat-only surfaces with violet actions, lavender neutrals and restrained glass. Product truth remains in
-[PRODUCT.md](PRODUCT.md); implementation tokens are in [Theme.swift](Theme.swift), and capture wiring is in
-[INTEGRATION.md](INTEGRATION.md). Historical reviews are retained in §13.
+[PRODUCT.md](PRODUCT.md); implementation tokens are in [Theme.swift](../../ios/RepairOS/Design/Theme.swift), and capture wiring is in
+[INTEGRATION.md](../../ios/RepairOS/Design/INTEGRATION.md). Historical reviews are retained in §13.
 
 **Design handoff:** [final light/dark review](https://www.figma.com/design/acZpRbLDyuavWtoJIqyj1u?node-id=95-1464),
 [component regression board](https://www.figma.com/design/acZpRbLDyuavWtoJIqyj1u?node-id=86-157), and fresh
-[Figma exports](../../figma/README.md). Resolved token values are in [palette.json](UXHarness/palette.json).
+[Figma exports](figma/README.md). Resolved token values are in [palette.json](UXHarness/palette.json).
 This branch documents the finalized design; production SwiftUI implementation remains a follow-up (§9).
 
 Alegreya Sans is the display face in Figma. Inter stands in for SF Pro in exports; named vector icons stand in for
