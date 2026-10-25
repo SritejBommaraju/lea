@@ -22,7 +22,9 @@ Stages, each persisted before the next call:
   MAX_TRANSIENT times per attempt, then the row fails (resumable) instead of looking busy forever.
 
 One worker at a time: a run takes a lease on the row (a compare-and-set write) before any Grain call and renews it
-while it works, so two jobs for one handoff never both call Grain. Jobs are keyed by the row's `attempt`, which goes
+while it works, so two jobs for one handoff never both call Grain. A worker that stops gives the lease back; one that
+dies leaves it to run out, and a run that finds a lease waits until it does (or, while its holder keeps renewing it,
+leaves the work to that run), so a job given back to the queue is never marked done without advancing. Jobs are keyed by the row's `attempt`, which goes
 up only when a new run is wanted (a new objective, a resume, an answer, or a design whose worker is gone).
 """
 from __future__ import annotations
@@ -38,6 +40,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from repairos.handoff import manifest as mf
+from repairos.pipeline.stopping import is_stopping
 from repairos.slots.grain import GrainError
 
 log = logging.getLogger(__name__)
@@ -50,6 +53,7 @@ OUT_FILES = ("out/model.step", "out/model.glb", "out/report.json")
 STAGES = ("queued", "measured", "project", "uploaded", "capture", "designing", "asking", "done", "stopped", "failed")
 WORKING = ("queued", "measured", "project", "uploaded", "capture", "designing")
 LEASE_S = 90.0                    # a run renews its lease at least this often (every save, and while polling)
+LEASE_WAIT_S = 3.0                # a run that finds a lease looks again this often, until it runs out (LEASE_S)
 MAX_TRANSIENT = 3                 # the queue's own attempt limit (state_sqlite.MAX_ATTEMPTS)
 
 
@@ -188,12 +192,21 @@ class Handoff:
     # ------------------------------------------------------------------------------------------------- steps
     async def run(self) -> dict:
         await self.load()
-        if self.row.get("stage") not in WORKING:
-            return self._result()
-        if not await self.acquire():
-            return self._result() | {"skipped": "another run holds this design"}
+        deadline = time.monotonic() + LEASE_S + LEASE_WAIT_S
+        while True:
+            if self.row.get("stage") not in WORKING:
+                return self._result()
+            if await self.acquire():
+                break
+            if time.monotonic() > deadline:      # its holder kept renewing it: that run is alive and does the work
+                return self._result() | {"skipped": "another run holds this design"}
+            await asyncio.sleep(LEASE_WAIT_S)    # a lease left by a worker that died runs out within LEASE_S
+            await self.load()
         try:
             await self._advance()
+        except asyncio.CancelledError:           # the worker is stopping: give the design back, never fail it
+            await asyncio.shield(self._release())
+            raise
         except GrainError as e:
             if not e.transient:
                 await self.fail(str(e))
@@ -204,12 +217,21 @@ class Handoff:
                                 lease=None, notes=[*(self.row.get("notes") or []), f"{_now()}: {e}; retrying"])
                 raise
         except Exception as e:  # noqa: BLE001 - anything else ends this attempt visibly, never a silent busy stage
+            if is_stopping(e):                   # WorkerStopping: release, not fail (the job goes back to the queue)
+                await self._release()
+                raise
             log.exception("grain handoff %s", self.hid)
             await self.fail(f"{type(e).__name__}: {e}")
         else:
             if self.row.get("lease"):
                 await self.save(lease=None)
         return self._result()
+
+    async def _release(self) -> None:
+        """Drop our lease so the next run of this design starts at once."""
+        if (self.row.get("lease") or {}).get("token") == self.token:
+            self.row["lease"] = None
+            self.rev = await self.ctx.state.put(KIND, self.row, expect_rev=self.rev)
 
     async def _advance(self) -> None:
         if self.row["stage"] == "queued":

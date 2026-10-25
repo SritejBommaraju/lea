@@ -92,7 +92,7 @@ def test_two_runs_at_once_reach_grain_once(tmp_path, grain):
     async def both():
         return await asyncio.gather(service.run_handoff(ctx, hid), service.run_handoff(ctx, hid))
     a, b = asyncio.run(both())
-    assert bool(a.get("skipped")) != bool(b.get("skipped"))               # exactly one of them worked
+    assert a["stage"] == b["stage"]                 # the second waited on the first's lease, then had nothing to do
     assert sum(p["name"] == f"Lea {hid}" for p in grain.projects()) == 1
     pid = asyncio.run(ctx.state.get(service.KIND, hid)).data["grain"]["project_id"]
     assert sum(len(s.get("photos") or []) for s in grain.scans(pid)) == 1

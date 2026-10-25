@@ -213,17 +213,75 @@ def test_a_failed_design_resumes_at_the_step_that_failed_under_a_new_attempt(tmp
     assert _run(service.create(st, scan, "a plate", None, []))["attempt"] == 2   # running: the same attempt
 
 
-def test_a_live_lease_keeps_a_second_run_away_from_grain(tmp_path):
-    import time
-
+def _leased(tmp_path, scan_id, stage, until):
     from repairos.handoff import service
     from repairos.slots.state_sqlite import SqliteState
     st = SqliteState(tmp_path / "s.sqlite3")
-    row = _run(service.create(st, {"scan_id": "scan_l"}, "a plate", None, []))
+    row = _run(service.create(st, {"scan_id": scan_id}, "a plate", None, []))
     r = _run(st.get(service.KIND, row["handoff_id"]))
-    _run(st.put(service.KIND, {**r.data, "lease": {"token": "other", "until": time.time() + 60}}, expect_rev=r.rev))
-    out = _run(service.run_handoff(_Ctx(st), row["handoff_id"]))   # _Ctx fails on any Grain call
+    lease = {"token": "other", "until": until} if until else None
+    _run(st.put(service.KIND, {**r.data, "stage": stage, "lease": lease}, expect_rev=r.rev))   # next: find the project
+    return st, row["handoff_id"]
+
+
+def test_a_live_lease_keeps_a_second_run_away_from_grain(tmp_path, monkeypatch):
+    import time
+
+    from repairos.handoff import service
+    monkeypatch.setattr(service, "LEASE_S", 0.3)
+    monkeypatch.setattr(service, "LEASE_WAIT_S", 0.1)
+    st, hid = _leased(tmp_path, "scan_l", "queued", time.time() + 60)    # its holder is alive (far from running out)
+    out = _run(service.run_handoff(_Ctx(st), hid))                    # _Ctx fails on any Grain call
     assert out["skipped"] and out["stage"] == "queued"
+
+
+def test_a_lease_left_by_a_dead_worker_is_waited_out_not_taken_as_done(tmp_path, monkeypatch):
+    import time
+
+    from repairos.handoff import service
+    monkeypatch.setattr(service, "LEASE_WAIT_S", 0.1)
+    st, hid = _leased(tmp_path, "scan_x", "measured", time.time() + 0.3)
+    out = _run(service.run_handoff(_Ctx(st), hid))                    # it ran on: its first Grain call was reached
+    assert "skipped" not in out and "must not be called" in out["error"]
+
+
+class _Slow:
+    """Grain that is slow to list projects (for stopping the worker mid-call), or raises what it is given."""
+
+    def __init__(self, raise_=None):
+        self.raise_ = raise_
+
+    def projects(self):
+        import time
+        if self.raise_:
+            raise self.raise_
+        time.sleep(1.0)
+        return []
+
+
+def test_a_stopping_worker_gives_the_design_back_without_failing_it(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    from repairos.handoff import service
+    from repairos.pipeline.stopping import WorkerStopping
+    st, hid = _leased(tmp_path, "scan_s", "measured", None)
+    ctx = SimpleNamespace(state=st, slot=lambda _: _Slow(WorkerStopping("stop")))
+    with pytest.raises(WorkerStopping):
+        _run(service.run_handoff(ctx, hid))
+    row = _run(st.get(service.KIND, hid)).data
+    assert row["stage"] == "measured" and row["lease"] is None and row["error"] is None
+
+    async def cancelled():
+        task = asyncio.ensure_future(service.run_handoff(SimpleNamespace(state=st, slot=lambda _: _Slow()), hid))
+        await asyncio.sleep(0.3)                                       # inside the slow Grain call, lease held
+        assert (await st.get(service.KIND, hid)).data["lease"]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    _run(cancelled())
+    row = _run(st.get(service.KIND, hid)).data
+    assert row["stage"] == "measured" and row["lease"] is None       # the next worker starts at once
 
 
 def test_a_finished_design_is_not_run_again(tmp_path):
