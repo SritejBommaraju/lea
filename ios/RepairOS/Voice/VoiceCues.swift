@@ -48,10 +48,11 @@ struct CueLimiter: Sendable {
     private(set) var lastStart: TimeInterval = -.infinity
     private(set) var lastSaid: [String: TimeInterval] = [:]
 
-    func decide(_ line: String, now: TimeInterval, busy: Bool) -> Decision {
+    /// `held`: a line that must be heard is waiting (what the object is), and this one goes after it.
+    func decide(_ line: String, now: TimeInterval, busy: Bool, held: Bool = false) -> Decision {
         if let t = lastSaid[line], now - t < repeatWindow { return .drop }
         if now - lastStart < minGap { return .wait(until: lastStart + minGap) }
-        if busy { return .wait(until: now + busyRetry) }
+        if busy || held { return .wait(until: now + busyRetry) }
         return .speak
     }
 
