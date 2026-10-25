@@ -20,6 +20,8 @@ Motion indications follow [Apple motion guidance](https://developer.apple.com/de
 
 ## Required device checks
 
+Use the [native session protocol and results template](native-validation.md). These checks are currently **NOT RUN**; a teammate must return observations from a real device and new users.
+
 - VoiceOver reads warning heading, instruction and residual hazard in order; a changed result is announced once.
 - Native Dynamic Type and Bold Text wrap without hiding content.
 - Interactive controls around these read-only labels have at least 44 × 44 pt targets.
