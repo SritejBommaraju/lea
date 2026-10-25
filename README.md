@@ -57,7 +57,4 @@ Three streams: [App](areas/app.md), [Modeling + benchmark](areas/modeling-benchm
 [Build execution](areas/build-execution.md). Start with [AGENTS.md](AGENTS.md); it applies to people and coding
 agents.
 
-Pull requests only. Nothing fake: no mocks or stubs of missing services, devices or data. Grain is proprietary:
-only the API surface we call is in this repo, and its internals stay in `private/` (gitignored; ask Sritej).
-
 Licence: Apache-2.0 ([LICENSE](LICENSE), [NOTICE](NOTICE)).
