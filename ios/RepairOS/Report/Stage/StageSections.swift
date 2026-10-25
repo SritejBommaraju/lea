@@ -150,6 +150,52 @@ struct StageProblemRow: View {
     }
 }
 
+/// A setup row (report `setup`: a battery missing, a cable unplugged): not broken, so the calm setup tone, and its fix
+/// in full. Numbered like its marker on the stage (StageMarks).
+struct StageSetupRow: View {
+    let problem: ReportModel.Problem
+    let number: Int
+    /// true: tapping flies the stage to its marker (a target glyph); false: opens the detail (a chevron).
+    var located: Bool
+    var selected = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    var body: some View {
+        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.m))
+            : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+        layout {
+            CropThumb(sha: problem.crops.first)
+                .frame(width: typeSize.isAccessibilitySize ? nil : 56, height: typeSize.isAccessibilitySize ? 140 : 56)
+                .overlay(alignment: .topLeading) { StageNumber(number: number, tone: .setup).offset(x: -5, y: -5) }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(problem.part).font(.headline).foregroundStyle(.primary)
+                Text(problem.issue).font(.subheadline.weight(.semibold)).foregroundStyle(Tone.setup.text)
+                if let fix = problem.fix {
+                    Text(ReportWords.sanitize(fix)).font(.subheadline).foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
+            }
+            .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+            Image(systemName: located ? "scope" : "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(located ? AnyShapeStyle(Palette.setup) : AnyShapeStyle(.tertiary))
+                .accessibilityHidden(true)
+        }
+        .card(padding: 14)
+        .overlay {
+            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                .strokeBorder(Palette.setup, lineWidth: 2)
+                .opacity(selected ? 1 : 0)
+        }
+        .motion(Motion.fade, value: selected)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(ReportWords.setupLabel(problem, number: number))
+        .accessibilityHint(located ? "Shows it on the scan" : "Shows the photo and the evidence")
+    }
+}
+
 /// The number badge used on rows; the 3D markers draw the same disc (tone fill, white ring, rounded bold number).
 struct StageNumber: View {
     let number: Int

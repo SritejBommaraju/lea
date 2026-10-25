@@ -31,6 +31,9 @@ a finding says it was confirmed by a meter.
 - Regions that were not inspected or could not be judged must be mentioned as such; never call them fine.
 - Lead with the most likely problems (most_likely_problems, in that order). Mention cosmetic-only issues briefly, \
 as wear that would not stop the device working.
+- setup_to_do lists setup or assembly states (a battery missing, a cable unplugged, a cover not clipped). They are \
+not broken parts: never call them faults or broken. Say each plainly with its fix (for example "the batteries look \
+missing: put them in, then test again"); when there are no likely problems, lead with them.
 - Write three to six short sentences of plain prose. No lists, no headings, no markdown.
 - Never write a digit, a number word for a measurement, a percentage or a probability. Use the confidence words \
 given (low, medium, high).
@@ -67,7 +70,7 @@ def photo_words(text: str) -> str:
 
 def _refs(report: Mapping[str, Any]) -> tuple[str, ...]:
     out = set()
-    for bucket in ("findings", "cosmetic", "not_inspected", "insufficient_evidence"):
+    for bucket in ("findings", "setup", "cosmetic", "not_inspected", "insufficient_evidence"):
         for e in report.get(bucket, []):
             out.add(e["subject"]["ref"])
             photo = e.get("crop") or e.get("photo") or {}
@@ -114,6 +117,7 @@ def words_for(report: Mapping[str, Any], symptom: str | None = None) -> dict[str
         "most_likely_problems": [issue_item(e)["ref"] for e in report.get("findings", []) if e["finding_id"] in top],
         "potential_issues": issues,
         "cosmetic_only": [issue_item(e) for e in report.get("cosmetic", [])],
+        "setup_to_do": [issue_item(e) | {"fix": w(e["fix"])} for e in report.get("setup", [])],
         "looked_fine": sorted(set(fine)),
         "not_inspected": [{"ref": e["subject"]["ref"], "part": e["part_class"], "reason": w(e["reason"])}
                           for e in report.get("not_inspected", [])],

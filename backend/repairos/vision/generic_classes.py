@@ -40,6 +40,13 @@ CROP_STATES: tuple[str, ...] = (
     "ok", "damaged", "burnt", "cracked", "corroded", "loose", "unplugged", "missing", "cannot_tell",
 )
 
+# What the assembly check (vision/assembly.py) may say about one place where something should be fitted or connected:
+# the crop states for "is it there, seated, connected and the right way round", plus damage. `reversed` = a part with a
+# polarity or orientation fitted the wrong way round, read from marks in the photo (never from wire colour, S1).
+ASSEMBLY_STATES: tuple[str, ...] = ("ok", "missing", "unplugged", "loose", "reversed", "damaged", "cannot_tell")
+# What the whole-object overview may claim at one place (a claim to confirm on a full-resolution crop, never a finding).
+ASSEMBLY_PROBLEMS: tuple[str, ...] = ("missing", "unplugged", "loose", "reversed")
+
 CONFIDENCE_WORDS: tuple[str, ...] = ("low", "medium", "high")
 
 # Words that mean a device runs on wall (mains) power, for the report's safety note (report/safety.py). Matched as

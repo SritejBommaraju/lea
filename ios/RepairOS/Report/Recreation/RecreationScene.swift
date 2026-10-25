@@ -442,6 +442,7 @@ extension RecreationMarker {
         case "caution": SIMD3(0.96, 0.62, 0.12)
         case "good": SIMD3(0.20, 0.74, 0.42)
         case "cosmetic": SIMD3(0.45, 0.55, 0.95)
+        case "setup": SIMD3(0.36, 0.79, 0.83)
         default: SIMD3(0.55, 0.55, 0.62)
         }
     }

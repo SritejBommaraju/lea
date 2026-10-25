@@ -13,8 +13,11 @@ count in `regions` (a roll-up finding from vision.inspect stands for many region
 
 Judged rows that are one physical issue collapse into one row (collapse_rows): the same still and the same issue
 with crops overlapping at IoU >= MERGE_IOU, or different stills, the same part family and issue, and located regions
-on the scan that intersect. Rows the vision model judged cosmetic go to `cosmetic`; the rest stay in `findings`,
-ranked most likely problem first (rank_key), and the first MOST_LIKELY issue rows are `most_likely`.
+on the scan that intersect. Setup and assembly states (Finding.category setup: a battery missing, a cable unplugged,
+a cover not clipped) go to `setup` with their plain fix, unless they are a hazard (severity safety) or a meter
+reading settled them; rows the vision model judged cosmetic go to `cosmetic`; the rest stay in `findings`, ranked
+most likely problem first (rank_key), and the first MOST_LIKELY issue rows are `most_likely`. Neither `setup` nor
+`cosmetic` makes the verdict potential_issues on its own (report.verdict).
 """
 from __future__ import annotations
 
@@ -256,11 +259,20 @@ def merge_undecided(undecided: list[dict[str, Any]], judged: list[dict[str, Any]
     return out
 
 
+def is_setup(e: Mapping[str, Any]) -> bool:
+    """A row for the `setup` section: a setup or assembly state (category setup), not a broken part, unless it is a
+    hazard (severity safety: a cell in backwards, a loose mains wire) or a meter reading confirmed or ruled out a fault
+    there; those stay in `findings` (and a hazard in `most_likely`)."""
+    return e["issue"] != "none" and e.get("category") == "setup" and e.get("severity") != "safety" and \
+        e["proof"]["status"] == "not_measured"
+
+
 def is_cosmetic(e: Mapping[str, Any]) -> bool:
     """A row for the `cosmetic` section: an issue the VLM judged cosmetic, unless a meter reading confirmed a fault
-    there (then it is a proven fault and stays in `findings` and `most_likely`, whatever it looks like)."""
+    there (then it is a proven fault and stays in `findings` and `most_likely`, whatever it looks like). A setup row is
+    in `setup`, whatever its severity."""
     return e["issue"] != "none" and e.get("severity") == "cosmetic" and \
-        e["proof"]["status"] != "confirmed_by_meter"
+        e["proof"]["status"] != "confirmed_by_meter" and not is_setup(e)
 
 
 def _is_issue(e: Mapping[str, Any]) -> bool:
@@ -276,7 +288,7 @@ def bottom_not_placed(report: Mapping[str, Any], segments: list[Mapping[str, Any
     if not want:
         return []
     out = []
-    for bucket in ("findings", "cosmetic", "insufficient_evidence"):
+    for bucket in ("findings", "setup", "cosmetic", "insufficient_evidence"):
         for row in report.get(bucket) or []:
             ids = [row.get("finding_id"), *(row.get("finding_ids") or [])]
             hit = next((i for i in ids if i in want), None)
@@ -359,6 +371,10 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
                 e["severity"] = f["severity"]
             if f.get("part_words"):
                 e["part_words"] = f["part_words"]
+            if f.get("category"):
+                e["category"] = f["category"]
+            if f.get("fix"):
+                e["fix"] = f["fix"]
             if sus:
                 e["judgment"] = {"rank": sus["rank"], "likelihood_word": sus["p_fault_word"],
                                  "verdict": sus["verdict"]}
@@ -370,14 +386,15 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
 
     not_inspected = group_not_inspected(not_inspected, {fid: int(r.get("regions", 1)) for fid, r in regions.items()},
                                         {f["finding_id"]: f for f in findings})
-    stable = frozenset(e["finding_id"] for b in ("findings", "cosmetic", "insufficient_evidence")
+    stable = frozenset(e["finding_id"] for b in ("findings", "setup", "cosmetic", "insufficient_evidence")
                        for e in (previous or {}).get(b, []))
     judged = sorted(collapse_rows(judged, stable=stable), key=rank_key)
     undecided = merge_undecided(undecided, judged, stable)
+    setup = [e for e in judged if is_setup(e)]
     cosmetic = [e for e in judged if is_cosmetic(e)]
-    judged = [e for e in judged if not is_cosmetic(e)]
-    across = len({s for e in judged + cosmetic for s in photos_of(e)}) > 1 and not any(
-        (e.get("location") or {}).get("status") == "computed" for e in judged + cosmetic)
+    judged = [e for e in judged if not is_cosmetic(e) and not is_setup(e)]
+    across = len({s for e in judged + setup + cosmetic for s in photos_of(e)}) > 1 and not any(
+        (e.get("location") or {}).get("status") == "computed" for e in judged + setup + cosmetic)
     stamp = (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ")
     report: dict[str, Any] = {
         "report_id": report_id_for(scan["scan_id"]),
@@ -387,6 +404,7 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
         "findings": judged,
         "most_likely": [e["finding_id"] for e in judged if _is_issue(e)][:MOST_LIKELY],
         "cosmetic": cosmetic,
+        "setup": setup,
         "not_inspected": not_inspected,
         "insufficient_evidence": undecided,
         "capture": capture_summary(scan, stills, judged_stills),
@@ -416,7 +434,7 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
         report["reference_hints"] = {"hints": list(hints["hints"])[:3],
                                      "sources": [{"title": x.get("title", ""), "link": x["link"]}
                                                  for x in (hints.get("sources") or [])[:5] if x.get("link")]}
-    report["safety"] = safety_notes(judged, cosmetic, undecided)
+    report["safety"] = safety_notes(judged, cosmetic, [*undecided, *setup])
     report["limits"] = limits(scan.get("symptom"), judged, unmerged_photos=across)
     if next_action:
         step = {"action_id": next_action["action_id"], "kind": next_action["kind"],
@@ -492,13 +510,13 @@ def group_not_inspected(rows: list[dict[str, Any]], counts: Mapping[str, int],
 def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, Any]]) -> list[str]:
     """MS1: every stored finding in exactly one bucket; nothing shown judged that no model looked at."""
     seen: dict[str, list[str]] = {}
-    for bucket in ("findings", "cosmetic", "not_inspected", "insufficient_evidence"):
+    for bucket in ("findings", "setup", "cosmetic", "not_inspected", "insufficient_evidence"):
         for e in report.get(bucket, []):
             for fid in (e.get("finding_ids") or [e["finding_id"]]) + list(e.get("superseded_ids") or []):
                 seen.setdefault(fid, []).append(bucket)
     out = []
     state = {f["finding_id"]: f["state"] for f in findings}
-    for e in report.get("findings", []) + report.get("cosmetic", []):
+    for e in report.get("findings", []) + report.get("setup", []) + report.get("cosmetic", []):
         for fid in e.get("superseded_ids") or []:
             if state.get(fid) not in UNDECIDED:
                 out.append(f"row {e['finding_id']} supersedes {fid}, which is {state.get(fid)!r}, not a finding that "
@@ -518,7 +536,7 @@ def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, An
         if ids and (ids[0] != e["finding_id"] or e.get("regions", 1) < len(ids)):
             out.append(f"grouped row {e['finding_id']}: finding_id is not its first finding, or it counts fewer "
                        "regions than it groups")
-    for e in report.get("findings", []) + report.get("cosmetic", []):
+    for e in report.get("findings", []) + report.get("setup", []) + report.get("cosmetic", []):
         if not JUDGES & set(e["inspected_by"]):
             out.append(f"finding {e['finding_id']} shown as judged but no model looked at it")
         ids = e.get("finding_ids")
@@ -532,6 +550,11 @@ def honesty_violations(report: Mapping[str, Any], findings: list[Mapping[str, An
     for e in report.get("findings", []):
         if is_cosmetic(e):
             out.append(f"row {e['finding_id']} is a cosmetic issue listed among the findings")
+        if is_setup(e):
+            out.append(f"row {e['finding_id']} is a setup state listed among the findings")
+    for e in report.get("setup", []):
+        if not is_setup(e) or not e.get("fix"):
+            out.append(f"row {e['finding_id']} is listed as setup but is not a setup state with a fix")
     issues = [e["finding_id"] for e in report.get("findings", []) if _is_issue(e)]
     if "most_likely" in report and report["most_likely"] != issues[:MOST_LIKELY]:
         out.append("most_likely is not the first issue rows of the findings")

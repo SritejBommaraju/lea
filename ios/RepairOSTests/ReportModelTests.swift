@@ -67,6 +67,77 @@ struct ReportModelTests {
     }
 }
 
+/// Assembly states (backend vision/assembly.py) read in plain words, never as raw state names.
+struct AssemblyWordingTests {
+    @Test func assemblyStatesReadPlainly() {
+        #expect(ReportModel.issueWords("reversed") == "In the wrong way round")
+        #expect(ReportModel.issueWords("unseated") == "Not plugged in fully")
+        #expect(ReportModel.issueWords("missing") == "Looks missing")
+        let m = ReportModel(json: ["verdict": "potential_issues", "most_likely": ["f1"], "not_inspected": [],
+                                   "insufficient_evidence": [],
+                                   "findings": [["finding_id": "f1", "part_class": "AA cell", "issue": "reversed"]]])
+        #expect(m.mostLikely.first?.issue == "In the wrong way round")
+    }
+
+    /// Setup rows (report `setup`) are read apart with their fix, and a report with nothing broken leads with the fix.
+    @Test func setupRowsAreListedApartAndLeadWhenNothingIsBroken() {
+        let m = ReportModel(json: [
+            "verdict": "no_problems_seen", "most_likely": [], "findings": [], "not_inspected": [],
+            "insufficient_evidence": [],
+            "setup": [["finding_id": "s1", "part_class": "battery bay", "issue": "missing", "category": "setup",
+                       "fix": "Put the batteries in, then test again."]],
+        ])
+        #expect(m.setup.count == 1 && m.mostLikely.isEmpty && m.otherIssues.isEmpty)
+        #expect(m.setup.first?.isSetup == true && m.setup.first?.fix == "Put the batteries in, then test again.")
+        #expect(ReportWords.headline(m) == "Put the batteries in, then test again.")
+        #expect(ReportWords.eyebrow(m).hasSuffix("1 thing to set up"))
+    }
+
+    static var battery: [String: Any] { [
+        "finding_id": "s1", "part_class": "battery bay", "issue": "missing", "category": "setup", "severity": "functional",
+        "fix": "Put the batteries in, then test again.", "location": ["status": "computed", "point_m": [0.0, 0.1, 0.2]],
+        "crop": ["still_id": "s3", "box_px": [10, 20, 110, 220]],
+    ] }
+
+    /// Greptile #29: the stage's "Setup to check" rows carry their fix, in the calm setup tone, and the detail says it.
+    @Test func setupRowsReadWithTheirFixInTheSetupTone() throws {
+        let m = ReportModel(json: ["verdict": "potential_issues", "most_likely": [], "findings": [], "not_inspected": [],
+                                   "insufficient_evidence": [], "setup": [Self.battery]])
+        let s = try #require(m.setup.first)
+        #expect(s.tone == .setup && s.fix == "Put the batteries in, then test again.")
+        #expect(ReportWords.setupLabel(s, number: 2) == "2: Battery bay, Looks missing. Put the batteries in, then test again.")
+        // a setup state that is a hazard stays a finding, in the danger tone
+        let hazard = ReportModel(json: ["verdict": "potential_issues", "most_likely": ["h1"], "not_inspected": [],
+                                        "insufficient_evidence": [],
+                                        "findings": [["finding_id": "h1", "part_class": "AA cell", "issue": "reversed",
+                                                      "category": "setup", "severity": "safety", "fix": "Turn it round."]]])
+        #expect(hazard.mostLikely.first?.tone == .danger)
+    }
+
+    /// Greptile #29: located setup rows are marked on the stage (3D pins, numbered photos, so "Show on object" has
+    /// them), numbered after the problems in the setup tone, and never counted as problems.
+    @Test func setupRowsAreMarkedOnTheStageButNeverCountedAsProblems() {
+        let m = ReportModel(json: [
+            "verdict": "potential_issues", "most_likely": ["f1"], "not_inspected": [], "insufficient_evidence": [],
+            "findings": [["finding_id": "f1", "part_class": "fan", "issue": "burnt", "severity": "functional",
+                          "location": ["status": "computed", "point_m": [0.1, 0.2, 0.3]]]],
+            "setup": [Self.battery],
+        ])
+        let pins = StageMarks.pins(m)
+        #expect(pins.map(\.id) == ["f1", "s1"] && pins.map(\.number) == [1, 2])
+        #expect(pins.map(\.tone) == [.caution, .setup] && pins.allSatisfy { $0.ringRadius == nil })
+        let marks = StageMarks.photoMarks(m)
+        #expect(marks.map(\.id) == ["s1"] && marks.first?.number == 2 && marks.first?.tone == .setup)
+        #expect(StageMarks.setupNumber(m, 0) == 2)
+        #expect(ReportWords.eyebrow(m) == "1 likely problem")   // the setup row is not a problem
+        // a setup-only report still has a marker to show on the object
+        let only = ReportModel(json: ["verdict": "no_problems_seen", "most_likely": [], "findings": [], "not_inspected": [],
+                                      "insufficient_evidence": [], "setup": [Self.battery]])
+        #expect(StageMarks.pins(only).map(\.number) == [1] && StageMarks.pins(only).first?.tone == .setup)
+        #expect(ReportWords.eyebrow(only).hasSuffix("1 thing to set up") && !ReportWords.eyebrow(only).contains("problem"))
+    }
+}
+
 /// Report rebuilds (continued scans): superseded and grouped rows are shown once.
 struct ReportRebuildTests {
     /// After a rebuild a newer row can name the older one in `superseded_ids`, and a grouped "could not judge" row lists

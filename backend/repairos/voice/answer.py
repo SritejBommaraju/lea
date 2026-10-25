@@ -62,7 +62,7 @@ def _finding(f: dict) -> dict:
            "confidence": f.get("confidence_word"), "where": f.get("part_words"),
            "likelihood": j.get("likelihood_word"), "explains_their_story": j.get("explains_symptom"),
            "proof": proof if proof and proof != "not_measured" else "not measured (photos only)",
-           "evidence": _evidence(f.get("evidence"))}
+           "evidence": _evidence(f.get("evidence")), "category": f.get("category"), "fix": f.get("fix")}
     return {k: v for k, v in row.items() if v not in (None, "", [])}
 
 
@@ -101,6 +101,8 @@ def report_facts(report: dict) -> dict:
         "most_likely_problems": top,
         "other_findings": [_finding(f) for f in findings if f.get("finding_id") not in top_ids][:8],
         "cosmetic": [_finding(f) for f in report.get("cosmetic") or [] if isinstance(f, dict)][:5],
+        # setup and assembly states (a battery missing, a cable unplugged): not broken parts, each with its fix
+        "setup_to_do": [_finding(f) for f in report.get("setup") or [] if isinstance(f, dict)][:5],
         "not_inspected": [_gap(g) for g in report.get("not_inspected") or [] if isinstance(g, dict)][:6],
         "could_not_judge": [_gap(g) for g in report.get("insufficient_evidence") or [] if isinstance(g, dict)][:6],
         "next_step": {k: _plain(v) for k, v in (report.get("next_step") or {}).items() if k in ("instruction", "reason")},

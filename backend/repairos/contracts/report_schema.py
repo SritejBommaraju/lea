@@ -631,6 +631,7 @@ class Issue(StrEnum):
     dirty = 'dirty'
     loose = 'loose'
     unseated = 'unseated'
+    reversed = 'reversed'
     missing = 'missing'
     shifted = 'shifted'
     partly = 'partly'
@@ -665,6 +666,15 @@ class Severity(StrEnum):
     cosmetic = 'cosmetic'
     functional = 'functional'
     safety = 'safety'
+
+
+class Category(StrEnum):
+    """
+    Finding.category: defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or assembly state, not a broken part: a battery missing or in backwards, a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse missing (repairos.vision.assembly). Code decides it from the state, never a model word.
+    """
+
+    defect = 'defect'
+    setup = 'setup'
 
 
 class FindingId(RootModel[str]):
@@ -713,6 +723,15 @@ class Finding(BaseModel):
     part_words: str | None = Field(
         None,
         description='Plain words that let a person find the part in the photo.',
+        min_length=1,
+    )
+    category: Category | None = Field(
+        None,
+        description='Finding.category: defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or assembly state, not a broken part: a battery missing or in backwards, a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse missing (repairos.vision.assembly). Code decides it from the state, never a model word.',
+    )
+    fix: str | None = Field(
+        None,
+        description="For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the batteries in, then test again.'). Shown to the user.",
         min_length=1,
     )
     finding_ids: list[FindingId] | None = Field(
@@ -838,6 +857,10 @@ class Report(BaseModel):
     cosmetic: list[Finding] | None = Field(
         None,
         description='Issues the vision model judged cosmetic (looks worn but would not stop the device working). Listed apart; they never make the verdict potential_issues on their own.',
+    )
+    setup: list[Finding] | None = Field(
+        None,
+        description='Setup and assembly states (category setup: a battery missing, a cable unplugged, a cover not clipped), each with its plain fix. Not a broken part: listed apart and they never make the verdict potential_issues on their own. A setup state that is a hazard (severity safety: a battery in backwards, a loose mains wire) stays in `findings`.',
     )
     not_inspected: list[NotInspected] = Field(
         ...,

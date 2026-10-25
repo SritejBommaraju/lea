@@ -274,7 +274,7 @@ def user_lead(story: Mapping[str, Any] | None, report: Mapping[str, Any]) -> dic
     if not said or hyp.get("status") != "done":
         return None
     suspect = str(hyp.get("suspect") or "").strip()
-    judged = list(report.get("findings") or []) + list(report.get("cosmetic") or [])
+    judged = list(report.get("findings") or []) + list(report.get("setup") or []) + list(report.get("cosmetic") or [])
     unjudged = list(report.get("insufficient_evidence") or []) + list(report.get("not_inspected") or [])
     top_ids = list(report.get("most_likely") or [])
     top = next((f for f in report.get("findings") or [] if top_ids and f["finding_id"] == top_ids[0]), None)

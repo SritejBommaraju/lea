@@ -728,7 +728,8 @@ def live_top_part(findings: list[dict], run: dict) -> str | None:
     best = None
     for f in findings:
         if f["state"] in ("ok", "not_inspected", "not_seen_in_photo", "insufficient_evidence", "unsure") or \
-                f.get("severity") == "cosmetic" or f["finding_id"] not in regions:
+                f.get("severity") == "cosmetic" or f["finding_id"] not in regions or \
+                (f.get("category") == "setup" and f.get("severity") != "safety"):   # a setup state needs no new part
             continue
         part = str(regions[f["finding_id"]].get("part_class") or "").replace("_", " ").strip()
         if part.lower() in NOT_A_PART:
@@ -1000,10 +1001,116 @@ async def _inspect_all(ctx: Context, scan: dict, stills: list[dict]) -> dict[str
     return stages
 
 
+# ------------------------------------------------------------------- assembly: complete and correctly assembled?
+ASSEMBLY_NOT_AVAILABLE = "the configured vision model has no assembly check"
+
+
+def _object_words(run_row: dict) -> str | None:
+    ident = run_row.get("identity") or {}
+    words = " ".join(str(ident[k]) for k in ("brand", "model", "category") if ident.get(k) and ident[k] != "unknown")
+    return words or None
+
+
+def _assembly_sync(ctx: Context, scan_id: str, picked: list[dict], object_words: str | None, rev: int) -> Any:
+    from repairos.vision.assembly import check_assembly
+    from repairos.vision.crops import load_still
+    from repairos.vision.scale import PixelScale
+
+    views, scales = [], {}
+    for st in picked:
+        views.append((st, load_still(ctx.local_file(scan_id, st["image_file"]))))
+        sc = PixelScale.from_still(st, ctx.depth(scan_id, st))
+        scales[st["still_id"]] = sc.px_per_mm if sc is not None else None
+    cfg = ctx.config["assembly"]
+    res = check_assembly(views, scan_id=scan_id, judge=ctx.slot("VLM"), object_words=object_words,
+                         max_confirm=cfg["max_confirm"], max_gaps=cfg["max_gaps"],
+                         crop_dir=ctx.workdir(scan_id) / "crops" / "assembly", px_per_mm_of=scales,
+                         stop=ctx.stopping, rev=rev)
+    for f in res.findings:
+        refs = f.get("evidence_refs") or {}
+        crop = refs.get("crop_file")
+        if crop and not crop.startswith(REF_PREFIX):
+            refs["crop_file"] = ctx.blobs.put(Path(crop).read_bytes(), "image/jpeg")
+        validate("finding", f)
+    return res
+
+
+async def run_assembly(ctx: Context, scan: dict, stills: list[dict]) -> tuple[dict[str, dict], set[str]]:
+    """The whole-object assembly check (repairos.vision.assembly), beside the inspection: its findings stored like
+    any other (finding.create), its record on the run row (`assembly`). Returns (the report regions of every assembly
+    finding of the scan, the ids of earlier checks' findings this check replaces). The same photos as the last check:
+    that answer stands (no new call). Other photos (more were added), or a last check that was paused or failed: a new
+    check, revision `rev` (in its row ids, so a new answer is never hidden behind an earlier row of the same place).
+    A check the overview answered replaces the earlier rows, not added to (`superseded`: left out of fusion and the
+    report, like an earlier report revision). Off in config, or a vision slot without the check: nothing, and the run
+    row says so. A check with no answer (a failed, declined or paused overview) is not a verdict: one not_inspected
+    row says the check was not done and why (I3), the last answered check's rows stand beside it (`answer_ids`), and
+    the next report does it again; the report still builds."""
+    from repairos.vision.assembly import finding_not_run, pick_stills
+
+    scan_id = scan["scan_id"]
+    cfg = ctx.config["assembly"]
+    run_row = (await _run_row(ctx, scan_id)) or {}
+    before = run_row.get("assembly") or {}
+    regions_before = dict(before.get("regions") or {})   # every assembly finding of the scan keeps its region
+    superseded_before = set(before.get("superseded") or [])
+    if not cfg["enabled"]:
+        await _update(ctx, scan, {"assembly": {"status": "off"}})
+        return regions_before, superseded_before
+    judge = ctx.slot("VLM")
+    if not (hasattr(judge, "assembly_check") and hasattr(judge, "inspect_state")):
+        await _update(ctx, scan, {"assembly": {"status": "not_available", "reason": ASSEMBLY_NOT_AVAILABLE}})
+        return regions_before, superseded_before
+    picked = pick_stills(stills, cfg["max_stills"])
+    ids = [s["still_id"] for s in picked]
+    if not picked or (before.get("status") == "done" and before.get("stills") == ids):
+        return regions_before, superseded_before
+    rev = int(before.get("rev") or 0) + 1
+    answered_before = list(before["answer_ids"] if "answer_ids" in before else
+                           (before.get("finding_ids") or []) if before.get("status") == "done" else [])
+    t0 = time.monotonic()
+    try:
+        res = await asyncio.to_thread(_assembly_sync, ctx, scan_id, picked, _object_words(run_row), rev)
+        status = "paused" if res.record.get("paused") else "failed" if res.record.get("failed") else "done"
+        findings, record, regions = res.findings, {**res.record, "status": status}, res.regions
+    except Exception as e:
+        if is_stopping(e):
+            raise
+        log.warning("assembly check for scan %s failed: %s", scan_id, e)
+        f = finding_not_run(scan_id=scan_id, reason=f"the vision model call failed ({type(e).__name__}); it is "
+                                                    "tried again on the next report", still_ids=ids, rev=rev)
+        findings, record = [f], {"status": "failed", "stills": ids, "error": type(e).__name__}
+        regions = {f["finding_id"]: {"part_class": "assembly check", "inspected_by": []}}
+    answered = bool(record.get("answered"))
+    standing = [] if answered else answered_before   # no answer never replaces the last answer with nothing
+    if standing:
+        for f in findings:
+            f["evidence"].append("the earlier assembly check's answers stand until this one is done")
+    new_ids, _kept = await _store_findings(ctx, findings)   # a conflict is only a retry of this same revision
+    finding_ids = list(dict.fromkeys([*standing, *new_ids]))
+    superseded = sorted((superseded_before | set(before.get("finding_ids") or [])) - set(finding_ids))
+    regions = {**regions_before, **regions}   # rows that stand keep their region on the next check too
+    await _update(ctx, scan, {"assembly": {**record, "rev": rev, "finding_ids": finding_ids,
+                                           "answer_ids": new_ids if answered else standing, "regions": regions,
+                                           "superseded": superseded, "seconds": round(time.monotonic() - t0, 3)}})
+    return regions, set(superseded)
+
+
 async def _run_stages(ctx: Context, scan: dict) -> dict:
     scan_id = scan["scan_id"]
     stills = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
-    stages = await _inspect_all(ctx, scan, stills)
+    assembly = asyncio.create_task(run_assembly(ctx, scan, stills))   # beside the inspection: no wait of its own
+    try:
+        stages = await _inspect_all(ctx, scan, stills)
+    except BaseException:
+        assembly.cancel()
+        raise
+    try:
+        assembly_regions, assembly_superseded = await assembly
+    except Exception as e:
+        if is_stopping(e):
+            raise
+        raise await _fail(ctx, scan, "assembly", e) from e
 
     # fuse
     t0 = time.monotonic()
@@ -1011,7 +1118,8 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
     try:
         from repairos.fusion import fuse
 
-        findings = [r.data for r in await ctx.state.list("finding", scan_id=scan_id)]
+        findings = [r.data for r in await ctx.state.list("finding", scan_id=scan_id)
+                    if r.data["finding_id"] not in assembly_superseded]   # an earlier assembly check, replaced
         readings = [r.data for r in await ctx.state.list("meter-reading", scan_id=scan_id)]
         engine = ctx.slot("FUSION") if findings or readings else None
         hints = (((await _run_row(ctx, scan_id)) or {}).get("hints") or {}).get("hints") or None
@@ -1040,6 +1148,7 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
     t0 = time.monotonic()
     try:
         regions = {fid: info for st in stages.values() for fid, info in (st.get("regions") or {}).items()}
+        regions.update(assembly_regions)
         seg_rec = await ensure_segment_alignment(ctx, scan_id)
         locations, locate_words = await locate_findings(ctx, scan, stills, findings, regions, seg_rec)
     except Exception as e:

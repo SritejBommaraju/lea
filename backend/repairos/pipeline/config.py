@@ -13,6 +13,7 @@ INT_KEYS = ("worker_jobs", "stills_at_once", "vlm_calls_at_once", "max_stills", 
             "mesh_max_triangles")
 FLOAT_KEYS = ("same_region_m",)
 BOOL_KEYS = ("detector_half",)
+ASSEMBLY_INT_KEYS = ("max_stills", "max_confirm", "max_gaps")   # under `assembly:` (vision/assembly.py)
 
 
 def load_pipeline_config(path: Path | None = None) -> dict:
@@ -36,4 +37,13 @@ def load_pipeline_config(path: Path | None = None) -> dict:
         if not isinstance(v, (int, float)) or isinstance(v, bool) or v <= 0:
             raise ValueError(f"{path}: {k} must be a positive number")
         out[k] = float(v)
+    a = data.get("assembly")
+    if not isinstance(a, dict) or not isinstance(a.get("enabled"), bool):
+        raise ValueError(f"{path}: assembly.enabled must be true or false")
+    out["assembly"] = {"enabled": a["enabled"]}
+    for k in ASSEMBLY_INT_KEYS:
+        v = a.get(k)
+        if not isinstance(v, int) or isinstance(v, bool) or v < (1 if k == "max_stills" else 0):
+            raise ValueError(f"{path}: assembly.{k} must be a whole number (max_stills at least 1)")
+        out["assembly"][k] = v
     return out
