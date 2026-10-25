@@ -211,9 +211,10 @@ enum Walkthrough {
         return "Look at the \(place)."
     }
 
-    /// How sure: a meter reading proves it; otherwise Jev's likelihood that this is the fault, else the vision
-    /// confidence, and always that photos alone are not proof.
+    /// How sure: a meter reading proves it (or rules it out); otherwise Jev's likelihood that this is the fault, else
+    /// the vision confidence, and always that photos alone are not proof.
     static func sureLine(_ p: ReportModel.Problem) -> String {
+        if p.ruledOut { return "A meter reading ruled it out, so it isn't the problem." }
         if p.proved { return "A meter reading confirmed it." }
         let sure: String? = switch p.likelihood?.lowercased() {
         case "very likely": "I think it's very likely the cause."

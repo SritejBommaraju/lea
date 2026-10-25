@@ -200,6 +200,59 @@ struct WalkthroughTests {
         #expect(WalkthroughPlayer.readingTime(String(repeating: "a", count: 900)) == .milliseconds(9000))
     }
 
+    /// Greptile PR #32: pressing talk pauses the tour whatever it is doing (here its lead, before any line), so it
+    /// never starts a card or moves on while the person records.
+    @MainActor @Test func pressingTalkPausesTheTourBetweenLines() {
+        let tour = WalkthroughPlayer()
+        tour.start(Walkthrough.steps(Self.full()))
+        #expect(tour.playing)
+        let convo = LeaConversation(scanID: nil, gateway: GatewayClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: nil), diag: nil)
+        convo.personStarted()   // what pressToTalk() does first
+        #expect(tour.active && !tour.playing && tour.index == 0)
+        tour.stop()
+    }
+
+    /// Greptile PR #32: once a question has paused the tour, the conversation's answer is not the tour's to stop:
+    /// neither swiping to another card nor the tour pausing (its interruption branch) cuts it off.
+    @MainActor @Test func theTourNeverCutsOffTheAnswer() {
+        let tour = WalkthroughPlayer()
+        tour.start(Walkthrough.steps(Self.full()))
+        let answer = LeaVoice.shared.beginStream(held: true)   // the answer to the person (held: nothing plays)
+        tour.pause()
+        #expect(LeaVoice.shared.utteranceID == answer)
+        tour.next()
+        #expect(tour.index == 1 && LeaVoice.shared.utteranceID == answer)
+        tour.back()
+        tour.stop()
+        #expect(LeaVoice.shared.utteranceID == answer)
+        LeaVoice.shared.endStreamNow(answer)
+    }
+
+    /// Greptile PR #32: a meter reading that ruled a fault out is not "confirmed", and a cleared fault is never a
+    /// problem: with every finding ruled out (`most_likely` empty) the tour narrates no problems.
+    @Test func ruledOutFaultsAreNeverNarratedAsProblems() {
+        func finding(_ id: String, _ status: String) -> [String: Any] {
+            ["finding_id": id, "part_class": "fuse", "issue": "blown", "severity": "functional", "confidence_word": "medium",
+             "evidence": ["fuse in still scan_ab12_s3 looks blown"], "proof": ["status": status, "reading_id": "r_\(id)"] as [String: Any]]
+        }
+        let cleared = ReportModel(json: ["verdict": "no_problems_seen", "most_likely": [String](),
+                                         "findings": [finding("f1", "ruled_out_by_meter"), finding("f2", "ruled_out_by_meter")]])
+        #expect(cleared.mostLikely.isEmpty && cleared.otherIssues.isEmpty)
+        let steps = Walkthrough.steps(cleared)
+        #expect(!steps.contains { $0.kind == .problem || $0.kind == .others })
+        #expect(!steps.map(\.speech).joined(separator: " ").contains("confirmed"))
+
+        let mixed = ReportModel(json: ["verdict": "potential_issues",
+                                       "findings": [finding("f1", "ruled_out_by_meter"), finding("f2", "confirmed_by_meter")]])
+        #expect(mixed.mostLikely.map(\.id) == ["f2"] && mixed.otherIssues.isEmpty)
+        #expect(mixed.mostLikely[0].proved && !mixed.mostLikely[0].ruledOut)
+        #expect(Walkthrough.sureLine(mixed.mostLikely[0]) == "A meter reading confirmed it.")
+
+        var p = ReportWordsTests.problem("Fuse", "Blown")
+        p.ruledOut = true
+        #expect(Walkthrough.sureLine(p) == "A meter reading ruled it out, so it isn't the problem.")
+    }
+
     // MARK: Camera
 
     static let center = SIMD3<Float>(0, 0, 0)

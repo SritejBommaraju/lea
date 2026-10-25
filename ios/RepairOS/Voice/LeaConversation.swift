@@ -85,7 +85,7 @@ final class LeaConversation {
     // MARK: Hold to talk
 
     func pressToTalk() {
-        stopLea()
+        personStarted()
         WakeListener.shared.suspend(true)
         phase = .listening
         Task {
@@ -195,8 +195,7 @@ final class LeaConversation {
     }
 
     func showLive(_ caption: String) {
-        if speculativeText == nil { stopLea() }   // the person is talking: Lea stops at once
-        WalkthroughPlayer.current?.personSpoke()  // and a walkthrough waits for them
+        personStarted(stopLea: speculativeText == nil)   // the person is talking: Lea stops at once
         liveCaption = caption
         phase = .listening
     }
@@ -205,6 +204,13 @@ final class LeaConversation {
     func turnDropped() {
         liveCaption = ""
         if phase == .listening || phase == .thinking { phase = .idle }
+    }
+
+    /// The person started a turn (pressed talk, or the phone heard them): Lea stops and a walkthrough waits for them,
+    /// whatever it was doing (mid-line, its lead or beat, a muted card's reading time), so it never talks over them.
+    func personStarted(stopLea stop: Bool = true) {
+        if stop { stopLea() }
+        WalkthroughPlayer.current?.personSpoke()
     }
 
     /// Lea stops talking now (the person started to speak, or pressed the button).

@@ -7,8 +7,10 @@ import Observation
 /// for about as long as reading it takes, so the tour still moves on.
 ///
 /// The person talking pauses the tour (the conversation answers them); "stop" ends it (Walkthrough.isStop, checked
-/// by WakeListener and LeaConversation through `current`). Anything else cutting Lea off (hold to talk, another
-/// line) pauses it too: her line's utterance id changed before it finished.
+/// by WakeListener and LeaConversation through `current`), and so does pressing talk, whatever the tour was doing
+/// (its lead, its beat, a muted card's reading time). Anything else cutting Lea off (another line) pauses it too:
+/// her line's utterance id changed before it finished. The tour only ever stops its own line (`ownLine`), never the
+/// conversation's answer that paused it.
 @MainActor
 @Observable
 final class WalkthroughPlayer {
@@ -29,6 +31,8 @@ final class WalkthroughPlayer {
     @ObservationIgnored private var task: Task<Void, Never>?
     /// The first card waits for Lea to finish what she is saying (the voice answer that asked for the tour).
     @ObservationIgnored private var waitForLea = false
+    /// The utterance of the card the tour last said (LeaVoice.utteranceID): the only speech the tour may stop.
+    @ObservationIgnored private var ownLine: Int?
 
     /// The camera arrives before Lea starts talking about the spot.
     static let lead: Duration = .milliseconds(450)
@@ -63,7 +67,7 @@ final class WalkthroughPlayer {
         guard playing else { return }
         playing = false
         task?.cancel()
-        LeaVoice.shared.stop()
+        silenceOwnLine()
     }
 
     func toggle() { playing ? pause() : play() }
@@ -77,13 +81,13 @@ final class WalkthroughPlayer {
         guard active, steps.indices.contains(i), i != index else { return }
         index = i
         finished = false
-        if playing { narrate() } else { LeaVoice.shared.stop() }
+        if playing { narrate() } else { silenceOwnLine() }
     }
 
     func stop() {
         guard active else { return }
         task?.cancel()
-        if playing { LeaVoice.shared.stop() }
+        silenceOwnLine()
         active = false
         playing = false
         finished = false
@@ -104,6 +108,12 @@ final class WalkthroughPlayer {
 
     // MARK: Playback
 
+    /// Stops Lea only while she is still saying the tour's own line: an answer to the person plays on.
+    private func silenceOwnLine() {
+        if let ownLine, LeaVoice.shared.utteranceID == ownLine { LeaVoice.shared.stop() }
+        ownLine = nil
+    }
+
     private func narrate() {
         task?.cancel()
         guard active, playing, let step else { return }
@@ -121,6 +131,7 @@ final class WalkthroughPlayer {
             if !voice.muted {
                 voice.say(step.speech)
                 let id = voice.utteranceID
+                self?.ownLine = id
                 // Never stuck on a line whose end is not reported: at most twice a slow reading of it, plus 10 s.
                 let until = ContinuousClock.now + .seconds(Double(step.speech.count) / 6 + 10)
                 while voice.speaking, voice.utteranceID == id, !Task.isCancelled, ContinuousClock.now < until {
@@ -128,7 +139,7 @@ final class WalkthroughPlayer {
                 }
                 guard !Task.isCancelled else { return }
                 if voice.utteranceID != id, !voice.muted {
-                    self?.pause()   // something else cut her off: wait for the person
+                    self?.pause()   // something else cut her off: wait for the person (and let it play)
                     return
                 }
             }
