@@ -37,6 +37,9 @@ export class ScanScene {
   private ring = ringTexture();
   private loadedUrl = '';
   private loading: Promise<boolean> | null = null;
+  /** Bumped by each load and by clear(): a load that finishes after another started (focus moved to another scan)
+   *  must not replace what is on screen. */
+  private generation = 0;
   private t0 = performance.now();
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -78,7 +81,12 @@ export class ScanScene {
     const key = parsed.origin + parsed.pathname + '|rev=' + (parsed.searchParams.get('rev') ?? '') + '|' + points;
     if (key === this.loadedUrl) return this.loading ?? Promise.resolve(true);
     this.loadedUrl = key;
+    const mine = ++this.generation;
     this.loading = new PLYLoader().loadAsync(url).then((geo) => {
+      if (mine !== this.generation) {   // superseded: leave the scene to the newer load
+        geo.dispose();
+        return false;
+      }
       geo.computeBoundingBox();
       const box = geo.boundingBox!;
       box.getCenter(this.offset);
@@ -110,7 +118,7 @@ export class ScanScene {
       return true;
     }).catch((e) => {
       console.warn('3D load failed', e);
-      this.loadedUrl = '';
+      if (mine === this.generation) this.loadedUrl = '';
       return false;
     });
     return this.loading;
@@ -122,6 +130,8 @@ export class ScanScene {
       disposeObject(this.object);
       this.object = null;
     }
+    this.generation++;   // a load still in flight is for what was shown before
+    this.loading = null;
     this.loadedUrl = '';
     this.setPins([]);
   }

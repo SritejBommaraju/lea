@@ -317,13 +317,16 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
     async def voice_converse(request: Request, d: device_dep,
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
                              audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
-                             live: Annotated[str | None, Query(max_length=2000)] = None):
+                             live: Annotated[str | None, Query(max_length=2000)] = None,
+                             session_id: Annotated[str | None, Query(max_length=128)] = None):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
         after its `sentence` event (`audio: true`). A sentence with `audio: false` (no Cartesia, the spend guard
         paused it, or `audio=none`) is for the phone to say in its own voice. `live`: JSON of what the screen shows
-        now (a scan's stage, cue, progress), read for this turn only; during a scan no scan is offered."""
+        now (a scan's stage, cue, progress), read for this turn only; during a scan no scan is offered. `session_id`:
+        before a scan exists, the session whose story row holds what the label photo identified and the product
+        brief, so Lea can talk about that product."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
@@ -343,7 +346,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             except VoicePaused:
                 paused_line = PAUSED_LINE
             stt_ms = round((time.perf_counter() - t0) * 1000)
-        report, story, identity = await _grounding(request, scan_id)
+        report, story, identity = await _grounding(request, scan_id, session_id)
         convo = rt.conversations.load(scope)
         talker = rt.talker()
         if paused_line is None and question:
@@ -448,26 +451,47 @@ def _scope(scan_id: str | None, device: dict) -> str:
     return scan_id or f"home_{device.get('device_id', 'unknown')}"
 
 
-async def _grounding(request: Request, scan_id: str | None) -> tuple[dict | None, str | None, dict | None]:
-    """(the scan's report or None, the person's story, the identified object) for a conversation turn."""
-    if not scan_id:
+async def _grounding(request: Request, scan_id: str | None,
+                     session_id: str | None = None) -> tuple[dict | None, str | None, dict | None]:
+    """(the scan's report or None, the person's story, the identified object) for a conversation turn. Before a scan
+    exists (the home conversation), the session's story row says what the label photo identified and what public
+    sources report about the product (its brief)."""
+    if not scan_id and not session_id:
         return None, None, None
     from repairos.report import report_id_for
 
     st = request.app.state.store
-    row = await st.get("report", report_id_for(scan_id))
+    row = await st.get("report", report_id_for(scan_id)) if scan_id else None
     report = row.data if row else None
-    run = await st.get("pipeline-run", f"run_{scan_id}")
+    run = await st.get("pipeline-run", f"run_{scan_id}") if scan_id else None
     identity = ((run.data if run else {}) or {}).get("identity") or (report or {}).get("object")
     story = None
-    pkg = await st.get("scan-package", scan_id)
-    sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None)
+    pkg = await st.get("scan-package", scan_id) if scan_id else None
+    sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None) or session_id
+    if sid and not identity:
+        identity = await _story_identity(st, sid)
     if sid:
         sess = await st.get("session", sid)
         story = (sess.data.get("symptom") if sess else None) or None
     if not story and pkg:
         story = pkg.data.get("symptom") or None
     return report, story, identity
+
+
+async def _story_identity(st: Any, session_id: str) -> dict | None:
+    """What was identified before the scan: the product brief when its research is done (with the issues public
+    sources report, as reports, never findings), else the label photo's identity."""
+    from repairos.pipeline.story import STORY_KIND
+
+    row = await st.get(STORY_KIND, session_id)
+    d = row.data if row else {}
+    b = d.get("brief") or {}
+    if b.get("status") == "done":
+        known = [x.get("area") for x in b.get("known_issues") or [] if isinstance(x, dict) and x.get("area")][:3]
+        return {k: b[k] for k in ("name", "category", "brand", "model") if b.get(k)} | (
+            {"known_issues": known} if known else {})
+    ident = d.get("identity") or {}
+    return ident if ident.get("status") == "done" else None
 
 
 async def _report_and_story(request: Request, scan_id: str) -> tuple[dict, str | None]:

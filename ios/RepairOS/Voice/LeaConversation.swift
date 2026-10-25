@@ -173,7 +173,8 @@ final class LeaConversation {
         phase = .thinking
         if let text { turns.append(Turn(mine: true, text: text)); postStory(text) }
         let speech = LeaVoice.shared.status?.cartesia == true && !LeaVoice.shared.muted
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: speech, live: live())
+        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: speech, live: live(),
+                                      sessionID: sessionID())
         let voice = LeaVoice.shared
         let id = voice.beginStream()
         firstAudioMs = nil
