@@ -22,17 +22,17 @@ Built at Cal Hacks. [How it works](#how-it-works) · [Run it](#run-it) · [Repo 
 Nothing is built for one product. We tested on a game controller, an Arduino board, a mouse, a toaster oven, a hair
 trimmer and a phone charger.
 
-## Why it's hard
+## Why we're different
 
-- **Any object, no CAD.** The model and every circle Lea draws come from the user's own scan and photos.
-- **Thin boards.** A 1.6 mm board sits inside LiDAR's noise. We rectify the photos onto the measured table plane,
-  extrude the measured outline, and recover part heights by plane-sweep stereo. A quality gate shows a flat board
-  instead of guessed towers when the photos don't agree.
-- **Flipped objects.** The underside scan is registered to the top: geometrically for objects with sides, and for
-  boards from their outline, through-holes and connector edges.
-- **A voice that drives 3D.** Lea's answers carry markers that become camera moves, timed to the sentence she is
-  speaking, with the matching real photo.
-- **Honest.** Lea never calls a part fine if no photo shows it, and parts nobody saw are never marked OK.
+AI assistants can describe a device, and 3D scanning apps can capture one, but as far as we know nothing puts the two
+together on the phone you already own. LEA does:
+
+- **Just an iPhone.** No special hardware, no CAD files, no setup. The phone's LiDAR camera and photos are enough.
+- **Your object, not a stock picture.** The 3D model is built from your own scan, so Lea is looking at the exact
+  device in front of you: your board, your wiring, your damage.
+- **AI that shows, not just tells.** Ask a question and Lea answers out loud while she turns the 3D model to the part,
+  circles it and brings up the real photo of that spot.
+- **Works on anything.** Controllers, circuit boards, appliances, chargers: nothing is built for one product.
 
 ## How it works
 
