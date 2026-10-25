@@ -47,9 +47,10 @@ def main(argv: list[str]) -> int:
         print("no diag lines")
         return 1
     starts = [r for r in rows if ev(r) == "handheld_start"]
-    if not starts:
-        print("no handheld_start: this scan did not use Turn it")
-    t0 = ts(starts[0]) if starts else None
+    flip0 = [r for r in rows if ev(r) == "flip_start"]
+    if not starts and not flip0:
+        print("no handheld_start or flip_start: neither Turn it nor Scan the bottom was used")
+    t0 = ts(starts[0]) if starts else (ts(flip0[0]) if flip0 else None)
     rel = (lambda r: f"{ts(r) - t0:6.1f} s" if t0 is not None and ts(r) is not None else "      ")
     for s in starts:
         print("start:", {k: s.get(k) for k in ("segmentation", "segmentation_supported", "hand_pose", "seed_points",
@@ -78,6 +79,16 @@ def main(argv: list[str]) -> int:
         mean = [b["frame_ms"]["mean"] for b in after]
         print(f"\ndisplay frame time while turning: mean {sum(mean) / len(mean):.1f} ms (~{1000 / (sum(mean) / len(mean)):.0f} fps), "
               f"p95 median {sorted(p95)[len(p95) // 2]:.1f} ms, worst p95 {max(p95):.1f} ms ({len(after)} heartbeats)")
+    flips = [r for r in rows if ev(r) in ("flip_start", "flip_align", "flip_aligned")]
+    if flips:
+        print("\nscan the bottom (live alignment to the main scan):")
+        for r in flips:
+            if ev(r) == "flip_align":
+                print(f"  {rel(r)} attempt {r.get('attempt')}: {r.get('refused') or 'accepted'}, agrees {r.get('agrees')}, "
+                      f"quality {r.get('quality')}, inliers {r.get('inliers')}, rms {r.get('rms_mm')} mm, overlap {r.get('overlap')}, "
+                      f"margin {r.get('margin')}, flip {r.get('flip_deg')}°, {r.get('align_ms')} ms")
+            else:
+                print(f"  {rel(r)} {ev(r)}", {k: r.get(k) for k in ("segment", "main_points", "attempt", "quality") if k in r})
     stills = [r for r in rows if ev(r) == "still"]
     rejected = [r for r in rows if ev(r) == "still_rejected"]
     print(f"\nstills: {len(stills)} taken, {len(rejected)} rejected (blurry)")
@@ -98,6 +109,10 @@ def main(argv: list[str]) -> int:
         pkgs = list(folder.glob("scans/*/scan_package.json"))
         for p in pkgs:
             pkg = json.loads(p.read_text())
+            for sg in pkg.get("segments") or []:
+                print(f"  segment {sg.get('segment')}: {sg.get('reason')}, object_moved {sg.get('object_moved')}, aligned {sg.get('aligned')}, "
+                      f"transform {'yes' if sg.get('transform_to_segment0') else 'no'} (quality {sg.get('transform_quality')}), "
+                      f"{sg.get('point_count')} points")
             kfs = pkg.get("keyframes") or []
             tracked = [k for k in kfs if k.get("pose_source") == "object_tracked"]
             print(f"  scan package: pose_source {pkg.get('pose_source')}, {len(kfs)} keyframes ({len(tracked)} object-tracked), "

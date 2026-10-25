@@ -57,11 +57,12 @@ case "lost":
     summary("lost+recovered \(arg(2, "box"))", r)
 case "flip":
     // Flip + mini-scan alignment: success rate and error over random flips.
-    let shape: SyntheticFlip.Shape = arg(2, "box") == "box" ? .texturedBox : .flatBoard
+    let shape: SyntheticFlip.Shape = ["box": .texturedBox, "board": .flatBoard, "plain": .plainBox][arg(2, "box")] ?? .texturedBox
+    let noise: Float = args.contains("--noise3") ? 0.003 : 0.002
     let trials = Int(arg(3, "20")) ?? 20
     var ok = 0, wrong = 0, refused: [String: Int] = [:], errs: [Float] = [], ms: [Double] = []
     for k in 0..<trials {
-        let c = SyntheticFlip.make(shape, seed: UInt64(100 + k), flipAboutZ: k % 2 == 1)
+        let c = SyntheticFlip.make(shape, seed: UInt64(100 + k), flipAboutZ: k % 2 == 1, noise: noise)
         guard let r = FlipAligner.align(target: c.target, source: c.source) else { refused["none", default: 0] += 1; continue }
         let e = SyntheticFlip.error(r.toSegment0, c) * 1000
         ms.append(r.ms)

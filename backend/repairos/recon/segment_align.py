@@ -46,8 +46,17 @@ TIE_FITNESS = 0.05          # candidates this close in fitness are told apart by
 RANSAC_SEEDS = (0, 1, 2)
 RANSAC_ITERATIONS = 60_000
 MAX_POINTS = 12_000         # each cloud is thinned to about this many points for registration (time bound)
-MAX_FREE_SPACE = 0.05      # a candidate is dropped when more of its points sit in space the cameras saw empty
-FREE_SPACE_MARGIN_M = 0.01  # "in front of the measured surface" by more than this (LiDAR noise + pose drift)
+MAX_FREE_SPACE = 0.10       # a candidate is dropped when this much more of its points than of the segment's own
+                            # points sit in space the cameras saw empty (the own-cloud share is the baseline)
+FREE_SPACE_MARGIN_M = 0.025  # "in front of the measured surface" by more than this: ARKit drift and LiDAR noise
+                             # put a cloud's own points up to ~2 cm in front of single frames (measured, 1e61)
+PLANE_MARGIN_M = 0.015       # below the support plane by more than this is impossible (ARKit drifts up to ~1.5 cm)
+FLIP_MIN_TILT_DEG = 60.0     # a flipped object's up direction turned at least this far (it may lie on its side)
+MAX_BELOW_PLANE = 0.03       # a candidate is dropped when more than this share of its points lies under the table
+SAME_POSE_DEG = 20.0         # candidates turned less than this from each other are the same pose
+MIN_COLOUR_SPREAD = 4.0      # 0-255: a cloud whose colours vary less than this has no colour to compare
+COLOUR_MARGIN = 0.15         # colour decides between symmetric poses only when 15% better than the runner-up
+MIN_PHONE_QUALITY = 0.5      # the phone's estimate may pick among symmetric poses only at this quality or above
 PHONE_OK_DEG, PHONE_OK_M = 2.0, 0.005   # the phone's estimate is "confirmed" when the result is this close to it
 
 
@@ -68,11 +77,13 @@ class Candidate:
     rmse_m: float
     colour_distance: float | None
     free_space: float | None = None     # share of points that a camera of the other segment saw as empty space
+    below_plane: float | None = None    # share of points under the other segment's support plane
 
     def brief(self) -> dict:
         return {"source": self.source, "fitness": round(self.fitness, 4), "rmse_mm": round(self.rmse_m * 1000, 3),
                 "colour_distance": None if self.colour_distance is None else round(self.colour_distance, 4),
-                "free_space_violation": None if self.free_space is None else round(self.free_space, 4)}
+                "free_space_violation": None if self.free_space is None else round(self.free_space, 4),
+                "below_table": None if self.below_plane is None else round(self.below_plane, 4)}
 
 
 @dataclass
@@ -180,9 +191,14 @@ def _fpfh(pc, voxel: float):
         pc, o3d.geometry.KDTreeSearchParamHybrid(radius=5.0 * voxel, max_nn=100))
 
 
-def _standardised(c: np.ndarray) -> np.ndarray:
+def _standardised(c: np.ndarray) -> np.ndarray | None:
+    """Colours with each channel's mean and spread removed (exposure changes between segments cancel); None when
+    the cloud is one colour (a plain object or no image): then colour cannot tell poses apart."""
     c = np.asarray(c, float)
-    return (c - c.mean(axis=0)) / np.maximum(c.std(axis=0), 1.0)
+    sd = c.std(axis=0)
+    if sd.max() < MIN_COLOUR_SPREAD:
+        return None
+    return (c - c.mean(axis=0)) / np.maximum(sd, 1.0)
 
 
 def _score(src, tgt, t: np.ndarray, voxel: float, src_col, tgt_col) -> tuple[float, float, float | None]:
@@ -254,6 +270,11 @@ def free_space_violation(points: np.ndarray, frames: Sequence[Any], *, margin_m:
     return float(bad[seen].mean()) if seen.any() else None
 
 
+def below_plane(points: np.ndarray, plane_y: float, margin_m: float) -> float:
+    """Share of points more than `margin_m` below the support plane y = plane_y (world Y up)."""
+    return float((np.asarray(points)[:, 1] < plane_y - margin_m).mean()) if len(points) else 0.0
+
+
 def _gravity_starts(src_pts: np.ndarray, tgt_pts: np.ndarray, steps: int = 12) -> list[tuple[str, np.ndarray]]:
     """Starts for an object moved on the table, in one gravity-aligned (Y up) world: upright or upside down (180 deg
     about a horizontal axis), at `steps` headings, centre on centre. Global registration can miss on a plain,
@@ -282,9 +303,15 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
                  max_rmse_voxels: float = MAX_RMSE_VOXELS, tie_fitness: float = TIE_FITNESS,
                  seeds: Sequence[int] = RANSAC_SEEDS, max_points: int = MAX_POINTS,
                  ref_frames: Sequence[Any] | None = None, mov_frames: Sequence[Any] | None = None,
-                 max_free_space: float = MAX_FREE_SPACE, gravity_sweep: bool = True) -> SegmentAlignment:
+                 max_free_space: float = MAX_FREE_SPACE, gravity_sweep: bool = True,
+                 colour_margin: float = COLOUR_MARGIN, min_phone_quality: float = MIN_PHONE_QUALITY,
+                 ref_plane_y: float | None = None, mov_plane_y: float | None = None,
+                 expect_flip: bool = False) -> SegmentAlignment:
     """Transform taking `mov` (segment k's world) onto `ref` (segment 0's world); see the module docstring.
-    `ref_frames` / `mov_frames`: the segments' depth frames, for the free-space check (raw depth, table included)."""
+    `ref_frames` / `mov_frames`: the segments' depth frames, for the free-space check (raw depth, table included).
+    `ref_plane_y` / `mov_plane_y`: each segment's support-plane height in its own world (Y up): nothing of the object
+    can sit below the table it rests on, so a candidate that puts over MAX_BELOW_PLANE of its points there is dropped
+    (the cameras cannot see under the table: only this catches a flat face matched to its opposite face)."""
     import open3d as o3d
 
     t0 = time.perf_counter()
@@ -322,7 +349,12 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
     cands: list[Candidate] = []
 
     margin = max(FREE_SPACE_MARGIN_M, 3.0 * voxel_m)
+    plane_margin = max(PLANE_MARGIN_M, 2.0 * voxel_m)
     src_pts, tgt_pts = np.asarray(src.points), np.asarray(tgt.points)
+    baseline = [b for b in (free_space_violation(tgt_pts, ref_frames, margin_m=margin) if ref_frames else None,
+                            free_space_violation(src_pts, mov_frames, margin_m=margin) if mov_frames else None)
+                if b is not None]
+    fs_base = max(baseline) if baseline else 0.0
 
     def evaluate(name: str, start: np.ndarray, schedule=(3.0, 1.5, 1.0)) -> Candidate:
         t = _icp(src, tgt, start, voxel_m, schedule)
@@ -333,8 +365,14 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
         if mov_frames:
             ti = np.linalg.inv(t)
             fs_parts.append(free_space_violation(tgt_pts @ ti[:3, :3].T + ti[:3, 3], mov_frames, margin_m=margin))
+        below = []
+        if ref_plane_y is not None:
+            below.append(below_plane(src_pts @ t[:3, :3].T + t[:3, 3], ref_plane_y, plane_margin))
+        if mov_plane_y is not None:
+            ti = np.linalg.inv(t)
+            below.append(below_plane(tgt_pts @ ti[:3, :3].T + ti[:3, 3], mov_plane_y, plane_margin))
         fs_parts = [x for x in fs_parts if x is not None]
-        cand = Candidate(name, t, f, e, c, max(fs_parts) if fs_parts else None)
+        cand = Candidate(name, t, f, e, c, max(fs_parts) if fs_parts else None, max(below) if below else None)
         cands.append(cand)
         return cand
 
@@ -354,28 +392,58 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
         return SegmentAlignment(aligned=False, transform=None, fitness=None, rmse_mm=None, **base,
                                 reason="global registration found no transform", seconds=secs)
 
-    plausible = [c for c in cands if c.free_space is None or c.free_space <= max_free_space]
+    up = np.array([0.0, 1.0, 0.0])
+
+    def tilt(c: Candidate) -> float:
+        return float(np.degrees(np.arccos(np.clip(up @ c.transform[:3, :3] @ up, -1.0, 1.0))))
+
+    plausible = [c for c in cands if (c.free_space is None or c.free_space - fs_base <= max_free_space)
+                 and (c.below_plane is None or c.below_plane <= MAX_BELOW_PLANE)
+                 and (not expect_flip or tilt(c) >= FLIP_MIN_TILT_DEG)]
     if not plausible:
         best = max(cands, key=lambda c: c.fitness)
         return SegmentAlignment(aligned=False, transform=None, fitness=round(best.fitness, 4),
                                 rmse_mm=round(best.rmse_m * 1000, 3), **{**base, "method": "none"},
                                 candidates=[c.brief() for c in sorted(cands, key=lambda c: -c.fitness)][:12],
-                                reason=f"every candidate puts more than {max_free_space:.0%} of the points where the "
-                                       "other segment's cameras saw empty space", seconds=secs)
+                                reason=f"every candidate puts {max_free_space:.0%} more of its points than the "
+                                       f"segment's own ({fs_base:.0%}) where the other segment's cameras saw empty "
+                                       f"space, or over {MAX_BELOW_PLANE:.0%} of them under the table"
+                                       + (", or keeps the object upright although it was flipped" if expect_flip
+                                          else ""),
+                                seconds=secs)
     top = max(c.fitness for c in plausible)
     tied = [c for c in plausible if c.fitness >= top - tie_fitness]
-    tie = None
-    if len(tied) > 1 and all(c.colour_distance is not None for c in tied):
-        win = min(tied, key=lambda c: c.colour_distance)
-        distinct = [c for c in tied if rotation_deg(c.transform[:3, :3] @ win.transform[:3, :3].T) > 20]
-        if distinct:
-            tie = (f"{len(tied)} candidates fit within {tie_fitness:.2f} of the best; {len(distinct)} of them are "
-                   f"turned > 20 deg from the chosen one; colour decided ({win.colour_distance:.2f} vs "
-                   f"{min(c.colour_distance for c in distinct):.2f})")
-    else:
-        win = max(tied, key=lambda c: (c.fitness, -c.rmse_m))
-        if len(tied) > 1 and any(rotation_deg(c.transform[:3, :3] @ win.transform[:3, :3].T) > 20 for c in tied):
-            tie = "candidates turned differently fit equally well and there are no colours to tell them apart"
+    win = max(tied, key=lambda c: (c.fitness, -c.rmse_m))
+
+    def turned(a: Candidate, b: Candidate) -> float:
+        return rotation_deg(a.transform[:3, :3] @ b.transform[:3, :3].T)
+
+    tie, undecided = None, False
+    rivals = [c for c in tied if turned(c, win) > SAME_POSE_DEG]
+    if rivals:   # a symmetric object: poses turned apart fit the shape equally well
+        if all(c.colour_distance is not None for c in tied):
+            by_colour = min(tied, key=lambda c: c.colour_distance)
+            others = [c for c in tied if turned(c, by_colour) > SAME_POSE_DEG]
+            runner = min(c.colour_distance for c in others)
+            if runner > 0 and by_colour.colour_distance < (1.0 - colour_margin) * runner:
+                win = by_colour
+                tie = (f"{len(tied)} candidates fit within {tie_fitness:.2f} of the best, {len(others)} of them "
+                       f"turned apart; colour decided ({by_colour.colour_distance:.2f} vs {runner:.2f})")
+            else:
+                tie = (f"{len(tied)} candidates fit within {tie_fitness:.2f} of the best, turned apart; colours do "
+                       f"not tell them apart ({by_colour.colour_distance:.2f} vs {runner:.2f}, needs a "
+                       f"{colour_margin:.0%} margin)")
+                undecided = True
+        else:
+            tie = f"{len(tied)} candidates turned apart fit equally well and there are no colours to tell them apart"
+            undecided = True
+        if undecided and init is not None and (init_quality is None or init_quality >= min_phone_quality):
+            e = np.asarray(init, float).reshape(4, 4)
+            near = [c for c in tied if rotation_deg(c.transform[:3, :3] @ e[:3, :3].T) <= SAME_POSE_DEG]
+            if near:   # the phone's estimate picks one of the poses the shape allows; the shape confirms it
+                win = max(near, key=lambda c: c.fitness)
+                tie += "; the phone's estimate picked one of them and the shape fits it as well as any"
+                undecided = False
     phone = None
     if init is not None:
         e = np.asarray(init, float).reshape(4, 4)
@@ -392,11 +460,13 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
     if not ok:
         reason = (f"best fit too weak: fitness {win.fitness:.2f} (needs >= {min_fitness:.2f}), RMSE "
                   f"{win.rmse_m * 1000:.1f} mm (needs <= {max_rmse_voxels * voxel_m * 1000:.1f} mm)")
-    elif tie and "no colours" in tie:
-        ok, reason = False, tie
+    elif undecided:
+        ok, reason = False, f"symmetric object: {tie}"
     return SegmentAlignment(aligned=ok, transform=[float(v) for v in win.transform.reshape(-1)] if ok else None,
                             fitness=round(win.fitness, 4), rmse_mm=round(win.rmse_m * 1000, 3), **{**base,
                             "method": method}, phone_estimate=phone, tie_break=tie,
-                            candidates=[c.brief() for c in sorted(cands, key=lambda c: -c.fitness)][:12],
+                            candidates=[{**c.brief(), "turned_from_chosen_deg": round(turned(c, win), 1),
+                                         "tilt_deg": round(tilt(c), 1)}
+                                        for c in sorted(cands, key=lambda c: -c.fitness)][:12],
                             reason=reason,
                             seconds=secs)

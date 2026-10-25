@@ -3,33 +3,181 @@
   "product_id": "unknown",
   "session_id": "sess_2026-10-24_hh",
   "captured_at": "2026-10-24T15:02:11Z",
-  "device": { "model": "iPhone17,2", "ios": "26.0", "app_version": "0.1" },
+  "device": {
+    "model": "iPhone17,2",
+    "ios": "26.0",
+    "app_version": "0.1"
+  },
   "frame": "arkit_world",
   "units": "m",
   "depth_source": "lidar",
   "pose_source": "object_tracked",
-  "gravity_arkit_world": [0, -1, 0],
-  "support_plane": { "transform": [1, 0, 0, 0, 0, 1, 0, 0.74, 0, 0, 1, -0.35, 0, 0, 0, 1], "extent_m": [0.8, 0.6] },
+  "gravity_arkit_world": [
+    0,
+    -1,
+    0
+  ],
+  "support_plane": {
+    "transform": [
+      1,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0.74,
+      0,
+      0,
+      1,
+      -0.35,
+      0,
+      0,
+      0,
+      1
+    ],
+    "extent_m": [
+      0.8,
+      0.6
+    ]
+  },
   "points_file": "scans/scan_hh01/points_arkit_world.ply",
   "point_count": 48211,
-  "crop_box": { "frame": "arkit_world", "center_m": [0.01, 0.78, -0.35], "extent_m": [0.09, 0.07, 0.06], "quaternion_xyzw": [0, 0.15, 0, 0.99] },
+  "crop_box": {
+    "frame": "arkit_world",
+    "center_m": [
+      0.01,
+      0.78,
+      -0.35
+    ],
+    "extent_m": [
+      0.09,
+      0.07,
+      0.06
+    ],
+    "quaternion_xyzw": [
+      0,
+      0.15,
+      0,
+      0.99
+    ]
+  },
   "supporting_plane_removed": true,
   "keyframes": [
     {
-      "keyframe_id": "kf_0000", "timestamp_s": 0.0, "image_file": "scans/scan_hh01/kf_0000.jpg",
-      "depth_file": "scans/scan_hh01/kf_0000_depth.png", "depth_encoding": "uint16_mm",
+      "keyframe_id": "kf_0000",
+      "timestamp_s": 0.0,
+      "image_file": "scans/scan_hh01/kf_0000.jpg",
+      "depth_file": "scans/scan_hh01/kf_0000_depth.png",
+      "depth_encoding": "uint16_mm",
       "confidence_file": "scans/scan_hh01/kf_0000_conf.png",
-      "camera": { "frame": "arkit_world", "position_m": [0.02, 1.05, -0.06], "quaternion_xyzw": [-0.32, 0.0, 0.0, 0.95] },
-      "intrinsics": { "fx": 483.1, "fy": 483.1, "cx": 320.4, "cy": 239.6, "width_px": 640, "height_px": 480 },
-      "tracking_state": "normal", "pose_source": "object_tracked", "pose_quality": 0.93
+      "camera": {
+        "frame": "arkit_world",
+        "position_m": [
+          0.02,
+          1.05,
+          -0.06
+        ],
+        "quaternion_xyzw": [
+          -0.32,
+          0.0,
+          0.0,
+          0.95
+        ]
+      },
+      "intrinsics": {
+        "fx": 483.1,
+        "fy": 483.1,
+        "cx": 320.4,
+        "cy": 239.6,
+        "width_px": 640,
+        "height_px": 480
+      },
+      "tracking_state": "normal",
+      "pose_source": "object_tracked",
+      "pose_quality": 0.93
     },
     {
-      "keyframe_id": "kf_0031", "timestamp_s": 9.4, "image_file": "scans/scan_hh01/kf_0031.jpg",
-      "depth_file": "scans/scan_hh01/kf_0031_depth.png", "depth_encoding": "uint16_mm",
+      "keyframe_id": "kf_0031",
+      "timestamp_s": 9.4,
+      "image_file": "scans/scan_hh01/kf_0031.jpg",
+      "depth_file": "scans/scan_hh01/kf_0031_depth.png",
+      "depth_encoding": "uint16_mm",
       "confidence_file": "scans/scan_hh01/kf_0031_conf.png",
-      "camera": { "frame": "arkit_world", "position_m": [-0.05, 0.52, -0.21], "quaternion_xyzw": [0.6, 0.1, -0.05, 0.79] },
-      "intrinsics": { "fx": 483.1, "fy": 483.1, "cx": 320.4, "cy": 239.6, "width_px": 640, "height_px": 480 },
-      "tracking_state": "normal", "pose_source": "object_tracked", "pose_quality": 0.81
+      "camera": {
+        "frame": "arkit_world",
+        "position_m": [
+          -0.05,
+          0.52,
+          -0.21
+        ],
+        "quaternion_xyzw": [
+          0.6,
+          0.1,
+          -0.05,
+          0.79
+        ]
+      },
+      "intrinsics": {
+        "fx": 483.1,
+        "fy": 483.1,
+        "cx": 320.4,
+        "cy": 239.6,
+        "width_px": 640,
+        "height_px": 480
+      },
+      "tracking_state": "normal",
+      "pose_source": "object_tracked",
+      "pose_quality": 0.81
+    }
+  ],
+  "segments": [
+    {
+      "segment": 1,
+      "reason": "flipped",
+      "object_moved": true,
+      "aligned": true,
+      "transform_to_segment0": [
+        -0.966,
+        0,
+        0.259,
+        0.02,
+        0,
+        -1,
+        0,
+        1.53,
+        0.259,
+        0,
+        0.966,
+        -0.01,
+        0,
+        0,
+        0,
+        1
+      ],
+      "transform_quality": 0.82,
+      "pose_source": "arkit",
+      "crop_box": {
+        "frame": "arkit_world",
+        "center_m": [
+          0.12,
+          0.765,
+          -0.42
+        ],
+        "extent_m": [
+          0.09,
+          0.07,
+          0.06
+        ],
+        "quaternion_xyzw": [
+          0,
+          0.4,
+          0,
+          0.92
+        ]
+      },
+      "points_file": "scans/scan_hh01/points_segment1_arkit_world.ply",
+      "point_count": 9120
     }
   ]
 }

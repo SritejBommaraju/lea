@@ -609,16 +609,19 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             return view
         view["report_rev"] = row.rev
         view["rebuilding"] = status in ("inspecting", "running")
-        if status != "done":
-            stills = (run or {}).get("stills") or {}
-            in_report = int((row.data.get("capture") or {}).get("stills") or 0)
-            claimed = await store(request).list("still", scan_id=scan_id)
-            new = max(0, len(claimed) - in_report)
-            if new or view["rebuilding"]:
-                view["pending"] = {"new_stills": new,
-                                   "inspected": max(0, sum(1 for st in stills.values() if st.get("status") == "done")
-                                                    - in_report),
-                                   "closed": status == "closed"}
+        stills = (run or {}).get("stills") or {}
+        in_report = int((row.data.get("capture") or {}).get("stills") or 0)
+        claimed = await store(request).list("still", scan_id=scan_id)
+        new = max(0, len(claimed) - in_report)
+        if status == "done" and new:
+            # a continuation's stills posted (and complete called) before a worker picked them up: the run row is
+            # still the finished one, but a newer report is coming
+            view["rebuilding"] = True
+        if new or view["rebuilding"]:
+            view["pending"] = {"new_stills": new,
+                               "inspected": max(0, sum(1 for st in stills.values() if st.get("status") == "done")
+                                                - in_report),
+                               "closed": status == "closed"}
         return view
 
     async def _report(request: Request, scan_id: str) -> tuple[dict, int, dict]:

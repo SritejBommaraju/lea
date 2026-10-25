@@ -198,3 +198,23 @@ def test_the_worker_claims_a_waiting_report_before_more_stills(tmp_path):
     w, first, second = asyncio.run(go())
     assert w.jobs_at_once == 2
     assert first.kind == "pipeline" and second.job_id == "job_detect_0"
+
+
+def test_a_place_the_first_still_could_not_judge_is_judged_again_by_a_later_still():
+    """Greptile PR #7: a blurry still registers a place first and its answer is insufficient_evidence; the sharper
+    still kept for that view must show its own crop to the model, not copy "take a sharper photo"."""
+    reg = SameRegions(0.02)
+    s2, s3 = still(2), still(3)
+    box = (1918, 1412, 2118, 1612)
+    first, _ = reg.for_still(s2, depth(s2)).claim("s2", 0, box, register=True)
+    first.resolve(_kept_finding("insufficient_evidence"))
+    placed = box_in_world(s2, depth(s2), box)
+    again, mine = reg.claim("s3", 0, placed, register=True)
+    assert mine and again is not first                   # the later view judges it itself
+    again.resolve(_kept_finding("ok"))
+    later, mine = reg.claim("s9", 0, placed, register=True)
+    assert later is again and not mine                   # and its answer is the one reused from then on
+    judged = SameRegions(0.02)
+    e, _ = judged.for_still(s2, depth(s2)).claim("s2", 0, box, register=True)
+    e.resolve(_kept_finding("ok"))
+    assert judged.claim("s3", 0, placed, register=True) == (e, False)   # a judged place is still reused

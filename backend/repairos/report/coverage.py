@@ -27,7 +27,8 @@ def _same_frame_segments(scan: Mapping[str, Any]) -> set[int]:
     segments = scan.get("segments") or []
     if scan.get("pose_source") == "object_tracked":
         return {0} | {g.get("segment") for g in segments}
-    return {0} | {g.get("segment") for g in segments if g.get("reason") == "continued" and g.get("aligned") is not False}
+    return {0} | {g.get("segment") for g in segments
+                  if g.get("reason") == "continued" and g.get("aligned") is not False and not g.get("object_moved")}
 
 
 def view_coverage(scan: Mapping[str, Any] | None, stills: Sequence[Mapping[str, Any]]) -> dict | None:

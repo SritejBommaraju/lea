@@ -3508,6 +3508,12 @@ public struct Step: Codable, Sendable {
 /// suspect; only a meter reading proves or rules out (I1, I2). Phase 1 makes no Grain calls.
 // MARK: - Report
 public struct Report: Codable, Sendable {
+    /// Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the
+    /// backend could not line up with the main scan: they are real findings, listed in their
+    /// buckets as usual, but have no 3D point on the model. Each comes with its crop so the app
+    /// can show it as a photo. Absent when every such segment was aligned or the scan has none.
+    /// Why a segment was not aligned: capture.segments[].why_not.
+    public let bottomNotPlaced: [BottomNotPlacedOnTheModel]?
     public let capture: Capture
     /// Issues the vision model judged cosmetic (looks worn but would not stop the device
     /// working). Listed apart; they never make the verdict potential_issues on their own.
@@ -3569,6 +3575,7 @@ public struct Report: Codable, Sendable {
     public let verdictReason: VerdictReason
 
     public enum CodingKeys: String, CodingKey {
+        case bottomNotPlaced = "bottom_not_placed"
         case capture = "capture"
         case cosmetic = "cosmetic"
         case createdAt = "created_at"
@@ -3594,7 +3601,8 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+        self.bottomNotPlaced = bottomNotPlaced
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt
@@ -3621,6 +3629,81 @@ public struct Report: Codable, Sendable {
     }
 }
 
+// MARK: - BottomNotPlacedOnTheModel
+public struct BottomNotPlacedOnTheModel: Codable, Sendable {
+    /// The report row (in findings, cosmetic or insufficient_evidence).
+    public let findingID: String
+    /// The row's issue (findings and cosmetic rows); absent for insufficient_evidence rows.
+    public let issue: String?
+    public let partClass: String?
+    /// The still and crop box the finding was seen in.
+    public let photo: BottomNotPlacedPhoto
+    /// Why it has no 3D point.
+    public let reason: String
+    public let segment: Int
+    public let subject: BottomNotPlacedSubject?
+
+    public enum CodingKeys: String, CodingKey {
+        case findingID = "finding_id"
+        case issue = "issue"
+        case partClass = "part_class"
+        case photo = "photo"
+        case reason = "reason"
+        case segment = "segment"
+        case subject = "subject"
+    }
+
+    public init(findingID: String, issue: String?, partClass: String?, photo: BottomNotPlacedPhoto, reason: String, segment: Int, subject: BottomNotPlacedSubject?) {
+        self.findingID = findingID
+        self.issue = issue
+        self.partClass = partClass
+        self.photo = photo
+        self.reason = reason
+        self.segment = segment
+        self.subject = subject
+    }
+}
+
+/// The still and crop box the finding was seen in.
+// MARK: - BottomNotPlacedPhoto
+public struct BottomNotPlacedPhoto: Codable, Sendable {
+    public let boxPx: [Int]?
+    public let cropRef: String?
+    public let stillID: String
+
+    public enum CodingKeys: String, CodingKey {
+        case boxPx = "box_px"
+        case cropRef = "crop_ref"
+        case stillID = "still_id"
+    }
+
+    public init(boxPx: [Int]?, cropRef: String?, stillID: String) {
+        self.boxPx = boxPx
+        self.cropRef = cropRef
+        self.stillID = stillID
+    }
+}
+
+/// Same as Finding.subject.
+// MARK: - BottomNotPlacedSubject
+public struct BottomNotPlacedSubject: Codable, Sendable {
+    public let kind: PurpleKind
+    public let pins: [String]?
+    public let ref: String
+
+    public enum CodingKeys: String, CodingKey {
+        case kind = "kind"
+        case pins = "pins"
+        case ref = "ref"
+    }
+
+    public init(kind: PurpleKind, pins: [String]?, ref: String) {
+        self.kind = kind
+        self.pins = pins
+        self.ref = ref
+    }
+}
+
 // MARK: - Capture
 public struct Capture: Codable, Sendable {
     /// The phone's coverage hint in words, or 'not measured'.
@@ -3630,6 +3713,11 @@ public struct Capture: Codable, Sendable {
     public let depthSource: DepthSource
     public let keyframes: Int
     public let scanPoints: Int?
+    /// Capture segments where the object was moved (the flipped mini-scan of the bottom) and how
+    /// the backend registered each to the main scan by shape (repairos.recon.segment_align). An
+    /// aligned segment's findings are placed on the same model; an unaligned one's are listed in
+    /// findings_not_placed with no 3D point. Absent when the scan has no such segment.
+    public let segments: [CaptureSegment]?
     /// Close-up stills received.
     public let stills: Int
     /// Stills with at least one region a model judged.
@@ -3644,16 +3732,18 @@ public struct Capture: Codable, Sendable {
         case depthSource = "depth_source"
         case keyframes = "keyframes"
         case scanPoints = "scan_points"
+        case segments = "segments"
         case stills = "stills"
         case stillsInspected = "stills_inspected"
         case views = "views"
     }
 
-    public init(coverageWords: String, depthSource: DepthSource, keyframes: Int, scanPoints: Int?, stills: Int, stillsInspected: Int, views: Views?) {
+    public init(coverageWords: String, depthSource: DepthSource, keyframes: Int, scanPoints: Int?, segments: [CaptureSegment]?, stills: Int, stillsInspected: Int, views: Views?) {
         self.coverageWords = coverageWords
         self.depthSource = depthSource
         self.keyframes = keyframes
         self.scanPoints = scanPoints
+        self.segments = segments
         self.stills = stills
         self.stillsInspected = stillsInspected
         self.views = views
@@ -3670,6 +3760,51 @@ public struct Capture: Codable, Sendable {
 public enum DepthSource: String, Codable, Sendable {
     case lidar = "lidar"
     case none = "none"
+}
+
+// MARK: - CaptureSegment
+public struct CaptureSegment: Codable, Sendable {
+    /// True when the backend registered the segment to segment 0 and placed its photos in
+    /// segment 0's frame.
+    public let aligned: Bool
+    /// Findings from this segment's photos that have no 3D point because the segment is not
+    /// aligned (empty when aligned).
+    public let findingsNotPlaced: [String]
+    /// Share of the segment's object points within 1.5 voxels of segment 0's after registration.
+    public let fitness: Double?
+    public let method: String?
+    public let objectMoved: Bool
+    /// The scan package's segment reason (flipped).
+    public let reason: String
+    /// RMS distance of those matched points, millimetres.
+    public let rmseMm: Double?
+    public let segment: Int
+    /// Why the segment was not registered (aligned false).
+    public let whyNot: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case aligned = "aligned"
+        case findingsNotPlaced = "findings_not_placed"
+        case fitness = "fitness"
+        case method = "method"
+        case objectMoved = "object_moved"
+        case reason = "reason"
+        case rmseMm = "rmse_mm"
+        case segment = "segment"
+        case whyNot = "why_not"
+    }
+
+    public init(aligned: Bool, findingsNotPlaced: [String], fitness: Double?, method: String?, objectMoved: Bool, reason: String, rmseMm: Double?, segment: Int, whyNot: String?) {
+        self.aligned = aligned
+        self.findingsNotPlaced = findingsNotPlaced
+        self.fitness = fitness
+        self.method = method
+        self.objectMoved = objectMoved
+        self.reason = reason
+        self.rmseMm = rmseMm
+        self.segment = segment
+        self.whyNot = whyNot
+    }
 }
 
 /// Where the camera was (keyframes and stills) on the view dome around the object box
@@ -3731,7 +3866,7 @@ public struct CosmeticElement: Codable, Sendable {
     /// How much the issue matters (the vision model's word per crop; absent = not judged,
     /// treated as functional). Cosmetic issues are listed in `cosmetic`, never in `findings`.
     public let severity: FindingSeverity?
-    public let subject: CosmeticSubject
+    public let subject: BottomNotPlacedSubject
     /// Findings of the same place on the scan that could not be judged in another photo
     /// (insufficient_evidence) and are judged in this row's photo instead, e.g. a closer photo
     /// added later to the same scan. They appear in no other row (MS1).
@@ -3758,7 +3893,7 @@ public struct CosmeticElement: Codable, Sendable {
         case supersededIDS = "superseded_ids"
     }
 
-    public init(confidenceWord: ConfidenceWordEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: CosmeticSubject, supersededIDS: [String]?) {
+    public init(confidenceWord: ConfidenceWordEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
         self.confidenceWord = confidenceWord
         self.crop = crop
         self.crops = crops
@@ -3967,26 +4102,6 @@ public enum ProofStatus: String, Codable, Sendable {
     case ruledOutByMeter = "ruled_out_by_meter"
 }
 
-/// Same as Finding.subject.
-// MARK: - CosmeticSubject
-public struct CosmeticSubject: Codable, Sendable {
-    public let kind: PurpleKind
-    public let pins: [String]?
-    public let ref: String
-
-    public enum CodingKeys: String, CodingKey {
-        case kind = "kind"
-        case pins = "pins"
-        case ref = "ref"
-    }
-
-    public init(kind: PurpleKind, pins: [String]?, ref: String) {
-        self.kind = kind
-        self.pins = pins
-        self.ref = ref
-    }
-}
-
 /// Optional "Fix it": where to buy the part of the top finding, from a public shopping
 /// search (repairos.references.parts). Only title, displayed price, seller and link are
 /// kept; no page, text or image. Added when the search is ready; never evidence and never
@@ -4055,9 +4170,9 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
     public let inspectedBy: [InspectedBy]
     public let location: Location?
     public let partClass: String
-    public let photo: InsufficientEvidencePhoto?
+    public let photo: BottomNotPlacedPhoto?
     public let reason: String
-    public let subject: CosmeticSubject
+    public let subject: BottomNotPlacedSubject
 
     public enum CodingKeys: String, CodingKey {
         case findingID = "finding_id"
@@ -4070,7 +4185,7 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: InsufficientEvidencePhoto?, reason: String, subject: CosmeticSubject) {
+    public init(findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: BottomNotPlacedPhoto?, reason: String, subject: BottomNotPlacedSubject) {
         self.findingID = findingID
         self.findingIDS = findingIDS
         self.inspectedBy = inspectedBy
@@ -4079,25 +4194,6 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
         self.photo = photo
         self.reason = reason
         self.subject = subject
-    }
-}
-
-// MARK: - InsufficientEvidencePhoto
-public struct InsufficientEvidencePhoto: Codable, Sendable {
-    public let boxPx: [Int]?
-    public let cropRef: String?
-    public let stillID: String
-
-    public enum CodingKeys: String, CodingKey {
-        case boxPx = "box_px"
-        case cropRef = "crop_ref"
-        case stillID = "still_id"
-    }
-
-    public init(boxPx: [Int]?, cropRef: String?, stillID: String) {
-        self.boxPx = boxPx
-        self.cropRef = cropRef
-        self.stillID = stillID
     }
 }
 
@@ -4228,11 +4324,11 @@ public struct NotInspectedElement: Codable, Sendable {
     public let findingIDS: [String]?
     public let location: Location?
     public let partClass: String
-    public let photo: InsufficientEvidencePhoto?
+    public let photo: BottomNotPlacedPhoto?
     public let reason: String
     /// How many detector regions this row stands for. Absent means one.
     public let regions: Int?
-    public let subject: CosmeticSubject
+    public let subject: BottomNotPlacedSubject
 
     public enum CodingKeys: String, CodingKey {
         case findingID = "finding_id"
@@ -4245,7 +4341,7 @@ public struct NotInspectedElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(findingID: String, findingIDS: [String]?, location: Location?, partClass: String, photo: InsufficientEvidencePhoto?, reason: String, regions: Int?, subject: CosmeticSubject) {
+    public init(findingID: String, findingIDS: [String]?, location: Location?, partClass: String, photo: BottomNotPlacedPhoto?, reason: String, regions: Int?, subject: BottomNotPlacedSubject) {
         self.findingID = findingID
         self.findingIDS = findingIDS
         self.location = location
@@ -4551,11 +4647,13 @@ public struct ScanPackage: Codable, Sendable {
     public let productID: String
     public let scanID: String
     /// Later capture segments of the same session: the object flipped for its underside (reason
-    /// flipped: it moved, so registering the segment is a separate step on the Mac), or more
-    /// photos of the same, unmoved object continued from the report (reason continued). Each has
-    /// its own locked box and LiDAR cloud in the same ARKit world frame unless aligned is false.
+    /// flipped, object_moved true: a quick mini-scan of the bottom in its own ARKit session;
+    /// transform_to_segment0, from the phone's live alignment or the backend's registration,
+    /// puts it on segment 0), or more photos of the same, unmoved object continued from the
+    /// report (reason continued). Each has its own locked box and LiDAR cloud, in the same ARKit
+    /// world frame as segment 0 unless aligned is false or object_moved is true.
     /// points_file/crop_box above are segment 0.
-    public let segments: [Segment]?
+    public let segments: [ScanPackageSegment]?
     /// One repair session; groups scans, stills and readings.
     public let sessionID: String
     /// The table the object stood on (segment 0), as ARKit detected it: a horizontal plane
@@ -4595,7 +4693,7 @@ public struct ScanPackage: Codable, Sendable {
         case voxelMm = "voxel_mm"
     }
 
-    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: ScanPackagePoseSource?, productID: String, scanID: String, segments: [Segment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
+    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: ScanPackagePoseSource?, productID: String, scanID: String, segments: [ScanPackageSegment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
         self.alignment = alignment
         self.capturedAt = capturedAt
         self.coverageHint = coverageHint
@@ -4849,6 +4947,8 @@ public struct KeyframeIntrinsics: Codable, Sendable {
 /// object_tracked: the camera relative to the tracked, moving object, in the object frame
 /// (see the package's pose_source).
 ///
+/// Where this segment's own poses come from (absent = arkit).
+///
 /// Where camera comes from. arkit (also when absent): ARKit world tracking. object_tracked:
 /// the app's hand-held mode: the camera relative to the tracked, moving object, in the
 /// scan's object frame (the ARKit world frame at the moment the object was locked; see
@@ -4890,44 +4990,70 @@ public enum ScanPackagePoseSource: String, Codable, Sendable {
     case photogrammetry = "photogrammetry"
 }
 
-// MARK: - Segment
-public struct Segment: Codable, Sendable {
-    /// False when ARKit could not relocalise this segment into the scan's world frame: its
-    /// stills' poses are not comparable with the scan, and the backend does not place their
-    /// findings on it. Absent = aligned.
+// MARK: - ScanPackageSegment
+public struct ScanPackageSegment: Codable, Sendable {
+    /// False when this segment's poses are not comparable with segment 0: ARKit could not
+    /// relocalise it into the scan's world frame, or (object_moved) no transform_to_segment0 was
+    /// found yet; the backend does not place its findings on the model until it registers the
+    /// segment. Absent = aligned. For an object_moved segment, true means transform_to_segment0
+    /// is set and must be applied to its poses and points.
     public let aligned: Bool?
     public let cropBox: CropBox?
+    /// True when the object was moved for this segment (a flip): its keyframes, stills, crop_box
+    /// and points_file are in this segment's own ARKit world frame, which says nothing about
+    /// segment 0's object frame; only transform_to_segment0 relates them. Absent = false.
+    public let objectMoved: Bool?
     public let pointCount: Int?
     /// Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world).
     public let pointsFile: String?
-    /// flipped: the object was turned over for its underside (it moved: not in segment 0's
-    /// object frame). continued: more photos of the same object, unmoved, taken later from the
-    /// report (POST /v1/scans again with the same scan_id).
+    /// Where this segment's own poses come from (absent = arkit).
+    public let poseSource: KeyframePoseSource?
+    /// flipped: the object was turned over for its underside ("Scan the bottom"; it moved:
+    /// object_moved true, not in segment 0's frame unless transform_to_segment0 is applied).
+    /// continued: more photos of the same object, unmoved, taken later from the report (POST
+    /// /v1/scans again with the same scan_id).
     public let reason: SegmentReason
     public let segment: Int
+    /// Confidence in transform_to_segment0, 0-1 (fit overlap, RMS and how clearly it beat the
+    /// next best pose; a symmetric object without telling colour scores low).
+    public let transformQuality: Double?
+    /// Row-major 4x4 rigid transform, metres: [p_segment0, 1] = T * [p_this_segment, 1] for
+    /// points and camera poses of this segment (object_moved segments). From the phone's live
+    /// 6-DoF registration of this segment's in-box cloud to segment 0's (pose_source arkit,
+    /// transform_quality) or from the backend's.
+    public let transformToSegment0: [Double]?
 
     public enum CodingKeys: String, CodingKey {
         case aligned = "aligned"
         case cropBox = "crop_box"
+        case objectMoved = "object_moved"
         case pointCount = "point_count"
         case pointsFile = "points_file"
+        case poseSource = "pose_source"
         case reason = "reason"
         case segment = "segment"
+        case transformQuality = "transform_quality"
+        case transformToSegment0 = "transform_to_segment0"
     }
 
-    public init(aligned: Bool?, cropBox: CropBox?, pointCount: Int?, pointsFile: String?, reason: SegmentReason, segment: Int) {
+    public init(aligned: Bool?, cropBox: CropBox?, objectMoved: Bool?, pointCount: Int?, pointsFile: String?, poseSource: KeyframePoseSource?, reason: SegmentReason, segment: Int, transformQuality: Double?, transformToSegment0: [Double]?) {
         self.aligned = aligned
         self.cropBox = cropBox
+        self.objectMoved = objectMoved
         self.pointCount = pointCount
         self.pointsFile = pointsFile
+        self.poseSource = poseSource
         self.reason = reason
         self.segment = segment
+        self.transformQuality = transformQuality
+        self.transformToSegment0 = transformToSegment0
     }
 }
 
-/// flipped: the object was turned over for its underside (it moved: not in segment 0's
-/// object frame). continued: more photos of the same object, unmoved, taken later from the
-/// report (POST /v1/scans again with the same scan_id).
+/// flipped: the object was turned over for its underside ("Scan the bottom"; it moved:
+/// object_moved true, not in segment 0's frame unless transform_to_segment0 is applied).
+/// continued: more photos of the same object, unmoved, taken later from the report (POST
+/// /v1/scans again with the same scan_id).
 public enum SegmentReason: String, Codable, Sendable {
     case continued = "continued"
     case flipped = "flipped"
@@ -5272,9 +5398,10 @@ public struct Still: Codable, Sendable {
     /// True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected.
     public let userSkipped: Bool?
     /// The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2
-    /// above the support plane, azimuth sector 0-11 around the object; in a hand-held scan,
-    /// pose_source object_tracked, b1s05 is a view of the underside, ring 1-2 below the object's
-    /// middle, in the object frame). Lets the backend see which sides were photographed.
+    /// above the support plane, azimuth sector 0-11 around the object; b1s05 is a view of the
+    /// underside: in a hand-held scan, pose_source object_tracked, ring 1-2 below the object's
+    /// middle in the object frame; in a flipped segment ("Scan the bottom"), ring and sector
+    /// around the flipped object). Lets the backend see which sides were photographed.
     public let viewCell: String?
     public let widthPx: Int
 

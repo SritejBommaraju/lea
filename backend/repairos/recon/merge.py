@@ -22,6 +22,7 @@ with the reason, and the segments stay in separate frames.
 """
 from __future__ import annotations
 
+import hashlib
 import shutil
 import subprocess
 import tempfile
@@ -62,9 +63,8 @@ def load_gray(path: Path, max_dim: int = FEATURE_MAX_DIM, cache_dir: Path | None
     path = Path(path)
     src = path
     if path.suffix.lower() in (".heic", ".heif"):
-        cache = Path(cache_dir) if cache_dir else Path(tempfile.gettempdir()) / "repairos-recon-cache"
-        cache.mkdir(parents=True, exist_ok=True)
-        src = cache / f"{path.stem}_{max_dim}.png"
+        src = gray_cache_path(path, max_dim, cache_dir)
+        src.parent.mkdir(parents=True, exist_ok=True)
         if not src.exists():
             subprocess.run(["sips", "-s", "format", "png", "-Z", str(max_dim), str(path), "--out", str(src)],
                            check=True, capture_output=True)
@@ -77,6 +77,16 @@ def load_gray(path: Path, max_dim: int = FEATURE_MAX_DIM, cache_dir: Path | None
         im2 = Image.fromarray(g).resize((round(g.shape[1] * scale), round(g.shape[0] * scale)))
         g = np.asarray(im2)
     return g, scale
+
+
+def gray_cache_path(path: Path, max_dim: int, cache_dir: Path | None = None) -> Path:
+    """Where a HEIC's decoded PNG is cached: keyed by the resolved file and its size and modification time, so two
+    captures' images of the same name (IMG_0001.HEIC in both segments) or a replaced file never share an entry."""
+    path = Path(path)
+    st = path.stat()
+    key = hashlib.sha256(f"{path.resolve()}:{st.st_size}:{st.st_mtime_ns}".encode()).hexdigest()[:16]
+    cache = Path(cache_dir) if cache_dir else Path(tempfile.gettempdir()) / "repairos-recon-cache"
+    return cache / f"{path.stem}_{key}_{max_dim}.png"
 
 
 def _full_size(path: Path) -> tuple[int, int] | None:
@@ -505,9 +515,19 @@ def apple_cross_check(ref_poses: Sequence[ApplePose], mov_poses: Sequence[AppleP
     if sa is None or sb is None:
         return AppleCheck(None, per, "Apple did not pose enough images of both segments")
     t = sa @ sb.inverse()
-    # Both ARKit worlds are metric: the similarity should be (close to) rigid; report the scale and drop it.
+    # Both ARKit worlds are metric: the similarity should be (close to) rigid; report the scale. Its translation was
+    # computed with that scale, so dropping the scale alone moves points by (1 - scale) R x: refit a rigid motion on
+    # the moving segment's cameras instead (each ARKit centre -> where Apple puts that camera in the reference).
     per["scale_moving_to_reference"] = t.scale
-    return AppleCheck(Sim3(1.0, t.r, t.t), per)
+    pairs = [(mov_centres[p.file], sa.apply(p.centre[None])[0]) for p in mov_poses if p.file in mov_centres]
+    src, dst = np.array([a for a, _ in pairs]), np.array([b for _, b in pairs])
+    try:
+        rigid, inl = robust_umeyama(src, dst, threshold_m=0.02, with_scale=False, min_inliers=max(3, len(src) // 2),
+                                    iterations=500)
+    except ValueError as e:
+        return AppleCheck(None, per, f"no rigid fit of the moving segment's cameras: {e}")
+    per["rigid_moving"] = {"inliers": int(inl.sum()), "residual": residuals(rigid, src[inl], dst[inl])}
+    return AppleCheck(rigid, per)
 
 
 def link_images(groups: Mapping[str, Sequence[Path]], out_dir: Path) -> dict[str, str]:
@@ -604,6 +624,8 @@ def decide(features: FeatureMatchResult | None, icp: IcpResult | None, apple: Ap
                                f"{other_fit:.2f} of points within 3 mm)")
         else:
             res = [apple.per_segment[k].get("residual", {}).get("rmse_m") for k in ("reference", "moving")]
+            if "rigid_moving" in apple.per_segment:   # and the rigid motion actually returned, not only the two fits
+                res.append(apple.per_segment["rigid_moving"].get("residual", {}).get("rmse_m"))
             if all(r is not None and r < max_disagreement_m for r in res):
                 t, source = apple.transform, "apple_joint"
                 reasons.append("used Apple's joint reconstruction (the feature bridge failed)")

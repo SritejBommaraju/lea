@@ -26,7 +26,7 @@ from repairos import contracts
 from repairos.config import ROOT
 from repairos.registry import register
 from repairos.slots.state import (ID_FIELDS, INTERNAL_KINDS, TRANSITIONS, AlreadyClaimed, InvariantViolation, Job,
-                                  NotFound, RevConflict, Row, RowEvent, StateError)
+                                  NotFound, RevConflict, Row, RowEvent, StaleReport, StateError)
 from repairos.slots.state_sqlite import rules
 
 T = TypeVar("T")
@@ -90,6 +90,15 @@ def _job(r: sqlite3.Row) -> Job:
                inputs=json.loads(r["inputs"]), status=r["status"], attempts=r["attempts"], worker=r["worker"],
                result=json.loads(r["result"]) if r["result"] else None, error=r["error"],
                created_at=r["created_at"], heartbeat_at=r["heartbeat_at"])
+
+
+def _report_stills(report: dict) -> int:
+    """How many stills a report was built from (capture.stills): stills are only added to a scan, so a larger count is
+    a newer set of inputs."""
+    try:
+        return int((report.get("capture") or {}).get("stills") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 class SqliteState:
@@ -231,11 +240,15 @@ class SqliteState:
             return self._create(c, kind, id, p)
         if action == "plan.create":
             return self._create(c, kind, id, p, status="open")
-        if action in ("pipeline.update", "pipeline.claim_still"):
+        if action.startswith("pipeline."):
             return self._pipeline(c, id, action, p)
         if action == "report.publish":   # a re-run replaces the scan's report (new rev, one event)
             prev = self._get(c, kind, id)
             p.setdefault("report_id", id)
+            if prev is not None:   # compare-and-set inside this transaction: an older draft never replaces a newer one
+                have, mine = _report_stills(prev.data), _report_stills(p)
+                if mine < have:
+                    raise StaleReport(id, mine, have)
             return self._write(c, kind, p, prev.rev if prev else 0)
         row = self._existing(c, kind, id) if action != "suspect.update_from_fusion" else self._get(c, kind, id)
         if action == "scan.update":   # the scan package posted again (more photos of the same object, A: continue)
@@ -277,9 +290,20 @@ class SqliteState:
 
     def _pipeline(self, c, id: str, action: str, p: dict) -> Row:
         """pipeline.update: an RFC 7386 merge patch on the run row (created on first use; None deletes a key).
-        pipeline.claim_still: {still_id, worker, at[, force]} marks one still `running` for one worker, atomically;
-        AlreadyClaimed when it is running or done (unless force). `announce` (a named live event: identified,
-        progress, mesh_ready) is kept only on the write that sets it, so each event is sent once."""
+        Still claims, each one compare-and-set inside this write transaction (AlreadyClaimed when the claim is not
+        as expected; nothing is written then):
+          pipeline.claim_still   {still_id, worker, at[, expect]}: mark the still `running` for `worker`. Without
+                                 `expect` only a still that is not running or done; with `expect` ({worker,
+                                 started_at, heartbeat_at} of a running claim seen stale) only if the claim is still
+                                 exactly that one (a takeover two waiters cannot both win);
+          pipeline.beat_still    {still_id, worker, at}: refresh heartbeat_at of `worker`'s running claim;
+          pipeline.finish_still  {still_id, worker, stage}: write the still's result, only while `worker` still
+                                 holds the running claim (a released or taken-over claim is never written over);
+          pipeline.release_still {still_id, expect | worker}: back to pending (the entry removed), only if the
+                                 claim is still exactly `expect`, or (with `worker`) still that worker's running
+                                 claim.
+        `announce` (a named live event: identified, progress, mesh_ready) is kept only on the write that sets it, so
+        each event is sent once."""
         prev = self._get(c, "pipeline-run", id)
         base = prev.data if prev else {"run_id": id, "scan_id": p.get("scan_id"), "session_id": p.get("session_id"),
                                        "status": "inspecting", "attempt": 0, "stages": {}, "stills": {}}
@@ -288,12 +312,39 @@ class SqliteState:
         else:
             sid = p["still_id"]
             cur = (base.get("stills") or {}).get(sid) or {}
-            if cur.get("status") in ("running", "done") and not p.get("force"):
-                raise AlreadyClaimed(sid, cur["status"], cur.get("worker"))
-            data = _merge(base, {"stills": {sid: {"status": "running", "worker": p.get("worker"),
-                                                  "started_at": p.get("at") or now(), "error": None}}})
-            if data.get("status") in ("done", "failed", "closed"):   # a new still after a report: out of date
-                data["status"] = "inspecting"
+
+            def refuse():
+                raise AlreadyClaimed(sid, cur.get("status") or "pending", cur.get("worker"))
+
+            def same(expect: dict) -> bool:
+                return cur.get("status") == "running" and all(cur.get(k) == expect.get(k)
+                                                              for k in ("worker", "started_at", "heartbeat_at"))
+            owned = cur.get("status") == "running" and cur.get("worker") == p.get("worker")
+            if action == "pipeline.claim_still":
+                if "expect" in p:
+                    if not same(p["expect"] or {}):
+                        refuse()
+                elif cur.get("status") in ("running", "done"):
+                    refuse()
+                data = _merge(base, {"stills": {sid: None}})
+                data = _merge(data, {"stills": {sid: {"status": "running", "worker": p.get("worker"),
+                                                      "started_at": p.get("at") or now(), "error": None}}})
+                if data.get("status") in ("done", "failed", "closed"):   # a new still after a report: out of date
+                    data["status"] = "inspecting"
+            elif action == "pipeline.beat_still":
+                if not owned:
+                    refuse()
+                data = _merge(base, {"stills": {sid: {"heartbeat_at": p.get("at") or now()}}})
+            elif action == "pipeline.finish_still":
+                if not owned:
+                    refuse()
+                data = _merge(base, {"stills": {sid: p["stage"]}})
+            elif action == "pipeline.release_still":
+                if not (same(p["expect"]) if "expect" in p else owned):
+                    refuse()
+                data = _merge(base, {"stills": {sid: None}})
+            else:
+                raise StateError(f"transition {action} not implemented")
         data["run_id"] = id
         if not (action == "pipeline.update" and "announce" in p):
             data.pop("announce", None)   # a live-event marker lives for the one write that sets it
@@ -336,6 +387,12 @@ class SqliteState:
 
     async def complete(self, job_id: str, result: dict[str, Any]) -> None:
         await self._update_job(job_id, "status='done', result=?, error=NULL", (json.dumps(result),))
+
+    async def release(self, job_id: str) -> None:
+        def fn(c):
+            c.execute("UPDATE job SET status='queued', worker=NULL, heartbeat_at=NULL, "
+                      "attempts=MAX(attempts - 1, 0) WHERE job_id=? AND status='running'", (job_id,))
+        await self._run(fn, write=True)
 
     async def fail(self, job_id: str, error: str, retry: bool) -> None:
         await self._update_job(job_id, "error=?, worker=NULL, status=CASE WHEN ? AND attempts < ? THEN 'queued' "

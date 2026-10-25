@@ -5,7 +5,9 @@ label, nothing about the object): its centre point and its size in metres. Withi
 lies within `same_region_m` (or half the smaller box's size, whichever is larger) of a box another still already
 registered, at a similar size (SIZE_RATIO_MAX), reuses that still's answer instead of a new Claude call
 (vision.inspect.finding_from_other_still). The first still to register a place judges it; the pipeline inspects
-close-ups and the sharpest views first, so that is usually the better view.
+close-ups and the sharpest views first, so that is usually the better view. When that answer could not judge the
+place (insufficient_evidence, not_inspected, a failed check), a later still judges it again (streaming inspects in
+arrival order, so a blurry still can register a place before the sharper one kept for that view).
 
 A box that cannot be placed (no pose, no depth there) is never matched: it is judged on its own. Boxes of different
 capture segments are never matched (the object may have moved, or the segment may not be aligned).
@@ -43,6 +45,15 @@ class Entry:
 
     def result(self, timeout: float | None = None) -> dict:
         return self.future.result(timeout)
+
+    def could_not_judge(self) -> bool:
+        """Answered, but without a judgment (insufficient_evidence, not_inspected or a failed check): a later view
+        of the same place judges it again instead of reusing this."""
+        if not self.future.done():
+            return False
+        if self.future.exception() is not None:
+            return True
+        return self.future.result().get("state") in ("insufficient_evidence", "not_inspected")
 
 
 def box_in_world(still: Mapping[str, Any], depth_m: np.ndarray, box: Sequence[float]) -> tuple[np.ndarray, float] | None:
@@ -96,6 +107,8 @@ class SameRegions:
         with self._lock:
             for e in self._entries:
                 if e.still_id == still_id or e.segment != segment:   # other segments: poses not comparable
+                    continue
+                if e.could_not_judge():   # e.g. a blurry still registered it first: let this view judge it
                     continue
                 near = max(self.same_region_m, 0.5 * min(size, e.size_m))
                 ratio = max(size, e.size_m) / max(min(size, e.size_m), 1e-6)

@@ -267,18 +267,50 @@ def _is_issue(e: Mapping[str, Any]) -> bool:
     return e["issue"] != "none" and e["proof"]["status"] != "ruled_out_by_meter"
 
 
+def bottom_not_placed(report: Mapping[str, Any], segments: list[Mapping[str, Any]],
+                      locations: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The "Bottom (not placed on the model)" list: report rows (findings, cosmetic, insufficient_evidence) built
+    from findings of a flipped segment that was not aligned, each with its photo crop and why it has no 3D point."""
+    want = {fid: int(sg["segment"]) for sg in segments if not sg.get("aligned")
+            for fid in sg.get("findings_not_placed") or []}
+    if not want:
+        return []
+    out = []
+    for bucket in ("findings", "cosmetic", "insufficient_evidence"):
+        for row in report.get(bucket) or []:
+            ids = [row.get("finding_id"), *(row.get("finding_ids") or [])]
+            hit = next((i for i in ids if i in want), None)
+            photo = row.get("crop") or row.get("photo")
+            if hit is None or not photo:
+                continue
+            loc = locations.get(hit) or {}
+            e = {"finding_id": row["finding_id"], "segment": want[hit],
+                 "photo": {k: photo[k] for k in ("still_id", "box_px", "crop_ref") if k in photo},
+                 "reason": str(loc.get("reason") or "the flipped segment was not lined up with the main scan")}
+            if row.get("subject"):
+                e["subject"] = row["subject"]
+            if row.get("part_class"):
+                e["part_class"] = row["part_class"]
+            if row.get("issue"):
+                e["issue"] = row["issue"]
+            out.append(e)
+    return out
+
+
 def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], findings: list[Mapping[str, Any]],
                  suspects: list[Mapping[str, Any]], next_action: Mapping[str, Any] | None,
                  regions: Mapping[str, Mapping[str, Any]], locations: Mapping[str, Mapping[str, Any]],
                  models: Mapping[str, str], now: datetime | None = None,
                  explains: Mapping[tuple[str, str], str] | None = None,
                  previous: Mapping[str, Any] | None = None, identity: Mapping[str, Any] | None = None,
-                 mesh: Mapping[str, Any] | None = None, hints: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 mesh: Mapping[str, Any] | None = None, hints: Mapping[str, Any] | None = None,
+                 segments: list[Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """The report without `summary` (repairos.report.summary adds it). `regions[finding_id]` gives the region's
     `part_class` and `inspected_by` (the stages that looked); `locations[finding_id]` its report location;
     `explains[(kind, ref)]` Jev's banded "explains the symptom" judgment (yes | unsettled | no) per subject.
     `previous`: the scan's report before this one (more photos were added): its row ids are kept for the same place
     (collapse_rows, merge_undecided), so the app sees the same finding again, updated, not a duplicate.
+    `segments`: the flipped segments' registration (shown as `capture.segments`).
     `identity`, `mesh`, `hints`: the run row's records (pipeline/run.py), shown as `object`, `mesh` and
     `reference_hints` when they are done."""
     explains = explains or {}
@@ -361,6 +393,10 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
         "models": dict(models),
         "grain": "not called",
     }
+    if segments:   # flipped segments and how they were registered (pipeline/segments.py report_segments)
+        report["capture"]["segments"] = [dict(x) for x in segments]
+        if (bottom := bottom_not_placed(report, segments, locations)):
+            report["bottom_not_placed"] = bottom
     v = decide(facts_of(report))
     report["verdict"] = v.verdict
     report["verdict_reason"] = v.as_reason()

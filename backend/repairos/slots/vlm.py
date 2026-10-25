@@ -43,6 +43,25 @@ class CropState:
     visibility: str = ""     # one of VISIBILITY, or "" when the answer did not report it
     open_for_access: bool = False  # what the state describes is only the device being open (cover off, panel open,
                                    # wiring exposed), with nothing broken: the normal state of an inspected device
+    where: str = ""          # plain words: where in the crop the fault is ("" for ok, cannot_tell or older answers)
+    too_small: bool = False  # cannot_tell only because the detail is too small for this view: a closer photo settles it
+
+
+@dataclass(frozen=True)
+class Comparison:
+    """`compare_parts`: which of several look-alike parts shown side by side in one numbered strip differ (a fault)."""
+    odd: tuple[int, ...]     # 1-based cell numbers that differ from the rest (all of them when all share one fault)
+    state: str               # one of CROP_STATES: the fault of the odd cells; ok = alike and fine; cannot_tell
+    part_class: str          # the VLM's generic name for the look-alike parts
+    evidence_text: str       # the difference it sees, in words
+    confidence_word: str
+    model: str
+    latency_ms: int
+    severity: str = "none"
+    visibility: str = ""
+    attempts: tuple[dict, ...] = field(default_factory=tuple)
+    escalated: bool = False
+    open_for_access: bool = False
 
 
 @dataclass(frozen=True)
@@ -60,11 +79,21 @@ class VisionJudge(Protocol):
     models: tuple[str, ...]  # escalation ladder, small first
 
     def inspect_crop(self, crop: Any, context: Any | None = None, part_hint: str | None = None,
-                     family: str | None = None, hints: Sequence[str] | None = None) -> CropState:
+                     family: str | None = None, hints: Sequence[str] | None = None, view: str = "part",
+                     px_per_mm: float | None = None) -> CropState:
         """`crop`: PIL image cut from the full-resolution still. `context`: optional downsized whole still with the
         crop's box outlined. `part_hint`: the detector's label (data, not instruction). `family`: the part family
         whose failure checklist to apply (vision/checklists.py; `unknown_part` = the general checks only), None =
-        the family the label suggests. `hints`: optional public-reference notes (untrusted data, never evidence)."""
+        the family the label suggests. `hints`: optional public-reference notes (untrusted data, never evidence).
+        `view`: "part" (a crop around one detected region) or "tile" (one close tile of
+        a larger object). Either way the whole crop is judged: a fault anywhere in it is the answer, with `where`.
+        `px_per_mm`: how finely the crop resolves the surface (from depth), stated in the request so claims about
+        details too small for the view are cannot_tell (`too_small`); None without a scale."""
+        ...
+
+    def compare_parts(self, strip: Any, context: Any | None, count: int, part_hint: str | None = None,
+                      px_per_mm: float | None = None) -> Comparison:
+        """`strip`: `count` look-alike parts side by side in numbered cells (vision/sweep.strip_image). Which differ?"""
         ...
 
     def judge_crop(self, crop: Any, render_crop: Any | None, expectation: str, options: Sequence[str]) -> Judgement:

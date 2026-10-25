@@ -46,10 +46,13 @@ final class ScanSession: NSObject {
     /// so it is used only once the continuation is aligned with it.
     private var lookTarget: InspectTarget?
     private var objectName: String?
-    /// 0...1 for the thin ring: half the in-box points goal, half the stills goal.
-    var progress: Double {
-        min(1, Double(boxPoints) / Double(Self.pointsGoal)) * 0.5 + min(1, Double(stills.count) / Double(Self.stillsGoal)) * 0.5
-    }
+    /// How much of what the backend needs is in (`ScanProgress`: views at the resolution target, required close-up
+    /// faces, keyframe directions for the mesh), 0...1. One number for the dial and the cue.
+    private(set) var scanProgress = ScanProgress(views: 0, faces: nil, mesh: 0, linedUp: nil, value: 0, enough: false)
+    var progress: Double { scanProgress.value }
+    /// The scan has enough: no more stills or keyframes (the cloud keeps drawing), the cue says to tap Done.
+    private(set) var enough = false
+    private var enoughAt: Date?
 
     let record: SessionRecord
     let storage: ScanStorage
@@ -65,6 +68,8 @@ final class ScanSession: NSObject {
     private(set) var segment = 0
     /// "Turn it" (Capture/Handheld): set once the person turns the object instead of walking around it.
     var handheld: HandheldController?
+    /// "Scan the bottom" (Capture/Handheld/FlipSegment): this continuation is a mini-scan of the flipped object.
+    var flip: FlipSegmentController?
 
     private var lastTick: TimeInterval = 0
     private var lastRecord: TimeInterval = 0
@@ -105,6 +110,14 @@ final class ScanSession: NSObject {
     private var closeDetail = 0
     private var belowTarget = 0
     private var torchNear = false
+    // On-phone selection (CaptureSelection): the best still per view cell, kept keyframe viewpoints and their cells.
+    private var cellBest: [Int: CaptureSelection.Best] = [:]
+    private var stillSerial = 0
+    private var stillsDropped: [String: Int] = [:]
+    private var stillsReplaced = 0
+    private var keptKeyframePoses: [simd_float4x4] = []
+    private var keyframeCells: Set<Int> = []
+    private var keyframesDropped: [String: Int] = [:]
 
     static let tickInterval: TimeInterval = 0.1
     static let recordInterval: TimeInterval = 0.2
@@ -176,7 +189,8 @@ final class ScanSession: NSObject {
         if continuing {
             previous = (try? Data(contentsOf: storage.scanPackageURL(record))).flatMap { try? JSON.decoder.decode(ScanPackage.self, from: $0) }
             segment = record.segmentCount ?? 1
-            stillOffset = record.stillIDs.count
+            // After the highest number used so far (replaced stills leave gaps).
+            stillOffset = record.stillIDs.compactMap { $0.split(separator: "_").last.flatMap { Int($0.dropFirst()) } }.max() ?? record.stillIDs.count
             recorder.startIndex(previous?.keyframes.count ?? 0)
             lookTarget = InspectTargets.pending(storage.dir(record))
         }
@@ -200,7 +214,7 @@ final class ScanSession: NSObject {
             ?? ARConfiguration.VideoFormat.stillCandidates().first
         if let videoFormat { config.videoFormat = videoFormat }
         session.delegate = self
-        if continuing, let map = Self.loadWorldMap(storage.dir(record)) {
+        if continuing, flip == nil, let map = Self.loadWorldMap(storage.dir(record)) {
             // Back into the scan's world frame: same box, same cloud, poses comparable with the first visit.
             config.initialWorldMap = map
             relocalizing = true
@@ -397,6 +411,10 @@ final class ScanSession: NSObject {
         boxRect = nil
         renderer?.beginFinish()
         upload?.markDone()
+        // A still already being captured and saved finishes first, so its id is in the saved record (no new one
+        // starts once the stage is finishing). Bounded: a capture that never returns does not hold up Done.
+        let waitFrom = Date()
+        while capturing, Date().timeIntervalSince(waitFrom) < 5 { try? await Task.sleep(for: .milliseconds(20)) }
         exposure.stop()
         torch.off()
         var keyframes = await recorder.drain()
@@ -428,8 +446,11 @@ final class ScanSession: NSObject {
                 keyframes = prev.keyframes + keyframes
                 plane = prev.supportPlane ?? plane
                 cropBox = prev.cropBox ?? cropBox
-                segments.append(Segment_(aligned: aligned ? nil : false, cropBox: box?.contract, pointCount: ownCloud ? count : nil,
-                                         pointsFile: ownCloud ? pointsFile : nil, reason: .continued, segment: segment))
+                flip?.stop()
+                segments.append(Segment_(aligned: flip.map { $0.aligned } ?? (aligned ? nil : false), cropBox: box?.contract,
+                                         objectMoved: flip == nil ? nil : true, pointCount: ownCloud ? count : nil,
+                                         pointsFile: ownCloud ? pointsFile : nil, poseSource: nil, reason: flip == nil ? .continued : .flipped,
+                                         segment: segment, transformQuality: flip?.transformQuality, transformToSegment0: flip?.transformRowMajor))
                 if ownCloud || pointsFile == nil {
                     pointsFile = prev.pointsFile
                     count = prev.pointCount
@@ -462,6 +483,7 @@ final class ScanSession: NSObject {
             }
             diag.log("finish", ["continuing": continuing, "segment": segment, "aligned": aligned,
                                 "stills_rejected": stillsRejected, "close_stills": closeStills,
+                                "selection": selectionSummary(),
                                 "detail": ["orbit": orbitDetail, "close": closeDetail, "below_target": belowTarget,
                                            "faces_covered": dome.closeFaces.sorted(), "faces_required": dome.requiredFaces,
                                            "cells_covered": dome.count, "min_focus_mm": minFocus.map { Int($0 * 1000) } ?? -1],
@@ -526,12 +548,25 @@ final class ScanSession: NSObject {
         let pose = handheld?.cameraInObject(frame.camera.transform, at: t) ?? frame.camera.transform
         recentPoses.append((t, pose))
         if let first = recentPoses.first, t - first.t > 0.3 { recentPoses.removeFirst() }
-        if hasLiDAR, stage == .scanning || stage == .locking, t - lastRecord >= Self.recordInterval,
+        if hasLiDAR, !enough, stage == .scanning || stage == .locking, t - lastRecord >= Self.recordInterval,
            lastKeyframePose.map({ Self.moved(from: $0, to: pose, move: Self.keyframeMove, turn: Self.keyframeTurn) }) ?? true,
            handheld?.allowsKeyframe(at: t) ?? true {
             lastRecord = t
             lastKeyframePose = pose
-            recorder.record(frame, segment: segment, objectPose: handheld.map { (pose, $0.quality) })
+            // Only a keyframe from a viewpoint no kept one already covers (thinned here, before it is written or sent).
+            let p = SIMD3(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z)
+            let cell = box.flatMap { CoverageDome.cell(camera: p, box: $0) }
+            let decision = CaptureSelection.keyframe(pose: pose, kept: keptKeyframePoses, cell: cell, cellsWithKeyframes: keyframeCells)
+            if decision == .keep {
+                if recorder.record(frame, segment: segment, objectPose: handheld.map { (pose, $0.quality) }) {
+                    keptKeyframePoses.append(pose)
+                    if let cell { keyframeCells.insert(cell) }
+                } else {
+                    keyframesDropped["busy", default: 0] += 1
+                }
+            } else {
+                keyframesDropped[decision.rawValue, default: 0] += 1
+            }
         }
         guard t - lastTick >= Self.tickInterval else { return }
         lastTick = t
@@ -586,6 +621,12 @@ final class ScanSession: NSObject {
         if torch.needsBatteryConsent, !batteryQuestion { batteryQuestion = true }
         guard stage == .scanning else {
             if stage == .ready { cue = a.meanLuma < QualityGate.darkLuma ? "Too dark: add light" : nil }
+            return
+        }
+        updateProgress()
+        // Enough: nothing more to take (a spot the person circled still gets its close-up).
+        if enough, !(aligned && lookTarget != nil) {
+            if cue != Self.enoughCue { cue = Self.enoughCue }
             return
         }
         // Motion over the last ~150 ms: "nearly still" gates the shot and lets the shutter lengthen (less noise);
@@ -706,11 +747,24 @@ final class ScanSession: NSObject {
                 cue = torch.applied >= torch.top(near: true) - 0.01 || torch.unavailable != nil || torch.mode == .off
                     ? "Too dark: add light" : "Hold still a moment"
             } else {
-                cue = orbitCue ?? (moved ? nil : "Keep walking around it")
+                cue = orbitCue ?? "Keep walking around it"
             }
         }
-        if let c = handheld?.cue(replacing: cue, covered: dome.count) { cue = c }
-        if (closeMode && inClose && closeResolved) || atTarget, movedClose || retryFace, closeOK, steadyEnough, !capturing,
+        if let c = handheld?.cue(replacing: cue, covered: dome.count) ?? flip?.cue(replacing: cue) { cue = c }
+        // The steady cue carries the one progress number, and where to go next once this side is in.
+        if box != nil, cue == nil || Self.steadyCues.contains(cue ?? "") {
+            let next = hereCovered ? nextCell.flatMap { c in box.map { CoverageDome.guidance(to: c, cameraToWorld: m, box: $0) } } : nil
+            cue = Self.progressCue(scanProgress.percent, next ?? cue ?? "Keep going")
+        }
+        // Selection: an orbit still only for a view cell without one, or a clearly closer view of it; at most
+        // `CaptureSelection.maxStills` per segment (room kept for the required close-ups).
+        let cellHere = box.flatMap { CoverageDome.cell(camera: cam, box: $0) }
+        let worthStill = CaptureSelection.worthShooting(cell: cellHere, predictedPx: objDistance.map { DetailTarget.pxPerMm(fx: stillFx, distance: $0) },
+                                                        best: cellBest)
+        let facesLeft = max(0, dome.requiredFaces - dome.closeFaces.count)
+        let roomForOrbit = stills.count < CaptureSelection.maxStills - facesLeft
+        let roomForClose = faceWanted || atTarget || stills.count < CaptureSelection.maxStills
+        if (closeMode && inClose && closeResolved) || atTarget, roomForClose, movedClose || retryFace, closeOK, steadyEnough, !capturing,
            closeResult.accept || closeResult.reason == "Keep the object in frame" {
             lastCloseShotPose = m
             lastCloseShotTime = t
@@ -722,13 +776,13 @@ final class ScanSession: NSObject {
                 milestoneTick += 1
             }
             let shot = ShotContext(close: true, face: faceHere, fill: fill, distance: viewDistance, blurPx: blurPx,
-                                   centerHitsBox: framing?.centerHitsBox)
+                                   centerHitsBox: framing?.centerHitsBox, mustKeep: atTarget)
             Task { await fire(auto: true, lowLight: closeResult.lowLight, shot: shot, gate: (a.sharpness, a.medianSharpness)) }
             return
         }
         // Orbit stills carry on unless a close-up is about to be taken here.
         guard result.accept, steadyEnough, !capturing, !(closeMode && inClose && closeResolved) else { return }
-        if moved {
+        if moved, worthStill, roomForOrbit {
             lastStillPose = m
             let shot = ShotContext(close: false, face: faceHere, fill: fill, distance: objDistance, blurPx: blurPx,
                                    centerHitsBox: framing?.centerHitsBox)
@@ -744,6 +798,57 @@ final class ScanSession: NSObject {
         var distance: Float?
         var blurPx: Double
         var centerHitsBox: Bool?
+        /// A close-up at a spot the person circled: kept whatever the selection says.
+        var mustKeep = false
+    }
+
+    // MARK: - Progress and "enough"
+
+    nonisolated static let enoughCue = "That's enough: tap Done"
+    /// Cues that only say "carry on": they carry the progress number instead.
+    nonisolated static let steadyCues: Set<String> = ["Keep walking around it", "Keep turning it slowly", "Keep going around the bottom"]
+
+    /// "74% — keep going" (the progress number, then the steady cue or the way to the next needed view).
+    nonisolated static func progressCue(_ percent: Int, _ then: String) -> String {
+        let lower = then.prefix(1).lowercased() + then.dropFirst()
+        return "\(percent)% — \(lower)"
+    }
+
+    /// Recomputes the one progress number (≤ 10 Hz) and fires the "enough" moment once.
+    private func updateProgress() {
+        guard box != nil else { return }
+        let sectors = Set(keyframeCells.map { $0 % CoverageDome.sectors }).count
+        let elapsed = lockedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let p = flip.map { ScanProgress.flip(dome: dome, keyframeSectors: sectors, linedUp: $0.aligned, elapsed: elapsed) }
+            ?? ScanProgress.main(dome: dome, keyframeSectors: sectors)
+        if p != scanProgress { scanProgress = p }
+        if p.enough, !enough { reachedEnough() }
+    }
+
+    private func reachedEnough() {
+        enough = true
+        enoughAt = Date()
+        dome.enough = true
+        milestoneTick += 1
+        closeTarget = nil
+        renderer?.marker = nil
+        cue = Self.enoughCue
+        LeaVoice.shared.dynamicCue(flip == nil ? "Got it, that's enough. Tap Done, or scan the bottom." : "Got it, that's the bottom. Tap Done.",
+                                   diag: diag)
+        diag.log("enough", selectionSummary())
+    }
+
+    /// What was kept and dropped, and how far along: in "enough", every heartbeat and "finish".
+    private func selectionSummary() -> [String: Any] {
+        ["progress_pct": scanProgress.percent, "views": (scanProgress.views * 100).rounded() / 100,
+         "faces": scanProgress.faces.map { ($0 * 100).rounded() / 100 } ?? -1, "mesh": (scanProgress.mesh * 100).rounded() / 100,
+         "lined_up": scanProgress.linedUp ?? false, "side_sectors": dome.sideSectors, "top_sectors": dome.topSectors,
+         "keyframe_sectors": Set(keyframeCells.map { $0 % CoverageDome.sectors }).count,
+         "stills_kept": stills.count, "stills_dropped": stillsDropped, "stills_replaced": stillsReplaced,
+         "keyframes_kept": keptKeyframePoses.count, "keyframes_dropped": keyframesDropped,
+         "since_scan_s": scanTapped.map { (Date().timeIntervalSince($0) * 10).rounded() / 10 } ?? -1,
+         "enough_at_s": enoughAt.flatMap { e in scanTapped.map { (e.timeIntervalSince($0) * 10).rounded() / 10 } } ?? -1,
+         "segment": segment]
     }
 
     /// Distance to the object's surface: LiDAR at the centre when that lands on the box, else where the view ray
@@ -773,7 +878,9 @@ final class ScanSession: NSObject {
         let cam = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
         let sector = CoverageDome.sector(azimuth: CoverageDome.azimuth(cam - box.center))
         if sector != hereSector { hereSector = sector }
-        let next = dome.isDone ? nil : dome.nearestMissing(camera: cam, box: box)
+        let next = dome.isDone ? nil : flip != nil
+            ? dome.nearestNeeded(camera: cam, box: box, side: ScanProgress.flipSectors, top: 0)
+            : dome.nearestNeeded(camera: cam, box: box)
         if next != nextCell { nextCell = next }
         var rect: CGRect?
         if viewSize != .zero {
@@ -897,6 +1004,7 @@ final class ScanSession: NSObject {
                                "points_in_box": inBox, "stills": stills.count, "keyframes": recorder.count,
                                "frame_ms": frameStats(), "torch": torch.applied,
                                "exposure_s": exposure.duration, "iso": exposure.iso,
+                               "selection": selectionSummary(),
                                "tracking": "\(session.currentFrame?.camera.trackingState ?? .notAvailable)"])
     }
 
@@ -916,7 +1024,7 @@ final class ScanSession: NSObject {
     }
 
     private func fire(auto: Bool, lowLight: Bool? = nil, shot: ShotContext, gate: (Double, Double?)? = nil) async {
-        guard !capturing, stage == .scanning else { return }
+        guard !capturing, stage == .scanning, !enough || shot.mustKeep else { return }
         capturing = true
         defer { capturing = false }
         let close = shot.close
@@ -969,15 +1077,30 @@ final class ScanSession: NSObject {
                                                             "rejected_total": stillsRejected]) { a, _ in a })
                 return
             }
-            let id = "\(record.scanID)_s\(stillOffset + stills.count + 1)"
+            let pos = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+            let covered = handheld.map { $0.coverage(camera: pos) } ?? box.flatMap { CoverageDome.cell(camera: pos, box: $0) }.map { ($0, flip?.cellID($0) ?? CoverageDome.id($0)) }
+            let cell = covered?.0
+            let faceShot = close ? (box.flatMap { CoverageDome.viewFace(cameraToWorld: m, box: $0) } ?? shot.face) : nil
+            let faceNew = faceShot.map { $0 < dome.requiredFaces && !dome.isFaceCovered($0) } ?? false
+            // Selection: a still for a view cell that has one only when it is clearly better (it then replaces it).
+            var replacing: CaptureSelection.Best?
+            if auto, !shot.mustKeep, !faceNew, let cell, let b = cellBest[cell] {
+                if !CaptureSelection.better(pxPerMm: pxPerMm ?? 0, sharpness: sharp, than: b) {
+                    stillsDropped["not_better", default: 0] += 1
+                    diag.log("still_dropped", ["reason": "not_better", "cell": covered?.1 ?? "", "px_mm": pxPerMm.map { ($0 * 10).rounded() / 10 } ?? -1,
+                                               "best_px_mm": (b.pxPerMm * 10).rounded() / 10, "box_sharpness": (sharp * 10).rounded() / 10,
+                                               "best_sharpness": (b.sharpness * 10).rounded() / 10, "close": close])
+                    return
+                }
+                replacing = b
+            }
+            stillSerial += 1
+            let id = "\(record.scanID)_s\(stillOffset + stillSerial)"
             if close { closeStills += 1 }
             // "Detail captured": only a still at the resolution target counts toward the coverage dome and faces.
             let detail = pxPerMm.map { $0 >= pxTarget } ?? false
             let orbitDetail = pxPerMm.map { px in box.map { px >= DetailTarget.orbitTarget(box: $0, shortSidePx: min(sw, sh)) } ?? true } ?? false
             if close, detail { closeDetail += 1 } else if !close, detail { self.orbitDetail += 1 } else { belowTarget += 1 }
-            let pos = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
-            let covered = handheld.map { $0.coverage(camera: pos) } ?? box.flatMap { CoverageDome.cell(camera: pos, box: $0) }.map { ($0, CoverageDome.id($0)) }
-            let cell = covered?.0
             // ISO: the frame's EXIF when ARKit fills it, else the ISO the fast-shutter exposure set.
             let exif = frame.exifData
             let iso = ((exif["{Exif}"] as? [String: Any])?["ISOSpeedRatings"] as? [NSNumber])?.first?.doubleValue
@@ -992,6 +1115,21 @@ final class ScanSession: NSObject {
                 iso: iso, stillsDir: storage.stillsDir(record)))
             stills.append(id)
             shotTick += 1
+            if let cell, cellBest[cell].map({ CaptureSelection.better(pxPerMm: pxPerMm ?? 0, sharpness: sharp, than: $0) }) ?? true {
+                cellBest[cell] = CaptureSelection.Best(id: id, pxPerMm: pxPerMm ?? 0, sharpness: sharp)
+            }
+            if let old = replacing {
+                // Not posted yet: take the worse one back; already posted: both stay (the backend keeps the best).
+                let withdrawn = upload?.withdrawStill(old.id) ?? false
+                if withdrawn {
+                    stills.removeAll { $0 == old.id }
+                    removeStillFiles(old.id)
+                }
+                stillsReplaced += 1
+                diag.log("still_replaced", ["old": old.id, "new": id, "withdrawn": withdrawn, "cell": covered?.1 ?? "",
+                                            "old_px_mm": (old.pxPerMm * 10).rounded() / 10,
+                                            "new_px_mm": pxPerMm.map { ($0 * 10).rounded() / 10 } ?? -1])
+            }
             let wasDone = dome.isDone
             if let cell, orbitDetail {
                 let ring = cell / CoverageDome.sectors
@@ -1001,7 +1139,6 @@ final class ScanSession: NSObject {
                 if !ringBefore && ringAfter { milestoneTick += 1 }
             }
             // A face's close-up counts once the photo resolves close-up detail.
-            let faceShot = close ? (box.flatMap { CoverageDome.viewFace(cameraToWorld: m, box: $0) } ?? shot.face) : nil
             if let f = faceShot, detail, f < dome.requiredFaces, !dome.isFaceCovered(f) {
                 dome.coverFace(f)
                 milestoneTick += 1
@@ -1029,6 +1166,14 @@ final class ScanSession: NSObject {
             upload?.enqueueStill(id)
         } catch {
             diag.log("still_failed", ["error": error.localizedDescription])
+        }
+    }
+
+    /// A withdrawn still's files (the photo, its record, depth and confidence).
+    private func removeStillFiles(_ id: String) {
+        let dir = storage.stillsDir(record)
+        for name in ["\(id).jpg", "\(id).json", "\(id)_depth.png", "\(id)_conf.png"] {
+            try? FileManager.default.removeItem(at: dir.appending(path: name))
         }
     }
 
@@ -1127,8 +1272,9 @@ final class FrameRecorder {
     var count: Int { keyframes.count }
 
     /// `objectPose`: turning it (Capture/Handheld), the camera relative to the object and the pose quality.
-    func record(_ frame: ARFrame, segment: Int, objectPose: (camera: simd_float4x4, quality: Float)? = nil) {
-        guard inFlight < 2, let depth = DepthCopy.from(frame) else { return }
+    @discardableResult
+    func record(_ frame: ARFrame, segment: Int, objectPose: (camera: simd_float4x4, quality: Float)? = nil) -> Bool {
+        guard inFlight < 2, let depth = DepthCopy.from(frame) else { return false }
         if start == nil { start = frame.timestamp }
         let id = String(format: "kf_%04d", next)
         next += 1
@@ -1170,6 +1316,7 @@ final class FrameRecorder {
                 }
             }
         }
+        return true
     }
 
     func drain() async -> [ScanPackageSchema] {
@@ -1263,4 +1410,4 @@ actor FrameAnalyzer {
 }
 
 /// The generated contract type for a later capture segment.
-typealias Segment_ = RepairOS.Segment
+typealias Segment_ = RepairOS.ScanPackageSegment

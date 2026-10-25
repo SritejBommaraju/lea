@@ -1,0 +1,6 @@
+{
+  "schema": "scan-package",
+  "why": "a flipped segment marked aligned must carry the transform that puts it on segment 0",
+  "base": "scan-package.object-tracked.json",
+  "patch": { "segments": [ { "segment": 1, "reason": "flipped", "object_moved": true, "aligned": true } ] }
+}

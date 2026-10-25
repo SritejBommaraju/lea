@@ -3,8 +3,10 @@ object box, decimated, vertex-coloured from the keyframe JPEGs, in the ARKit wor
 `locate` puts findings in, so a finding's `location.point_m` is a pin on this mesh as it is.
 
 Keyframes of a capture segment whose poses are not in the scan's frame are left out: a flipped segment (the object
-moved) and any segment marked `aligned: false`. Segments marked `continued` (the same, unmoved object, photographed
-later from the report) are fused in, so a continuation re-post rebuilds a fuller mesh.
+moved) that the server has not registered, and any segment marked `aligned: false`. A flipped segment the server
+registered (pipeline/segments.py) is fused in with its poses restated in segment 0's frame. Segments marked
+`continued` (the same, unmoved object, photographed later from the report) are fused in, so a continuation re-post
+rebuilds a fuller mesh.
 
 Output: binary little-endian PLY (float x y z, uchar red green blue per vertex, int triangle lists), which Model I/O
 (MDLAsset) loads directly. Open3D (MIT) does the TSDF and the quadric decimation.
@@ -256,10 +258,41 @@ def points_ply(p: np.ndarray, c: np.ndarray) -> bytes:
         return ply_bytes(p)
 
 
-def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int) -> ScanMesh:
+def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, np.ndarray]
+                         ) -> list[tuple[list[Any], list[np.ndarray], Any, float | None, Mapping[str, Any]]]:
+    """Per object-moved segment the server registered (pipeline/segments.py): its frames with poses moved into
+    segment 0's frame, their object depths (masked in the segment's own world: its box, its own support plane),
+    the box, the plane height and the segment record."""
+    from dataclasses import replace
+
+    from repairos.pipeline.segments import frames_of, moved_segments, own_plane_height, segment_box
+    from repairos.recon.tsdf import moved_pose
+
+    out = []
+    for seg in moved_segments(pkg_local):
+        k = int(seg["segment"])
+        t = transforms.get(k)
+        if t is None:
+            continue
+        frames = frames_of(pkg_local, {k})
+        box, _ = segment_box(pkg_local, seg, t)
+        if not frames or box is None:
+            continue
+        plane = None if (seg.get("pose_source") or pkg_local.get("pose_source")) == "object_tracked" \
+            else own_plane_height(frames, box)
+        depths, _ = object_depths(frames, box, plane)
+        moved = [replace(f, pose=moved_pose(f.pose, t)) for f in frames]
+        out.append((moved, depths, box, plane, seg))
+    return out
+
+
+def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
+                    segment_transforms: Mapping[int, np.ndarray] | None = None) -> ScanMesh:
     """The object's coloured, decimated mesh from a scan package whose file fields are local paths: high-confidence
     LiDAR depth inside the object box and above the support plane, a TSDF at a voxel scaled to the box, the pieces
-    that reach the box's middle. Raises MeshUnavailable."""
+    that reach the box's middle. `segment_transforms` ({segment: 4x4}, pipeline/segments.py): object-moved
+    segments the server registered are fused in too, in segment 0's frame (the flipped bottom). Raises
+    MeshUnavailable."""
     from repairos.importers.fuse import make_fuser
     from repairos.importers.ply import mesh_ply_bytes
     from repairos.recon.tsdf import ObjectBox, frames_from_scan_package
@@ -274,6 +307,9 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int) -> Scan
         raise MeshUnavailable("the scan has no object box")
     box = ObjectBox.from_contract(pkg["crop_box"])
     depths, info = object_depths(frames, box, plane_height(pkg))
+    extra = moved_segment_frames(pkg_local, segment_transforms or {})
+    for moved, mdepths, _, _, _ in extra:
+        frames, depths = frames + moved, depths + mdepths
     t["load_s"] = time.perf_counter() - t0
     t1 = time.perf_counter()
     spacing = voxel_for(box)
@@ -297,6 +333,11 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int) -> Scan
     cloud, cloud_n, size = None, 0, float(np.ptp(v, axis=0).max()) if len(v) else 0.0
     if pkg.get("points_file"):
         cp, cc = object_cloud(pkg["points_file"], box, plane_height(pkg))
+        for moved, _, mbox, mplane, seg in extra:   # the registered bottom's own in-box cloud, carried over
+            if seg.get("points_file") and len(cp):
+                mp, mc = object_cloud(seg["points_file"], mbox, mplane)
+                tr = (segment_transforms or {})[int(seg["segment"])]
+                cp, cc = np.vstack([cp, mp @ tr[:3, :3].T + tr[:3, 3]]), np.vstack([cc, mc])
         if len(cp):
             size = float(np.ptp(cp, axis=0).max())
             cloud_n = len(cp)
@@ -309,4 +350,5 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int) -> Scan
                     cloud_points=cloud_n, hero=hero, hero_reason=why, size_m=round(size, 4),
                     seconds={k: round(x, 3) for k, x in t.items()},
                     method=f"tsdf {spacing * 1000:.1f} mm, plane margin {info['plane_margin_mm']} mm, "
-                           f"{dropped} off-object triangles dropped")
+                           f"{dropped} off-object triangles dropped"
+                           + (f", {len(extra)} flipped segment(s) fused in" if extra else ""))

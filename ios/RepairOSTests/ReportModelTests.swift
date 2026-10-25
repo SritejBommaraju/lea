@@ -92,3 +92,18 @@ struct ReportRebuildTests {
         #expect(m.insufficient.count == 1)
     }
 }
+
+/// The cloud under the pins is the scan's own (segment 0) cloud, never a later unaligned segment's (Greptile, PR #7).
+struct ModelSourceTests {
+    @Test func theModelIsTheScansOwnCloudNotALaterSegments() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "repairos-model-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for n in 1...6 { try Data("ply\n".utf8).write(to: dir.appending(path: "points_segment\(n)_arkit_world.ply")) }
+        try Data("ply\n".utf8).write(to: dir.appending(path: "points_arkit_world.ply"))
+        guard case .pointCloud(let url) = ModelSource.find(in: dir) else { Issue.record("no cloud found"); return }
+        #expect(url.lastPathComponent == "points_arkit_world.ply")
+
+        try FileManager.default.removeItem(at: dir.appending(path: "points_arkit_world.ply"))
+        #expect(ModelSource.find(in: dir).isNone)       // only another frame's clouds: nothing under the pins
+    }
+}

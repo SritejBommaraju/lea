@@ -136,8 +136,9 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
         hyp = await asyncio.to_thread(vlm.story_hypothesis, text, identity)
     except Exception as e:  # noqa: BLE001 - a guess is optional; the row says why (spend cap included)
         status = "limited" if type(e).__name__ == "SpendLimit" else "failed"
+        error = type(e).__name__   # the patch callback may run after this block, when `e` is unbound
         await _patch(ctx.state, session_id, lambda d: {**d, "hypothesis": {
-            "status": status, "error": type(e).__name__, "said_count": len(said), "said_seq": seq}})
+            "status": status, "error": error, "said_count": len(said), "said_seq": seq}})
         return {"stage": "story", "hypothesis": status}
     hyp = {**hyp, "status": "done", "said_count": len(said), "said_seq": seq, "seconds": round(time.monotonic() - t0, 3),
            "at": _now()}

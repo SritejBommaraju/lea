@@ -36,13 +36,19 @@ struct RecreationView: View {
     var focus: String?
     var spin = true
     var onMarkerTap: (String) -> Void = { _ in }
+    /// Called once the recreation is drawn (or could not be): the report stage lands its markers on it.
+    var onLoaded: (() -> Void)?
+    /// Circle to inspect (Report/Stage): turns a circle drawn over the view into a spot on the surface.
+    var probe: StageProbe?
 
     init(source: RecreationSource, markers: [ModelPin], focus: String? = nil, spin: Bool = true,
-         onMarkerTap: @escaping (String) -> Void = { _ in }) {
+         onMarkerTap: @escaping (String) -> Void = { _ in }, onLoaded: (() -> Void)? = nil, probe: StageProbe? = nil) {
         self.source = source
         self.markers = markers
         self.focus = focus
         self.spin = spin
+        self.onLoaded = onLoaded
+        self.probe = probe
         self.onMarkerTap = onMarkerTap
     }
 
@@ -68,7 +74,7 @@ struct RecreationView: View {
         ZStack {
             if let loaded {
                 RecreationHost(loaded: loaded, markers: markers.map(Self.marker), focus: focus, spin: spin && !reduceMotion,
-                               animate: !reduceMotion, active: visible, onMarkerTap: onMarkerTap)
+                               animate: !reduceMotion, active: visible, probe: probe, onMarkerTap: onMarkerTap)
                     .id(loaded.id)
                     .transition(.opacity)
             } else if !failed {
@@ -76,7 +82,7 @@ struct RecreationView: View {
             }
         }
         .onScrollVisibilityChange(threshold: 0.05) { visible = $0 }
-        .task(id: reloadKey) { await load() }
+        .task(id: reloadKey) { await load(); onLoaded?() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("3D recreation of the scanned object with \(markers.count) numbered problems")
     }
@@ -152,6 +158,7 @@ private struct RecreationHost: UIViewRepresentable {
     let spin: Bool
     let animate: Bool
     let active: Bool
+    var probe: StageProbe?
     let onMarkerTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -180,8 +187,11 @@ private struct RecreationHost: UIViewRepresentable {
         view.addGestureRecognizer(touch)
         c.view = view
         c.onMarkerTap = onMarkerTap
+        view.delegate = c.separator   // numbered markers never cover each other on screen (Report/Stage/MarkerLayout)
+        probe?.resolve = { [weak c] center, radius in c?.resolve(center, radius) }
         c.stage.set(loaded.content, focus: loaded.focus)
         c.stage.place(markers, focus: focus)
+        c.keepApart()
         cam.target = SCNVector3(c.stage.focusCenter)
         if spin { c.stage.startSpin(); view.isPlaying = active }
         return view
@@ -192,6 +202,7 @@ private struct RecreationHost: UIViewRepresentable {
         c.onMarkerTap = onMarkerTap
         if c.stage.markers != markers || c.focus != focus {
             c.stage.place(markers, focus: focus)
+            c.keepApart()
         }
         if c.focus != focus {
             c.focus = focus
@@ -211,7 +222,16 @@ private struct RecreationHost: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         let stage = RecreationStage()
+        let separator = MarkerSeparator()
         weak var view: SCNView?
+
+        /// The numbered badges, in rank order, to the separator (the surface dots stay on the true spot).
+        func keepApart() {
+            let badges = stage.markers.filter { $0.number != nil }.sorted { ($0.number ?? 99) < ($1.number ?? 99) }
+            separator.set(badges.compactMap { m in
+                stage.markerRoot.childNodes.first { $0.name == "marker:\(m.id)" }.map { ($0, stage.focusRadius * 0.17) }
+            })
+        }
         var focus: String?
         var onMarkerTap: (String) -> Void = { _ in }
 
@@ -229,6 +249,21 @@ private struct RecreationHost: UIViewRepresentable {
                 guard let self, !self.stage.isSpinning else { return }
                 self.view?.isPlaying = false
             }
+        }
+
+        /// A circle on screen → the spot on the recreation's surface under its centre (scan frame), and the circle's
+        /// radius at that depth. nil when the centre misses the object.
+        func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
+            guard let view else { return nil }
+            let hits = view.hitTest(center, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue,
+                                                      .rootNode: stage.modelNode])
+            guard let hit = hits.first else { return nil }
+            let world = SIMD3<Float>(hit.worldCoordinates)
+            let z = view.projectPoint(hit.worldCoordinates).z
+            let edge = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
+            // The markers' frame is the scan frame (findings' point_m), so the target uses it too.
+            let local = stage.markerRoot.presentation.simdConvertPosition(world, from: nil)
+            return (local, max(0.01, simd_distance(world, edge)))
         }
 
         @objc func tap(_ g: UITapGestureRecognizer) {

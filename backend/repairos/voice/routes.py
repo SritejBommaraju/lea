@@ -298,6 +298,35 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                              "timings_ms": timings})
 
 
+    # ------------------------------------------------------------------ realtime (phone -> Cartesia sockets)
+    @app.post("/v1/voice/token")
+    async def voice_token(request: Request, d: device_dep):
+        """A short-lived Cartesia access token (5 min) for the phone's realtime sockets: Ink-2 turn detection
+        (`wss://api.cartesia.ai/stt/turns/websocket`) and Sonic (`wss://api.cartesia.ai/tts/websocket`). The key
+        never leaves the gateway; every mint is spend-checked (503 `voice_paused` when the guard says no)."""
+        rt = _runtime(request)
+        s = rt.settings
+        try:
+            token = await rt.cartesia().access_token(300, scope=d.get("device_id", ""))
+        except CartesiaError as e:
+            raise _cartesia_failed(e) from None
+        return {"token": token, "expires_in": 300, "version": s.cartesia_version, "voice_id": s.cartesia_voice_id,
+                "tts_model": s.cartesia_tts_model, "stt_model": "ink-2", "speed": s.cartesia_speed,
+                "emotion": s.cartesia_emotion or None, "sample_rate": SAMPLE_RATE, "stt_sample_rate": 16000,
+                "keyterms": ["Lea", "Leah"]}
+
+    @app.post("/v1/voice/stream")
+    async def voice_stream(request: Request, d: device_dep,
+                           kind: Annotated[str, Query(pattern="^(stt|tts)$")] = "stt"):
+        """The phone opens one realtime socket (a listening turn or one spoken answer): counted by the spend guard
+        before it opens (503 `voice_paused` = use the gateway or the phone's own voice instead)."""
+        rt = _runtime(request)
+        if not rt.cartesia_on:
+            raise HTTPException(503, {"error": "voice_unavailable"})
+        from repairos.voice.spend_guard import charge, key_of
+        charge("cartesia", key=key_of("stream", kind, d.get("device_id", ""), time.time()))
+        return {"ok": True}
+
     # ------------------------------------------------------------------ conversation
     @app.get("/v1/voice/conversation")
     async def voice_conversation(request: Request, d: device_dep,

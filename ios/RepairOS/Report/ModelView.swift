@@ -67,12 +67,12 @@ enum ModelSource: Sendable {
     }
 
     /// The session's own files: the gateway's mesh (same frame as `location.point_m`) when it has been fetched, else
-    /// the PLY cloud the locator ray-casts against, else a photogrammetry mesh.
+    /// the PLY cloud the locator ray-casts against (ownCloud), else a photogrammetry mesh.
     static func find(in scanDir: URL) -> ModelSource {
         let fm = FileManager.default
-        let names = (try? fm.contentsOfDirectory(atPath: scanDir.path)) ?? []
+        let names = ((try? fm.contentsOfDirectory(atPath: scanDir.path)) ?? []).sorted()
         if names.contains(backendMeshName) { return .meshPLY(scanDir.appending(path: backendMeshName), crop: cropBox(in: scanDir)) }
-        if let ply = names.sorted().first(where: { $0.hasSuffix(".ply") && !gatewayFiles.contains($0) }) {
+        if let ply = ownCloud(in: names) {
             return .pointCloud(scanDir.appending(path: ply))
         }
         if let mesh = names.first(where: { $0.hasSuffix(".usdz") || $0.hasSuffix(".obj") }) { return .mesh(scanDir.appending(path: mesh)) }
@@ -93,10 +93,19 @@ enum ModelSource: Sendable {
         return ObjectBox(center: SIMD3(c[0], c[1], c[2]), size: SIMD3(e[0], e[1], e[2]), yaw: yaw)
     }
 
+    /// The scan's own PLY cloud (the frame the locator ray-casts against): `points_arkit_world.ply` when present, else
+    /// the first other PLY that is neither a gateway file nor a later segment's own cloud (`points_segmentN_…`, an
+    /// unaligned continuation in another frame, so never the one drawn under the pins). `names` sorted.
+    static func ownCloud(in names: [String]) -> String? {
+        let main = "points_arkit_world.ply"
+        if names.contains(main) { return main }
+        return names.first(where: { $0.hasSuffix(".ply") && !gatewayFiles.contains($0) && !$0.hasPrefix("points_segment") })
+    }
+
     /// The point cloud to fall back to when a mesh cannot be read.
     static func cloudFallback(in scanDir: URL) -> URL? {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: scanDir.path)) ?? []
-        return names.sorted().first(where: { $0.hasSuffix(".ply") && !gatewayFiles.contains($0) }).map { scanDir.appending(path: $0) }
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: scanDir.path)) ?? []).sorted()
+        return ownCloud(in: names).map { scanDir.appending(path: $0) }
     }
 }
 

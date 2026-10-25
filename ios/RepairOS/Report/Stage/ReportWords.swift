@@ -38,7 +38,8 @@ enum ReportWords {
         case .looksGood:
             return r.photosInspected > 0 ? "Nothing looked wrong in \(r.photosInspected) photos" : "Nothing looked wrong"
         case .insufficientEvidence:
-            return r.verdictReason.map(firstSentence).flatMap(\.trimmedOrNil) ?? "Lea couldn't tell from these photos"
+            // Lead with what to do (the next step's title, e.g. "Take a closer photo"); the eyebrow says why.
+            return r.nextStep?.title ?? "Lea needs a closer look"
         case .noProblemsSeen:
             return "No problems seen"
         case .other(let raw):
@@ -67,7 +68,8 @@ enum ReportWords {
                                      : "\(spots(gaps).capitalizedFirst) weren't clear enough to judge, so they aren't counted as fine.")
             }
         case .insufficientEvidence:
-            if let next = r.nextStep { out.append(firstSentence(next.instruction)) }
+            if let next = r.nextStep { out.append(sanitize(firstSentence(next.instruction))) }
+            else if let reason = r.verdictReason { out.append(sanitize(firstSentence(reason))) }
         case .noProblemsSeen:
             // The caveat, as the backend wrote it (one quiet line); else what was left unchecked.
             if let caveat = r.verdictCaveat { out.append(sanitize(caveat)) }

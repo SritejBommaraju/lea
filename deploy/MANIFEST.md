@@ -17,6 +17,7 @@ Fallback: the same three processes on the Mac (gateway :8000 on the LAN), the ph
 | | |
 |---|---|
 | Image | `ghcr.io/sritejbommaraju/lea-backend:demo` (`deploy/runpod/Dockerfile`, linux/amd64, ~4.5 GB compressed; private GHCR package, pulled with a Runpod registry credential) |
+| Image, Route B | no image build: the official `runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404` template runs `deploy/runpod/bootstrap.sh` from the repo (checkout, venv and weights on the volume, then `start.sh`); `runpod/README.md` Route B |
 | Hardware | 1x RTX A5000 24 GB, Secure Cloud, on demand (~$0.28/hr with disks); fallbacks in `runpod/README.md` |
 | Processes | `start.sh` supervises: `[gateway]` uvicorn `repairos.main:app` on :8000; `[worker]` `repairos.pipeline.worker`; `[bridge]` `repairos.live.spacetime_bridge` (only when `SPACETIME_DB` is set). Each restarts on a crash; SIGTERM stops all |
 | Ports | `8000/http` → `https://<pod_id>-8000.proxy.runpod.net` (gateway); `8790/http` → `https://<pod_id>-8790.proxy.runpod.net` (bridge media, HMAC-signed expiring URLs, 403 otherwise) |

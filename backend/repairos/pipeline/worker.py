@@ -10,6 +10,12 @@ Jobs (queued by the gateway, repairos.api.app):
   story    on `POST /v1/sessions/{id}/story`: the person's guess -> a hypothesis and live `lead` events
            (pipeline/story.py; a lead orders the inspection, never makes a finding)
 Every SWEEP_S the worker also closes continuations nobody finished (run.close_abandoned).
+Shutdown (SIGTERM from the pod, SIGINT): no new job is claimed and no new model call starts; running jobs get GRACE_S
+to end; what is still running is cancelled, its still claims are released to pending (their stills queued again) and
+its jobs go back to the queue untried. Startup and every sweep release claims whose worker is gone
+(run.release_claims). Every still claim carries a heartbeat while it is held, in every mode (Context.hold), and every
+claim change (take over, beat, result, release) is a compare-and-set in one transaction, so two workers never both
+own a still and a released claim is never written over.
 One worker runs up to `worker_jobs` (config/pipeline.yaml) jobs at once in one event loop, sharing one Context: one
 detector model, one Claude call pool. A pipeline job is claimed before any other kind, so a finished scan's report
 is not queued behind the next scan's stills.
@@ -27,12 +33,14 @@ import sys
 from typing import Any
 
 from repairos.pipeline.run import (Context, PipelineFailed, close_abandoned, inspect_still_stage, record_capture,
-                                   run_scan)
+                                   release_claims, run_scan)
+from repairos.pipeline.stopping import is_stopping
 from repairos.slots.state import Job
 
 KINDS = ["detect", "ocr", "pipeline", "story"]
 HEARTBEAT_S = 30.0
-SWEEP_S = 30.0   # how often an idle or busy worker closes continuations nobody finished (close_abandoned)
+SWEEP_S = 30.0
+GRACE_S = 20.0   # on SIGTERM / SIGINT: how long running jobs may finish before their claims are released   # how often an idle or busy worker closes continuations nobody finished (close_abandoned)
 log = logging.getLogger("repairos.pipeline.worker")
 
 
@@ -79,6 +87,7 @@ class Worker:
         self.ctx = Context(state=state, blobs=blobs, registry=registry, worker=self.name)
         self.state, self.kinds, self.poll_s = state, kinds or KINDS, poll_s
         self.jobs_at_once = jobs_at_once or self.ctx.config["worker_jobs"]
+        self.active: dict[asyncio.Task, Job] = {}
 
     async def _claim(self) -> Job | None:
         """Pipeline jobs first (a report waiting is worth more than one more still), then the rest in queue order."""
@@ -104,6 +113,10 @@ class Worker:
         try:
             result = await handle(self.ctx, job)
         except Exception as e:
+            if is_stopping(e):   # shutting down: the job goes back to the queue untried, never failed
+                await self.state.release(job.job_id)
+                log.info("job %s (%s) released: the worker is stopping", job.job_id, job.kind)
+                return await self.state.get_job(job.job_id)
             retry = transient(e)
             log.error("job %s (%s) failed%s: %s", job.job_id, job.kind, ", will retry" if retry else "", e)
             await self.state.fail(job.job_id, f"{type(e).__name__}: {e}"[:4000], retry=retry)
@@ -123,7 +136,7 @@ class Worker:
         await self.ctx.settle()   # background side work (identity, mesh) of the jobs run
         return done
 
-    async def run_forever(self, stop: asyncio.Event | None = None) -> None:
+    async def run_forever(self, stop: asyncio.Event | None = None, grace_s: float = GRACE_S) -> None:
         """Up to `jobs_at_once` jobs at a time; an idle worker polls every `poll_s`."""
         stop = stop or asyncio.Event()
         running: set[asyncio.Task] = set()
@@ -133,11 +146,15 @@ class Worker:
             if loop.time() - swept >= SWEEP_S:
                 swept = loop.time()
                 try:
+                    await release_claims(self.ctx)          # claims of workers that are gone (also at startup)
                     await close_abandoned(self.ctx)
                 except Exception as e:  # noqa: BLE001 - the sweep never stops the worker; it is retried next time
-                    log.error("closing abandoned continuations failed: %s", e)
-            while len(running) < self.jobs_at_once and (job := await self._claim()) is not None:
-                running.add(asyncio.create_task(self._run(job)))
+                    log.error("sweep failed: %s", e)
+            while len(running) < self.jobs_at_once and not stop.is_set() and (job := await self._claim()) is not None:
+                task = asyncio.create_task(self._run(job))
+                self.active[task] = job
+                task.add_done_callback(lambda t: self.active.pop(t, None))
+                running.add(task)
             waiters = [asyncio.create_task(stop.wait())]
             try:
                 await asyncio.wait(running | set(waiters), timeout=self.poll_s, return_when=asyncio.FIRST_COMPLETED)
@@ -145,9 +162,32 @@ class Worker:
                 for w in waiters:
                     w.cancel()
             running = {t for t in running if not t.done()}
+        await self.shutdown(running, grace_s)
+
+    async def shutdown(self, running: set[asyncio.Task], grace_s: float = GRACE_S) -> None:
+        """Stop new model work at once (Context.stopping: an inspection thread stops before its next detector or
+        vision-model call), let running jobs end within `grace_s`, then cancel the rest, release this worker's still
+        claims and put its unfinished jobs back in the queue. A thread still in a model call when its claim is
+        released cannot write over the claim afterwards: every still result is owner-checked (finish_still)."""
+        self.ctx.stopping.set()
         if running:
-            await asyncio.gather(*running, return_exceptions=True)
-        await self.ctx.settle()
+            log.info("stopping: %d job(s) running, %.0f s to finish", len(running), grace_s)
+            _, late = await asyncio.wait(running, timeout=grace_s)
+            unfinished = [self.active.get(t) for t in late]
+            for t in late:
+                t.cancel()
+            await asyncio.gather(*late, return_exceptions=True)
+            for job in unfinished:
+                if job is not None:
+                    await self.state.release(job.job_id)
+                    log.info("job %s (%s) back in the queue", job.job_id, job.kind)
+        released = await release_claims(self.ctx, worker=self.name)
+        if released:
+            log.info("released %d still claim(s) on shutdown", len(released))
+        try:   # background side work (identity, mesh) of the jobs run, within the same grace
+            await asyncio.wait_for(self.ctx.settle(), timeout=grace_s)
+        except TimeoutError:
+            log.info("stopping: background side work did not finish in %.0f s; dropped", grace_s)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,11 +209,19 @@ def main(argv: list[str] | None = None) -> int:
         failed = [j for j in jobs if j and j.status == "failed"]
         print(f"{len(jobs)} job(s) run, {len(failed)} failed")
         return 1 if failed else 0
-    try:
-        asyncio.run(w.run_forever())
-    except KeyboardInterrupt:
-        pass
+    asyncio.run(serve(w))
     return 0
+
+
+async def serve(w: Worker, grace_s: float = GRACE_S) -> None:
+    """run_forever until SIGTERM or SIGINT, then a graceful shutdown (Worker.shutdown)."""
+    import signal
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+    await w.run_forever(stop, grace_s)
 
 
 if __name__ == "__main__":

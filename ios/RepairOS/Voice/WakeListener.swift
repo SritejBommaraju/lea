@@ -60,6 +60,13 @@ final class WakeListener {
     @ObservationIgnored private var wokeAt: Date?
     @ObservationIgnored private var heartbeat: Task<Void, Never>?
     @ObservationIgnored private var leaStoppedAt = Date.distantPast
+    @ObservationIgnored private var stream: CartesiaTurns?
+    @ObservationIgnored private var streamOpening: Task<Void, Never>?
+    @ObservationIgnored private var streamWatchdog: Task<Void, Never>?
+    /// Ink-2 has heard words in this turn (it owns the turn from then on).
+    @ObservationIgnored private var streamHeard = false
+    /// How long Ink-2 may stay quiet after opening before Apple takes the turn back.
+    static let streamGrace: TimeInterval = 3.5
     static let echoGuard: TimeInterval = 0.7
     static let endSilence: TimeInterval = 1.1
     static let followUpWindow: TimeInterval = 9
@@ -91,6 +98,7 @@ final class WakeListener {
         leaTalking = on
         if on {
             silenceTimer?.cancel()
+            closeStream()
             if heardAfterWake != nil { heardAfterWake = nil }
         } else {
             leaStoppedAt = Date()
@@ -111,13 +119,114 @@ final class WakeListener {
         guard enabled else { return }
         mode = .followUp
         followUpTimer?.cancel()
-        if continuous { refresh(); return }
-        followUpTimer = Task {
-            try? await Task.sleep(for: .seconds(Self.followUpWindow))
-            guard !Task.isCancelled, mode == .followUp, heardAfterWake == nil else { return }
-            mode = .wake
+        if !continuous {   // continuous hands-free has no window
+            followUpTimer = Task {
+                try? await Task.sleep(for: .seconds(Self.followUpWindow))
+                guard !Task.isCancelled, mode == .followUp, heardAfterWake == nil, !streamHeard else { return }
+                closeStream()
+                mode = .wake
+            }
         }
         refresh()
+        openStream(backfill: 0.3)
+    }
+
+    // MARK: Ink-2 (realtime, after Samik's PR #11)
+
+    /// Where the realtime token comes from (set by LeaVoice.attach): the paired gateway, when there is one.
+    var gateway: () -> GatewayClient? = { nil }
+    /// Ink-2 on Cartesia listens to the person's turn when the gateway has voice; Apple's recognizer is the fallback
+    /// and keeps hearing the wake word. `--no-realtime` turns it off (to compare).
+    var realtimeOn: Bool { LeaVoice.shared.status?.cartesia == true && !CommandLine.arguments.contains("--no-realtime") }
+
+    /// Opens an Ink-2 turn, sending the last `backfill` seconds of audio first (the words said while it connects).
+    private func openStream(backfill: TimeInterval) {
+        guard stream == nil, streamOpening == nil, realtimeOn, micOn, let gateway = gateway() else { return }
+        let opened = Date()
+        streamOpening = Task { [weak self] in
+            async let grant = RealtimeTokens.grant(gateway)
+            async let allowed = gateway.realtimeStream(kind: "stt")
+            let (g, ok) = await (grant, allowed)
+            guard let self else { return }
+            self.streamOpening = nil
+            guard !Task.isCancelled, let g, ok, self.micOn, !self.leaTalking,
+                  self.mode == .followUp || self.heardAfterWake != nil else {
+                if g == nil || !ok { Self.diag.log("realtime_open", ["ok": false, "token": g != nil, "allowed": ok]) }
+                if self.heardAfterWake != nil { self.armSilence() }   // Apple finishes the turn
+                return
+            }
+            let turns = CartesiaTurns(grant: g) { [weak self] e in Task { @MainActor in self?.streamEvent(e) } }
+            self.stream = turns
+            self.streamHeard = false
+            self.mic.pcm.open(backfill: backfill + Date().timeIntervalSince(opened)) { [weak turns] d in turns?.send(d) }
+            Self.diag.log("realtime_open", ["ok": true, "setup_ms": Int(Date().timeIntervalSince(opened) * 1000)])
+            // No words from Ink-2 in time: it is Apple's turn again (and the socket goes).
+            self.streamWatchdog = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.streamGrace))
+                guard let self, !Task.isCancelled, !self.streamHeard else { return }
+                Self.diag.log("realtime_quiet", ["mode": "\(self.mode)"])
+                self.closeStream()
+                if self.heardAfterWake != nil { self.armSilence() }
+            }
+        }
+    }
+
+    private func closeStream() {
+        streamOpening?.cancel()
+        streamOpening = nil
+        streamWatchdog?.cancel()
+        mic.pcm.close()
+        stream?.cancel()
+        stream = nil
+        streamHeard = false
+    }
+
+    private func streamEvent(_ e: CartesiaTurns.Event) {
+        guard stream != nil else { return }
+        switch e {
+        case .start:
+            streamHeard = true
+            followUpTimer?.cancel()
+        case .update(let t):
+            streamHeard = true
+            silenceTimer?.cancel()
+            followUpTimer?.cancel()
+            lastChange = Date()
+            let words = Self.dropWake(t)
+            if !words.isEmpty { caption(words) }
+        case .eagerEnd(let t):
+            LeaConversation.active?.speculate(Self.dropWake(t))
+        case .resume:
+            LeaConversation.active?.cancelSpeculation()
+        case .end(let t):
+            let from = mode == .followUp ? "follow_up" : "wake"
+            let words = Self.dropWake(t)
+            closeStream()
+            heardAfterWake = nil
+            mode = continuous ? .followUp : .wake
+            speechStart = nil
+            mic.restart()
+            Self.diag.log("wake_turn", ["from": from, "engine": "ink2", "words": words.split(separator: " ").count,
+                                        "wake_to_turn_ms": wokeAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1])
+            wokeAt = nil
+            guard !words.isEmpty else { LeaConversation.active?.cancelSpeculation(); return }
+            if let convo = LeaConversation.active { convo.heard(words, engine: "ink2") } else { pendingUtterance = words }
+        case .failed(let why):
+            Self.diag.log("realtime_failed", ["why": why])
+            LeaConversation.active?.cancelSpeculation()
+            closeStream()
+            if heardAfterWake != nil { armSilence() }   // Apple finishes the turn
+        }
+    }
+
+    /// The transcript without a leading "Hey Lea" (kept as the person said it otherwise).
+    static func dropWake(_ t: String) -> String {
+        guard let after = afterWake(t) else { return t.trimmingCharacters(in: .whitespaces) }
+        let words = t.split(separator: " ")
+        for k in 0..<min(words.count, 5) where normalize(words[k...].joined(separator: " ")) == after {
+            return words[k...].joined(separator: " ")
+        }
+        return after
     }
 
     func refresh() {
@@ -164,6 +273,7 @@ final class WakeListener {
         if heardAfterWake != nil { finishTurn() }
         guard micOn else { return }
         Self.diag.log("wake_stop", ["enabled": enabled, "foreground": foreground, "hold": holdToTalk, "capture": capturing])
+        closeStream()
         micOn = false
         mic.stop()
         if mode == .wake { mode = .off }
@@ -179,6 +289,8 @@ final class WakeListener {
             if tail != lastLogged { lastLogged = tail; Self.diag.log("wake_heard", ["tail": tail, "match": Self.afterWake(words) != nil]) }
         }
         if mode == .followUp || heardAfterWake != nil {
+            // Ink-2 owns the turn once it hears words; until then Apple keeps the captions going.
+            if stream != nil, streamHeard { return }
             let after = heardAfterWake == nil ? words : Self.afterWake(words) ?? words
             if after != heardAfterWake { heardAfterWake = after; lastChange = Date(); caption(after) }
             followUpTimer?.cancel()
@@ -202,6 +314,7 @@ final class WakeListener {
         if LeaConversation.active == nil { pendingUtterance = nil; wakes += 1 }
         caption(after)
         armSilence(longer: after.isEmpty)
+        openStream(backfill: 2.0)   // the words after "Hey Lea" go to Ink-2 (with the audio said so far)
     }
 
     private func caption(_ text: String) {
@@ -220,6 +333,10 @@ final class WakeListener {
 
     /// The person stopped talking: their words go to the conversation, and listening starts over.
     private func finishTurn() {
+        // Ink-2 is connecting or listening: its turn.end decides (the watchdog hands back if it stays quiet).
+        if stream != nil || streamOpening != nil {
+            if streamHeard || stream == nil || Date().timeIntervalSince(stream!.openedAt) < Self.streamGrace { return }
+        }
         silenceTimer?.cancel()
         let words = (heardAfterWake ?? "").trimmingCharacters(in: .whitespaces)
         let from = mode == .followUp ? "follow_up" : "wake"
@@ -297,6 +414,8 @@ final class MicTap: @unchecked Sendable {
     private var onText: (@Sendable (String, Bool) -> Void)?
     private var running = false
     private var restartTimer: DispatchWorkItem?
+    /// The same audio as 16 kHz s16le for Ink-2 (with ~2 s kept for the words said while a socket connects).
+    let pcm = PCM16Feed()
     /// For the diag heartbeat: results and errors since the last one, the last error, audio buffers seen.
     private(set) var results = 0, errors = 0, buffers = 0
     private(set) var lastError = ""
@@ -343,6 +462,7 @@ final class MicTap: @unchecked Sendable {
                 }
                 input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buf, _ in
                     self?.request?.append(buf)
+                    self?.pcm.feed(buf)
                     self?.buffers += 1
                 }
                 do { try engine.start() } catch {

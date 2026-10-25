@@ -210,7 +210,7 @@ class Still(BaseModel):
     )
     view_cell: str | None = Field(
         None,
-        description="The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object; in a hand-held scan, pose_source object_tracked, b1s05 is a view of the underside, ring 1-2 below the object's middle, in the object frame). Lets the backend see which sides were photographed.",
+        description='The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object; b1s05 is a view of the underside: in a hand-held scan, pose_source object_tracked, ring 1-2 below the object\'s middle in the object frame; in a flipped segment ("Scan the bottom"), ring and sector around the flipped object). Lets the backend see which sides were photographed.',
         min_length=1,
     )
     pose_source: PoseSource | None = Field(

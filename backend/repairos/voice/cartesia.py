@@ -8,9 +8,13 @@ Endpoints (docs.cartesia.ai, read 2026-10-24):
 - STT: POST /stt, multipart/form-data {file, model, language}; returns {text, language, duration, ...}
   (api-reference/stt/transcribe.md). The file is decoded from its container (wav, m4a, mp3, ...).
 - Auth: `Authorization: Bearer <key>` (or X-Api-Key) plus the required `Cartesia-Version` header.
+- Access tokens: POST /access-token {grants: {stt, tts}, expires_in <= 3600} -> {token}
+  (api-reference/auth/access-token.md). The phone uses one as `access_token` on the realtime WebSockets
+  (/stt/turns/websocket: Ink-2 with turn detection; /tts/websocket: Sonic), so the key itself stays here.
 """
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -71,6 +75,15 @@ class Cartesia:
 
     async def tts(self, text: str, sample_rate: int = SAMPLE_RATE) -> bytes:
         return b"".join([c async for c in self.tts_stream(text, sample_rate)])
+
+    async def access_token(self, seconds: int, scope: str = "") -> str:
+        """A short-lived token for the phone's realtime STT and TTS sockets (spend-checked)."""
+        charge("cartesia", key=key_of("token", scope, int(time.time()) // 30))
+        r = await self._http.post("/access-token", json={"grants": {"stt": True, "tts": True},
+                                                         "expires_in": max(30, min(3600, int(seconds)))})
+        if r.status_code != 200:
+            raise CartesiaError(r.status_code, r.text)
+        return r.json()["token"]
 
     async def stt(self, audio: bytes, filename: str, content_type: str, language: str = "en",
                   scope: str = "") -> Transcript:

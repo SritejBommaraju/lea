@@ -196,3 +196,92 @@ struct DistanceCueVoiceTests {
         #expect(VoiceCues.line(for: "Blurry: hold still") == nil)
     }
 }
+
+/// "You have enough": one progress number from what the backend needs, and the on-phone selection.
+struct ScanProgressTests {
+    /// Covers `n` side sectors (alternating the two lower rings) and `top` top sectors.
+    func dome(side: Int, top: Int, faces: Int = 0, required: Int = 0) -> CoverageDome {
+        var d = CoverageDome()
+        d.requiredFaces = required
+        for s in 0..<side { d.cover((s % 2) * CoverageDome.sectors + s) }
+        for s in 0..<top { d.cover(2 * CoverageDome.sectors + s) }
+        for f in 0..<faces { d.coverFace(f) }
+        return d
+    }
+
+    @Test func largeObjectIsEnoughWithViewsAndMesh() {
+        #expect(ScanProgress.main(dome: dome(side: 0, top: 0), keyframeSectors: 0).value == 0)
+        let half = ScanProgress.main(dome: dome(side: 4, top: 1), keyframeSectors: 4)
+        #expect(half.value > 0.4 && half.value < 0.6 && !half.enough)
+        let full = ScanProgress.main(dome: dome(side: 8, top: 2), keyframeSectors: 9)
+        #expect(full.value >= 1 - 1e-9 && full.enough && full.percent == 100)
+        // Good enough at 85 %: one top view and a sector short still stops.
+        let most = ScanProgress.main(dome: dome(side: 7, top: 2), keyframeSectors: 9)
+        #expect(most.value >= ScanProgress.goodEnough && most.enough)
+        // Repeat views of the same sector add nothing.
+        var same = CoverageDome()
+        same.cover(0); same.cover(CoverageDome.sectors)
+        #expect(same.sideSectors == 1)
+    }
+
+    @Test func smallObjectNeedsEveryFace() {
+        let noFaces = ScanProgress.main(dome: dome(side: 8, top: 2, faces: 4, required: 5), keyframeSectors: 9)
+        #expect(noFaces.value >= ScanProgress.goodEnough && !noFaces.enough)
+        let all = ScanProgress.main(dome: dome(side: 8, top: 2, faces: 5, required: 5), keyframeSectors: 9)
+        #expect(all.enough)
+    }
+
+    @Test func bottomNeedsViewsMeshAndLineUpOrTheWait() {
+        let d = dome(side: 6, top: 0)
+        #expect(!ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: false, elapsed: 10).enough)
+        #expect(ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: true, elapsed: 10).enough)
+        #expect(ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: false, elapsed: ScanProgress.flipAlignWait).enough)
+        #expect(!ScanProgress.flip(dome: dome(side: 3, top: 0), keyframeSectors: 6, linedUp: true, elapsed: 60).enough)
+    }
+
+    @Test func nextNeededIsASideSectorThenTheTop() {
+        let box = ObjectBox(center: SIMD3(0, 0.05, 0), size: SIMD3(0.1, 0.1, 0.1), yaw: 0)
+        let cam = box.center + CoverageDome.direction(1) * 0.3
+        let next = dome(side: 3, top: 0).nearestNeeded(camera: cam, box: box)!
+        #expect(next / CoverageDome.sectors < 2 && next % CoverageDome.sectors >= 3)
+        let top = dome(side: 8, top: 0).nearestNeeded(camera: cam, box: box)!
+        #expect(top / CoverageDome.sectors == 2)
+        #expect(dome(side: 8, top: 2).nearestNeeded(camera: cam, box: box) == nil)
+    }
+
+    @Test func progressCueCarriesTheNumber() {
+        #expect(ScanSession.progressCue(74, "Keep going") == "74% — keep going")
+        #expect(ScanSession.progressCue(40, "Move right") == "40% — move right")
+    }
+}
+
+struct CaptureSelectionTests {
+    func pose(_ p: SIMD3<Float>, yaw: Float = 0) -> simd_float4x4 {
+        var m = simd_float4x4(simd_quatf(angle: yaw, axis: SIMD3(0, 1, 0)))
+        m.columns.3 = SIMD4(p, 1)
+        return m
+    }
+
+    @Test func stillOnlyForANewCellOrAClearlyBetterView() {
+        let best: [Int: CaptureSelection.Best] = [3: .init(id: "a", pxPerMm: 10, sharpness: 100)]
+        #expect(CaptureSelection.worthShooting(cell: 4, predictedPx: 9, best: best))
+        #expect(!CaptureSelection.worthShooting(cell: 3, predictedPx: 11, best: best))
+        #expect(CaptureSelection.worthShooting(cell: 3, predictedPx: 13, best: best))
+        #expect(CaptureSelection.better(pxPerMm: 13, sharpness: 80, than: best[3]!))
+        #expect(CaptureSelection.better(pxPerMm: 10, sharpness: 140, than: best[3]!))
+        #expect(!CaptureSelection.better(pxPerMm: 10.5, sharpness: 110, than: best[3]!))
+    }
+
+    @Test func keyframeOnlyFromANewViewpointAndCapped() {
+        let kept = [pose(.zero)]
+        #expect(CaptureSelection.keyframe(pose: pose(SIMD3(0.02, 0, 0)), kept: kept, cell: 1, cellsWithKeyframes: []) == .near)
+        #expect(CaptureSelection.keyframe(pose: pose(SIMD3(0.08, 0, 0)), kept: kept, cell: 1, cellsWithKeyframes: []) == .keep)
+        // Same spot, turned well away: a new view.
+        #expect(CaptureSelection.keyframe(pose: pose(.zero, yaw: 0.3), kept: kept, cell: 1, cellsWithKeyframes: []) == .keep)
+        let many = (0..<CaptureSelection.keyframeSoftCap).map { pose(SIMD3(Float($0) * 0.1, 0, 0)) }
+        #expect(CaptureSelection.keyframe(pose: pose(SIMD3(0, 1, 0)), kept: many, cell: 2, cellsWithKeyframes: [2]) == .softCap)
+        #expect(CaptureSelection.keyframe(pose: pose(SIMD3(0, 1, 0)), kept: many, cell: 5, cellsWithKeyframes: [2]) == .keep)
+        let full = (0..<CaptureSelection.maxKeyframes).map { pose(SIMD3(Float($0) * 0.1, 0, 0)) }
+        #expect(CaptureSelection.keyframe(pose: pose(SIMD3(0, 2, 0)), kept: full, cell: 9, cellsWithKeyframes: []) == .cap)
+    }
+}

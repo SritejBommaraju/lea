@@ -37,17 +37,20 @@ from typing import Any
 from repairos.config import ROOT
 from repairos.contracts import validate
 from repairos.fusion.state import vlm_part_class
-from repairos.pipeline import locate_iface
+from repairos.pipeline import locate_iface, segments
 from repairos.pipeline.config import load_pipeline_config
+from repairos.pipeline.stopping import WorkerStopping, is_stopping  # noqa: F401 (WorkerStopping re-exported)
 from repairos.report import build_report, honesty_violations, report_id_for, write_summary
 from repairos.sessions.layout import EXT_BY_TYPE, ext_for, map_files
 from repairos.slots.blob import REF_PREFIX
-from repairos.slots.state import AlreadyClaimed, RevConflict
+from repairos.slots.state import AlreadyClaimed, RevConflict, StaleReport
 from repairos.spend import PAUSED, SpendLimit
 
 log = logging.getLogger(__name__)
 
 STILL_WAIT_S = 900.0     # how long a run waits for a still another worker is inspecting
+CLAIM_BEAT_S = 15.0      # a worker refreshes `heartbeat_at` on every still claim it holds this often
+CLAIM_STALE_S = 90.0     # a `running` claim with no heartbeat for this long belongs to a worker that is gone
 POLL_S = 0.5
 OCR_NOT_BUILT = "reading label text needs OCR, which is not built yet (task M8)"
 SKIPPED = "the user skipped this close-up"
@@ -114,6 +117,24 @@ class Context:
         self._background: set[asyncio.Task] = set()
         self._side_gate: asyncio.Semaphore | None = None
         self._prewarmed: dict[str, set] = {}
+        self.held: set[tuple[str, str]] = set()   # (scan_id, still_id) claims this worker holds (beat_claims)
+        self.stopping = threading.Event()   # set on shutdown: inspection threads stop before their next model call
+        self._beater: asyncio.Task | None = None
+
+    def hold(self, scan_id: str, still_id: str) -> None:
+        """Record a claim this worker now holds and make sure its heartbeat runs (in every mode: run_forever,
+        drain / --once, a direct call), for as long as any claim is held."""
+        self.held.add((scan_id, still_id))
+        if self._beater is None or self._beater.done():
+            self._beater = asyncio.get_running_loop().create_task(self._beat_while_held())
+
+    async def _beat_while_held(self) -> None:
+        while self.held:
+            await asyncio.sleep(CLAIM_BEAT_S)
+            try:
+                await beat_claims(self)
+            except Exception as e:  # noqa: BLE001 - a missed beat is retried; the claim goes stale only after many
+                log.error("claim heartbeat failed: %s", e)
 
     def spawn(self, coro: Any) -> asyncio.Task:
         """Run side work (identity, mesh) in the background, one item at a time, never holding a job slot: the
@@ -202,6 +223,8 @@ class Context:
 
             im = image if image is not None else load_still(self.local_file(scan_id, ref))
             det = self.slot("DET")
+            if self.stopping.is_set():
+                raise WorkerStopping("the worker is stopping")
             with self.gpu:
                 dets = det.detect(im)
         except BaseException as e:
@@ -301,6 +324,10 @@ async def record_capture(ctx: Context, scan_id: str) -> dict:
 
 async def _mesh_quietly(ctx: Context, scan_id: str) -> None:
     try:
+        await ensure_segment_alignment(ctx, scan_id)   # a flipped bottom segment joins the mesh once registered
+    except Exception as e:  # noqa: BLE001 - recorded on the row by ensure_segment_alignment; never blocks the mesh
+        log.warning("segment alignment for scan %s: %s", scan_id, e)
+    try:
         await ensure_mesh(ctx, scan_id)
     except Exception as e:  # noqa: BLE001 - ensure_mesh records its own failures; this only guards the task
         log.warning("mesh for scan %s: %s", scan_id, e)
@@ -337,6 +364,8 @@ def regions_for(findings: list[dict], detections: list[dict], whole: str,
     VLM's generic name for what it looked at (detector labels are often wrong, e.g. a damage prompt on an intact
     part); a region no VLM looked at keeps the detector's label from the generic vocabulary, or `unknown_part` when
     that label was a weak match (vision.inspect.region_part_class)."""
+    from repairos.vision.inspect import TILE_REF   # close tiles (vision.inspect): judged by the VLM, no detector box
+
     labels = {d["index"]: d.get("part_class") or d["label"] for d in detections}
     out = {}
     rollups = rollups or {}
@@ -349,9 +378,11 @@ def regions_for(findings: list[dict], detections: list[dict], whole: str,
         idx = _det_index(f["subject"]["ref"])
         if idx is not None and idx not in labels:
             raise PipelineError(f"finding {f['finding_id']} names detection {idx}, which the detector did not return")
-        looked = f["state"] != "not_inspected" and idx is not None
+        tile = f["subject"]["ref"].rpartition("/")[2].startswith(TILE_REF)
+        looked = f["state"] != "not_inspected" and (idx is not None or tile)
         part = (vlm_part_class(f) if looked else None) or (labels[idx] if idx is not None else whole)
-        out[f["finding_id"]] = {"part_class": part, "inspected_by": ["detector", "vlm"] if looked else ["detector"]}
+        out[f["finding_id"]] = {"part_class": part, "inspected_by": (["vlm"] if tile else ["detector", "vlm"])
+                                if looked else ["detector"]}
     return out
 
 
@@ -372,6 +403,7 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict, hints: list[str] | No
                   focus: list[str] | None = None) -> tuple[list[dict], list[dict], str, str, dict, dict]:
     from repairos.vision.crops import load_still
     from repairos.vision.inspect import inspect_still
+    from repairos.vision.scale import PixelScale
 
     detector, judge = ctx.slot("DET"), ctx.slot("VLM")
     t0 = time.perf_counter()
@@ -379,11 +411,13 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict, hints: list[str] | No
     t1 = time.perf_counter()
     dets, cached = ctx.detections_for(scan_id, still["image_file"], im)
     t2 = time.perf_counter()
-    share = ctx.share(scan_id).for_still(still, ctx.depth(scan_id, still))
+    depth = ctx.depth(scan_id, still)
+    share = ctx.share(scan_id).for_still(still, depth)
     crop_dir = ctx.workdir(scan_id) / "crops" / still["still_id"]
     res = inspect_still(im, still_id=still["still_id"], scan_id=scan_id, detector=detector, judge=judge,
                         crop_dir=crop_dir, sharpness=still.get("sharpness"), detections=dets, pool=ctx.vlm_pool,
-                        share=share, max_crops=ctx.config["max_crops_per_still"], hints=hints, focus=focus)
+                        share=share, max_crops=ctx.config["max_crops_per_still"], hints=hints, focus=focus,
+                        stop=ctx.stopping, scale=PixelScale.from_still(still, depth))
     timing = {"load_s": round(t1 - t0, 3), "detect_s": round(t2 - t1, 3), "detections_ready": cached,
               "vlm_s": round(res.timing.get("vlm_s", 0.0), 3), "vlm_calls": int(res.timing.get("vlm_calls", 0)),
               "reused_regions": int(res.timing.get("reused_regions", 0))}
@@ -463,7 +497,36 @@ async def _claim(ctx: Context, scan: dict, still_id: str) -> tuple[str, dict | N
         if e.status == "done":
             return "done", (await _run_row(ctx, scan["scan_id"]))["stills"][still_id]
         return "wait", None
+    ctx.hold(scan["scan_id"], still_id)
     return "mine", None
+
+
+class ClaimLost(PipelineError):
+    """This worker's claim on a still was released or taken over while it inspected: its result is not written."""
+
+
+async def _write_still(ctx: Context, scan: dict, still_id: str, stage: dict) -> None:
+    """The still's result, only while this worker still holds its claim (pipeline.finish_still, one transaction)."""
+    try:
+        await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.finish_still",
+                                   {"still_id": still_id, "worker": ctx.worker, "stage": stage,
+                                    "scan_id": scan["scan_id"], "session_id": scan["session_id"]})
+    except AlreadyClaimed as e:
+        raise ClaimLost(f"still {still_id}: the claim of {ctx.worker} was released or taken over (now {e.status}, "
+                        f"worker {e.worker}); this result is dropped") from None
+    finally:
+        ctx.held.discard((scan["scan_id"], still_id))
+
+
+async def _release_mine(ctx: Context, scan: dict, still_id: str) -> None:
+    """Give this worker's claim on a still back (pending), only if it is still this worker's (owner-checked)."""
+    try:
+        await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.release_still",
+                                   {"still_id": still_id, "worker": ctx.worker})
+    except AlreadyClaimed:
+        pass
+    finally:
+        ctx.held.discard((scan["scan_id"], still_id))
 
 
 async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) -> dict:
@@ -471,11 +534,13 @@ async def _finish(ctx: Context, scan: dict, still: dict, covered: str | None) ->
     try:
         stage = await _inspect_one(ctx, scan, still, covered)
     except Exception as e:
+        if is_stopping(e):   # shutting down: release, never fail (pipeline/stopping.py)
+            await _release_mine(ctx, scan, still_id)
+            raise WorkerStopping(f"still {still_id} released: the worker is stopping") from e
         msg = f"{type(e).__name__}: {e}"
-        await _update(ctx, scan, {"stills": {still_id: {"status": "failed", "error": msg[:2000],
-                                                        "finished_at": _now()}}})
+        await _write_still(ctx, scan, still_id, {"status": "failed", "error": msg[:2000], "finished_at": _now()})
         raise
-    await _update(ctx, scan, {"stills": {still_id: stage}})
+    await _write_still(ctx, scan, still_id, stage)
     try:
         await announce_progress(ctx, scan)
     except Exception as e:  # noqa: BLE001 - a live count is never worth failing an inspection
@@ -747,7 +812,9 @@ async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
     t0 = time.monotonic()
     try:
         local = await asyncio.to_thread(_local_scan, ctx, scan)
-        m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"])
+        seg_rec = await _segment_record(ctx, scan_id, rev)
+        m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"],
+                                    segment_transforms=segments.aligned_transforms(seg_rec))
     except Exception as e:  # noqa: BLE001 - the 3D view never fails the capture or the report; the row says why
         unavailable = isinstance(e, MeshUnavailable)
         if not unavailable:
@@ -770,7 +837,50 @@ async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
     return rec
 
 
+async def _segment_record(ctx: Context, scan_id: str, rev: int) -> dict | None:
+    """The run row's `segments` record for this scan-package revision (None when not computed for it)."""
+    rec = (await _run_row(ctx, scan_id) or {}).get("segments") or {}
+    return rec if rec.get("scan_rev") == rev else None
+
+
+async def ensure_segment_alignment(ctx: Context, scan_id: str) -> dict:
+    """Register every object-moved segment (the flipped bottom) to segment 0 (pipeline/segments.py), once per
+    scan-package revision: the run row's `segments` record (per segment: aligned, fitness, rmse_mm, transform),
+    and a merged cloud blob (`cloud_ref`) that locate ray-casts. A scan with no moved segment records
+    status none. Runs before the mesh and before locate; bounded by segments.TIME_BUDGET_S."""
+    async with ctx.scan_lock(f"segments:{scan_id}"):
+        row = await ctx.state.get("scan-package", scan_id)
+        if row is None:
+            raise PipelineError(f"no scan-package {scan_id}")
+        scan, rev = row.data, row.rev
+        have = await _segment_record(ctx, scan_id, rev)
+        if have is not None:
+            return have
+        if not segments.moved_segments(scan):
+            rec = {"status": "none", "scan_rev": rev, "segments": []}
+            await _update(ctx, scan, {"segments": rec})
+            return rec
+        t0 = time.monotonic()
+        try:
+            local = await asyncio.to_thread(_local_scan, ctx, scan)
+            rec, clouds = await asyncio.to_thread(segments.align_scan_segments, local)
+            merged = await asyncio.to_thread(segments.merged_cloud_ply, local.get("points_file"), clouds)
+            if merged:
+                rec["cloud_ref"] = await asyncio.to_thread(ctx.blobs.put, merged, "application/x-ply")
+        except Exception as e:  # noqa: BLE001 - never fails the scan: its findings stay unplaced, the row says why
+            log.warning("segment alignment for scan %s failed: %s", scan_id, e)
+            reason = f"aligning the flipped segment failed ({type(e).__name__}: {e})"[:500]
+            rec = {"status": "failed", "segments": [
+                {"segment": int(sg["segment"]), "reason": sg.get("reason"), "object_moved": True, "aligned": False,
+                 "fitness": None, "rmse_mm": None, "why_not": reason} for sg in segments.moved_segments(scan)]}
+        rec.update(scan_rev=rev, with_io_s=round(time.monotonic() - t0, 3), finished_at=_now())
+        await _update(ctx, scan, {"segments": rec})
+        return rec
+
+
 async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
+    """Wait for a still another job is inspecting. A claim whose worker is gone (claim_is_stale) is taken over and
+    inspected here, so a restart never leaves a run waiting out STILL_WAIT_S on a dead claim."""
     deadline = time.monotonic() + STILL_WAIT_S
     while time.monotonic() < deadline:
         st = ((await _run_row(ctx, scan["scan_id"])) or {}).get("stills", {}).get(still_id, {})
@@ -778,6 +888,22 @@ async def _wait_for_still(ctx: Context, scan: dict, still_id: str) -> dict:
             return st
         if st.get("status") == "failed":
             raise PipelineError(f"still {still_id} failed on worker {st.get('worker')}: {st.get('error')}")
+        if not st or claim_is_stale(st, datetime.now(UTC)):
+            row = await ctx.state.get("still", still_id)
+            if row is not None:
+                take = {"still_id": still_id, "worker": ctx.worker, "at": _now(), "scan_id": scan["scan_id"],
+                        "session_id": scan["session_id"]}
+                if st:   # take over exactly the stale claim seen; if anyone changed it since, keep waiting
+                    take["expect"] = {k: st.get(k) for k in ("worker", "started_at", "heartbeat_at")}
+                try:
+                    await ctx.state.transition("pipeline-run", run_id_for(scan["scan_id"]), "pipeline.claim_still",
+                                               take)
+                except AlreadyClaimed:
+                    await asyncio.sleep(POLL_S)
+                    continue
+                ctx.hold(scan["scan_id"], still_id)
+                log.info("still %s: took over a claim of %s, which is gone", still_id, st.get("worker"))
+                return await _finish(ctx, scan, row.data, None)
         await asyncio.sleep(POLL_S)
     raise PipelineError(f"still {still_id} is still being inspected by another worker after {STILL_WAIT_S:.0f} s")
 
@@ -853,6 +979,12 @@ async def _inspect_all(ctx: Context, scan: dict, stills: list[dict]) -> dict[str
             return sid, await inspect_still_stage(ctx, sid)   # labels, skipped, and stills claimed during the scan
 
     results = await asyncio.gather(*(one(sid) for sid in mine + others), return_exceptions=True)
+    stopped = [r for r in results if isinstance(r, BaseException) and is_stopping(r)]
+    if stopped:   # shutting down: the run is not failed; its job goes back to the queue
+        for sid in mine:
+            if (scan["scan_id"], sid) in ctx.held:
+                await _release_mine(ctx, scan, sid)
+        raise WorkerStopping(f"scan {scan['scan_id']}: inspection stopped, the worker is stopping") from stopped[0]
     for sid, r in zip(mine + others, results):
         if isinstance(r, BaseException):
             raise await _fail(ctx, scan, "inspect", r, sid) from r
@@ -904,11 +1036,12 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
                                                   "next_action_id": result.next_action["action_id"],
                                                   "seconds": round(time.monotonic() - t0, 3)}}})
 
-    # locate
+    # locate (after the flipped segments are registered: their stills are restated in segment 0's frame)
     t0 = time.monotonic()
     try:
         regions = {fid: info for st in stages.values() for fid, info in (st.get("regions") or {}).items()}
-        locations, locate_words = await locate_findings(ctx, scan, stills, findings, regions)
+        seg_rec = await ensure_segment_alignment(ctx, scan_id)
+        locations, locate_words = await locate_findings(ctx, scan, stills, findings, regions, seg_rec)
     except Exception as e:
         raise await _fail(ctx, scan, "locate", e) from e
     computed = sum(1 for v in locations.values() if v["status"] == "computed")
@@ -938,7 +1071,9 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
                              next_action=result.next_action, regions=regions, locations=locations, models=models,
                              explains={k: band(j.explains) for k, j in result.judgments.items()},
                              previous=before.data if before else None,
-                             identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"))
+                             identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"),
+                             segments=segments.report_segments(scan, seg_rec,
+                                                               findings_by_segment(stills, findings, locations)))
         from repairos.pipeline.story import STORY_KIND
         from repairos.references.leads import user_lead
 
@@ -962,7 +1097,16 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
         problems = honesty_violations(draft, findings)
         if problems:
             raise PipelineError("honesty check failed: " + "; ".join(problems))
-        published = await ctx.state.transition("report", draft["report_id"], "report.publish", draft)
+        try:
+            published = await ctx.state.transition("report", draft["report_id"], "report.publish", draft)
+        except StaleReport as e:
+            # A run with more stills published first (two /complete calls ran at once): its report and its run
+            # record stand. This run writes nothing more, not even a stage, and returns the report that stands.
+            log.info("scan %s: %s", scan_id, e)
+            if fix_task is not None:
+                fix_task.cancel()
+            current = await ctx.state.get("report", draft["report_id"])
+            return current.data if current else draft
     except Exception as e:
         raise await _fail(ctx, scan, "report", e) from e
     await _update(ctx, scan, {"status": "done", "report_id": draft["report_id"], "finished_at": _now(),
@@ -1028,13 +1172,38 @@ async def attach_fix(ctx: Context, scan: dict, published: Any, task: asyncio.Tas
     return parts.payload(scan["scan_id"], fix)
 
 
-NOT_ALIGNED = ("this photo's capture segment could not be aligned with the scan (ARKit relocalisation failed), so it "
-               "is not placed on the scan")
+NOT_ALIGNED = ("this photo's capture segment is not lined up with the scan (the object was flipped for its underside, "
+               "or ARKit relocalisation failed), so it is not placed on the scan")
 
 
-def unaligned_segments(scan: dict) -> set[int]:
-    """Capture segments the scan package marks `aligned: false`: their photos' poses are not in the scan's frame."""
-    return {int(sg["segment"]) for sg in scan.get("segments") or [] if sg.get("aligned") is False}
+def unaligned_segments(scan: dict, seg_rec: dict | None = None) -> set[int]:
+    """Capture segments whose photos' poses are not in the scan's frame: marked `aligned: false`, or `object_moved`
+    (a flipped mini-scan of the bottom, in its own frame) and not registered by the server (`seg_rec`, the run row's
+    `segments` record: pipeline/segments.py). Their findings are inspected and listed but not placed on the model.
+    The phone's own `transform_to_segment0` is never used unverified."""
+    return segments.unplaced_segments(scan, seg_rec)
+
+
+def not_aligned_reason(scan: dict, seg_rec: dict | None, segment: int) -> str:
+    seg = next((s for s in scan.get("segments") or [] if int(s["segment"]) == segment), {})
+    if not segments.is_moved(seg):
+        return NOT_ALIGNED
+    r = next((x for x in (seg_rec or {}).get("segments") or [] if int(x["segment"]) == segment), {})
+    why = r.get("why_not") or "it has not been registered to the main scan yet"
+    return (f"this photo is from the flipped scan of the bottom, which could not be lined up with the main scan "
+            f"({why}), so it is not placed on the model")
+
+
+def findings_by_segment(stills: list[dict], findings: list[dict], locations: dict[str, dict]) -> dict[int, list[str]]:
+    """{segment >= 1: finding ids from its photos that got no 3D point}, for the report's capture.segments."""
+    seg_of = {s["still_id"]: int(s.get("segment") or 0) for s in stills}
+    out: dict[int, list[str]] = {}
+    for f in findings:
+        sid = ((f.get("evidence_refs") or {}).get("still_ids") or [None])[0]
+        k = seg_of.get(sid, 0)
+        if k and (locations.get(f["finding_id"]) or {}).get("status") != "computed":
+            out.setdefault(k, []).append(f["finding_id"])
+    return out
 
 
 def _local_scan(ctx: Context, scan: dict) -> dict:
@@ -1047,7 +1216,7 @@ def _local_scan(ctx: Context, scan: dict) -> dict:
 
 
 async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings: list[dict],
-                          regions: dict[str, dict]) -> tuple[dict[str, dict], str]:
+                          regions: dict[str, dict], seg_rec: dict | None = None) -> tuple[dict[str, dict], str]:
     """finding_id -> report location for every finding, and the locator's provenance words. A LiDAR scan
     (depth_source lidar, also when absent) ray-casts each box with try_locate; a no-LiDAR scan triangulates across
     stills of the same target (locate_iface.triangulation_views); otherwise the reason is recorded."""
@@ -1061,13 +1230,16 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
     still_local: dict[str, dict] = {}
     part_class = {fid: r["part_class"] for fid, r in regions.items()}
 
+    moved_to0 = segments.aligned_transforms(seg_rec)   # flipped segments the server registered
+
     def local_still(sid: str) -> dict:
         if sid not in still_local:
-            still_local[sid] = map_files("still", by_still[sid],
-                                         lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
+            st = map_files("still", by_still[sid], lambda v, _b: str(ctx.local_file(scan["scan_id"], v)))
+            k = int(st.get("segment") or 0)
+            still_local[sid] = segments.restate_still(st, moved_to0[k]) if k in moved_to0 else st
         return still_local[sid]
 
-    unaligned = unaligned_segments(scan)
+    unaligned = unaligned_segments(scan, seg_rec)
     for f in findings:
         refs = f.get("evidence_refs") or {}
         sid = (refs.get("still_ids") or [None])[0]
@@ -1075,7 +1247,8 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
         if locator is None:
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NOT_INSTALLED)
         elif sid in by_still and int(by_still[sid].get("segment") or 0) in unaligned:
-            out[f["finding_id"]] = locate_iface.not_computed(NOT_ALIGNED)
+            out[f["finding_id"]] = locate_iface.not_computed(
+                not_aligned_reason(scan, seg_rec, int(by_still[sid].get("segment") or 0)))
         elif not sid or sid not in by_still or not box:
             out[f["finding_id"]] = locate_iface.not_computed(locate_iface.NO_BOX)
         elif "camera" not in by_still[sid]:
@@ -1083,6 +1256,8 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
         elif lidar:
             if scan_local is None:
                 scan_local = await asyncio.to_thread(_local_scan, ctx, scan)
+                if (seg_rec or {}).get("cloud_ref"):   # segment 0's cloud plus the registered bottom's
+                    scan_local["points_file"] = str(ctx.local_file(scan["scan_id"], seg_rec["cloud_ref"]))
             out[f["finding_id"]] = await asyncio.to_thread(locator.locate, scan_local, local_still(sid), tuple(box))
         else:
             views = locate_iface.triangulation_views(f, findings, by_still, part_class)
@@ -1098,6 +1273,86 @@ WORKER_GONE = "the worker inspecting it stopped before it finished; it is inspec
 
 def _age_s(stamp: str, now: datetime) -> float:
     return (now - datetime.fromisoformat(stamp.replace("Z", "+00:00"))).total_seconds()
+
+
+# ------------------------------------------------------------------------------------- claim liveness (restarts)
+def worker_alive(name: str | None) -> bool | None:
+    """Whether the worker that holds a claim still runs: a worker name `host:pid` on this host is checked with its
+    pid (True / False); a worker elsewhere is unknown (None; its heartbeat decides)."""
+    import socket
+
+    host, _, pid = (name or "").rpartition(":")
+    if not pid.isdigit() or host != socket.gethostname():
+        return None
+    try:
+        os.kill(int(pid), 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def claim_is_stale(st: dict, now: datetime, me: str | None = None) -> bool:
+    """A `running` still claim whose worker is gone: its process on this host has exited, or it has had no
+    heartbeat (or start, before its first beat) for CLAIM_STALE_S. A claim of `me` (this worker) is never stale."""
+    if st.get("status") != "running" or (me and st.get("worker") == me):
+        return False
+    if worker_alive(st.get("worker")) is False:
+        return True
+    stamp = st.get("heartbeat_at") or st.get("started_at")
+    return stamp is None or _age_s(stamp, now) > CLAIM_STALE_S
+
+
+async def beat_claims(ctx: Context) -> int:
+    """Refresh `heartbeat_at` on every still claim this worker holds (Context.hold runs it every CLAIM_BEAT_S while
+    any claim is held, in every mode). Each beat is owner-checked in one transaction (pipeline.beat_still)."""
+    n = 0
+    for scan_id, still_id in list(ctx.held):
+        try:
+            await ctx.state.transition("pipeline-run", run_id_for(scan_id), "pipeline.beat_still",
+                                       {"still_id": still_id, "worker": ctx.worker, "at": _now()})
+        except AlreadyClaimed:   # finished, released or taken over: not ours to beat any more
+            ctx.held.discard((scan_id, still_id))
+            continue
+        n += 1
+    return n
+
+
+async def release_claims(ctx: Context, *, worker: str | None = None, now: datetime | None = None
+                         ) -> list[tuple[str, str]]:
+    """Release `running` still claims back to pending and queue their stills again: the claims of `worker` (this
+    worker shutting down), or, with no `worker`, every stale claim (claim_is_stale: its worker is gone; a worker
+    starting up, and every sweep). A live claim of another worker is never touched. Returns (scan_id, still_id)."""
+    import hashlib
+
+    from repairos.slots.state import Job
+
+    now = now or datetime.now(UTC)
+    out = []
+    for row in await ctx.state.list("pipeline-run"):
+        run = row.data
+        for sid, st in (run.get("stills") or {}).items():
+            mine = worker is not None and st.get("status") == "running" and st.get("worker") == worker
+            if not (mine or (worker is None and claim_is_stale(st, now, me=ctx.worker))):
+                continue
+            try:   # only the claim exactly as seen: a claim that was beaten, finished or taken since is left alone
+                await ctx.state.transition("pipeline-run", row.id, "pipeline.release_still", {
+                    "still_id": sid, "expect": {k: st.get(k) for k in ("worker", "started_at", "heartbeat_at")}})
+            except AlreadyClaimed:
+                continue
+            ctx.held.discard((run["scan_id"], sid))
+            still = await ctx.state.get("still", sid)
+            if still is not None:
+                kind = "ocr" if still.data.get("kind") == "label" else "detect"
+                key = f"still:{sid}:released:{now.timestamp():.0f}"
+                job_id = f"job_{kind}_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+                await ctx.state.enqueue(Job(kind=kind, job_id=job_id, session_id=run["session_id"],
+                                            scan_id=run["scan_id"], inputs={"kind": "still", "id": sid}))
+            log.info("released the claim of %s on still %s (%s)", st.get("worker"), sid,
+                     "shutting down" if mine else "its worker is gone")
+            out.append((run["scan_id"], sid))
+    return out
 
 
 async def close_abandoned(ctx: Context, now: datetime | None = None) -> list[str]:

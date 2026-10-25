@@ -14,9 +14,11 @@ extension ScanSession {
     }
 }
 
-/// The scan screen's "Turn it" choice: before Scan, a toggle (default off: walk around); while scanning a small
+/// The scan screen's "Turn it" choice (developer flag `--turn-it`): before Scan, a toggle; while scanning a small
 /// object from one spot, a one-tap suggestion. Plain words, the capture flow's own chip look.
 struct HandheldModeChip: View {
+    /// Developer flag only (`--turn-it`): in-hand turning is not the product flow ("Scan the bottom" is).
+    static let enabled = CommandLine.arguments.contains("--turn-it")
     @Bindable var scan: ScanSession
     @Binding var wanted: Bool
     @State private var suggest = false
@@ -24,7 +26,7 @@ struct HandheldModeChip: View {
 
     var body: some View {
         Group {
-            if scan.handheld != nil || scan.continuing {
+            if !Self.enabled || scan.handheld != nil || scan.continuing {
                 EmptyView()   // a continuation lives in the first visit's world frame: walk-around only
             } else if scan.stage == .ready || scan.stage == .locking {
                 chip(wanted ? "Turning it in your hand" : "Turn it in your hand", symbol: wanted ? "checkmark" : "rotate.3d") {
@@ -97,5 +99,8 @@ enum HandheldCues {
         "Hold it still for a moment": ("hand.raised.fill", .caution),
         "Now flip it over": ("arrow.up.arrow.down", .guide),
         "Set it down and point at it": ("viewfinder", .guide),
+        FlipSegmentController.prompt: ("arrow.up.arrow.down", .guide),
+        FlipSegmentController.linedUp: ("checkmark", .good),
+        "Keep going around the bottom": ("figure.walk", .guide),
     ]
 }

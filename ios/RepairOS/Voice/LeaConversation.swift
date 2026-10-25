@@ -59,6 +59,12 @@ final class LeaConversation {
     @ObservationIgnored private let recorder = VoiceRecorder()
     @ObservationIgnored private var loaded = false
     @ObservationIgnored private var firstAudioMs: Int?
+    @ObservationIgnored private var current: TurnState?
+    /// An answer started early on Ink-2's eager end: held until confirmed.
+    @ObservationIgnored private var holding = false
+    @ObservationIgnored private var heldEvents: [ConverseEvent] = []
+    @ObservationIgnored private var speculativeText: String?
+    @ObservationIgnored private var speculativeTurn: UUID?
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?) {
         self.scanID = scanID
@@ -115,12 +121,22 @@ final class LeaConversation {
 
     // MARK: Words the phone heard (Hey Lea, hands-free)
 
-    func heard(_ text: String) {
+    /// The person's turn is over (Apple's recognizer after a pause, or Ink-2's `turn.end`). If an answer was already
+    /// started on Ink-2's `turn.eager_end` for the same words, it is released now instead of asked again.
+    func heard(_ text: String, engine: String = "apple") {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         liveCaption = ""
+        if speculativeText != nil, action != nil, acceptOffer != nil, Self.isYes(words) { cancelSpeculation() }
+        if let spec = speculativeText {
+            if Self.same(spec, words) {
+                confirmSpeculation(final: words)
+                return
+            }
+            cancelSpeculation()
+        }
         guard !words.isEmpty else { return }
         if accept(words) { return }
-        send(audio: nil, text: words, since: Date())
+        send(audio: nil, text: words, since: Date(), input: engine)
     }
 
     /// "Yes" to an offer on screen takes it, without another round trip. True when it did.
@@ -140,6 +156,43 @@ final class LeaConversation {
         return w.range(of: "^\(yes)( \(yes))*( please| lea| leah| thanks)?$", options: .regularExpression) != nil
     }
 
+    /// Ink-2 thinks the person may be done: start the answer now, but hold it (nothing is shown or played) until
+    /// `turn.end` confirms the same words, or drop it on `turn.resume`.
+    func speculate(_ text: String) {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty, speculativeText == nil, phase != .speaking else { return }
+        if action != nil, acceptOffer != nil, Self.isYes(words) { return }   // heard() takes the offer
+        speculativeText = words
+        send(audio: nil, text: words, since: Date(), input: "ink2_eager", hold: true)
+    }
+
+    func cancelSpeculation() {
+        guard speculativeText != nil else { return }
+        speculativeText = nil
+        holding = false
+        heldEvents = []
+        task?.cancel()
+        LeaVoice.shared.stop()
+        if let id = speculativeTurn { turns.removeAll { $0.id == id } }
+        speculativeTurn = nil
+        phase = .listening
+    }
+
+    private func confirmSpeculation(final words: String) {
+        speculativeText = nil
+        if let id = speculativeTurn, let i = turns.firstIndex(where: { $0.id == id }) { turns[i].text = words }
+        speculativeTurn = nil
+        postStory(words)
+        current?.start = Date()   // latency counts from the end of the person's turn
+        current?.confirmedEarly = true
+        holding = false
+        let replay = heldEvents
+        heldEvents = []
+        if let st = current { for e in replay { apply(e, st) } }
+    }
+
+    static func same(_ a: String, _ b: String) -> Bool { WakeListener.normalize(a) == WakeListener.normalize(b) }
+
     /// Lea says something on her own (what the object is, once the backend works it out).
     func leaSays(_ text: String) {
         turns.append(Turn(mine: false, text: text))
@@ -152,7 +205,7 @@ final class LeaConversation {
     }
 
     func showLive(_ caption: String) {
-        stopLea()   // the person is talking: Lea stops at once
+        if speculativeText == nil { stopLea() }   // the person is talking: Lea stops at once
         liveCaption = caption
         phase = .listening
     }
@@ -166,68 +219,145 @@ final class LeaConversation {
 
     // MARK: One turn
 
-    private func send(audio: Data?, text: String?, since start: Date) {
+    /// Per-turn bookkeeping (kept outside the stream loop so a held answer can be replayed on confirmation).
+    @MainActor private final class TurnState {
+        var start: Date
+        /// Gateway-audio path: a sentence whose cloud audio never started is said by the phone (Greptile, PR #13).
+        var fallback = StreamFallback()
+        let id: Int
+        let input: String
+        let recorded: Bool
+        var answerIndex: Int?
+        var answerText = ""
+        var firstSentence: Int?
+        var confirmedEarly = false
+        /// The offer on screen when the turn began ("Start a scan"): a recorded yes takes it.
+        var offered: String?
+        /// Sonic's socket for this answer (nil: the gateway streams the audio, or the phone's voice).
+        var sonic: SonicSocket?
+        var sonicFailed = false
+        var sonicFinished = false
+        init(start: Date, id: Int, input: String, recorded: Bool) {
+            self.start = start; self.id = id; self.input = input; self.recorded = recorded
+        }
+    }
+
+    private func send(audio: Data?, text: String?, since start: Date, input: String = "apple", hold: Bool = false) {
         task?.cancel()
         let offered = action?.kind
         action = nil
         phase = .thinking
-        if let text { turns.append(Turn(mine: true, text: text)); postStory(text) }
-        let speech = LeaVoice.shared.status?.cartesia == true && !LeaVoice.shared.muted
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: speech, live: live(),
-                                      sessionID: sessionID())
+        holding = hold
+        heldEvents = []
+        if let text {
+            let turn = Turn(mine: true, text: text)
+            turns.append(turn)
+            if hold { speculativeTurn = turn.id } else { postStory(text) }
+        }
+        let voiceOn = LeaVoice.shared.status?.cartesia == true && !LeaVoice.shared.muted
+        // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
+        // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
+        let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
+        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil,
+                                      live: live(), sessionID: sessionID())
         let voice = LeaVoice.shared
-        let id = voice.beginStream()
+        let st = TurnState(start: start, id: voice.beginStream(), input: audio == nil ? input : "recording",
+                           recorded: audio != nil)
+        current = st
+        st.offered = offered
         firstAudioMs = nil
-        var firstSentence: Int?
+        if let grant { openSonic(grant, st) }
         task = Task {
-            var answer = Turn(mine: false, text: "")
-            var answerIndex: Int?
-            var unvoiced: String?   // marked for Cartesia, no audio yet: the phone says it if Cartesia gives up
+            defer { st.sonic?.cancel() }
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
-                    switch event {
-                    case .transcript(let t):
-                        // Held to talk and said yes to the offer: take it (the gateway's answer is dropped).
-                        if audio != nil, offered != nil, accept(t, offered: offered) {
-                            voice.endStreamNow(id)
-                            return
-                        }
-                        if audio != nil, !t.isEmpty { turns.append(Turn(mine: true, text: t)); postStory(t) }
-                    case .sentence(let s, let withAudio):
-                        firstSentence = firstSentence ?? Self.ms(since: start)
-                        answer.text = answer.text.isEmpty ? s : answer.text + " " + s
-                        if let i = answerIndex { turns[i] = answer } else { turns.append(answer); answerIndex = turns.count - 1 }
-                        phase = .speaking
-                        if !withAudio { voice.queueOnDevice(s, stream: id) }
-                        unvoiced = withAudio ? s : nil
-                    case .audio(let pcm):
-                        unvoiced = nil
-                        voice.appendStream(pcm, stream: id) { [weak self] in
-                            let ms = Self.ms(since: start)
-                            Task { @MainActor in if self?.firstAudioMs == nil { self?.firstAudioMs = ms } }
-                        }
-                    case .audioOff:
-                        // Cartesia refused this sentence before any audio; the rest come with audio: false.
-                        if let s = unvoiced { voice.queueOnDevice(s, stream: id) }
-                        unvoiced = nil
-                    case .action(let kind, let label):
-                        action = (kind, label)
-                    case .done(_, let timings):
-                        diag?.log("voice_turn", ["input": audio == nil ? "phone_words" : "recording",
-                                                 "end_to_first_sentence_ms": firstSentence ?? -1,
-                                                 "end_to_first_audio_ms": firstAudioMs ?? -1, "server_ms": timings])
-                    }
+                    if holding { heldEvents.append(event); continue }
+                    apply(event, st)
                 }
-                await voice.endStream(id)
+                while holding, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(30)) }
+                if Task.isCancelled { return }
+                // Sonic may still be sending the last sentence's audio.
+                let waitUntil = Date().addingTimeInterval(10)
+                while st.sonic != nil, !st.sonicFinished, !st.sonicFailed, Date() < waitUntil, !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(40))
+                }
+                await voice.endStream(st.id)
                 if !Task.isCancelled {
                     phase = .idle
                     afterTurn?()
                     if handsFree, phase == .idle { WakeListener.shared.listenForFollowUp() }
                 }
             } catch {
-                voice.endStreamNow(id)
+                if Task.isCancelled { return }
+                voice.endStreamNow(st.id)
                 phase = .failed(AskLeaBar.message(error))
+            }
+        }
+    }
+
+    private func apply(_ event: ConverseEvent, _ st: TurnState) {
+        let voice = LeaVoice.shared
+        switch event {
+        case .transcript(let t):
+            // Held to talk and said yes to the offer: take it, and drop the gateway's answer.
+            if st.recorded, st.offered != nil, accept(t, offered: st.offered) {
+                task?.cancel()
+                voice.endStreamNow(st.id)
+                return
+            }
+            if st.recorded, !t.isEmpty { turns.append(Turn(mine: true, text: t)); postStory(t) }
+        case .sentence(let s, let withAudio):
+            st.firstSentence = st.firstSentence ?? Self.ms(since: st.start)
+            st.answerText = st.answerText.isEmpty ? s : st.answerText + " " + s
+            let answer = Turn(mine: false, text: st.answerText)
+            if let i = st.answerIndex, i < turns.count { turns[i].text = st.answerText } else { turns.append(answer); st.answerIndex = turns.count - 1 }
+            phase = .speaking
+            if let sonic = st.sonic, !st.sonicFailed { sonic.say(s + " ", more: true) }
+            else if let say = st.fallback.sentence(s, withAudio: withAudio) { voice.queueOnDevice(say, stream: st.id) }
+        case .audio(let pcm):
+            st.fallback.audio()
+            let start = st.start
+            voice.appendStream(pcm, stream: st.id) { [weak self] in
+                let ms = Self.ms(since: start)
+                Task { @MainActor in if self?.firstAudioMs == nil { self?.firstAudioMs = ms } }
+            }
+        case .audioOff:   // Cartesia stopped before this sentence's audio (gateway path): the phone says it
+            if st.sonic == nil || st.sonicFailed, let say = st.fallback.audioOff() { voice.queueOnDevice(say, stream: st.id) }
+        case .action(let kind, let label):
+            action = (kind, label)
+        case .done(_, let timings):
+            if let sonic = st.sonic, !st.sonicFailed { sonic.say("", more: false) }
+            diag?.log("voice_turn", ["input": st.input, "eager_start": st.confirmedEarly,
+                                     "voice": st.sonic == nil ? "gateway" : (st.sonicFailed ? "sonic_failed" : "sonic_ws"),
+                                     "end_to_first_sentence_ms": st.firstSentence ?? -1,
+                                     "end_to_first_audio_ms": firstAudioMs ?? -1, "server_ms": timings])
+        }
+    }
+
+    /// Sonic's socket for one answer: audio straight into playback; if it fails, the rest is the phone's voice; the
+    /// gateway's spend guard counts it (paused: the phone's voice).
+    private func openSonic(_ grant: RealtimeGrant, _ st: TurnState) {
+        let sonic = SonicSocket(grant: grant)
+        let append = LeaVoice.shared.appender(stream: st.id)
+        let start = st.start
+        let first = FirstFlag()
+        let markFirst: @Sendable () -> Void = { [weak self] in
+            let ms = Self.ms(since: start)
+            Task { @MainActor in if self?.firstAudioMs == nil { self?.firstAudioMs = ms } }
+        }
+        sonic.onAudio = { d in append(d, first.take() ? markFirst : nil) }
+        sonic.onDone = { Task { @MainActor in st.sonicFinished = true } }
+        sonic.onFailed = { [weak self] why in Task { @MainActor in
+            st.sonicFailed = true
+            self?.diag?.log("realtime_tts_failed", ["why": why])
+        } }
+        st.sonic = sonic
+        let gateway = self.gateway
+        Task {
+            if !(await gateway.realtimeStream(kind: "tts")) {
+                sonic.cancel()
+                st.sonicFailed = true
             }
         }
     }
@@ -243,6 +373,29 @@ final class LeaConversation {
     nonisolated private static func ms(since d: Date) -> Int { Int(Date().timeIntervalSince(d) * 1000) }
 }
 
+/// Which of Lea's streamed sentences the phone's own voice must say. A sentence the gateway sends with `audio: true`
+/// is followed by its audio, unless Cartesia stops (refused, spend cap) first: then `audio_off` comes with no audio
+/// for that sentence, and it would never be heard. The phone says it, then every later sentence (`audio: false`).
+struct StreamFallback: Equatable {
+    /// The last sentence sent with audio whose audio has not started yet.
+    private(set) var awaitingAudio: String?
+
+    /// A sentence arrived: the text to say on the device now, if any.
+    mutating func sentence(_ text: String, withAudio: Bool) -> String? {
+        awaitingAudio = withAudio ? text : nil
+        return withAudio ? nil : text
+    }
+
+    /// Audio arrived: it belongs to the sentence awaiting it, which is heard.
+    mutating func audio() { awaitingAudio = nil }
+
+    /// Cartesia stopped: the sentence that got no audio, to say on the device (nil when its audio had started).
+    mutating func audioOff() -> String? {
+        defer { awaitingAudio = nil }
+        return awaitingAudio
+    }
+}
+
 extension GatewayClient {
     /// POST /v1/sessions/{id}/story {text}. A 404 (the route is not there yet) is not an error.
     func postStory(sessionID: String, text: String, scanID: String? = nil) async throws {
@@ -254,4 +407,11 @@ extension GatewayClient {
         req.timeoutInterval = 10
         _ = try? await URLSession.shared.data(for: req)
     }
+}
+
+/// True once (the first audio chunk of an answer), from any thread.
+private final class FirstFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fresh = true
+    func take() -> Bool { lock.withLock { defer { fresh = false }; return fresh } }
 }
