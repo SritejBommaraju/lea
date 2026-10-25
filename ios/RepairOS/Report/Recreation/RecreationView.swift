@@ -456,7 +456,10 @@ private struct RecreationHost: UIViewRepresentable {
                 touching = true
                 idle?.cancel()
                 if rig?.moving ?? false { rig?.cancel(); probe?.land(nil) }
-                if stage.isSpinning { stage.stopSpin(); view?.isPlaying = false }
+                if stage.isSpinning { stage.stopSpin() }
+                // Back to drawing on demand once nothing runs: a cancelled move never reaches `settled`, so nothing
+                // else would stop the full-rate drawing of a still model (the walkthrough draws per frame itself).
+                if !touring, !stage.isSpinning, !(rig?.moving ?? false) { view?.isPlaying = false }
             case .ended, .cancelled, .failed:
                 touching = false
                 scheduleIdle()

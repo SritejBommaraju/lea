@@ -1215,6 +1215,51 @@ def test_stills_of_continuations_and_registered_flips_are_usable():
     assert [V.usable(s) for s in stills] == [True, False, False, False]   # unmarked: segment 0 only, as before
 
 
+def test_a_bottom_the_merge_gate_refused_is_never_placed_on_the_model(tmp_path):
+    """Evidence.stills follows the merge gate the model is built with (segments.merged_transforms): a registered
+    bottom whose merge the gate refused keeps its photos out of model-point lookup; a merged one is restated."""
+    import numpy as np
+
+    from repairos.pipeline.run import Context, _update
+    from repairos.voice import views as V
+    from repairos.voice.evidence import Evidence
+
+    state, blobs = SqliteState(tmp_path / "s.db"), LocalBlobStore(tmp_path / "b")
+    box = {"frame": "arkit_world", "center_m": [0, 0.03, 0], "extent_m": [0.1, 0.05, 0.1],
+           "quaternion_xyzw": [0, 0, 0, 1]}
+    scan = {"scan_id": "scan_gate", "product_id": "p", "session_id": "sess_gate",
+            "captured_at": "2026-10-25T01:00:00Z", "device": {"model": "iPhone17,2", "ios": "26.5"},
+            "frame": "arkit_world", "units": "m", "depth_source": "lidar", "pose_source": "arkit", "voxel_mm": 3.0,
+            "gravity_arkit_world": [0, -1, 0], "points_file": blobs.put(b"ply", "application/x-ply"),
+            "point_count": 1, "crop_box": box, "keyframes": [],
+            "segments": [{"segment": k, "reason": "flipped", "object_moved": True, "aligned": False, "crop_box": box}
+                         for k in (1, 2)]}
+    move = np.eye(4)
+    move[:3, 3] = [0.1, 0, 0]
+    t = list(move.reshape(-1))
+
+    async def seed():
+        await state.transition("session", "sess_gate", "session.create", {"session_id": "sess_gate"})
+        row = await state.transition("scan-package", "scan_gate", "scan.create", scan)
+        for k in (0, 1, 2):
+            await state.put("still", {
+                "still_id": f"scan_gate_s{k}", "scan_id": "scan_gate", "session_id": "sess_gate", "kind": "unguided",
+                "captured_at": "2026-10-25T01:01:00Z", "image_file": blobs.put(b"jpeg", "image/jpeg"),
+                "width_px": 64, "height_px": 48, "pose_reliable": k == 0, "segment": k, "targets": [],
+                "camera": {"frame": "arkit_world", "position_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1]},
+                "intrinsics": {"fx": 50.0, "fy": 50.0, "cx": 32.0, "cy": 24.0}, "tracking_state": "normal"})
+        rec = {"status": "done", "scan_rev": row.rev, "segments": [
+            {"segment": 1, "aligned": True, "transform": t, "merge": {"ok": False, "why": "the bottom floats"}},
+            {"segment": 2, "aligned": True, "transform": t, "merge": {"ok": True}}]}
+        await _update(Context(state=state, blobs=blobs), scan, {"segments": rec})
+        app = type("App", (), {"state": type("S", (), {"store": state, "blobs": blobs})})
+        return await Evidence(app, tmp_path).stills("scan_gate")
+    got = {s["still_id"]: s for s in asyncio.run(seed())}
+    assert [V.usable(got[f"scan_gate_s{k}"]) for k in (0, 1, 2)] == [True, False, True]
+    assert got["scan_gate_s1"]["camera"]["position_m"] == [0, 0, 0]          # never restated by a refused fit
+    assert got["scan_gate_s2"]["camera"]["position_m"][0] == pytest.approx(0.1)
+
+
 def test_part_index_is_rebuilt_for_new_photos_and_failures_are_retried(tmp_path):
     from repairos.voice.evidence import INDEX_MAX_ATTEMPTS, INDEX_RETRY_S, Evidence
 

@@ -31,6 +31,17 @@ final class CameraRig {
         }
     }
 
+    /// The highest and lowest the camera goes (just short of straight down or up, where the look-at flips).
+    nonisolated static let maxElevation: Float = 1.43
+
+    /// The orbit with its elevation within the camera's range. A goal past the clamp in `tick` would never be
+    /// reached, so the move would never settle and the display link would keep drawing a still camera.
+    nonisolated static func reachable(_ o: Orbit) -> Orbit {
+        var o = o
+        o.elevation = max(-maxElevation, min(maxElevation, o.elevation))
+        return o
+    }
+
     private weak var view: SCNView?
     private let camera: SCNNode
     private var current: Orbit?
@@ -67,6 +78,7 @@ final class CameraRig {
         }
         guard let now = current else { return }
         var next = Orbit(eye: eye, look: look)
+        next = Self.reachable(next)
         // The short way round.
         while next.azimuth - now.azimuth > .pi { next.azimuth -= 2 * .pi }
         while next.azimuth - now.azimuth < -.pi { next.azimuth += 2 * .pi }
@@ -119,7 +131,7 @@ final class CameraRig {
         let at = w * w * (g.target - c.target) - 2 * w * velocity.target
         velocity.target += at * dt
         c.target += velocity.target * dt
-        c.elevation = max(-1.43, min(1.43, c.elevation))
+        c.elevation = max(-Self.maxElevation, min(Self.maxElevation, c.elevation))
         current = c
         camera.simdWorldPosition = c.eye
         camera.simdLook(at: c.target, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))

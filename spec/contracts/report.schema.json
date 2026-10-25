@@ -37,6 +37,11 @@
       "type": "string",
       "format": "date-time"
     },
+    "build_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique per report build (report.publish); a later revision of the same build (the fix, the mesh) keeps it. A patch applies only while the row still carries its build's id (created_at has whole seconds)."
+    },
     "verdict": {
       "type": "string",
       "enum": [

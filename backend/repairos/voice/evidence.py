@@ -108,9 +108,11 @@ class Evidence:
 
     async def stills(self, scan_id: str) -> list[dict]:
         """The scan's stills, each marked `in_frame` (views.usable): segment 0, a continuation in its frame
-        (segments.same_frame_segments), or a flipped bottom the server registered for this package revision (its
-        camera restated in segment 0's frame)."""
-        from repairos.pipeline.segments import aligned_transforms, same_frame_segments
+        (segments.same_frame_segments), or a flipped bottom the server registered for this package revision and
+        whose merge passed the gate (segments.merged_transforms, the bottoms the model is built with; its camera
+        restated in segment 0's frame). A bottom the gate refused stays out of frame: its photos are shown as
+        photos, never placed on the model."""
+        from repairos.pipeline.segments import merged_transforms, same_frame_segments
 
         st = self.app.state.store
         rows = await st.list("still", scan_id=scan_id)
@@ -120,7 +122,7 @@ class Evidence:
             return stills
         run = await st.get("pipeline-run", f"run_{scan_id}")
         rec = ((run.data if run else {}) or {}).get("segments") or {}
-        moved = aligned_transforms(rec) if rec.get("scan_rev") == pkg_row.rev else {}
+        moved = merged_transforms(rec) if rec.get("scan_rev") == pkg_row.rev else {}
         return V.in_scan_frame(stills, same_frame_segments(pkg_row.data or {}), moved)
 
     async def surface_key(self, scan_id: str) -> str:

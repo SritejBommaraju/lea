@@ -3545,6 +3545,10 @@ public struct Report: Codable, Sendable {
     /// can show it as a photo. Absent when every such segment was aligned or the scan has none.
     /// Why a segment was not aligned: capture.segments[].why_not.
     public let bottomNotPlaced: [BottomNotPlacedOnTheModel]?
+    /// Unique per report build (report.publish); a later revision of the same build (the fix,
+    /// the mesh) keeps it. A patch applies only while the row still carries its build's id
+    /// (created_at has whole seconds).
+    public let buildID: String?
     public let capture: Capture
     /// Issues the vision model judged cosmetic (looks worn but would not stop the device
     /// working). Listed apart; they never make the verdict potential_issues on their own.
@@ -3612,6 +3616,7 @@ public struct Report: Codable, Sendable {
 
     public enum CodingKeys: String, CodingKey {
         case bottomNotPlaced = "bottom_not_placed"
+        case buildID = "build_id"
         case capture = "capture"
         case cosmetic = "cosmetic"
         case createdAt = "created_at"
@@ -3638,8 +3643,9 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, buildID: String?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.bottomNotPlaced = bottomNotPlaced
+        self.buildID = buildID
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt

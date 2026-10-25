@@ -27,6 +27,7 @@ import logging
 import os
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -1271,6 +1272,7 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
                              identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"),
                              segments=segments.report_segments(scan, seg_rec,
                                                                findings_by_segment(stills, findings, locations)))
+        draft["build_id"] = uuid.uuid4().hex   # this build; its later patches (fix, mesh) check it (_patch_report)
         from repairos.pipeline.story import STORY_KIND
         from repairos.references.leads import user_lead
 
@@ -1336,9 +1338,13 @@ async def _models_after_report(ctx: Context, scan: dict, published: Any) -> None
 
 
 async def _patch_report(ctx: Context, published: Any, patch: dict, tries: int = 3) -> bool:
-    """One more revision of the published report with `patch` merged in, only while it is still the same report (a
-    patch from this run, like the fix or the mesh, may land first: then it is re-read and patched again). False when a
-    newer report (more photos) replaced it."""
+    """One more revision of the published report with `patch` merged in, only while it is still the same report build
+    (its `build_id`, unique per report.publish and kept by every patch: a patch from this run, like the fix or the
+    mesh, may land first, then it is re-read and patched again). False when a newer report (more photos) replaced it,
+    even one built in the same second (created_at has whole seconds)."""
+    def build(data: Mapping[str, Any]) -> tuple:
+        return data.get("build_id"), data.get("created_at")   # created_at alone only for rows from before build_id
+
     row = published
     for _ in range(tries):
         try:
@@ -1346,7 +1352,7 @@ async def _patch_report(ctx: Context, published: Any, patch: dict, tries: int = 
             return True
         except RevConflict:
             row = await ctx.state.get("report", published.data["report_id"])
-            if row is None or row.data.get("created_at") != published.data.get("created_at"):
+            if row is None or build(row.data) != build(published.data):
                 return False
     return False
 

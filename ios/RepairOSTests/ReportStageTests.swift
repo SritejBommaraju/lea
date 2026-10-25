@@ -157,6 +157,20 @@ struct ProblemRingTests {
         #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0, 0)), (badge, nil)]) == "b")   // a badge first
     }
 
+    /// A goal straight above (a part at the top centre) is clamped to the range the camera can reach, so the move
+    /// settles and the display link stops.
+    @MainActor @Test func aCameraGoalStaysWithinTheReachableElevation() {
+        let above = CameraRig.Orbit(eye: SIMD3(0, 0.5, 0.0001), look: SIMD3(0, 0, 0))
+        #expect(above.elevation > CameraRig.maxElevation)
+        let goal = CameraRig.reachable(above)
+        #expect(goal.elevation == CameraRig.maxElevation)
+        #expect(goal.azimuth == above.azimuth && goal.distance == above.distance && goal.target == above.target)
+        let below = CameraRig.reachable(CameraRig.Orbit(eye: SIMD3(0, -0.5, 0.0001), look: SIMD3(0, 0, 0)))
+        #expect(below.elevation == -CameraRig.maxElevation)
+        let side = CameraRig.Orbit(eye: SIMD3(0.3, 0.2, 0.3), look: SIMD3(0, 0, 0))
+        #expect(CameraRig.reachable(side) == side)
+    }
+
     @MainActor @Test func ringTextureDraws() {
         #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2)) != nil)
         #expect(RecreationStage.ring(rgb: FixedHex.rgb(FixedHex.next)) != nil)
