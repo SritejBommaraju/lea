@@ -14,6 +14,8 @@ struct ModelPin: Identifiable, Sendable, Equatable {
     var tone: Tone
     /// A circled "look closer" area (Report/Stage/InspectTarget): drawn as a dashed ring of this radius (metres).
     var ringRadius: Float? = nil
+    /// A finding's problem area on the scan (metres): the recreation circles it. Not a circled target (`ringRadius`).
+    var area: Float? = nil
 }
 
 /// Points to draw (already capped), metres, the scan's ARKit frame, Y up.

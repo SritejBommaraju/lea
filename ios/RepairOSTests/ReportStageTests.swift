@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SceneKit
 import Testing
 @testable import RepairOS
 
@@ -118,5 +119,35 @@ struct MarkerLayoutTests {
         for i in 0..<3 { for j in (i + 1)..<3 {
             #expect(hypot(placed[i].x - placed[j].x, placed[i].y - placed[j].y) >= 29.9)
         } }
+    }
+}
+
+/// The problem area's size on the scan (ReportModel.extent) and the ring drawn round it.
+struct ProblemRingTests {
+    @Test func extentIsHalfTheRegionDiagonal() {
+        let loc: [String: Any] = ["status": "computed", "point_m": [0, 0, 0],
+                                  "region_min_m": [0, 0, 0], "region_max_m": [0.03, 0.04, 0]]
+        #expect(abs((ReportModel.extent(loc) ?? 0) - 0.025) < 1e-6)
+    }
+
+    @Test func noRingWithoutAComputedPoint() {
+        #expect(ReportModel.extent(["status": "failed", "region_min_m": [0, 0, 0], "region_max_m": [1, 1, 1]]) == nil)
+        #expect(ReportModel.extent(["status": "computed", "point_m": [0, 0, 0]]) == nil)
+    }
+
+    @MainActor @Test func aBadgeWinsATapAndARingOnlyInsideItsCircle() {
+        let stage = RecreationStage()
+        let ring = SCNNode(geometry: SCNPlane(width: 0.026, height: 0.026))   // a 10 mm ring: 13 mm half-width plane
+        ring.name = "ring:a"
+        let badge = SCNNode(geometry: SCNPlane(width: 0.01, height: 0.01))
+        badge.name = "marker:b"
+        #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0.003, 0))]) == "a")        // inside the circle
+        #expect(stage.markerID(atHit: [(ring, SIMD3(0.0125, 0.0125, 0))]) == nil)      // a clear corner
+        #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0, 0)), (badge, nil)]) == "b")   // a badge first
+    }
+
+    @MainActor @Test func ringTextureDraws() {
+        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2), dashed: false) != nil)
+        #expect(RecreationStage.ring(rgb: SIMD3(0.5, 0.5, 0.6), dashed: true) != nil)
     }
 }

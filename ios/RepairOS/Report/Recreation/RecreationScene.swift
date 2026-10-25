@@ -18,6 +18,8 @@ struct RecreationMarker: Sendable, Equatable, Identifiable {
     var point: SIMD3<Float>
     /// sRGB 0...1.
     var rgb: SIMD3<Float>
+    /// The problem area's radius on the scan (metres): drawn as a glowing ring round the point; nil draws none.
+    var ring: Float? = nil
 }
 
 /// What the stage draws.
@@ -189,6 +191,17 @@ final class RecreationStage {
             let on = focus == m.id
             node.simdScale = SIMD3(repeating: on ? 1.3 : 1)
             node.opacity = focus == nil || on ? (m.number == nil ? 0.8 : 1) : 0.45
+            if let r = ringRadius(m) {
+                // The problem area circled on the object (it stays on the spot); the badge, still its own node for the
+                // separator, is drawn at the ring's upper right (a pivot in its billboard plane) so the spot stays visible.
+                let ring = ringNode(m, radius: r, on: on)
+                ring.simdPosition = at
+                ring.opacity = focus == nil || on ? 1 : 0.4
+                markerRoot.addChildNode(ring)
+                var pivot = matrix_identity_float4x4
+                pivot.columns.3 = SIMD4(-r * 0.72, -r * 0.72, 0, 1)
+                node.simdPivot = pivot
+            }
             // A small dot on the surface itself, hidden where the object is in front of it.
             let dot = SCNSphere(radius: CGFloat(focusRadius) * 0.012)
             let dm = SCNMaterial()
@@ -200,6 +213,33 @@ final class RecreationStage {
             markerRoot.addChildNode(dotNode)
             markerRoot.addChildNode(node)
         }
+    }
+
+    /// The ring's radius: the problem area's size, at least a fingertip on screen and never most of the object.
+    func ringRadius(_ m: RecreationMarker) -> Float? {
+        guard let r = m.ring, r > 0 else { return nil }
+        return min(max(r, focusRadius * 0.06, 0.006), focusRadius * 0.45, 0.06)
+    }
+
+    /// A billboard circle round the problem area: a soft glow and a stroke in the marker's colour (dashed for a spot the
+    /// person circled), a little larger while it is the selected one. A tap on it selects its marker (`markerID`).
+    private func ringNode(_ m: RecreationMarker, radius r: Float, on: Bool) -> SCNNode {
+        let side = CGFloat(r) * 2 * 1.3
+        let plane = SCNPlane(width: side, height: side)
+        let mat = SCNMaterial()
+        mat.diffuse.contents = Self.ring(rgb: m.rgb, dashed: m.number == nil)
+        mat.lightingModel = .constant
+        mat.isDoubleSided = true
+        mat.readsFromDepthBuffer = false
+        mat.writesToDepthBuffer = false
+        plane.materials = [mat]
+        let node = SCNNode(geometry: plane)
+        node.name = "ring:\(m.id)"
+        node.renderingOrder = 5
+        node.constraints = [SCNBillboardConstraint()]
+        // Static, not an animation: the view draws on demand once the turntable stops, which would freeze it.
+        node.simdScale = SIMD3(repeating: on ? 1.12 : 1)
+        return node
     }
 
     /// A finding's point moved onto the drawn surface: the findings are located on the phone's raw LiDAR points,
@@ -236,7 +276,23 @@ final class RecreationStage {
     }
 
     func markerID(atHit nodes: [SCNNode]) -> String? {
-        nodes.lazy.compactMap(\.name).first { $0.hasPrefix("marker:") }.map { String($0.dropFirst("marker:".count)) }
+        markerID(atHit: nodes.map { ($0, nil) })
+    }
+
+    /// The marker a tap selects: a number badge first; else a ring, but only inside its circle (the ring is drawn on a
+    /// square plane whose clear corners must not take a tap meant for a nearby badge; Greptile, PR #25). `local` is the
+    /// hit's point in the node's own plane; nil (no position known) counts as inside.
+    func markerID(atHit hits: [(node: SCNNode, local: SIMD3<Float>?)]) -> String? {
+        if let badge = hits.lazy.compactMap({ $0.node.name }).first(where: { $0.hasPrefix("marker:") }) {
+            return String(badge.dropFirst("marker:".count))
+        }
+        for hit in hits {
+            guard let name = hit.node.name, name.hasPrefix("ring:"), let plane = hit.node.geometry as? SCNPlane else { continue }
+            let radius = Float(plane.width) / 2 / 1.3 * 1.15   // the circle (1/1.3 of the plane) and its stroke
+            if let p = hit.local, simd_length(SIMD2(p.x, p.y)) > radius { continue }
+            return String(name.dropFirst("ring:".count))
+        }
+        return nil
     }
 
     // MARK: Building blocks
@@ -331,6 +387,26 @@ final class RecreationStage {
         m.diffuse.contents = CGColor(gray: 1, alpha: 1)
         g.materials = [m]
         return g
+    }
+
+    /// The ring texture: the circle at 1/1.3 of the image (room for the glow), drawn once per colour and style.
+    static func ring(rgb: SIMD3<Float>, dashed: Bool) -> CGImage? {
+        let side = 256, c = CGFloat(side) / 2, r = CGFloat(side) / 2 / 1.3
+        guard let ctx = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let colour = CGColor(srgbRed: CGFloat(rgb.x), green: CGFloat(rgb.y), blue: CGFloat(rgb.z), alpha: 1)
+        let circle = CGRect(x: c - r, y: c - r, width: 2 * r, height: 2 * r)
+        ctx.setShadow(offset: .zero, blur: CGFloat(side) * 0.06, color: colour)
+        ctx.setStrokeColor(colour)
+        ctx.setLineWidth(CGFloat(side) * 0.035)
+        if dashed { ctx.setLineDash(phase: 0, lengths: [CGFloat(side) * 0.07, CGFloat(side) * 0.045]) }
+        ctx.strokeEllipse(in: circle)
+        ctx.setShadow(offset: .zero, blur: 0, color: nil)
+        ctx.setStrokeColor(CGColor(gray: 1, alpha: 0.85))
+        ctx.setLineWidth(CGFloat(side) * 0.008)
+        ctx.strokeEllipse(in: circle)
+        return ctx.makeImage()
     }
 
     /// A round badge: white ring, marker colour, the number in white (CoreText, so it draws the same everywhere).

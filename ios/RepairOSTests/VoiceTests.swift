@@ -225,3 +225,16 @@ struct SonicFailoverTests {
         #expect(LeaConversation.unheard(sent, heardSeconds: 60).isEmpty)
     }
 }
+
+/// An early answer is asked for as held, so the gateway keeps it out of the conversation until it is committed
+/// (Greptile, PR #21).
+struct HeldAnswerTests {
+    let gateway = GatewayClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: nil)
+
+    @Test func onlyAnEarlyAnswerIsHeld() {
+        let held = gateway.converseRequest(scanID: "scan_1", audio: nil, text: "is it the fuse", speech: false, held: true)
+        #expect(held.url?.query?.contains("held=1") == true)
+        let final = gateway.converseRequest(scanID: "scan_1", audio: nil, text: "is it the fuse", speech: false)
+        #expect(final.url?.query?.contains("held") == false)
+    }
+}
