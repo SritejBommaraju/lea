@@ -102,5 +102,6 @@ enum HandheldCues {
         FlipSegmentController.prompt: ("arrow.up.arrow.down", .guide),
         FlipSegmentController.linedUp: ("checkmark", .good),
         "Keep going around the bottom": ("figure.walk", .guide),
+        FlipSegmentController.sidesCue: ("cube.transparent", .guide),
     ]
 }

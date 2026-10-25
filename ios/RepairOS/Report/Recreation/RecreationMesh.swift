@@ -148,4 +148,9 @@ struct RecreationManifest: Codable, Sendable, Equatable {
     var focusCenter: [Float]?
     var focusRadius: Float?
     var stats: [String: Double] = [:]
+
+    /// `stats` key: how many registered flipped segments close the model underneath (the gateway's).
+    static let bottomKey = "bottom_segments"
+    /// The underside was scanned and fused in: the model is closed, so the viewer may turn it over.
+    var closedBottom: Bool { (stats[Self.bottomKey] ?? 0) > 0 }
 }

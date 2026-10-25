@@ -1,15 +1,15 @@
 import Foundation
 import simd
 
-// Tier 1 geometry: the object AND the patch of table it stands on, from the scan's keyframe LiDAR depth, on the phone.
+// Tier 1 geometry: the object alone, from the scan's keyframe LiDAR depth, on the phone.
 // The same steps as the gateway's `repairos/recreation/surface.py` (keep the two in step):
 //   the table height under the box (lowest well-supported horizontal layer of depth points),
 //   a dense TSDF over the box grown sideways (high confidence weight 1, medium 0.4; truncation >= 1.2 cm, the LiDAR's
 //   noise), outside the box's footprint only the table is kept (a mug beside the object is not part of it),
-//   naive Surface Nets on the zero level (even triangles, which texture well), the piece under the box centre,
-//   Taubin smoothing (no shrinking).
-// Why the table: cutting at the table + its noise (the report's old mesh) removes the lower centimetre of every object
-// and leaves a flat one (a controller, a charger) as a few hundred triangles in the air.
+//   naive Surface Nets on the zero level (even triangles, which texture well), the table sheet cut from the mesh,
+//   the piece under the box centre, Taubin smoothing (no shrinking).
+// Why the table is fused and then cut from the mesh: cutting the depth at the table + its noise first removes the lower
+// centimetre of every object and leaves a flat one (a controller, a charger) as a few hundred triangles in the air.
 
 struct DepthFrameData: Sendable {
     var pose: CameraPose
@@ -68,6 +68,12 @@ enum ShellSurface {
     static let voxelLimits: ClosedRange<Float> = 0.0025...0.006
     static let maxVoxels = 2_500_000
     static let footprintMargin: Float = 0.1, tableBand: Float = 0.012
+    // The table cut (backend recreation/surface.py cut_table): a robust plane through the mesh near the ground; faces
+    // within tableLow x its spread are table, flat ones (within 30 deg of level) up to tableCut x.
+    static let tableCutMin: Float = 0.003, tableLow: Float = 1.5, tableCut: Float = 3, tableFlatCos: Float = 0.87
+    // The object's pieces (backend keep_central): pieces of at least minPieceShare of the triangles within joinGap of
+    // the central piece stay with it.
+    static let minPieceShare: Float = 0.02, joinGap: Float = 0.015
 
     struct Grid: Sendable {
         var lo: SIMD3<Float>          // box-local position of voxel (0,0,0)'s corner
@@ -293,7 +299,52 @@ enum ShellSurface {
 
     // MARK: Cleaning
 
-    /// The connected piece (triangles sharing vertices) with the most triangles near the box's centre line.
+    /// The triangles without the table (see the constants above; the same rule as the gateway's mesh), so the shell
+    /// shows the object alone. The sheet is fitted as y = a + b x + c z, dropping points beyond 2.5 x the residual
+    /// spread each round (the object's lowest rim leaves the fit). Unchanged when there is no ground or too little sheet.
+    static func cutTable(_ v: [SIMD3<Float>], _ t: [UInt32], groundY: Float?) -> [UInt32] {
+        guard let groundY, !t.isEmpty else { return t }
+        let near = v.filter { abs($0.y - groundY) <= tableBand }
+        guard near.count >= 50 else { return t }
+        var keep = [Bool](repeating: true, count: near.count)
+        var coef = SIMD3<Float>(groundY, 0, 0), spread: Float = 0
+        func height(_ p: SIMD3<Float>) -> Float { coef.x + coef.y * p.x + coef.z * p.z }
+        for _ in 0..<4 {
+            guard keep.filter({ $0 }).count >= 50 else { break }
+            var ata = simd_double3x3(), atb = SIMD3<Double>()
+            for (i, p) in near.enumerated() where keep[i] {
+                let a = SIMD3<Double>(1, Double(p.x), Double(p.z))
+                ata += simd_double3x3(rows: [a * a.x, a * a.y, a * a.z])
+                atb += a * Double(p.y)
+            }
+            guard abs(ata.determinant) > 1e-12 else { break }
+            let x = ata.inverse * atb
+            coef = SIMD3<Float>(Float(x.x), Float(x.y), Float(x.z))
+            let r = near.map { $0.y - height($0) }
+            let kept = zip(r, keep).filter { $0.1 }.map(\.0).sorted()
+            let med = kept[kept.count / 2]
+            let dev = kept.map { abs($0 - med) }.sorted()
+            spread = 1.4826 * dev[dev.count / 2]
+            let lim = max(2.5 * spread, tableCutMin)
+            keep = r.map { abs($0) <= lim }
+        }
+        let low = max(tableLow * spread, tableCutMin), cut = max(tableCut * spread, tableCutMin)
+        var out: [UInt32] = []
+        out.reserveCapacity(t.count)
+        for f in Swift.stride(from: 0, to: t.count, by: 3) {
+            let a = v[Int(t[f])], b = v[Int(t[f + 1])], c = v[Int(t[f + 2])]
+            let above = (a.y + b.y + c.y) / 3 - height((a + b + c) / 3)
+            let n = simd_cross(b - a, c - a)
+            let flat = abs(n.y) / max(simd_length(n), 1e-12) >= tableFlatCos
+            if above <= low || (above <= cut && flat) { continue }
+            out += [t[f], t[f + 1], t[f + 2]]
+        }
+        return out
+    }
+
+    /// The object's pieces: the connected piece (triangles sharing vertices) with the most triangles near the box's
+    /// centre line, and the pieces of at least minPieceShare of the triangles whose bounds come within joinGap of its
+    /// bounds (cutting the table can part a thin foot or a cable from the body); specks and neighbours are dropped.
     static func keepCentral(_ v: [SIMD3<Float>], _ t: [UInt32], box: ShellBox) -> ([SIMD3<Float>], [UInt32]) {
         var parent = Array(0..<v.count)
         func root(_ x: Int) -> Int {
@@ -306,18 +357,29 @@ enum ShellSurface {
             parent[b] = a
             parent[root(c)] = a
         }
-        var score: [Int: Int] = [:]
+        var score: [Int: Int] = [:], count: [Int: Int] = [:]
+        var bounds: [Int: (lo: SIMD3<Float>, hi: SIMD3<Float>)] = [:]     // of each piece's triangle centres
         let half = SIMD2(box.extent.x, box.extent.z) / 2
         for f in Swift.stride(from: 0, to: t.count, by: 3) {
             let c = (v[Int(t[f])] + v[Int(t[f + 1])] + v[Int(t[f + 2])]) / 3
+            let id = root(Int(t[f]))
             let l = box.local(c)
             let r = simd_length(SIMD2(l.x, l.z) / max(half, SIMD2(repeating: 0.01)))
-            if r < 0.5 { score[root(Int(t[f])), default: 0] += 1 }
+            if r < 0.5 { score[id, default: 0] += 1 }
+            count[id, default: 0] += 1
+            let b = bounds[id] ?? (c, c)
+            bounds[id] = (simd_min(b.lo, c), simd_max(b.hi, c))
         }
-        guard let best = score.max(by: { $0.value < $1.value })?.key else { return (v, t) }
+        guard let best = score.max(by: { $0.value < $1.value })?.key, let core = bounds[best] else { return (v, t) }
+        let minCount = minPieceShare * Float(t.count / 3)
+        var keep: Set<Int> = [best]
+        for (id, b) in bounds where id != best && Float(count[id] ?? 0) >= minCount {
+            let gap = simd_max(SIMD3<Float>(repeating: 0), simd_max(b.lo - core.hi, core.lo - b.hi))
+            if simd_length(gap) <= joinGap { keep.insert(id) }
+        }
         var remap = [Int32](repeating: -1, count: v.count)
         var nv: [SIMD3<Float>] = [], nt: [UInt32] = []
-        for f in Swift.stride(from: 0, to: t.count, by: 3) where root(Int(t[f])) == best {
+        for f in Swift.stride(from: 0, to: t.count, by: 3) where keep.contains(root(Int(t[f]))) {
             for k in 0..<3 {
                 let o = Int(t[f + k])
                 if remap[o] < 0 { remap[o] = Int32(nv.count); nv.append(v[o]) }
@@ -350,7 +412,9 @@ enum ShellSurface {
 
     // MARK: All
 
-    static func build(frames: [DepthFrameData], box: ShellBox, smoothIterations: Int = 10) -> Result? {
+    /// `handHeld`: a hand-held scan (pose_source object_tracked) holds the underside in the object frame, where its flat
+    /// bottom lies at the table's height, so nothing is cut there (backend scan_surface).
+    static func build(frames: [DepthFrameData], box: ShellBox, smoothIterations: Int = 10, handHeld: Bool = false) -> Result? {
         var s: [String: Double] = [:]
         var t0 = Date()
         let ground = groundHeight(frames, box: box)
@@ -362,7 +426,8 @@ enum ShellSurface {
         let (vi, tris) = surfaceNets(tsdf: tsdf, weight: weight, grid: g)
         guard !tris.isEmpty else { return nil }
         var v = vi.map { g.world($0.x, $0.y, $0.z) }
-        var t = tris
+        var t = handHeld ? tris : cutTable(v, tris, groundY: ground)
+        guard !t.isEmpty else { return nil }
         (v, t) = keepCentral(v, t, box: box)
         taubin(&v, t, iterations: smoothIterations)
         s["extract_s"] = Date().timeIntervalSince(t0)
