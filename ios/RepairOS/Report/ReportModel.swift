@@ -170,6 +170,15 @@ struct ReportModel: Sendable {
     var fix: FixIt?
     /// The person's own guess and what the photos showed about it (report `user_lead`).
     var userLead: GuessCheck?
+    /// Photos from the bottom scan that could not be lined up with the model (report `bottom_not_placed`): real
+    /// findings without a 3D point, shown as photos so the underside is never a dead end. One per crop.
+    var bottomPhotos: [BottomPhoto] = []
+
+    struct BottomPhoto: Identifiable, Sendable, Equatable {
+        var id: String
+        var part: String
+        var crop: String
+    }
 
     init(json r: [String: Any]) {
         verdict = Verdict(r["verdict"] as? String ?? "")
@@ -211,12 +220,19 @@ struct ReportModel: Sendable {
         meshRev = (r["mesh"] as? [String: Any])?["rev"] as? Int
         fix = FixIt(json: r["fix"] as? [String: Any])
         userLead = GuessCheck(json: r["user_lead"] as? [String: Any])
+        var seen = Set<String>()
+        bottomPhotos = ((r["bottom_not_placed"] as? [[String: Any]]) ?? []).compactMap { b in
+            guard let sha = Self.sha((b["photo"] as? [String: Any])?["crop_ref"]), seen.insert(sha).inserted else { return nil }
+            let part = (b["part_class"] as? String).map { $0.replacingOccurrences(of: "_", with: " ").capitalizedFirst } ?? "Bottom"
+            return BottomPhoto(id: b["finding_id"] as? String ?? sha, part: part, crop: sha)
+        }
     }
 
     /// Every crop the report shows (problems, cosmetic, gaps), for saving them on the phone.
     var cropSHAs: [String] {
         var out: [String] = []
         for sha in (mostLikely + otherIssues + setup + cosmetic).flatMap(\.crops) + (notInspected + insufficient).compactMap(\.crop)
+                   + bottomPhotos.map(\.crop)
         where !out.contains(sha) { out.append(sha) }
         return out
     }

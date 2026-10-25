@@ -216,3 +216,20 @@ struct StageHeroChoiceTests {
         #expect(ReportView.heroChoice(live: "mesh", pipeline: "photos", cached: "photos") == "mesh")   // live first
     }
 }
+
+/// Bottom-scan photos that could not be lined up with the model (report `bottom_not_placed`).
+struct BottomPhotosTests {
+    @Test func unplacedBottomFindingsBecomePhotosOncePerCrop() {
+        let r = ReportModel(json: ["verdict": "no_problems_seen", "bottom_not_placed": [
+            ["finding_id": "f1", "segment": 1, "part_class": "battery_cover", "reason": "not aligned",
+             "photo": ["still_id": "s20", "crop_ref": "blob://sha256:aaa"]],
+            ["finding_id": "f2", "segment": 1, "part_class": "screw", "reason": "not aligned",
+             "photo": ["still_id": "s20", "crop_ref": "blob://sha256:aaa"]],
+            ["finding_id": "f3", "segment": 1, "reason": "not aligned", "photo": ["still_id": "s21", "crop_ref": "blob://sha256:bbb"]],
+        ]])
+        #expect(r.bottomPhotos.map(\.crop) == ["aaa", "bbb"])
+        #expect(r.bottomPhotos.map(\.part) == ["Battery cover", "Bottom"])
+        #expect(r.cropSHAs.contains("bbb"))
+        #expect(ReportModel(json: ["verdict": "looks_good"]).bottomPhotos.isEmpty)
+    }
+}
