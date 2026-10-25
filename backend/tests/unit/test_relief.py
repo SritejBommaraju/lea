@@ -148,3 +148,35 @@ def test_spikes_and_table_pieces_dropped() -> None:
     assert out[53, 102] == 0 and out[60, 14] == 0 and out[88, 110] == 0
     assert out[50, 63] == pytest.approx(0.009)
     assert n == {"spikes": 2, "table": 2}
+
+
+def test_needles_cut_and_gated() -> None:
+    res = R.RES_M
+    h = np.zeros((200, 200))
+    h[20:30, 20:100] = 0.0085                     # a 2.5 x 20 mm row standing 8.5 mm: a part, kept
+    h[60:100, 60:100] = 0.011                     # a 10 x 10 mm block, 11 mm: kept
+    cut_h, cut = R.cut_needles(h, res)
+    assert cut == 0.0 and np.array_equal(cut_h, h)
+    assert R.gate(0.4, cut, cut_h, 0.05) is None
+    n = h.copy()
+    n[150:158, 150:158] = 0.022                   # a 2 x 2 mm needle, 22 mm tall
+    cut_n, cut = R.cut_needles(n, res)
+    assert cut_n[154, 154] <= 2 * 0.002 * R.NEEDLE_RATIO and cut_n[25, 50] == pytest.approx(0.0085)
+    only = np.zeros((200, 200))
+    only[100:106, 100:106] = 0.02                 # nothing but needles: the relief is not shown
+    only[20:26, 150:156] = 0.018
+    cut_o, cut = R.cut_needles(only, res)
+    assert R.gate(0.4, cut, cut_o, 0.05) is not None
+    assert R.gate(0.1, 0.0, h, 0.05) is not None   # too few confident matches
+    assert R.gate(0.4, 0.0, h, 0.02) is not None   # 11 mm on a 20 mm wide object
+
+
+def test_large_footprint_stays_within_memory() -> None:
+    n = int(0.45 / R.RES_M) * int(0.15 / R.RES_M)             # a 45 x 15 cm keyboard at the board resolution
+    res = R.grid_res(n)
+    assert res is not None and res > R.RES_M
+    px = int(0.45 / res) * int(0.15 / res)
+    assert px <= R.MAX_GRID_PX * 1.01
+    chunk = R.sweep_chunk(px, R.MAX_VIEWS)
+    assert R.sweep_bytes(px, R.MAX_VIEWS, chunk) <= R.MEM_BUDGET
+    assert R.grid_res(int(2.0 / R.RES_M) ** 2) is None         # 2 m square: slab only

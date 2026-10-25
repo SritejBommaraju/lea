@@ -63,6 +63,14 @@ TABLE_SHARE = 0.6        # a raised piece whose pixels are this much table-colou
 EDGE_TABLE_SHARE = 0.3   # ... or this much when it touches the outline (the outline took in some table)
 EDGE_M = 0.001           # touching: within this of the outline
 RING_M = (0.003, 0.015)  # the table's colours: this band round the outline in the top still
+NEEDLE_RATIO = 1.6       # a raised piece standing taller than this x its size (sqrt of its area at that height) is a
+                         # needle: cut down to where it is not (a part is as wide as it is tall, or long like a row)
+GATE_MIN_CONFIDENT = 0.25   # the relief ships only when this share of the outline matched confidently ...
+GATE_MAX_CUT = 0.35         # ... at most this share of the raised volume was needles ...
+GATE_MAX_HEIGHT = 0.4       # ... and nothing stands taller than this x the outline's shorter side
+MAX_GRID_PX = 300_000    # the height map's grid: coarsened past RES_M to stay within this many pixels
+MAX_RES_M = 0.001        # ... but never coarser (a footprint that needs more is too big for relief: slab only)
+MEM_BUDGET = 512 * 2 ** 20   # bytes the sweep holds at once (sample points, warped stills, costs of one chunk)
 MESH_CELL_M = 0.0005
 MAX_QUAD_M = 0.003
 MAX_TRIANGLES = 80_000
@@ -202,6 +210,29 @@ def _pick_views(ref: Any, others: Sequence[Any], grid: Any, top_y: float) -> lis
     return chosen
 
 
+def grid_res(n_px_at_res: int) -> float | None:
+    """The height map's grid spacing for a footprint of n_px_at_res pixels at RES_M: RES_M, coarsened to keep within
+    MAX_GRID_PX; None past MAX_RES_M (too big for relief)."""
+    res = RES_M * max(1.0, float(np.sqrt(n_px_at_res / MAX_GRID_PX)))
+    return None if res > MAX_RES_M + 1e-12 else res
+
+
+def sweep_bytes(n_px: int, n_views: int, layers: int) -> int:
+    """Peak bytes of one chunk of the sweep: float64 sample points and float32 samples, box sums and costs per still,
+    plus the whole aggregated cost volume (float32)."""
+    per_layer = n_px * (3 * 8 + 3 * 4 + n_views * 4 * 7)
+    return layers * per_layer + len(np.arange(-STEP_M, MAX_M + 1e-9, STEP_M)) * n_px * 4
+
+
+def sweep_chunk(n_px: int, n_views: int) -> int:
+    """Height layers per chunk so that a chunk stays within MEM_BUDGET (at least 1)."""
+    n_layers = len(np.arange(-STEP_M, MAX_M + 1e-9, STEP_M))
+    k = n_layers
+    while k > 1 and sweep_bytes(n_px, n_views, k) > MEM_BUDGET:
+        k = max(1, k // 2)
+    return k
+
+
 def relief_heights(ref: Any, others: Sequence[Any], grid: Any, top_y: float, mask: np.ndarray | None = None
                    ) -> Relief:
     """The height map above the top plane on `grid` (module docstring 1-4, without LiDAR). `ref` is the still the top
@@ -216,25 +247,25 @@ def relief_heights(ref: Any, others: Sequence[Any], grid: Any, top_y: float, mas
     mask = np.ones(grid.shape, bool) if mask is None else mask
     hs = np.arange(-STEP_M, MAX_M + 1e-9, STEP_M)
     c = ref.pose.t.astype(float)
-    pts = _ray_points(grid, top_y, c, hs)                                  # L x N x 3
+    i0 = int(np.argmin(np.abs(hs)))
+    pts0 = _ray_points(grid, top_y, c, hs[i0:i0 + 1])                      # 1 x N x 3 (the top plane)
     foot = float(np.linalg.norm(grid.world(top_y, np.array([[hh // 2, ww // 2]]))[0] - c)) / ref.cam.fx
     factor = max(1, int(round(grid.res / foot / 1.5)))
-    stats: dict = {"views": [ref.name], "downsample": factor}
+    stats: dict = {"views": [ref.name], "downsample": factor, "grid_mm": round(grid.res * 1000, 3)}
     with torch.no_grad():
         g_ref, i_ref = _grey(ref, factor)
-        r = _sample(g_ref, i_ref, ref.pose, pts[:1])[0].reshape(hh, ww)
+        r = _sample(g_ref, i_ref, ref.pose, pts0)[0].reshape(hh, ww)
         valid_ref = ~torch.isnan(r)
         r = torch.nan_to_num(r)
         k = max(3, int(round(WIN_M / grid.res)) | 1)
         r4 = r[None, None]
         mr = _box(r4, k)
         sr = (_box(r4 * r4, k) - mr * mr).clamp_min(0).sqrt()
-        costs, shifts = [], {}
+        used, shifts = [], {}
         m_np = mask & valid_ref.cpu().numpy()
-        i0 = int(np.argmin(np.abs(hs)))
-        for v, _d in chosen:
+        for v, _d in chosen:   # each still shifted onto the top still at the top plane (module docstring 2)
             g, intr = _grey(v, factor)
-            w0 = _sample(g, intr, v.pose, pts[i0:i0 + 1])[0].reshape(hh, ww)
+            w0 = _sample(g, intr, v.pose, pts0)[0].reshape(hh, ww)
             ok = m_np & ~torch.isnan(w0).cpu().numpy()
             if ok.mean() < 0.3:
                 continue
@@ -244,28 +275,34 @@ def relief_heights(ref: Any, others: Sequence[Any], grid: Any, top_y: float, mas
                 shifts[v.name] = None
                 continue
             shifts[v.name] = round(float(np.linalg.norm(off)) * 1000, 2)
-            pose = replace(v.pose, t=v.pose.t - np.array([off[0], 0.0, off[1]]))
-            w = _sample(g, intr, pose, pts).reshape(len(hs), 1, hh, ww)  # L x 1 x H x W
-            nan = torch.isnan(w)
-            w = torch.nan_to_num(w)
-            mw = _box(w, k)
-            sw = (_box(w * w, k) - mw * mw).clamp_min(0).sqrt()
-            ncc = (_box(w * r4, k) - mw * mr) / (sw * sr + 1e-3)
-            cost = (1 - ncc.clamp(-1, 1))[:, 0]
-            cost[_box(nan.float(), k)[:, 0] > 0.2] = float("nan")
-            costs.append(cost)
+            used.append((g, intr, replace(v.pose, t=v.pose.t - np.array([off[0], 0.0, off[1]]))))
             stats["views"].append(v.name)
-            del g
         stats["align_shift_mm"] = shifts
-        if len(costs) < 2:
-            raise ReliefUnavailable(f"only {len(costs)} other photo(s) land on the top photo within "
+        if len(used) < 2:
+            raise ReliefUnavailable(f"only {len(used)} other photo(s) land on the top photo within "
                                     f"{ALIGN_MAX_M * 1000:.0f} mm")
-        cv = torch.stack(costs)                                            # V x L x H x W
-        nv = cv.shape[0]
+        nv = len(used)
         keep = max(1, (nv + 1) // 2)
-        cv = torch.nan_to_num(cv, nan=3.0)
-        best_half = torch.topk(cv, keep, dim=0, largest=False).values.mean(0)   # L x H x W
-        agg = best_half
+        chunk = sweep_chunk(hh * ww, nv)
+        stats["chunk_layers"] = chunk
+        agg = torch.empty((len(hs), hh, ww), device=r.device)
+        for a in range(0, len(hs), chunk):   # bounded memory: a few height layers at a time (MEM_BUDGET)
+            pts = _ray_points(grid, top_y, c, hs[a:a + chunk])               # l x N x 3
+            costs = []
+            for g, intr, pose in used:
+                w = _sample(g, intr, pose, pts).reshape(len(pts), 1, hh, ww)
+                nan = torch.isnan(w)
+                w = torch.nan_to_num(w)
+                mw = _box(w, k)
+                sw = (_box(w * w, k) - mw * mw).clamp_min(0).sqrt()
+                ncc = (_box(w * r4, k) - mw * mr) / (sw * sr + 1e-3)
+                cost = (1 - ncc.clamp(-1, 1))[:, 0]
+                cost[_box(nan.float(), k)[:, 0] > 0.2] = 3.0
+                costs.append(cost)
+                del w, nan, mw, sw, ncc
+            cv = torch.stack(costs)
+            agg[a:a + len(pts)] = torch.topk(cv, keep, dim=0, largest=False).values.mean(0)
+            del cv, costs, pts
         ib = torch.argmin(agg, 0)
         cb = torch.gather(agg, 0, ib[None])[0]
         # sub-step parabola
@@ -367,6 +404,18 @@ def clean(rel: Relief, mask: np.ndarray) -> np.ndarray:
     return h
 
 
+def clean_small(h: np.ndarray, res: float) -> np.ndarray:
+    """Raised pieces smaller than MIN_BLOB_M square back to the top (after cutting, what is left of a needle)."""
+    h = h.copy()
+    lab, n = _components(h >= RAISED_M)
+    if n:
+        sizes = np.bincount(lab.ravel(), minlength=n + 1)
+        small = sizes < (MIN_BLOB_M / res) ** 2
+        small[0] = False
+        h[small[lab]] = 0.0
+    return h
+
+
 def lidar_check(h: np.ndarray, grid: Any, top_y: float, lidar: np.ndarray | None) -> dict:
     """LiDAR's word on the raised pieces: per piece (largest first) the photos' median height and LiDAR's median
     height of its points over it (mm above the top), and over the flat part."""
@@ -453,6 +502,39 @@ def drop_unlikely(h: np.ndarray, colours: np.ndarray, mask: np.ndarray, res: flo
     h[table_piece[lab]] = 0.0
     out["table"] = int(table_piece.sum())
     return h, out
+
+
+def cut_needles(h: np.ndarray, res: float) -> tuple[np.ndarray, float]:
+    """Raised parts standing taller than NEEDLE_RATIO x their size (sqrt of the area above each height) cut down to
+    the height where they are not: at every height t (QUANT_M steps), each piece above t whose size is less than
+    t / NEEDLE_RATIO comes down to t. Returns (heights, share of the raised volume cut)."""
+    h = h.copy()
+    before = float(h.sum())
+    for t in np.arange(RAISED_M, CLAMP_M, QUANT_M):
+        above = h > t + 1e-9
+        if not above.any():
+            break
+        lab, n = _components(above)
+        sizes = np.bincount(lab.ravel(), minlength=n + 1)
+        needle = np.sqrt(sizes * res * res) * NEEDLE_RATIO < t + QUANT_M
+        needle[0] = False
+        if needle.any():
+            sel = needle[lab]
+            h[sel] = t
+    return h, (1.0 - float(h.sum()) / before) if before > 0 else 0.0
+
+
+def gate(confident_share: float, cut_share: float, h: np.ndarray, short_side_m: float) -> str | None:
+    """Why the relief should not ship (None: it may): too few confident matches, too much of it needles, or taller
+    than the object's footprint makes plausible."""
+    if confident_share < GATE_MIN_CONFIDENT:
+        return f"only {confident_share:.0%} of the top matched across the photos (need {GATE_MIN_CONFIDENT:.0%})"
+    if cut_share > GATE_MAX_CUT:
+        return f"{cut_share:.0%} of the raised volume was thin needles (at most {GATE_MAX_CUT:.0%})"
+    top = float(h.max()) if h.size else 0.0
+    if top > GATE_MAX_HEIGHT * short_side_m:
+        return f"{top * 1000:.1f} mm tall on a {short_side_m * 1000:.0f} mm wide object"
+    return None
 
 
 # --- mesh ------------------------------------------------------------------------------------------------------------
@@ -587,8 +669,13 @@ def add_relief(model: Any, views: Sequence[Any], tex: Any, table_y: float, lidar
         return model
     top_y = float(model.vertices[0, 1])
     k = len(model.outline)
-    shape = (int(np.ceil(tex.shape[0] * tex.res / RES_M)), int(np.ceil(tex.shape[1] * tex.res / RES_M)))
-    grid = Grid(tex.origin, tex.u, tex.v, RES_M, shape)
+    n0 = int(np.ceil(tex.shape[0] * tex.res / RES_M)) * int(np.ceil(tex.shape[1] * tex.res / RES_M))
+    res = grid_res(n0)
+    if res is None:
+        model.stats["relief"] = "not built: the object is too big for a height map within the memory budget"
+        return model
+    shape = (int(np.ceil(tex.shape[0] * tex.res / res)), int(np.ceil(tex.shape[1] * tex.res / res)))
+    grid = Grid(tex.origin, tex.u, tex.v, res, shape)
     centres = grid.world(top_y)[:, [0, 2]]
     mask = _inside(centres, model.outline).reshape(shape)
     key = (tuple(v.name for v in views), tuple(float(x) for v in views for x in v.pose.t), tuple(grid.origin),
@@ -613,23 +700,35 @@ def add_relief(model: Any, views: Sequence[Any], tex: Any, table_y: float, lidar
         return np.c_[xz, np.ones(len(xz))] @ uv_map
 
     colours = _atlas_at(model.atlas, uv_of(centres)).reshape(*shape, 3)
-    h, dropped = drop_unlikely(h, colours, mask, RES_M, table_colours(views[0], model.outline, top_y))
-    f = max(1, int(round(MESH_CELL_M / RES_M)))
+    h, dropped = drop_unlikely(h, colours, mask, res, table_colours(views[0], model.outline, top_y))
+    h, cut = cut_needles(h, res)
+    h = clean_small(h, res)
+    o = model.outline
+    short = min(float(np.linalg.norm(o[1] - o[0])), float(np.linalg.norm(o[-1] - o[0]))) if len(o) == 4 else \
+        float(np.ptp(o, 0).min())
+    why = gate(rel.stats.get("confident_share", 0.0), cut, h, short)
+    model.stats["relief_gate"] = {"confident_share": rel.stats.get("confident_share"), "needle_cut_share": round(cut, 3),
+                                  "max_mm": round(float(h.max()) * 1000, 1), "short_side_mm": round(short * 1000, 1)}
+    if why:
+        model.stats["relief"] = f"not shown: {why}"
+        model.stats["relief_detail"] = {**rel.stats, "dropped": dropped}
+        return model
+    f = max(1, int(round(MESH_CELL_M / res)))
     hc = _coarsen(h, f)
-    cgrid = Grid(grid.origin, grid.u, grid.v, RES_M * f, hc.shape)
+    cgrid = Grid(grid.origin, grid.u, grid.v, res * f, hc.shape)
     hc[~_inside(cgrid.world(top_y)[:, [0, 2]], model.outline).reshape(hc.shape)] = 0.0
     budget = MAX_TRIANGLES - len(model.faces)
     v, uv, fc = block_mesh(hc, cgrid, top_y, views[0].pose.t.astype(float), uv_of)
     while len(fc) > budget and f < 16:
         f *= 2
         hc = _coarsen(h, f)
-        cgrid = Grid(grid.origin, grid.u, grid.v, RES_M * f, hc.shape)
+        cgrid = Grid(grid.origin, grid.u, grid.v, res * f, hc.shape)
         v, uv, fc = block_mesh(hc, cgrid, top_y, views[0].pose.t.astype(float), uv_of)
     check = lidar_check(h, grid, top_y, lidar)
     raised = h >= RAISED_M
-    model.stats["relief"] = (f"{int(raised.sum() * RES_M ** 2 * 1e6)} mm2 raised, up to "
+    model.stats["relief"] = (f"{int(raised.sum() * res ** 2 * 1e6)} mm2 raised, up to "
                              f"{h.max() * 1000:.1f} mm, from {len(rel.stats['views'])} photos")
-    model.stats["relief_detail"] = {**rel.stats, "dropped": dropped, "lidar": check, "cell_mm": RES_M * f * 1000,
+    model.stats["relief_detail"] = {**rel.stats, "dropped": dropped, "lidar": check, "cell_mm": round(res * f * 1000, 3),
                                     "triangles": int(len(fc)), "total_s": round(time.perf_counter() - t0, 3)}
     if len(fc):
         n0 = len(model.vertices)
