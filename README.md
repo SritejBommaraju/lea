@@ -109,7 +109,7 @@ app's Settings with the gateway URL and pairing code.
 
 ## Team
 
-Rohan Kilaru, Sritej Bommaraju, Jayden, Samik.
+Rohan Kilaru, Sritej Bommaraju, Jayden Lee, Samik Thusoo.
 
 ## License and credits
 

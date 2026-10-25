@@ -454,7 +454,7 @@ The site uses this direction, not one of its own (§10). It lives in `website/` 
   use JavaScript only when it adds a real product interaction. Reduced Motion removes travel, scaling and smooth
   scrolling; all content remains readable without animation.
 - **Copy.** Only what the product does today, in the report's plain words. Screens are labelled as prototypes.
-  Grain is never named. There are no numbers, customers or quotes we cannot show.
+  There are no numbers, customers or quotes we cannot show.
 
 ## 12. Rules for generated design
 
