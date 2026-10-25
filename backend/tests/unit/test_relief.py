@@ -61,7 +61,9 @@ def _render(pose: Pose, cam: Pinhole, w: int, h: int) -> np.ndarray:
             break
     t = np.where(np.isnan(hit), t, hit)
     p = pose.t + t[:, None] * d
-    g = _texture(p[:, 0], p[:, 1], p[:, 2]).reshape(h, w)
+    g = _texture(p[:, 0], p[:, 1], p[:, 2])
+    table = (np.abs(p[:, 0]) > 0.025) | (np.abs(p[:, 2]) > 0.02)
+    g = np.where(table, 215 + g // 12, g // 2 + 10).astype(np.uint8).reshape(h, w)   # a light table, a dark board
     return np.repeat(g[..., None], 3, -1)
 
 
@@ -115,11 +117,34 @@ def test_blocks_in_the_slab(views: list) -> None:
     uv = np.c_[(outline[:, 0] + 0.025) / 0.05, (outline[:, 1] + 0.02) / 0.0408]
     from PIL import Image
 
+    col, _ = F.rectify(views[0].image, views[0].pose, views[0].cam, tex, TOP_Y)
+    atlas = np.vstack([np.clip(col, 0, 255).astype(np.uint8).reshape(400, 500, 3), np.full((8, 500, 3), 70, np.uint8)])
     m = F.FlatModel(top.astype(np.float32), uv.astype(np.float32), np.array([[0, 2, 1], [0, 3, 2]], np.int32),
-                    Image.new("RGB", (500, 408)), outline, {})
+                    Image.fromarray(atlas), outline, {})
     m = R.add_relief(m, views, tex, 0.0, None)
     assert m.relief is not None, m.stats.get("relief")
     assert len(m.faces) > 2 and len(m.faces) <= R.MAX_TRIANGLES
     assert float(m.vertices[:, 1].max()) == pytest.approx(TOP_Y + 0.011, abs=0.0015)
     assert m.vertices[:, 1].min() >= TOP_Y - 1e-6
     assert len(m.uv) == len(m.vertices)
+
+
+def test_spikes_and_table_pieces_dropped() -> None:
+    res = R.RES_M
+    h = np.zeros((120, 160))
+    mask = np.zeros(h.shape, bool)
+    mask[10:110, 10:150] = True
+    colours = np.zeros((*h.shape, 3)) + 40.0                  # a dark board
+    h[40:60, 40:70] = 0.009                                   # a dark part: stays
+    h[50:56, 100:105] = 0.024                                 # 1.5 x 1.25 mm, 24 mm tall: a spike
+    h[42:58, 62:64] = 0.026                                   # a 0.5 mm blade on the part: back to 9 mm
+    h[20:100, 10:18] = 0.006                                  # along the outline's edge, table-coloured
+    colours[:, :20] = 230.0
+    h[80:95, 100:130] = 0.006                                 # inside, mostly table-coloured
+    colours[80:95, 100:130] = 230.0
+    table = (np.array([230.0, 230.0, 230.0]), np.linalg.inv(np.eye(3) * 20.0))
+    out, n = R.drop_unlikely(h, colours, mask, res, table)
+    assert out[50, 55] == pytest.approx(0.009)
+    assert out[53, 102] == 0 and out[60, 14] == 0 and out[88, 110] == 0
+    assert out[50, 63] == pytest.approx(0.009)
+    assert n == {"spikes": 2, "table": 2}

@@ -16,7 +16,9 @@ millimetres of noise), but the stills see them from several sides at ~0.1 mm per
    some sides), its height the lowest cost (sub-step parabola), its confidence the best NCC and the gap to the next
    minimum.
 4. Clean-up: confident heights only, median filtered (edges stay steps), clamped to [0, CLAMP_M], quantised to
-   QUANT_M; raised pieces smaller than MIN_BLOB_M square dropped; low-confidence pixels fall back to 0 (LiDAR is
+   QUANT_M; raised pieces smaller than MIN_BLOB_M square dropped, and those that are not parts (drop_unlikely):
+   spikes, and table-coloured pieces (the table's colours round the outline, as recreation.flat.footprint measures
+   them; an outline that took in some table gets no towers on it); low-confidence pixels fall back to 0 (LiDAR is
    only a check: its median height over each raised piece is reported next to the photos').
 5. Mesh: the grid coarsened to MESH_CELL_M, equal-height cells merged into rectangles (at most MAX_QUAD_M a side,
    so vertex colours keep detail), walls where neighbouring cells differ, all on the slab's flat top (which keeps
@@ -55,6 +57,12 @@ QUANT_M = 0.0005
 SPIKE_M = 0.00075         # grey opening radius
 RAISED_M = 0.001         # a cell this much above the top is raised
 MIN_BLOB_M = 0.002       # raised pieces smaller than this square go
+TALL_M = 0.02            # a raised piece this tall ...
+TALL_MIN_M = 0.003       # ... nowhere this wide is a spike (no part is a 20 mm needle or blade)
+TABLE_SHARE = 0.6        # a raised piece whose pixels are this much table-coloured is the table (parallax on it)
+EDGE_TABLE_SHARE = 0.3   # ... or this much when it touches the outline (the outline took in some table)
+EDGE_M = 0.001           # touching: within this of the outline
+RING_M = (0.003, 0.015)  # the table's colours: this band round the outline in the top still
 MESH_CELL_M = 0.0005
 MAX_QUAD_M = 0.003
 MAX_TRIANGLES = 80_000
@@ -384,6 +392,69 @@ def lidar_check(h: np.ndarray, grid: Any, top_y: float, lidar: np.ndarray | None
     return out
 
 
+def table_colours(still: Any, outline: np.ndarray, y: float) -> tuple[np.ndarray, np.ndarray] | None:
+    """(mean, inverse covariance) of the table's colours in a still: a band RING_M round the outline rectified at
+    height y, the statistics recreation.flat.footprint uses (covariance + 4 I). None when too little is seen."""
+    from repairos.recreation.flat import Grid, _inside, _nearest_on_outline, rectify
+
+    res = 0.0005
+    lo, hi = outline.min(0) - RING_M[1], outline.max(0) + RING_M[1]
+    g = Grid(lo, np.array([1.0, 0.0]), np.array([0.0, 1.0]), res,
+             (int((hi[1] - lo[1]) / res), int((hi[0] - lo[0]) / res)))
+    xz = g.world(y)[:, [0, 2]]
+    d = np.linalg.norm(_nearest_on_outline(xz, outline) - xz, axis=1)
+    ring = ~_inside(xz, outline) & (d > RING_M[0]) & (d < RING_M[1])
+    col, ok = rectify(still.image, still.pose, still.cam, g, y)
+    t = col[ring & ok]
+    if len(t) < 500:
+        return None
+    return t.mean(0), np.linalg.inv(np.cov(t.T) + np.eye(3) * 4.0)
+
+
+def drop_unlikely(h: np.ndarray, colours: np.ndarray, mask: np.ndarray, res: float,
+                  table: tuple[np.ndarray, np.ndarray] | None) -> tuple[np.ndarray, dict]:
+    """Raised pieces that are not parts, set to the top (0): spikes (taller than TALL_M and nowhere TALL_MIN_M
+    wide) and the table (pieces whose colours, `colours` H x W x 3 from the top still, are mostly the table's:
+    TABLE_SHARE, or EDGE_TABLE_SHARE when they touch the outline's edge). Returns (heights, counts dropped)."""
+    from repairos.recreation.flat import TABLE_SIGMA, _dilate, _erode
+
+    h = h.copy()
+    lab, n = _components(h >= RAISED_M)
+    out = {"spikes": 0, "table": 0}
+    if not n:
+        return h, out
+    sizes = np.bincount(lab.ravel(), minlength=n + 1)
+    edge = mask & ~_erode(mask, max(1, int(round(EDGE_M / res))))
+    tablelike = np.zeros(h.shape, bool)
+    if table is not None:
+        mu, icov = table
+        dd = colours.reshape(-1, 3) - mu
+        tablelike = (np.sqrt(np.einsum("ij,jk,ik->i", dd, icov, dd)) <= TABLE_SIGMA).reshape(h.shape)
+    share = np.bincount(lab.ravel(), weights=tablelike.ravel(), minlength=n + 1) / np.maximum(sizes, 1)
+    touches = np.bincount(lab.ravel(), weights=edge.ravel(), minlength=n + 1) > 0
+    # spikes: what stands above TALL_M and is nowhere TALL_MIN_M wide (a needle, or a thin wall from a stray match
+    # along an edge), also when it sits on a real part: it comes down to the median height round it
+    rw = max(1, int(round(TALL_MIN_M / 2 / res)))
+    tlab, tn = _components(h > TALL_M)
+    for k in range(1, tn + 1):
+        sel = tlab == k
+        if _erode(sel, rw).any():
+            continue
+        ring = _dilate(sel, rw) & ~sel & (h <= TALL_M)
+        h[sel] = float(np.median(h[ring])) if ring.any() else 0.0
+        out["spikes"] += 1
+    if out["spikes"]:
+        lab, n = _components(h >= RAISED_M)
+        sizes = np.bincount(lab.ravel(), minlength=n + 1)
+        share = np.bincount(lab.ravel(), weights=tablelike.ravel(), minlength=n + 1) / np.maximum(sizes, 1)
+        touches = np.bincount(lab.ravel(), weights=edge.ravel(), minlength=n + 1) > 0
+    table_piece = (share >= TABLE_SHARE) | (touches & (share >= EDGE_TABLE_SHARE))
+    table_piece[0] = False
+    h[table_piece[lab]] = 0.0
+    out["table"] = int(table_piece.sum())
+    return h, out
+
+
 # --- mesh ------------------------------------------------------------------------------------------------------------
 
 def _coarsen(h: np.ndarray, f: int) -> np.ndarray:
@@ -496,6 +567,12 @@ def block_mesh(h: np.ndarray, grid: Any, top_y: float, c: np.ndarray, uv_of: Any
 
 # --- the hook --------------------------------------------------------------------------------------------------------
 
+def _atlas_at(atlas: Any, uv: np.ndarray) -> np.ndarray:
+    a = np.asarray(atlas).astype(float)
+    hh, ww = a.shape[:2]
+    return a[np.clip((uv[:, 1] * hh).astype(int), 0, hh - 1), np.clip((uv[:, 0] * ww).astype(int), 0, ww - 1)]
+
+
 def add_relief(model: Any, views: Sequence[Any], tex: Any, table_y: float, lidar: np.ndarray | None) -> Any:
     """The slab (flat.FlatModel) with its raised parts as blocks on its top, from the stills (`views`, best first: the
     first textures the top) on the top's texture frame `tex`. Unchanged, with the reason in stats["relief"], when the
@@ -535,6 +612,8 @@ def add_relief(model: Any, views: Sequence[Any], tex: Any, table_y: float, lidar
     def uv_of(xz: np.ndarray) -> np.ndarray:
         return np.c_[xz, np.ones(len(xz))] @ uv_map
 
+    colours = _atlas_at(model.atlas, uv_of(centres)).reshape(*shape, 3)
+    h, dropped = drop_unlikely(h, colours, mask, RES_M, table_colours(views[0], model.outline, top_y))
     f = max(1, int(round(MESH_CELL_M / RES_M)))
     hc = _coarsen(h, f)
     cgrid = Grid(grid.origin, grid.u, grid.v, RES_M * f, hc.shape)
@@ -550,7 +629,7 @@ def add_relief(model: Any, views: Sequence[Any], tex: Any, table_y: float, lidar
     raised = h >= RAISED_M
     model.stats["relief"] = (f"{int(raised.sum() * RES_M ** 2 * 1e6)} mm2 raised, up to "
                              f"{h.max() * 1000:.1f} mm, from {len(rel.stats['views'])} photos")
-    model.stats["relief_detail"] = {**rel.stats, "lidar": check, "cell_mm": RES_M * f * 1000,
+    model.stats["relief_detail"] = {**rel.stats, "dropped": dropped, "lidar": check, "cell_mm": RES_M * f * 1000,
                                     "triangles": int(len(fc)), "total_s": round(time.perf_counter() - t0, 3)}
     if len(fc):
         n0 = len(model.vertices)
