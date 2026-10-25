@@ -20,6 +20,7 @@ struct RootView: View {
     @State private var replay: SessionRecord?
     /// "Hey Lea" (or the Talk button) on the home screen: Voice/HomeConversationSheet.
     @State private var talking = false
+    @State private var talksSeen = 0
     @AppStorage(DemoReplay.enabledKey) private var demoReplay = false
     @AppStorage(DemoReplay.sessionKey) private var demoSession = ""
     private static let recentCount = 3
@@ -90,6 +91,12 @@ struct RootView: View {
             }
             // "Hey Siri, scan with Lea" (Voice/ScanIntent): start a scan with the spoken description.
             .onChange(of: IntentInbox.shared.requests, initial: true) { scanFromIntent() }
+            // "Hey Siri, hey lea" (Voice/ScanIntent): the conversation opens listening, and Lea asks what's up.
+            .onChange(of: IntentInbox.shared.talks, initial: true) { _, talks in
+                guard talks > talksSeen else { return }
+                talksSeen = talks
+                talkToLea()
+            }
             .onChange(of: WakeListener.shared.wakes) { if active == nil, replay == nil, app.gateway != nil { talking = true } }
             .sheet(isPresented: $talking) {
                 if let gateway = app.gateway {

@@ -230,6 +230,7 @@ struct ConversationPanel: View {
 
     @State private var wake = WakeListener.shared
     @State private var pressedAt: Date?
+    @State private var typed = ""
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String? = { nil },
          compact: Bool = false, afterTurn: (@MainActor () -> Void)? = nil, onAction: @escaping (String) -> Void) {
@@ -251,6 +252,14 @@ struct ConversationPanel: View {
                 }
                 .buttonStyle(.primary(.quiet))
                 .transition(.opacity)
+            }
+            if !compact {
+                // Detail that is easier to type (a model number, an error code): the same turn as saying it.
+                FieldWell(symbol: "keyboard") {
+                    TextField("Type to Lea", text: $typed)
+                        .submitLabel(.send)
+                        .onSubmit(sendTyped)
+                }
             }
             HStack(spacing: Spacing.s) {
                 talkButton
@@ -279,6 +288,13 @@ struct ConversationPanel: View {
     }
 
     private var isFailed: Bool { if case .failed = convo.phase { true } else { false } }
+
+    private func sendTyped() {
+        let words = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return }
+        typed = ""
+        convo.typed(words)
+    }
 
     private var captions: some View {
         ScrollViewReader { proxy in
@@ -430,7 +446,11 @@ struct HomeConversationSheet: View {
                 }
                 .ignoresSafeArea()
             }
-            .task { await pre.begin(gateway: gateway) }
+            .task {
+                await pre.begin(gateway: gateway)
+                // Opened by "Hey Siri, hey lea": Lea speaks first, then listens (hands-free).
+                if IntentInbox.shared.takeGreeting() { LeaConversation.active?.leaSays("Hey, what's up?") }
+            }
             // What the backend works out is said once, in Lea's voice, and shown in the conversation.
             .onChange(of: pre.live?.identity?.words) { _, words in
                 guard let words, words != spokenIdentity, pre.live?.brief == nil else { return }

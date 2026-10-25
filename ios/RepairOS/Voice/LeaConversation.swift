@@ -212,6 +212,12 @@ final class LeaConversation {
 
     static func same(_ a: String, _ b: String) -> Bool { WakeListener.normalize(a) == WakeListener.normalize(b) }
 
+    /// A typed turn: Lea stops talking and it goes the way spoken words do ("yes" still takes an offer).
+    func typed(_ text: String) {
+        stopLea()
+        heard(text, engine: "typed")
+    }
+
     /// Lea says something on her own (what the object is, once the backend works it out).
     func leaSays(_ text: String) {
         turns.append(Turn(mine: false, text: text))
