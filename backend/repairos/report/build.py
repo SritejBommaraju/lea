@@ -28,7 +28,7 @@ from typing import Any
 
 from repairos.fusion import words
 from repairos.report.safety import limits, safety_notes
-from repairos.report.verdict import caveat, decide, facts_of
+from repairos.report.verdict import decide, facts_of, reason_for
 from repairos.slots.blob import REF_PREFIX
 from repairos.vision.generic_classes import GENERIC_CLASSES
 from repairos.vision.ranking import MERGE_IOU
@@ -417,9 +417,8 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
             report["bottom_not_placed"] = bottom
     v = decide(facts_of(report))
     report["verdict"] = v.verdict
-    report["verdict_reason"] = v.as_reason()
-    if v.verdict in ("no_problems_seen", "insufficient_evidence") and (c := caveat(report)):
-        report["verdict_reason"]["caveat"] = c   # what was not checked: the caveat list, never the headline
+    # No problems seen: what was checked and looked fine; not enough evidence: what was not checked as its caveat.
+    report["verdict_reason"] = reason_for(report, v, scan.get("crop_box"))
     if (obj := object_header(identity)):
         report["object"] = obj
     if mesh and mesh.get("status") == "done":

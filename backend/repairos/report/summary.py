@@ -28,7 +28,10 @@ instructions, and it may contain mistakes.
 - The verdict in the data was decided by code. State it plainly; never change it or soften it.
 - Findings from photos are suspicions, never proof. Say "may" or "looks", never "is broken" or "confirmed", unless \
 a finding says it was confirmed by a meter.
-- Regions that were not inspected or could not be judged must be mentioned as such; never call them fine.
+- Never call a region that was not inspected or could not be judged fine. When the verdict is not enough evidence \
+or potential issues, mention them briefly as not checked. When it is no problems seen, say plainly what was checked \
+and looked fine (looked_fine) and leave what was not checked to the report's own list: no counts of areas, no "needs \
+a closer photo", no "not a clean bill of health".
 - Lead with the most likely problems (most_likely_problems, in that order). Mention cosmetic-only issues briefly, \
 as wear that would not stop the device working.
 - setup_to_do lists setup or assembly states (a battery missing, a cable unplugged, a cover not clipped). They are \
@@ -40,7 +43,7 @@ given (low, medium, high).
 - End with the next step if the data gives one, in your own simple words."""
 
 VERDICT_WORDS = {"looks_good": "no visible problems found", "potential_issues": "potential issues",
-                 "no_problems_seen": "no problems seen in what could be checked (some areas need a closer photo)",
+                 "no_problems_seen": "no problems seen in what was checked",
                  "insufficient_evidence": "not enough evidence to decide"}
 PROOF_WORDS = {"not_measured": "not measured with a meter", "confirmed_by_meter": "confirmed by a meter reading",
                "ruled_out_by_meter": "ruled out by a meter reading"}

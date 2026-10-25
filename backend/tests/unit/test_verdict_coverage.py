@@ -151,3 +151,49 @@ def test_the_new_verdict_has_words_everywhere_and_validates():
                                                            "text": "Nothing looked wrong.", "caveat": "3 areas need a closer photo."})
     if rep["findings"]:
         validate("report", rep)
+
+
+
+def test_no_problems_seen_says_what_was_checked_confidently():
+    from repairos.report.verdict import checked_text, reason_for
+
+    rep = trimmer()
+    rep["findings"] = [{**_ok(0), "part_class": "battery"}, {**_ok(1), "part_class": "face_button"},
+                       {**_ok(2), "part_class": "cable"}, {**_ok(3), "part_class": "unknown_part"},
+                       {"finding_id": "f_x", "issue": "none", "proof": {"status": "not_measured"}, "part_class": "cable"}]
+    reason = reason_for(rep, decide(facts_of(rep)))
+    assert reason["rule"] == "V8" and "caveat" not in reason
+    assert reason["text"] == "Nothing looked wrong. The battery, face button and cable all looked fine in the photos."
+    for words in ("clean bill of health", "closer photo", "areas"):
+        assert words not in reason["text"]
+    # Never a part that was not inspected or could not be judged; the lists stay as data for the report view.
+    assert "unknown" not in reason["text"] and len(rep["insufficient_evidence"]) == 8 and len(rep["not_inspected"]) == 5
+    assert checked_text({"findings": [_ok(0)]}) == "Nothing looked wrong. The housing looked fine in the photos."
+    assert checked_text({"findings": []}) is None
+    # Not enough evidence keeps what was not checked as its caveat.
+    poor = trimmer(views=None)
+    poor_reason = reason_for(poor, decide(facts_of(poor)))
+    assert poor_reason["rule"] == "V7" and poor_reason["caveat"].endswith("need a closer photo.")
+
+
+def test_the_summary_writer_is_told_not_to_lead_with_caveats():
+    assert summary.VERDICT_WORDS["no_problems_seen"] == "no problems seen in what was checked"
+    s = " ".join(summary.SYSTEM.split())
+    assert "no counts of areas" in s and "not a clean bill of health" in s and "Never call a region that was not inspected" in s
+
+
+
+def test_the_looked_fine_list_is_only_the_object():
+    from repairos.report.verdict import checked_text, reason_for
+
+    box = {"center_m": [0.0, 0.0, -0.4], "extent_m": [0.2, 0.1, 0.2], "quaternion_xyzw": [0, 0, 0, 1], "frame": "arkit_world"}
+
+    def at(name, point):
+        return {**_ok(name), "part_class": name, "location": {"status": "computed", "point_m": point}}
+    rep = trimmer()
+    rep["findings"] = [at("circuit_board", [0.01, 0.0, -0.41]), at("pin_header", [0.08, 0.02, -0.35]),
+                       at("plastic_bottle", [0.45, 0.05, -0.2]),                      # beside the object, off it
+                       {**_ok("x"), "part_class": "wooden_surface"}]                    # not located: can't tell
+    assert checked_text(rep, box) == "Nothing looked wrong. The circuit board and pin header all looked fine in the photos."
+    assert "bottle" not in reason_for(rep, decide(facts_of(rep)), box)["text"]
+    assert "plastic bottle" in checked_text(rep)                                       # no box: nothing to tell apart

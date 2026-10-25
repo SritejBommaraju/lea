@@ -1150,3 +1150,19 @@ def test_photo_only_parts_show_their_photo_and_are_placed_when_the_surface_chang
     events = ask(c, scan_id, "and where is A2 now")
     assert {"type": "view", "side": "reset"} in events and not [e for e in events if e["type"] == "point"]
     assert any(e["type"] == "photo" and e["for"] == "ix_1" for e in events)
+
+
+def test_punctuation_around_a_removed_marker_is_tidied():
+    sp = SentenceSplitter()
+    out = sp.feed('It looks seated flat in its spot: <show part="ix_4"/>. ')
+    out += sp.feed('A2 is here, <show part="ix_25"/>, next to A3. And <show part="ix_1"/>; that one: ') + sp.flush()
+    assert out == ["It looks seated flat in its spot.", "A2 is here, next to A3.", "And; that one"]
+    from repairos.voice.conversation import unspeakable
+    assert unspeakable("seated in its spot:.") == "Seated in its spot." and unspeakable("here, , there") == "Here, there"
+
+
+def test_persona_never_clears_what_was_not_photographed():
+    p = " ".join(PERSONA.split())
+    for words in ("can't be judged at all: never call it fine, clean, shiny or even", "Credit the scan only with what it checked",
+                  "a part in a socket has no solder on that side to judge"):
+        assert words in p, words
