@@ -173,9 +173,11 @@ struct ReportStageView: View {
             .padding(.bottom, Self.overlap)
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: Spacing.s) {
-                    Button { startTour() } label: { Label("Walk me through it", systemImage: "play.fill") }
-                        .buttonStyle(StageCapsuleButtonStyle())
-                        .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
+                    if hasTourContent {
+                        Button { startTour() } label: { Label("Walk me through it", systemImage: "play.fill") }
+                            .buttonStyle(StageCapsuleButtonStyle())
+                            .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
+                    }
                     if canShowOnObject {
                         Button { showOnObject = true } label: { Label("Show on object", systemImage: "arkit") }
                             .buttonStyle(StageCapsuleButtonStyle())
@@ -280,7 +282,14 @@ struct ReportStageView: View {
     static let deckHeight: CGFloat = 44 + WalkthroughCard.height + 3 + 44 + 3 * Spacing.m + Spacing.m
 
     /// Plays the tour from its first card. `afterLea`: asked by voice, so it starts once she has said she will.
+    /// A tour only when the report has problems or setup items to show (the owner: no guide through nothing).
+    private var hasTourContent: Bool { !report.mostLikely.isEmpty || !report.otherIssues.isEmpty || !report.setup.isEmpty }
+
     private func startTour(afterLea: Bool = false) {
+        guard hasTourContent else {
+            LeaConversation.active?.leaSays("There's nothing to walk through: I didn't find any problems in this scan.")
+            return
+        }
         let photo = isPhotoHero, threeD = isCustomHero || !model.isNone
         let steps = Walkthrough.steps(report) { p in photo ? p.cropStill != nil : threeD && p.point != nil }
         circling = false

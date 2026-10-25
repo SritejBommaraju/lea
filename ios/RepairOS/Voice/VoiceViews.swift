@@ -230,6 +230,8 @@ struct ConversationPanel: View {
 
     @State private var wake = WakeListener.shared
     @State private var pressedAt: Date?
+    /// A tap instead of a hold: the button says how to talk for a moment.
+    @State private var tapHint = false
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String? = { nil },
          compact: Bool = false, afterTurn: (@MainActor () -> Void)? = nil, onAction: @escaping (String) -> Void) {
@@ -317,7 +319,7 @@ struct ConversationPanel: View {
         return HStack(spacing: Spacing.s) {
             Image(systemName: listening ? "waveform" : (convo.phase == .speaking ? "speaker.wave.2.fill" : "mic.fill"))
                 .symbolEffect(.variableColor.iterative, isActive: listening || convo.phase == .speaking)
-            Text(listening ? "Listening…" : (convo.phase == .speaking ? "Tap to interrupt" : "Talk to Lea"))
+            Text(tapHint ? "Hold to talk" : (listening ? "Listening… let go to send" : (convo.phase == .speaking ? "Hold to interrupt" : "Hold to talk to Lea")))
         }
         .font(.buttonLabel)
         .foregroundStyle(.white)
@@ -337,17 +339,18 @@ struct ConversationPanel: View {
                 let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
                 pressedAt = nil
                 if held < 0.35 {
-                    // A tap: hands-free. The phone listens; the turn ends when you stop talking.
+                    // A tap is not a question (the owner, 2026-10-25: press and hold to talk, the tap-for-hands-free
+                    // mode misfired): drop the blip and say how. "Hey Lea" still works hands-free.
                     convo.cancelHold()
-                    convo.handsFree = true
-                    wake.listenForFollowUp()
+                    withAnimation(Motion.fade) { tapHint = true }
+                    Task { try? await Task.sleep(for: .seconds(1.6)); withAnimation(Motion.fade) { tapHint = false } }
                 } else {
                     convo.releaseToTalk()
                 }
             })
         .sensoryFeedback(.impact(weight: .light), trigger: pressedAt != nil) { _, new in new }   // on press only
         .accessibilityLabel("Talk to Lea")
-        .accessibilityHint("Hold to ask, or tap once to talk hands-free")
+        .accessibilityHint("Press and hold, ask, then let go")
         .accessibilityAddTraits(.isButton)
     }
 }

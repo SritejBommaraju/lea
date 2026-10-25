@@ -259,6 +259,9 @@ final class LeaConversation {
             if hold { speculativeTurn = turn.id } else { postStory(text) }
         }
         let voiceOn = LeaVoice.shared.status?.cartesia == true && !LeaVoice.shared.muted
+        // No voice status at all (lost after a gateway change or a failed fetch): ask again for the next turn. This
+        // turn falls back to the phone's voice (the owner's cloud turns all went audio=none, 2026-10-25).
+        if LeaVoice.shared.status == nil { Task { await LeaVoice.shared.refresh() } }
         // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
         // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
@@ -344,6 +347,8 @@ final class LeaConversation {
                 unsavedHeld = nil   // the gateway saved it with this turn
             }
             diag?.log("voice_turn", ["input": st.input, "eager_start": st.confirmedEarly,
+                                     "voice_status": LeaVoice.shared.status.map { $0.cartesia ? "cartesia" : "no_cartesia" } ?? "none",
+                                     "muted": LeaVoice.shared.muted,
                                      "voice": st.sonic == nil ? "gateway" : (st.sonicFailed ? "sonic_failed" : "sonic_ws"),
                                      "end_to_first_sentence_ms": st.firstSentence ?? -1,
                                      "end_to_first_audio_ms": firstAudioMs ?? -1, "server_ms": timings])
