@@ -107,19 +107,6 @@ app's Settings with the gateway URL and pairing code.
 
 **Tests:** `make test` for the backend; the `RepairOS` scheme's tests in Xcode for the app.
 
-## Honest limits
-
-- A flipped board registers only when its outline and a confident connector cue agree; otherwise its underside shows
-  as photos.
-- Stereo depth misses shiny parts (a metal USB shell) and stays flat there rather than guessing.
-- Pointing at a tiny part needs a sharp close photo; without one Lea circles the region and names the part in words.
-
-## What's next
-
-1. Register flipped boards from more cues (silkscreen text, pad patterns).
-2. Live part pointing while scanning, not only in the report.
-3. Repair steps and replacement parts linked to each finding.
-
 ## Team
 
 Rohan Kilaru, Sritej Bommaraju, Jayden, Samik.
