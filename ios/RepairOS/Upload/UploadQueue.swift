@@ -164,14 +164,15 @@ final class UploadQueue {
                 }
                 continue
             }
-            if let path = ahead.first {
+            if !ahead.isEmpty {
                 do {
                     if state.gatewaySessionID == nil {
                         state.gatewaySessionID = try await gateway.createSession(symptom: record.symptom)
                         persist()
                     }
-                    _ = try await ref(path)
-                    ahead.removeFirst()
+                    let batch = Array(ahead.prefix(Self.parallel))
+                    try await refs(batch)
+                    ahead.removeAll { batch.contains($0) }
                 } catch {
                     break    // network trouble: these go again with the scan package
                 }
@@ -220,7 +221,14 @@ final class UploadQueue {
         }
         switch item {
         case .scan:
-            var body = try await Self.withRefs(loadJSON(storage.scanPackageURL(record)), ref)
+            let package = try loadJSON(storage.scanPackageURL(record))
+            var files: [String] = []
+            _ = try await Self.withRefs(package) { v in
+                if let path = v as? String, !path.hasPrefix("blob://") { files.append(path) }
+                return v as? String
+            }
+            try await refs(files)
+            var body = try await Self.withRefs(package, ref)
             body["session_id"] = state.gatewaySessionID
             let data = try JSONSerialization.data(withJSONObject: body)
             let answer = try await gateway.postScan(data)
@@ -268,11 +276,37 @@ final class UploadQueue {
         return "\(size)@\(modified)"
     }
 
+    /// Files sent at once: over the internet each file costs a round trip, so one at a time leaves the link idle
+    /// (the owner's mouse scan to the cloud ran at about one small file a second, 2026-10-24).
+    static let parallel = 4
+    @ObservationIgnored private var uploading: [String: Task<String?, Error>] = [:]
+
+    /// Uploads these files, `parallel` at a time (each once: `ref`).
+    private func refs(_ paths: [String]) async throws {
+        var rest = paths[...]
+        while !rest.isEmpty {
+            let batch = rest.prefix(Self.parallel)
+            rest = rest.dropFirst(batch.count)
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for path in batch { group.addTask { _ = try await self.ref(path) } }
+                try await group.waitForAll()
+            }
+        }
+    }
+
     /// Uploads the file at a relative path once and returns its blob ref (nil stays nil). A file changed since its
-    /// ref was made is uploaded again.
+    /// ref was made is uploaded again. Two callers asking for the same file at once share one upload.
     private func ref(_ value: Any?) async throws -> String? {
         guard let path = value as? String else { return nil }
         if path.hasPrefix("blob://") { return path }
+        if let running = uploading[path] { return try await running.value }
+        let task = Task { try await upload(path: path) }
+        uploading[path] = task
+        defer { uploading[path] = nil }
+        return try await task.value
+    }
+
+    private func upload(path: String) async throws -> String? {
         let url = storage.dir(record).appending(path: path)
         let stamp = Self.stamp(of: url)
         if let done = state.cachedRef(path, stamp: stamp) { return done }
