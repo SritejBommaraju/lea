@@ -76,9 +76,9 @@ def opencv_w2c(pose: Pose) -> np.ndarray:
 def train_views(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], *, max_keyframes: int = 80
                 ) -> list[TrainView]:
     """Every posed still (trained at STILL_TRAIN_PX wide) and keyframe (640 px) of the scan's frame."""
-    from repairos.recreation.texture import _same_frame_segments
+    from repairos.pipeline.segments import same_frame_segments
 
-    segs = _same_frame_segments(pkg)
+    segs = same_frame_segments(pkg)   # the one frame rule, as the mesh and texture use
     out: list[TrainView] = []
     for s in stills:
         if int(s.get("segment") or 0) not in segs or s.get("pose_reliable") is False or not s.get("camera"):

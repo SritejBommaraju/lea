@@ -259,6 +259,22 @@ struct LeaSightTests {
         #expect(right.map { $0.x > 1.1 && abs($0.z - 2.5) < 0.001 } == true)
     }
 
+    /// The person's pointer is drawn where the pointed spot is in the photo actually sent, wherever the phone is.
+    @Test func thePointedSpotIsFoundAgainInALaterFrame() {
+        let k = simd_float3x3(SIMD3(1000, 0, 0), SIMD3(0, 1000, 0), SIMD3(960, 720, 1))
+        let res = CGSize(width: 1920, height: 1440)
+        let spot = SIMD3<Float>(0.1, 0, -1)   // pointed at from the origin
+        let there = LeaSight.sensorPoint(of: spot, transform: matrix_identity_float4x4, intrinsics: k, resolution: res)
+        #expect(there.map { abs($0.x - 0.5521) < 0.001 && abs($0.y - 0.5) < 0.001 } == true)
+        var moved = matrix_identity_float4x4
+        moved.columns.3 = SIMD4(0.2, 0, 0, 1)   // the phone moved 20 cm right before the photo
+        let later = LeaSight.sensorPoint(of: spot, transform: moved, intrinsics: k, resolution: res)
+        #expect(later.map { $0.x < 0.5 } == true)   // the spot is now left of centre
+        var turned = matrix_identity_float4x4
+        turned.columns.3 = SIMD4(0, 0, -2, 1)       // walked past it: behind the camera, so no ring
+        #expect(LeaSight.sensorPoint(of: spot, transform: turned, intrinsics: k, resolution: res) == nil)
+    }
+
     @Test func depthOutsideTheUsefulRangeOrLowConfidenceIsNotUsed() {
         func one(_ metres: Float, _ conf: UInt8) -> DepthCopy {
             DepthCopy(width: 1, height: 1, depth: [metres], confidence: [conf], fx: 1, fy: 1, cx: 0.5, cy: 0.5,

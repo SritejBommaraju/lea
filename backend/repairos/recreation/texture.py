@@ -89,11 +89,6 @@ class TexturedMesh:
 
 
 # ------------------------------------------------------------------------------------------------ inputs
-def _same_frame_segments(pkg: Mapping[str, Any]) -> set[int]:
-    return {0} | {int(s["segment"]) for s in pkg.get("segments") or []
-                  if s.get("reason") == "continued" and s.get("aligned") is not False}
-
-
 def _image_size(path: Path) -> tuple[int, int]:
     from PIL import Image
 
@@ -132,7 +127,9 @@ def scan_views(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], *, b
                max_keyframes: int = MAX_KEYFRAMES, use_keyframes: bool = True) -> list[View]:
     """Posed views of a scan whose file fields are local paths: its stills (same frame, reliable pose) and its
     keyframes (evenly thinned to `max_keyframes`), with a relative sharpness per kind."""
-    segs = _same_frame_segments(pkg)
+    from repairos.pipeline.segments import same_frame_segments
+
+    segs = same_frame_segments(pkg)   # the one frame rule, as the mesh uses
     views: list[View] = []
     for s in stills:
         if int(s.get("segment") or 0) not in segs or s.get("pose_reliable") is False or not s.get("camera"):

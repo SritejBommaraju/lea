@@ -243,6 +243,17 @@ final class WakeListener {
         mic.restart()
     }
 
+    /// A typed turn took over: whatever was being heard is dropped (Apple's transcript starts over, Ink-2 closes), so
+    /// it can't become a turn of its own.
+    func dropPendingTurn() {
+        silenceTimer?.cancel()
+        guard heardAfterWake != nil || stream != nil || streamOpening != nil else { return }
+        heardAfterWake = nil
+        speechStart = nil
+        closeStream()
+        mic.restart()
+    }
+
     func refresh() {
         let should = enabled && foreground && !holdToTalk && !capturing
         if should { Task { await start() } } else { stop() }

@@ -30,8 +30,9 @@ final class LeaSight {
 
     private(set) var pins: [Pin] = []
 
-    /// Where the person pointed (normalized sensor-image coordinates), drawn into the next photo.
-    @ObservationIgnored private var pointer: CGPoint?
+    /// Where the person pointed, on the object (world): projected into the next photo Lea sees, wherever the phone is
+    /// by then (they point, then talk, often while moving).
+    @ObservationIgnored private var pointedAt: SIMD3<Float>?
     /// The camera at the moment of the last photo: its marks are pinned from here, wherever the phone is now.
     @ObservationIgnored private var lastLook: Snapshot?
 
@@ -55,8 +56,12 @@ final class LeaSight {
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let size = image.extent.size
         guard let cg = CIContext().createCGImage(image, from: image.extent) else { return nil }
-        let pointed = pointer
-        pointer = nil
+        // The ring goes where the pointed spot is in this frame; none when it has gone out of view.
+        let pointed = pointedAt.flatMap {
+            Self.sensorPoint(of: $0, transform: frame.camera.transform, intrinsics: frame.camera.intrinsics,
+                             resolution: frame.camera.imageResolution)
+        }
+        pointedAt = nil
         let jpeg = UIGraphicsImageRenderer(size: size).jpegData(withCompressionQuality: 0.7) { ctx in
             UIImage(cgImage: cg).draw(in: CGRect(origin: .zero, size: size))
             if let p = pointed {
@@ -91,11 +96,10 @@ final class LeaSight {
         guard viewSize.width > 0, viewSize.height > 0 else { return false }
         let inv = frame.displayTransform(for: .portrait, viewportSize: viewSize).inverted()
         let s = CGPoint(x: viewPoint.x / viewSize.width, y: viewPoint.y / viewSize.height).applying(inv)
-        guard (0...1).contains(s.x), (0...1).contains(s.y) else { return false }
-        pointer = s
-        if let w = Self.world(at: s, Self.snapshot(frame), session: session) {
-            pins = pins.filter { $0.kind != .person } + [Pin(world: w, label: "You pointed", kind: .person)]
-        }
+        guard (0...1).contains(s.x), (0...1).contains(s.y),
+              let w = Self.world(at: s, Self.snapshot(frame), session: session) else { return false }   // nothing there
+        pointedAt = w
+        pins = pins.filter { $0.kind != .person } + [Pin(world: w, label: "You pointed", kind: .person)]
         return true
     }
 
@@ -112,9 +116,30 @@ final class LeaSight {
         return words.isEmpty ? nil : words.joined(separator: ", ")
     }
 
-    func clear() { pins = []; pointer = nil; lastLook = nil }
+    func clear() { pins = []; pointedAt = nil; lastLook = nil }
+
+    /// ARKit restarted tracking with another origin (a continued scan relocalised, or gave up and started fresh): pins
+    /// made in the old frame would point at the wrong place, and an answer still on its way was about the old frame.
+    /// The report's findings stay: they are in the saved map's frame and only drawn once the scan is aligned.
+    func trackingReset() {
+        pins = pins.filter { $0.kind == .finding }
+        pointedAt = nil
+        lastLook = nil
+    }
 
     // MARK: Geometry
+
+    /// Where a world point is in a camera's image (normalized sensor-image coordinates), or nil when it is behind the
+    /// camera or outside the image. The inverse of `world(at:)`.
+    nonisolated static func sensorPoint(of world: SIMD3<Float>, transform: simd_float4x4, intrinsics k: simd_float3x3,
+                                        resolution: CGSize) -> CGPoint? {
+        let c = transform.inverse * SIMD4(world, 1)
+        guard c.z < -0.01 else { return nil }
+        let d = -c.z
+        let s = CGPoint(x: Double((c.x / d * k[0][0] + k[2][0]) / Float(resolution.width)),
+                        y: Double((-c.y / d * k[1][1] + k[2][1]) / Float(resolution.height)))
+        return (0...1).contains(s.x) && (0...1).contains(s.y) ? s : nil
+    }
 
     /// Portrait photo fraction → normalized sensor-image point (the photo is the sensor image turned right).
     nonisolated static func sensor(_ portrait: CGPoint) -> CGPoint { CGPoint(x: portrait.y, y: 1 - portrait.x) }

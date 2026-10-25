@@ -214,6 +214,11 @@ final class LeaConversation {
 
     /// A typed turn: Lea stops talking and it goes the way spoken words do ("yes" still takes an offer).
     func typed(_ text: String) {
+        // Typing ends anything still being heard: a hold-to-talk recording, or a spoken turn not finished yet (its
+        // late words would otherwise cancel this answer and replace it).
+        cancelHold()
+        WakeListener.shared.dropPendingTurn()
+        liveCaption = ""
         stopLea()
         heard(text, engine: "typed")
     }

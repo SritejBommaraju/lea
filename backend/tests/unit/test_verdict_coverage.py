@@ -122,6 +122,26 @@ def test_one_frame_rule_for_mesh_and_coverage():
     assert [k["keyframe_id"] for k in keyframes_in_frame(pkg)] == ["0", "1"]
 
 
+def test_texture_views_follow_the_same_frame_rule(tmp_path):
+    import json
+    from pathlib import Path
+
+    from PIL import Image
+
+    from repairos.recreation.texture import scan_views
+
+    example = json.loads((Path(__file__).resolve().parents[3] / "spec/contracts/examples/still.json").read_text())
+    stills = []
+    for i, seg in enumerate([0, 0, 1, 4]):
+        img = tmp_path / f"s{i}.jpg"
+        Image.new("RGB", (64, 48), (40 * i, 90, 140)).save(img)
+        stills.append({**example, "still_id": f"s{i}", "segment": seg, "image_file": str(img), "depth_file": None,
+                       "width_px": 64, "height_px": 48, "pose_reliable": True})
+    pkg = {"segments": [{"segment": 1, "reason": "continued"},
+                        {"segment": 4, "reason": "continued", "object_moved": True}], "keyframes": []}
+    assert [v.name for v in scan_views(pkg, stills)] == ["s0", "s1", "s2"]   # the moved segment's photo is out
+
+
 def test_the_new_verdict_has_words_everywhere_and_validates():
     assert export.TITLE["no_problems_seen"] == "No problems seen"
     assert "no_problems_seen" in summary.VERDICT_WORDS

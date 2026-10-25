@@ -231,6 +231,7 @@ final class ScanSession: NSObject {
                 // Not recognised in time: carry on in a frame of its own (aligned false; the Mac registers it).
                 self.relocalizing = false
                 self.session.run(fresh, options: [.resetTracking, .removeExistingAnchors])
+                self.sight.trackingReset()   // Voice/LeaSight: pins of the old origin would point elsewhere
                 self.cue = nil
                 self.diag.log("relocalize", ["ok": false, "after_s": Self.relocalizeTimeout, "segment": self.segment])
                 if self.scanWanted { self.autoLock() }
@@ -296,6 +297,7 @@ final class ScanSession: NSObject {
     /// The saved map matched: reuse the scan's box and show its cloud, so new points refine it.
     private func relocalized() {
         relocalizing = false
+        sight.trackingReset()   // the world just moved onto the saved map's origin
         aligned = true
         if let cb = previous?.cropBox {
             let q = simd_quatf(ix: Float(cb.quaternionXyzw[0]), iy: Float(cb.quaternionXyzw[1]),
