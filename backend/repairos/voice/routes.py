@@ -19,6 +19,7 @@ import base64
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Annotated, Any
 
@@ -45,6 +46,11 @@ class TTSBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     text: str = Field(min_length=1, max_length=MAX_TEXT)
     format: str = Field(default="wav", pattern="^(wav|pcm)$")
+
+
+class CommitBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    held_id: str = Field(min_length=1, max_length=64)
 
 
 @dataclass
@@ -342,15 +348,33 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
         rt.conversations.save(_scope(scan_id, d), {"turns": [], "starts": []})
         return {"turns": []}
 
+    @app.post("/v1/voice/conversation/commit")
+    async def voice_conversation_commit(body: CommitBody, request: Request, d: device_dep,
+                                        scan_id: Annotated[str | None, Query(max_length=128)] = None):
+        """An early answer (`converse?held=1`) that the person's final words confirmed: into the conversation.
+        `committed` false when it was replaced (another turn came first) or already committed."""
+        rt = _runtime(request)
+        scope = _scope(scan_id, d)
+        convo = rt.conversations.load(scope)
+        held = convo.get("held") or {}
+        if held.get("id") != body.held_id:
+            return {"committed": False, "turns": _user_turns(convo)}
+        _remember(convo, held.get("turns") or [], rt.settings, time.time())
+        rt.conversations.save(scope, convo)
+        return {"committed": True, "turns": _user_turns(convo)}
+
     @app.post("/v1/voice/converse", responses={200: {"content": {"application/x-lea-voice": {}}}})
     async def voice_converse(request: Request, d: device_dep,
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
-                             audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream"):
+                             audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
+                             held: bool = False):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
         after its `sentence` event (`audio: true`). A sentence with `audio: false` (no Cartesia, the spend guard
-        paused it, or `audio=none`) is for the phone to say in its own voice."""
+        paused it, or `audio=none`) is for the phone to say in its own voice. `held=1`: an answer started before the
+        person finished (Ink-2's eager end); it stays out of the conversation (later answers, the caps) until the
+        phone commits the `held_id` its `done` event carries."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
@@ -453,16 +477,20 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 yield jframe({"type": "action", "action": action, "label": ACTIONS[action]})
             answer = " ".join(spoken)
             timings["total"] = round((time.perf_counter() - t0) * 1000)
+            held_id = None
             if question and lines is None:
-                convo.setdefault("turns", []).extend([
-                    {"role": "user", "text": question, "at": time.time()},
-                    {"role": "assistant", "text": answer, "at": time.time(), **({"action": action} if action else {})}])
-                convo["turns"] = convo["turns"][-2 * rt.settings.lea_voice_turns_per_scan:]
-                convo["starts"] = [t for t in convo.get("starts", []) if time.time() - t < 60] + [time.time()]
+                now = time.time()
+                exchange = [{"role": "user", "text": question, "at": now},
+                            {"role": "assistant", "text": answer, "at": now, **({"action": action} if action else {})}]
+                if held:   # kept aside until the phone commits it (POST /v1/voice/conversation/commit)
+                    held_id = uuid.uuid4().hex
+                    convo["held"] = {"id": held_id, "turns": exchange}
+                else:
+                    _remember(convo, exchange, rt.settings, now)
                 rt.conversations.save(scope, convo)
             log.info("voice converse %s timings %s", scope, timings)
             yield jframe({"type": "done", "answer_text": answer, "action": action, "timings_ms": timings,
-                          "turns": sum(1 for t in convo.get("turns", []) if t.get("role") == "user")})
+                          "turns": _user_turns(convo), **({"held_id": held_id} if held_id else {})})
 
         return StreamingResponse(stream(), media_type="application/x-lea-voice",
                                  headers={"Cache-Control": "no-cache", "X-Sample-Rate": str(SAMPLE_RATE)})
@@ -470,6 +498,19 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
 
 def _scope(scan_id: str | None, device: dict) -> str:
     return scan_id or f"home_{device.get('device_id', 'unknown')}"
+
+
+def _remember(convo: dict, exchange: list[dict], settings: VoiceSettings, now: float) -> None:
+    """One question and its answer into the conversation: what later answers see and the caps count. An early answer
+    still held is dropped (the person said something else)."""
+    convo.setdefault("turns", []).extend(exchange)
+    convo["turns"] = convo["turns"][-2 * settings.lea_voice_turns_per_scan:]
+    convo["starts"] = [t for t in convo.get("starts", []) if now - t < 60] + [now]
+    convo.pop("held", None)
+
+
+def _user_turns(convo: dict) -> int:
+    return sum(1 for t in convo.get("turns", []) if t.get("role") == "user")
 
 
 async def _grounding(request: Request, scan_id: str | None) -> tuple[dict | None, str | None, dict | None]:

@@ -236,7 +236,7 @@ final class LeaConversation {
         // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
         // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil)
+        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil, held: hold)
         let voice = LeaVoice.shared
         let st = TurnState(start: start, id: voice.beginStream(held: hold), input: audio == nil ? input : "recording",
                            recorded: audio != nil)
@@ -299,8 +299,14 @@ final class LeaConversation {
             if st.sonic == nil || st.sonicFailed, let say = st.fallback.audioOff() { voice.queueOnDevice(say, stream: st.id) }
         case .action(let kind, let label):
             action = (kind, label)
-        case .done(_, let timings):
+        case .done(_, let timings, let heldID):
             if let sonic = st.sonic, !st.sonicFailed { sonic.say("", more: false) }
+            // A held answer is applied only once confirmed (a dropped one never gets here): now it joins the
+            // conversation on the gateway too, so later answers and the turn caps see it.
+            if let heldID {
+                let gateway = self.gateway, scan = scanID
+                Task.detached { try? await gateway.commitHeld(scanID: scan, heldID: heldID) }
+            }
             diag?.log("voice_turn", ["input": st.input, "eager_start": st.confirmedEarly,
                                      "voice": st.sonic == nil ? "gateway" : (st.sonicFailed ? "sonic_failed" : "sonic_ws"),
                                      "end_to_first_sentence_ms": st.firstSentence ?? -1,

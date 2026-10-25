@@ -422,6 +422,41 @@ def test_converse_turn_caps(gw):
     assert "Start a new scan" in events[-1]["answer_text"]
 
 
+def test_converse_held_answer_is_remembered_only_once_committed(gw):
+    """An early answer (Ink-2's eager end, `held=1`) is kept aside (Greptile, PR #21): one the phone drops
+    (`turn.resume`) never reaches later answers or the caps; one the person's final words confirm is committed."""
+    c = gw(lea_voice_turns_per_minute=2)   # the dropped answer counting would refuse the confirmed one below
+    scan_id = publish_report(c)
+
+    def held(text):
+        r = c.post(f"/v1/voice/converse?audio=none&held=1&scan_id={scan_id}", json={"text": text})
+        assert r.status_code == 200, r.text
+        done = [p for k, p in frames(r.content) if k == "J"][-1]
+        assert done["type"] == "done" and done["held_id"]
+        return done["held_id"]
+
+    def commit(held_id):
+        r = c.post(f"/v1/voice/conversation/commit?scan_id={scan_id}", json={"held_id": held_id})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def history():
+        return [t["text"] for t in c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"]
+                if t["role"] == "user"]
+
+    dropped = held("is it the fuse")
+    assert history() == []
+    converse(c, scan_id, audio=False, mode="none")   # the words the person actually finished with
+    assert len(c.claude.bodies[1]["messages"]) == 1   # the dropped exchange is not in the answer's context...
+    assert history() == ["what should I check first"]   # ...nor in the history, nor the per-minute cap
+    assert commit(dropped) == {"committed": False, "turns": 1}   # replaced: it can no longer be committed
+
+    confirmed = held("is it the fuse")
+    assert commit(confirmed) == {"committed": True, "turns": 2}
+    assert history() == ["what should I check first", "is it the fuse"]
+    assert commit(confirmed) == {"committed": False, "turns": 2}   # once
+
+
 def test_sentence_splitter():
     sp = SentenceSplitter()
     assert sp.feed("Hi. It looks") == []          # "Hi." is too short to stand alone
