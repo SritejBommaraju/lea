@@ -431,6 +431,9 @@ final class WakeListener {
         Self.diag.log("wake_turn", ["from": from, "words": words.split(separator: " ").count,
                                     "wake_to_turn_ms": wokeAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1])
         wokeAt = nil
+        // Only "Hey Lea", then a pause (Apple's path; the Ink-2 path does the same): keep listening for the request,
+        // no phrase needed (the owner's phone, 2026-10-25: two empty turns after the phrase).
+        if words.isEmpty, from == "wake" { listenForFollowUp(); return }
         guard !words.isEmpty, !tooShort else { return }
         if let convo = LeaConversation.active { convo.heard(words) } else { pendingUtterance = words }
     }

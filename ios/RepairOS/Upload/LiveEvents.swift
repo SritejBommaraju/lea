@@ -87,6 +87,8 @@ final class LiveEvents {
                     backoff = 1
                 } catch is CancellationError {
                     return
+                } catch GatewayError.http(404, _) {
+                    return   // this gateway has no such session (a scan made on another server): nothing will come
                 } catch {
                     self.connected = false
                     try? await Task.sleep(for: .seconds(backoff))
@@ -111,7 +113,9 @@ final class LiveEvents {
 
     private func listen(_ request: URLRequest) async throws {
         let (bytes, response) = try await Self.session.bytes(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw GatewayError.message("events unavailable") }
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if code == 404 { throw GatewayError.http(404, "") }
+        guard code == 200 else { throw GatewayError.message("events unavailable") }
         connected = true
         if openedAt == nil { openedAt = Date() }
         diag?.log("live_events_open", [:])

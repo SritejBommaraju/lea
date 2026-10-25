@@ -30,6 +30,7 @@ struct ReportStageView: View {
 
     @Environment(\.continueScan) private var continueScan
     @Environment(\.cropSource) private var cropSource
+    @State private var bottomZoom: BottomZoom?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State var focus: String?
@@ -172,9 +173,11 @@ struct ReportStageView: View {
             .padding(.bottom, Self.overlap)
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: Spacing.s) {
-                    Button { startTour() } label: { Label("Walk me through it", systemImage: "play.fill") }
-                        .buttonStyle(StageCapsuleButtonStyle())
-                        .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
+                    if hasTourContent {
+                        Button { startTour() } label: { Label("Walk me through it", systemImage: "play.fill") }
+                            .buttonStyle(StageCapsuleButtonStyle())
+                            .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
+                    }
                     if canShowOnObject {
                         Button { showOnObject = true } label: { Label("Show on object", systemImage: "arkit") }
                             .buttonStyle(StageCapsuleButtonStyle())
@@ -279,7 +282,14 @@ struct ReportStageView: View {
     static let deckHeight: CGFloat = 44 + WalkthroughCard.height + 3 + 44 + 3 * Spacing.m + Spacing.m
 
     /// Plays the tour from its first card. `afterLea`: asked by voice, so it starts once she has said she will.
+    /// A tour only when the report has problems or setup items to show (the owner: no guide through nothing).
+    private var hasTourContent: Bool { !report.mostLikely.isEmpty || !report.otherIssues.isEmpty || !report.setup.isEmpty }
+
     private func startTour(afterLea: Bool = false) {
+        guard hasTourContent else {
+            LeaConversation.active?.leaSays("There's nothing to walk through: I didn't find any problems in this scan.")
+            return
+        }
         let photo = isPhotoHero, threeD = isCustomHero || !model.isNone
         let steps = Walkthrough.steps(report) { p in photo ? p.cropStill != nil : threeD && p.point != nil }
         circling = false
@@ -355,6 +365,7 @@ struct ReportStageView: View {
                 if let next = report.nextStep, report.verdict != .insufficientEvidence { StageNextStep(step: next) }
                 if let summary = report.summary?.trimmedOrNil { StagePlainWords(text: ReportWords.sanitize(summary)) }
                 if !others.isEmpty { alsoWorthALook }
+                if !report.bottomPhotos.isEmpty { bottomPhotosSection }
                 CouldNotCheckCard(notInspected: report.notInspected, unclear: report.insufficient,
                                   continueScan: continueScan.map { action -> () -> Void in { action() } })
                     .id("gaps")
@@ -417,6 +428,35 @@ struct ReportStageView: View {
             }
         }
         .id("setup")
+    }
+
+    /// The bottom scan's photos when it could not be lined up with the model: checked like the rest, just not placed
+    /// on the 3D view. A tap opens the photo full screen.
+    private var bottomPhotosSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            SectionHeader("Bottom photos", count: report.bottomPhotos.count)
+            Text("The bottom scan didn't line up with the 3D model, so its photos are here instead. They were checked like the rest.")
+                .font(.footnote).foregroundStyle(.secondary)
+            ScrollView(.horizontal) {
+                HStack(spacing: Spacing.s) {
+                    ForEach(Array(report.bottomPhotos.enumerated()), id: \.element.id) { i, b in
+                        Button { bottomZoom = BottomZoom(index: i) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                CropThumb(sha: b.crop, cornerRadius: Radius.small).frame(width: 96, height: 96)
+                                Text(b.part).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(width: 96, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(PressableCardStyle())
+                        .accessibilityLabel("Bottom photo: \(b.part)")
+                        .accessibilityHint("Opens the photo full screen")
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .fullScreenCover(item: $bottomZoom) { z in
+            CropZoomView(shas: report.bottomPhotos.map(\.crop), index: z.index).environment(\.cropSource, cropSource)
+        }
     }
 
     private var alsoWorthALook: some View {
@@ -610,3 +650,10 @@ struct ReportStageWaiting: View {
         }
     }
 }
+
+/// Which bottom photo is open full screen.
+private struct BottomZoom: Identifiable {
+    let index: Int
+    var id: Int { index }
+}
+

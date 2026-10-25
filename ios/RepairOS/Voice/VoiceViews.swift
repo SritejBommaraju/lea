@@ -231,6 +231,8 @@ struct ConversationPanel: View {
     @State private var wake = WakeListener.shared
     @State private var pressedAt: Date?
     @State private var typed = ""
+    /// A tap instead of a hold: the button says how to talk for a moment.
+    @State private var tapHint = false
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String? = { nil },
          compact: Bool = false, afterTurn: (@MainActor () -> Void)? = nil, onAction: @escaping (String) -> Void) {
@@ -334,7 +336,7 @@ struct ConversationPanel: View {
         return HStack(spacing: Spacing.s) {
             Image(systemName: listening ? "waveform" : (convo.phase == .speaking ? "speaker.wave.2.fill" : "mic.fill"))
                 .symbolEffect(.variableColor.iterative, isActive: listening || convo.phase == .speaking)
-            Text(listening ? "Listening…" : (convo.phase == .speaking ? "Tap to interrupt" : "Talk to Lea"))
+            Text(tapHint ? "Hold to talk" : (listening ? "Listening… let go to send" : (convo.phase == .speaking ? "Hold to interrupt" : "Hold to talk to Lea")))
         }
         .font(.buttonLabel)
         .foregroundStyle(.white)
@@ -345,13 +347,14 @@ struct ConversationPanel: View {
         .animation(Motion.press, value: pressedAt != nil)
         .contentShape(Rectangle())
         .holdOrTapToTalk(convo, pressedAt: $pressedAt) {
-            // A tap: hands-free. The phone listens; the turn ends when you stop talking.
-            convo.handsFree = true
-            wake.listenForFollowUp()
+            // A tap is not a question (the owner, 2026-10-25: press and hold to talk; the tap-for-hands-free mode
+            // misfired): say how. "Hey Lea" still works hands-free.
+            withAnimation(Motion.fade) { tapHint = true }
+            Task { try? await Task.sleep(for: .seconds(1.6)); withAnimation(Motion.fade) { tapHint = false } }
         }
         .sensoryFeedback(.impact(weight: .light), trigger: pressedAt != nil) { _, new in new }   // on press only
         .accessibilityLabel("Talk to Lea")
-        .accessibilityHint("Hold to ask, or tap once to talk hands-free")
+        .accessibilityHint("Press and hold, ask, then let go")
         .accessibilityAddTraits(.isButton)
     }
 }
@@ -515,6 +518,8 @@ struct ScanTalkBar: View {
     @State private var convo: LeaConversation
     @State private var wake = WakeListener.shared
     @State private var pressedAt: Date?
+    /// A tap instead of a hold: the caption says how to talk for a moment.
+    @State private var tapHint = false
 
     init(scanID: String, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String?,
          live: @escaping () -> [String: String], eyes: LeaEyes? = nil) {
@@ -545,9 +550,12 @@ struct ScanTalkBar: View {
                 .font(.system(size: 34))
                 .foregroundStyle(pressedAt != nil ? Palette.danger : .white)
                 .symbolEffect(.variableColor.iterative, isActive: listening || convo.phase == .speaking)
-                .holdOrTapToTalk(convo, pressedAt: $pressedAt) { talkHandsFree() }
+                .holdOrTapToTalk(convo, pressedAt: $pressedAt) {   // a tap says how; the switch turns hands-free on
+                    withAnimation(Motion.fade) { tapHint = true }
+                    Task { try? await Task.sleep(for: .seconds(1.6)); withAnimation(Motion.fade) { tapHint = false } }
+                }
                 .accessibilityLabel("Talk to Lea")
-                .accessibilityHint("Hold to ask, or tap once to talk hands-free")
+                .accessibilityHint("Press and hold, ask, then let go")
                 .accessibilityAddTraits(.isButton)
         }
         .padding(.horizontal, Spacing.m)
@@ -571,6 +579,7 @@ struct ScanTalkBar: View {
     private var isFailed: Bool { if case .failed = convo.phase { true } else { false } }
 
     private var caption: String {
+        if tapHint { return "Hold to talk" }
         if case .failed(let m) = convo.phase { return m }
         if !convo.liveCaption.isEmpty { return convo.liveCaption }
         if convo.phase == .thinking { return "Thinking…" }

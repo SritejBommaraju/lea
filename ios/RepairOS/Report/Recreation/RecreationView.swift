@@ -190,8 +190,9 @@ private struct RecreationHost: UIViewRepresentable {
         let cam = view.defaultCameraController
         cam.interactionMode = .orbitTurntable
         cam.inertiaEnabled = true
-        // Stay above the table while the recreation is open underneath; a scanned bottom can be turned to.
-        cam.minimumVerticalAngle = loaded.closedBottom ? -82 : 4
+        // Turn all the way round, underneath too (the owner, 2026-10-25): an unscanned bottom shows open, and the
+        // report offers the bottom scan's own photos (ReportModel.bottomPhotos) when it could not be lined up.
+        cam.minimumVerticalAngle = -82
         cam.maximumVerticalAngle = 82
         view.addGestureRecognizer(UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap(_:))))
         let touch = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.touched(_:)))
