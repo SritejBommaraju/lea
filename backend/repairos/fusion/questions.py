@@ -39,7 +39,7 @@ FAULT_KINDS: dict[str, dict[str, str]] = {
         "unseated_or_loose": "The part or its connector is not fully seated, unplugged or loose.",
         "broken_or_damaged": "The part is cracked, broken, burnt or otherwise damaged.",
         "missing": "The part is not there.",
-        "out_of_position": "The part is shifted or out of its expected position.",
+        "out_of_position": "The part is shifted, out of its expected position or fitted the wrong way round.",
         "wrong_or_extra_part": "A different part from the expected one is fitted, or there is an extra part.",
     },
     "net": {

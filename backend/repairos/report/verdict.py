@@ -2,9 +2,11 @@
 
 Three facts about the scan's regions, each computed in code from the report's buckets:
 
-  judged      a model (VLM, classifier or meter) judged at least one region's state (`findings` or `cosmetic`)
+  judged      a model (VLM, classifier or meter) judged at least one region's state (`findings`, `setup` or
+              `cosmetic`)
   issue       some region in `findings` shows an issue that no meter reading ruled out, or a meter reading confirmed
-              one (a cosmetic issue never counts)
+              one (a cosmetic issue or a setup state, such as a battery missing or a cable unplugged, never counts:
+              neither is a broken part; a setup state that is a hazard stays in `findings` and counts)
   unsettled   some region was not inspected (I3) or could not be judged (I4)
 
 | row | judged | issue | unsettled | verdict               | reason code          |
@@ -101,7 +103,7 @@ def decide(facts: Facts) -> Verdict:
 
 
 def judged_regions(report: dict) -> int:
-    return len(report.get("findings", [])) + len(report.get("cosmetic") or [])
+    return len(report.get("findings", [])) + len(report.get("cosmetic") or []) + len(report.get("setup") or [])
 
 
 def is_covered(report: dict, cfg: dict | None = None) -> bool:
@@ -134,7 +136,7 @@ def facts_of(report: dict) -> Facts:
     """The three facts from a report's buckets (findings / cosmetic / not_inspected / insufficient_evidence). A
     cosmetic issue counts as judged, never as an issue: it would not stop the device working."""
     findings = report.get("findings", [])
-    judged = bool(findings) or bool(report.get("cosmetic"))
+    judged = bool(findings) or bool(report.get("cosmetic")) or bool(report.get("setup"))
     issue = any((e["issue"] != "none" and e["proof"]["status"] != "ruled_out_by_meter")
                 or e["proof"]["status"] == "confirmed_by_meter" for e in findings)
     unsettled = bool(report.get("not_inspected")) or bool(report.get("insufficient_evidence"))

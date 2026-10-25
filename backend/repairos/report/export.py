@@ -101,6 +101,9 @@ def to_markdown(report: Mapping[str, Any]) -> str:
     out += [f"- **{_name(e)}** ({e['subject']['ref']}): {_issue(e)}; {SEVERITY[e.get('severity') or 'functional']}; "
             f"confidence {e['confidence_word']}; {PROOF[e['proof']['status']]}. {_photo(e)}{_also(e)}; "
             f"{_where(e.get('location'))}. Evidence: {' '.join(_evidence(e))}" for e in issues] or ["- none"]
+    out += ["", "## Setup to check (not a broken part)", ""]
+    out += [f"- {_name(e)} ({e['subject']['ref']}): {_issue(e)}. Fix: {e['fix']} {_photo(e)}{_also(e)}. "
+            f"Evidence: {' '.join(_evidence(e))}" for e in report.get("setup", [])] or ["- none"]
     out += ["", "## Cosmetic only (would not stop it working)", ""]
     out += [f"- {_name(e)} ({e['subject']['ref']}): {_issue(e)}; confidence {e['confidence_word']}. "
             f"{_photo(e)}{_also(e)}. Evidence: {' '.join(_evidence(e))}" for e in report.get("cosmetic", [])] \
@@ -189,6 +192,10 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
         esc(" ".join(_evidence(e))),
         f'<span class="muted">{esc(_photo(e) + _also(e))}; {esc(_where(e.get("location")))}</span>'])
         for e in issues]))
+    parts.append(section("Setup to check (not a broken part)", [item(e, [
+        f"<strong>{esc(_name(e))}</strong>: {esc(_issue(e))}", f"Fix: {esc(e['fix'])}",
+        esc(" ".join(_evidence(e))),
+        f'<span class="muted">{esc(_photo(e) + _also(e))}</span>']) for e in report.get("setup", [])]))
     parts.append(section("Cosmetic only (would not stop it working)", [item(e, [
         f"<strong>{esc(_name(e))}</strong>: {esc(_issue(e))}; confidence {esc(e['confidence_word'])}",
         esc(" ".join(_evidence(e))),

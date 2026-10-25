@@ -19,14 +19,21 @@ enum ReportWords {
             return parts.joined(separator: " · ")
         case .looksGood:
             let gaps = unchecked(r)
-            return gaps > 0 ? "Nothing looked wrong · \(spots(gaps, digits: true)) unchecked" : "Nothing looked wrong"
+            let base = gaps > 0 ? "Nothing looked wrong · \(spots(gaps, digits: true)) unchecked" : "Nothing looked wrong"
+            return r.setup.isEmpty ? base : "\(base) · \(setupCount(r))"
         case .insufficientEvidence:
             return "Not enough to call it yet"
         case .noProblemsSeen:
-            return r.photosInspected > 0 ? "\(r.photosInspected) photos checked" : "Checked"
+            let base = r.photosInspected > 0 ? "\(r.photosInspected) photos checked" : "Checked"
+            return r.setup.isEmpty ? base : "\(base) · \(setupCount(r))"
         case .other(let raw):
             return raw.replacingOccurrences(of: "_", with: " ").capitalizedFirst
         }
+    }
+
+    /// "1 thing to set up", "2 things to set up": setup and assembly states (report `setup`), never called broken.
+    static func setupCount(_ r: ReportModel) -> String {
+        r.setup.count == 1 ? "1 thing to set up" : "\(r.setup.count) things to set up"
     }
 
     /// The top finding in the backend's own words ("Wire may be loose"), or the plain verdict when there is none.
@@ -36,11 +43,13 @@ enum ReportWords {
             if let top = r.mostLikely.first ?? r.otherIssues.first { return phrase(top) }
             return "Lea found likely problems"
         case .looksGood:
+            if let s = r.setup.first { return s.fix ?? phrase(s) }   // nothing broken: lead with what to put right
             return r.photosInspected > 0 ? "Nothing looked wrong in \(r.photosInspected) photos" : "Nothing looked wrong"
         case .insufficientEvidence:
             // Lead with what to do (the next step's title, e.g. "Take a closer photo"); the eyebrow says why.
             return r.nextStep?.title ?? "Lea needs a closer look"
         case .noProblemsSeen:
+            if let s = r.setup.first { return s.fix ?? phrase(s) }
             return "No problems seen"
         case .other(let raw):
             return raw.replacingOccurrences(of: "_", with: " ").capitalizedFirst

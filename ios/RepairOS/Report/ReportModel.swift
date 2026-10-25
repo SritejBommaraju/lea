@@ -73,6 +73,10 @@ struct ReportModel: Sendable {
         /// The main crop's photo and its box there (pixels of the full still, sensor orientation).
         var cropStill: String? = nil
         var cropBox: [Double]? = nil
+        /// A setup or assembly state (report `category` setup: a battery missing, a cable unplugged), not a broken part.
+        var isSetup: Bool = false
+        /// The plain fix for a setup state ("Put the batteries in, then test again.").
+        var fix: String? = nil
     }
 
     /// A region nobody looked at (not_inspected) or that could not be judged (insufficient_evidence).
@@ -141,6 +145,8 @@ struct ReportModel: Sendable {
     /// Issue rows after the top three (still suspects, lower ranked).
     var otherIssues: [Problem]
     var cosmetic: [Problem]
+    /// Setup and assembly states (report `setup`), each with its fix: listed apart, never counted as broken.
+    var setup: [Problem]
     var notInspected: [Gap]
     var insufficient: [Gap]
     var nextStep: NextStep?
@@ -180,6 +186,7 @@ struct ReportModel: Sendable {
         let shown = Set(mostLikely.map(\.id))
         otherIssues = issues.filter { !shown.contains($0.id) }
         cosmetic = Self.current(r["cosmetic"]).map(Self.problem)
+        setup = Self.current(r["setup"]).map(Self.problem)
         notInspected = Self.current(r["not_inspected"]).map(Self.gap)
         insufficient = Self.current(r["insufficient_evidence"]).map(Self.gap)
         if let n = r["next_step"] as? [String: Any], let instruction = n["instruction"] as? String {
@@ -201,7 +208,7 @@ struct ReportModel: Sendable {
     /// Every crop the report shows (problems, cosmetic, gaps), for saving them on the phone.
     var cropSHAs: [String] {
         var out: [String] = []
-        for sha in (mostLikely + otherIssues + cosmetic).flatMap(\.crops) + (notInspected + insufficient).compactMap(\.crop)
+        for sha in (mostLikely + otherIssues + setup + cosmetic).flatMap(\.crops) + (notInspected + insufficient).compactMap(\.crop)
         where !out.contains(sha) { out.append(sha) }
         return out
     }
@@ -269,7 +276,9 @@ struct ReportModel: Sendable {
             point: Self.point(location),
             proved: ((f["proof"] as? [String: Any])?["status"] as? String).map { $0 != "not_measured" } ?? false,
             cropStill: (f["crop"] as? [String: Any])?["still_id"] as? String,
-            cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue))
+            cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue),
+            isSetup: f["category"] as? String == "setup",
+            fix: (f["fix"] as? String)?.trimmedOrNil)
     }
 
     private static func gap(_ g: [String: Any]) -> Gap {
@@ -294,6 +303,8 @@ struct ReportModel: Sendable {
         switch issue ?? "" {
         case "none": noIssue
         case "loose": "May be loose"
+        case "unseated": "Not plugged in fully"
+        case "reversed": "In the wrong way round"
         case "open": "Looks open"
         case "short": "May be shorted"
         case "partly": "Partly seated"

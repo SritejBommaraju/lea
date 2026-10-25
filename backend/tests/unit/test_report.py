@@ -105,8 +105,8 @@ def _build(states: list[str], with_ni: bool = True, **kw) -> tuple[dict, list[di
 
 
 def test_every_finding_lands_in_exactly_one_bucket_and_validates():
-    rep, findings = _build(["loose", "ok", "cannot_tell"])
-    assert [e["issue"] for e in rep["findings"]] == ["loose", "none"]          # issues first
+    rep, findings = _build(["cracked", "ok", "cannot_tell"])
+    assert [e["issue"] for e in rep["findings"]] == ["broken", "none"]         # issues first
     assert len(rep["insufficient_evidence"]) == 1 and len(rep["not_inspected"]) == 1
     assert honesty_violations(rep, findings) == []
     assert rep["verdict"] == "potential_issues" and rep["verdict_reason"]["rule"] == "V6"
@@ -163,7 +163,7 @@ def test_a_finding_without_its_region_record_is_refused():
 
 
 def test_honesty_check_catches_a_dropped_or_doubled_region():
-    rep, findings = _build(["loose", "ok"])
+    rep, findings = _build(["cracked", "ok"])
     bad = copy.deepcopy(rep)
     bad["not_inspected"] = []
     assert any("no bucket" in p for p in honesty_violations(bad, findings))
@@ -183,7 +183,7 @@ def test_no_stills_no_findings():
 # ---------------------------------------------------------------------------------------- words only (S5)
 def test_summary_payload_is_words_only():
     action = {**ex("next-action")}
-    rep, _ = _build(["loose", "ok", "cannot_tell"], next_action=action)
+    rep, _ = _build(["cracked", "ok", "cannot_tell"], next_action=action)
     payload = words_for(rep, symptom="stopped after 3 seconds at 5V")
     assert_words_only(payload)
     text = json.dumps(payload)
@@ -219,7 +219,7 @@ def _flooded_report(extra_small: int, budget_rows: int):
     `budget_rows` regions over the crop budget (the shape vision.inspect writes)."""
     scan, still = ex("scan-package"), ex("still")
     sid = still["still_id"]
-    findings, regions = _findings(scan["scan_id"], sid, ["loose", "ok"])
+    findings, regions = _findings(scan["scan_id"], sid, ["cracked", "ok"])
     tiny = [Detection((10 * i, 10, 10 * i + 8, 18), "screw", 0.2) for i in range(extra_small)]
     roll = insp.finding_rollup(scan_id=scan["scan_id"], still_id=sid, what=insp.SMALL_REGIONS,
                                indices=list(range(extra_small)), dets=tiny)
@@ -248,7 +248,7 @@ def test_many_not_inspected_regions_of_a_still_become_one_row_with_the_exact_cou
     assert row["reason"].startswith("45 regions in this photo were not inspected: 41 regions: too small")
     assert "3 regions: over this still's crop budget" in row["reason"]
     assert honesty_violations(rep, findings) == []                  # every finding in exactly one row (MS1)
-    assert [e["issue"] for e in rep["findings"]] == ["loose", "none"]   # real findings are not buried
+    assert [e["issue"] for e in rep["findings"]] == ["broken", "none"]  # real findings are not buried
     assert rep["verdict"] == "potential_issues"
     validate("report", {**rep, "summary": TEST_SUMMARY})
     assert "45 regions in this photo were not inspected" in to_markdown({**rep, "summary": TEST_SUMMARY})

@@ -67,6 +67,33 @@ struct ReportModelTests {
     }
 }
 
+/// Assembly states (backend vision/assembly.py) read in plain words, never as raw state names.
+struct AssemblyWordingTests {
+    @Test func assemblyStatesReadPlainly() {
+        #expect(ReportModel.issueWords("reversed") == "In the wrong way round")
+        #expect(ReportModel.issueWords("unseated") == "Not plugged in fully")
+        #expect(ReportModel.issueWords("missing") == "Looks missing")
+        let m = ReportModel(json: ["verdict": "potential_issues", "most_likely": ["f1"], "not_inspected": [],
+                                   "insufficient_evidence": [],
+                                   "findings": [["finding_id": "f1", "part_class": "AA cell", "issue": "reversed"]]])
+        #expect(m.mostLikely.first?.issue == "In the wrong way round")
+    }
+
+    /// Setup rows (report `setup`) are read apart with their fix, and a report with nothing broken leads with the fix.
+    @Test func setupRowsAreListedApartAndLeadWhenNothingIsBroken() {
+        let m = ReportModel(json: [
+            "verdict": "no_problems_seen", "most_likely": [], "findings": [], "not_inspected": [],
+            "insufficient_evidence": [],
+            "setup": [["finding_id": "s1", "part_class": "battery bay", "issue": "missing", "category": "setup",
+                       "fix": "Put the batteries in, then test again."]],
+        ])
+        #expect(m.setup.count == 1 && m.mostLikely.isEmpty && m.otherIssues.isEmpty)
+        #expect(m.setup.first?.isSetup == true && m.setup.first?.fix == "Put the batteries in, then test again.")
+        #expect(ReportWords.headline(m) == "Put the batteries in, then test again.")
+        #expect(ReportWords.eyebrow(m).hasSuffix("1 thing to set up"))
+    }
+}
+
 /// Report rebuilds (continued scans): superseded and grouped rows are shown once.
 struct ReportRebuildTests {
     /// After a rebuild a newer row can name the older one in `superseded_ids`, and a grouped "could not judge" row lists

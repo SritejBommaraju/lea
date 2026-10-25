@@ -521,13 +521,13 @@ struct ReportContent: View {
         }
     }
 
-    /// Findings beyond the top three (lower-ranked and cosmetic).
-    private var others: [ReportModel.Problem] { report.otherIssues + report.cosmetic }
+    /// Findings beyond the top three (lower-ranked, setup and cosmetic).
+    private var others: [ReportModel.Problem] { report.otherIssues + report.setup + report.cosmetic }
 
     private var showsModel: Bool { !model.isNone || !pins.isEmpty }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
     private var canShowOnObject: Bool { space != nil && !pins.isEmpty }
-    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.cosmetic }
+    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -609,6 +609,10 @@ struct ReportContent: View {
                 }
                 if !report.otherIssues.isEmpty {
                     ProblemList(title: "Other possible problems", problems: report.otherIssues).id("other")
+                }
+                if !report.setup.isEmpty {
+                    ProblemList(title: "Setup to check", problems: report.setup,
+                                note: "Not broken: put these right, then test again.").id("setup")
                 }
                 if !report.cosmetic.isEmpty {
                     ProblemList(title: "Cosmetic", problems: report.cosmetic,
@@ -977,6 +981,9 @@ private struct ProblemList: View {
                             Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                             Text([p.issue, p.confidence].compactMap { $0 }.joined(separator: " · "))
                                 .font(.footnote).foregroundStyle(.secondary)
+                            if let fix = p.fix {
+                                Text(fix).font(.footnote).foregroundStyle(.primary)
+                            }
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)

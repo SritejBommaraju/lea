@@ -134,6 +134,13 @@
       },
       "description": "Issues the vision model judged cosmetic (looks worn but would not stop the device working). Listed apart; they never make the verdict potential_issues on their own."
     },
+    "setup": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      },
+      "description": "Setup and assembly states (category setup: a battery missing, a cable unplugged, a cover not clipped), each with its plain fix. Not a broken part: listed apart and they never make the verdict potential_issues on their own. A setup state that is a hazard (severity safety: a battery in backwards, a loose mains wire) stays in `findings`."
+    },
     "not_inspected": {
       "type": "array",
       "items": {
@@ -505,7 +512,7 @@
         ]
       },
       "then": {
-        "description": "Looks good only when at least one region was judged (in `findings` or `cosmetic`), every region was judged, and none shows an unresolved functional or safety issue.",
+        "description": "Looks good only when at least one region was judged (in `findings`, `cosmetic` or `setup`), every region was judged, and none shows an unresolved functional or safety issue.",
         "properties": {
           "verdict_reason": {
             "properties": {
@@ -562,6 +569,16 @@
                 "minItems": 1
               }
             }
+          },
+          {
+            "required": [
+              "setup"
+            ],
+            "properties": {
+              "setup": {
+                "minItems": 1
+              }
+            }
           }
         ]
       }
@@ -585,7 +602,7 @@
             "items": { "anyOf": [ { "properties": { "issue": { "const": "none" } } }, { "properties": { "proof": { "properties": { "status": { "const": "ruled_out_by_meter" } } } } } ] }
           }
         },
-        "anyOf": [ { "properties": { "findings": { "minItems": 1 } } }, { "required": ["cosmetic"], "properties": { "cosmetic": { "minItems": 1 } } } ]
+        "anyOf": [ { "properties": { "findings": { "minItems": 1 } } }, { "required": ["cosmetic"], "properties": { "cosmetic": { "minItems": 1 } } }, { "required": ["setup"], "properties": { "setup": { "minItems": 1 } } } ]
       }
     },
     {
@@ -909,6 +926,7 @@
             "dirty",
             "loose",
             "unseated",
+            "reversed",
             "missing",
             "shifted",
             "partly",
@@ -978,6 +996,19 @@
           "type": "string",
           "minLength": 1,
           "description": "Plain words that let a person find the part in the photo."
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "defect",
+            "setup"
+          ],
+          "description": "Finding.category: defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or assembly state, not a broken part: a battery missing or in backwards, a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse missing (repairos.vision.assembly). Code decides it from the state, never a model word."
+        },
+        "fix": {
+          "type": "string",
+          "minLength": 1,
+          "description": "For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the batteries in, then test again.'). Shown to the user."
         },
         "finding_ids": {
           "type": "array",

@@ -69,8 +69,8 @@ struct ReportStageView: View {
         }
     }
 
-    private var others: [ReportModel.Problem] { report.otherIssues + report.cosmetic }
-    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.cosmetic }
+    private var others: [ReportModel.Problem] { report.otherIssues + report.setup + report.cosmetic }
+    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
     private var canShowOnObject: Bool { space != nil && !findingPins.isEmpty }
     private var isCustomHero: Bool { if case .custom = hero { true } else { false } }
