@@ -411,7 +411,6 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
         "insufficient_evidence": undecided,
         "capture": capture_summary(scan, stills, judged_stills),
         "models": dict(models),
-        "grain": "not called",
     }
     if segments:   # flipped segments and how they were registered (pipeline/segments.py report_segments)
         report["capture"]["segments"] = [dict(x) for x in segments]

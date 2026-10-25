@@ -1,4 +1,0 @@
-{
- "_note": "API shape only, built from the schema with generic names; not a recorded Grain response (those are private, private/grain/observed/).",
- "detail": "name must end in the file format's extension, e.g. .ply"
-}

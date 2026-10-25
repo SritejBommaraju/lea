@@ -1,0 +1,213 @@
+{
+  "figmaFileKey": "acZpRbLDyuavWtoJIqyj1u",
+  "sessionId": "3b57e849-5b09-43cc-b430-095ed95de79a",
+  "exports": [
+    {
+      "file": "00-cover.png",
+      "nodeId": "12:65",
+      "width": 1440,
+      "height": 977,
+      "originalWidth": 1440,
+      "originalHeight": 977,
+      "sha256": "69e2f165900fc9df1d0a3248c2573e5955d4c1cc89ee05628aa9f6286d1602bf"
+    },
+    {
+      "file": "00-foundations.png",
+      "nodeId": "11:2",
+      "width": 1600,
+      "height": 2650,
+      "originalWidth": 1600,
+      "originalHeight": 2650,
+      "sha256": "41ba46ce5821f438b18c8bde2389ccfe5dfed0ea576eb49c5e628795cfc8c3a9"
+    },
+    {
+      "file": "00-components.png",
+      "nodeId": "2:3",
+      "width": 3765,
+      "height": 4939,
+      "originalWidth": 3765,
+      "originalHeight": 4939,
+      "sha256": "4a72b71e148b88eb5e8d49c2c7cc2f666bfc4bd647429a1ff46761c5d8250268"
+    },
+    {
+      "file": "01-home-first-run-light.png",
+      "nodeId": "9:3",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "90fc2018057be92971c294b3777e54f25086787e14625b78479cf2fbdeb6ec71"
+    },
+    {
+      "file": "01-home-first-run-dark.png",
+      "nodeId": "78:1358",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "46fa1d3e4e150ea4a1275ac9324492411581df77726f360bcfff84b18714f0bc"
+    },
+    {
+      "file": "01b-home-scans-light.png",
+      "nodeId": "9:68",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "eae277b107935dfbd4fcc5a0935f8ab5b80f80170075c85edb3b8ead5c51beb6"
+    },
+    {
+      "file": "01b-home-scans-dark.png",
+      "nodeId": "78:1397",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "71edd549f8ba1f16c788992d5c512cf43e0ed09eb379db9603945a63c8681b01"
+    },
+    {
+      "file": "02-consent-light.png",
+      "nodeId": "9:184",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "b22dbdb1442254f0729af1a3b3f650813c0477054dd48affa152aa4b42877c8e"
+    },
+    {
+      "file": "02-consent-dark.png",
+      "nodeId": "64:1440",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "15619b7cd36496a83edcaa7c00ac7f465610a0f6b0ee3d089b203e4ed83aef84"
+    },
+    {
+      "file": "03-pairing-light.png",
+      "nodeId": "9:245",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "9852fdedf0f36551e1c198fd6cc1a40f18f05d9c62ea84d2f3d3a386b28e870e"
+    },
+    {
+      "file": "03-pairing-dark.png",
+      "nodeId": "78:1416",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "912498f5d41eefad8552e515eba6162acb6c858ff315a6f1924688feef5e8b03"
+    },
+    {
+      "file": "04-capture-searching.png",
+      "nodeId": "9:279",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "8264d79fe6fd07b977c98ca5a364d8328a94d6291fc1ed7339c129736931c9a9"
+    },
+    {
+      "file": "05-capture-locked.png",
+      "nodeId": "9:382",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "89cbbe90a4b2da28b802ac2ef4d3f906c5ff8dc4fe964d12854b75df5ad03bda"
+    },
+    {
+      "file": "06-report-progress-light.png",
+      "nodeId": "10:355",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "2f9dd130c9b4a038af86c9310246e07aee2ec2de2ad35fe6f862fcb33d375f02"
+    },
+    {
+      "file": "06-report-progress-dark.png",
+      "nodeId": "64:1495",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "9c4e48617cd66540f85bfdf1cd18dbf7c8add2ff71f945c96ab3594a536311ef"
+    },
+    {
+      "file": "07-report-light.png",
+      "nodeId": "10:404",
+      "width": 393,
+      "height": 2955,
+      "originalWidth": 393,
+      "originalHeight": 2955,
+      "sha256": "62324b4e57a2c9434fee7883ea5639e2fa7ea9b1e7341b3a1b739d03edd5e0e2"
+    },
+    {
+      "file": "07-report-dark.png",
+      "nodeId": "78:1437",
+      "width": 393,
+      "height": 2955,
+      "originalWidth": 393,
+      "originalHeight": 2955,
+      "sha256": "9ec4bab67634234c035ab19837c9be7dcc67da1a719f4ca2bad65438e47f3a9f"
+    },
+    {
+      "file": "08-problem-detail-light.png",
+      "nodeId": "10:645",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "a76c2a555f79fdf5eccc170f36f264e7956eecdd28a3a8ca329afbd53420f961"
+    },
+    {
+      "file": "08-problem-detail-dark.png",
+      "nodeId": "78:1494",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "8e2453c1042309225792591965c99393b025198476c0b7a77a0c5751e0e71d10"
+    },
+    {
+      "file": "09-talk-to-lea-light.png",
+      "nodeId": "39:1108",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "600851aab293329d876386baeba33d095194c3a7036543ad593c774c3752e349"
+    },
+    {
+      "file": "09-talk-to-lea-dark.png",
+      "nodeId": "78:1537",
+      "width": 393,
+      "height": 852,
+      "originalWidth": 393,
+      "originalHeight": 852,
+      "sha256": "8386aefe3e01aa9ce3b933a25cfe8b243d0891d7e3a6721f5e58e5528c22ae20"
+    },
+    {
+      "file": "10-ux-regression.png",
+      "nodeId": "86:157",
+      "width": 1121,
+      "height": 2448,
+      "originalWidth": 1121,
+      "originalHeight": 2448,
+      "sha256": "cf5b209ce4b18d431c32fe6bee27d8e814d1d5194e655cedd1d326adc59f041c"
+    },
+    {
+      "file": "10-purple-glass-review.png",
+      "nodeId": "95:1464",
+      "width": 1692,
+      "height": 951,
+      "originalWidth": 1692,
+      "originalHeight": 951,
+      "sha256": "d56b8712a59c0564469c9c6c71c0a26a3561ed07f26ebcd18b5e0d75f62e72c1"
+    }
+  ]
+}

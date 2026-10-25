@@ -155,6 +155,21 @@ def test_the_rule_refuses_conflicting_cues_a_worse_silhouette_and_contrary_holes
     assert not d["accepted"] and "through-holes" in d["why"]
 
 
+def test_features_the_model_names_itself_decide_like_the_recorded_per_photo_answers():
+    """The side-cue call names its own features (any flat object): the recorded scan_477a answers, renamed and in that
+    shape, give the same decision; an answer with no features is refused as unsure."""
+    fx, poses = _fixture("flat_flip_sides_477a.json")
+    a, b = fx["answers"]["photo_a"], fx["answers"]["photo_b"]
+    names = {"usb": "connector shell over the edge", "jack": "round jack", "gap_header": "pin row with a gap"}
+    cues = {"cues": [{"name": names[k], "photo_a": a[k], "photo_b": b[k]} for k in a]}
+    d = FF.decide_pose(cues, fx["face0"], fx["face1"], poses, fx["ious"])
+    assert d["accepted"], d["why"]
+    assert d["chosen"] == fx["verified_pose"] == 0 and d["sure_cues"] == {"connector shell over the edge": [0]}
+    assert FF.side_cues({"cues": [cues["cues"][0]] * 2})[0].keys() == {"connector shell over the edge",
+                                                                       "connector shell over the edge #2"}
+    assert not FF.decide_pose({"cues": []}, fx["face0"], fx["face1"], poses, fx["ious"])["accepted"]
+
+
 def test_one_sure_cue_agreeing_with_two_poses_is_refused():
     fx, poses = _fixture("flat_flip_sides_477a.json")
     d = FF.decide_pose(fx["answers"], fx["face0"], fx["face1"], poses + [poses[0]], fx["ious"] + [fx["ious"][0]])

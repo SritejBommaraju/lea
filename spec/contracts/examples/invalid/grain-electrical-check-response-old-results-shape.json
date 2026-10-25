@@ -1,2 +1,0 @@
-{ "schema": "grain-electrical-check-response", "why": "the old contract's invented shape: Grain returns readings[], not results[] with agrees/disagrees",
-  "instance": { "results": [ { "net": "VIN", "verdict": "agrees", "expected": { "volts_min": 4.75, "volts_max": 5.25 } } ], "summary": "ok" } }

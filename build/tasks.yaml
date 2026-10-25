@@ -8,7 +8,7 @@
 #   depends_on, owns, human (ids from human_steps), slots (["SLOT=impl"] the task implements; the conformance
 #   runner reads it), done_when.
 # A task whose id leads a commit subject on main counts as done (squash-merge keeps the PR title).
-# Phase 2 (Grain) has no tasks yet: PLAN.md §9.
+# Phase 2 has no tasks yet: PLAN.md §9.
 
 streams:
   - id: app
@@ -298,7 +298,7 @@ tasks:
     owns: [spec/contracts/report.schema.json, spec/contracts/examples/report*.json, spec/contracts/examples/invalid/report-*.json]
     done_when: "make contracts and make codegen-check pass; invalid examples show an uninspected region cannot be ok and insufficient_evidence needs a reason"
   - id: B10
-    title: "Phase 1 pipeline orchestrator (no Grain)"
+    title: "Phase 1 pipeline orchestrator"
     stream: build
     phase: 1
     depends_on: [B9]

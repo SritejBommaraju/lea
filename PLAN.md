@@ -21,7 +21,7 @@ status: [build/STATUS.md](build/STATUS.md); streams: [areas/](areas/README.md).
 - Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after checking its terms.
 
 **Out (Phase 1)**
-- Anything that calls Grain: reference designs, design alignment, Grain cross-check, expected electrical values, replacement parts, simulation checks, repair plans, shopping (Phase 2, §9).
+- Reference designs, design alignment, expected electrical values, replacement parts, simulation checks, repair plans, shopping (Phase 2, §9).
 - AR probe labels and a meter wizard; speech; segmenters and renderers.
 - SpacetimeDB, GPU hosting, multi-user deployment. One laptop runs the backend.
 - Training anything except the defect classifier.
@@ -41,7 +41,7 @@ flowchart LR
   gw <--> st[("State SQLite and blobs on disk")]
   gw --> orch["Phase 1 pipeline orchestrator"]
   orch --> pose["Pose refinement if needed"]
-  subgraph Pipe["Detection pipeline, no Grain"]
+  subgraph Pipe["Detection pipeline"]
     det["Detector OWLv2, Grounding DINO alt"] --> crops["Full-res crops"]
     crops --> cls["Defect classifier, planned"]
     cls --> vlm["Claude VLM explains and settles unclear cases"]
@@ -55,7 +55,6 @@ flowchart LR
   pose -->|"coverage"| code
   code --> rep["Report builder"]
   rep --> screen
-  grain["Grain, Phase 2, not called"] -.- orch
 ```
 
 The phone talks only to the gateway. [config/providers.yaml](config/providers.yaml) picks every slot's provider.
@@ -69,7 +68,7 @@ Swift from them, `make contracts` checks every example.
 |---|---|
 | Phase 1, in use | `scan-package`, `still`, `finding`, `suspect`, `next-action`, `meter-reading` |
 | Phase 1, planned | `report` (task B9) |
-| Phase 2 | `reference-design`, `repair-plan`, `part-on-hand`, `shopping-quote`, `grain-*` (9 schemas) |
+| Phase 2 | `repair-plan`, `part-on-hand`, `shopping-quote` |
 
 Recorded sessions: [samples/README.md](samples/README.md) and `samples/session.schema.json`.
 
@@ -77,7 +76,7 @@ Recorded sessions: [samples/README.md](samples/README.md) and `samples/session.s
 
 Code that cannot keep one stops and says so. The ids are the ones code comments cite.
 
-1. **A10 Grain is proprietary.** Only the API surface we call is in the repo; internals stay in `private/` (gitignored). `tools/guard_proprietary.py` enforces it.
+1. **A10 Proprietary material stays out.** Nothing under `private/` (gitignored) is committed; `tools/guard_proprietary.py` enforces it.
 2. **GEN3 Nothing fake.** No mocks, stubs or fakes of missing services, devices or data; a missing key or device is HUMAN ACTION NEEDED.
 3. **GEN1 Any product.** No product names, refs or class lists in code; one generic vocabulary in `vision/generic_classes.py`; held-out products measure it (GEN2).
 4. **I1/I2 Vision is a suspect; the meter is proof.** Only a meter reading makes `is_proof` true or calls an electrical fault proven.
@@ -96,7 +95,7 @@ Acceptance tests work on any product. No target is invented: MS4 measures the ba
 
 | Id | Milestone | Acceptance test | Needs |
 |---|---|---|---|
-| MS1 | Replay to report | `make replay SESSION=<id>` on a recorded real session writes a report that validates against `report`; every detected region ends as exactly one of finding, `not_inspected` or `insufficient_evidence`; 0 regions shown `ok` that no model looked at; 0 Grain calls. | B9, B10, B11 |
+| MS1 | Replay to report | `make replay SESSION=<id>` on a recorded real session writes a report that validates against `report`; every detected region ends as exactly one of finding, `not_inspected` or `insufficient_evidence`; 0 regions shown `ok` that no model looked at. | B9, B10, B11 |
 | MS2 | Capture on device | On a product nobody developed against, the app scans, guides close-ups and uploads a session that passes `make sessions-check`; an upload cut mid-way resumes without re-sending finished chunks. | A1-A4 |
 | MS3 | Report on the phone | The report for that session shows in the app: verdict, each finding's crop, confidence words, `not_inspected` and `insufficient_evidence` with reasons; a meter reading on a suspect marks it proven or ruled out. | A5, A6, B11 |
 | MS4 | Benchmark baseline | `make eval` prints per-split metrics (tuned vs held-out products) for the current pipeline; the numbers and the targets chosen from them are committed with the eval results. | M4, M5 |
@@ -175,7 +174,7 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 | B7 | Fusion via Jev: word state, questions, suspects, next action in code, meter override | `fusion/**`, `slots/fusion*`, `tools/jev_smoke.py` | **Done** | B2 |
 | B8 | LLM slot (Claude Sonnet) | `slots/llm*` | **Done** | B3 |
 | B9 | `report` contract: verdict (`looks_good`, `potential_issues`, `insufficient_evidence`), findings with crop refs and confidence words, `not_inspected` regions, reasons | `spec/contracts/report*`, generated code | `make contracts` and `make codegen-check` pass; invalid examples show an uninspected region cannot be `ok` and `insufficient_evidence` needs a reason | B2 |
-| B10 | Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report; no Grain | `pipeline/**`, `make run-workers` | MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default | B9 |
+| B10 | Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report | `pipeline/**`, `make run-workers` | MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default | B9 |
 | B11 | Report generation: code picks the verdict, Claude writes plain words from words only (S5); `GET /v1/scans/{id}/report` and an SSE event | `report/**`, report route in `api/app.py` | The report validates; the verdict rule is a tested truth table; A5 renders it | B9, B10 |
 | B12 | Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after its terms are checked | `tools/import_capture.py` | A real Stray Scanner export imports into a session that passes `make sessions-check`; no closed third-party app capture is used for training or benchmarking | B6 |
 | B13 | Backend pose-graph refinement (loop closure) with Open3D and OpenCV, seeded with ARKit poses, then re-fusion; used only if on-phone drift correction (A2) measures not good enough | `recon/**` | On recorded sessions, loop-closure residual and point-to-plane error are reported per session and are lower than with raw ARKit poses | B6 |
@@ -196,26 +195,19 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 - **Tooling**: proprietary guard and hook; `build/doctor.py`, `next.py`, `status.py`.
 - **Report stage (iOS)**: the report on a dark stage (`ios/RepairOS/Report/Stage/`): verdict led by the top finding, markers kept apart on screen, one "couldn't check" card, circle to inspect, landing timed to Lea's voice; the hero is the photo-real recreation when the scan has one, else the 3D view or photo hero (`RedesignFlags.reportStage`, `--old-report` to compare).
 
-## 9. Phase 2: Grain (later)
+## 9. Phase 2 (later)
 
-Grain is the team's proprietary design engine; Phase 2 sends it our scans and findings. Internals stay in
-`private/grain/` (ask Sritej).
-
-- **Reference designs**: a product's reference (from Grain or built by it) to compare the scan and photos against.
+- **Reference designs**: a product's reference to compare the scan and photos against.
 - **Replacement parts**: is the part on hand a fit; what to buy (selection and budget in code, A5).
 - **Simulation checks**: a rebuild with a substitute is a "simulation check", never "verified" (I5).
-- **The API**: upload, diagnose, electrical check, call. A product Grain did not design has `design_trust: low` (I7).
 
-Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-response`, `grain-look-response`,
-`grain-electrical-reference`, `grain-electrical-check-request`, `grain-electrical-check-response`,
-`grain-call-request`, `grain-call-response`, `grain-error`, `reference-design`, `repair-plan`, `part-on-hand`,
-`shopping-quote`. Tasks are written when Phase 1 is done.
+Contracts already in the repo for Phase 2: `repair-plan`, `part-on-hand`, `shopping-quote`. Tasks are written when
+Phase 1 is done.
 
 ## 10. Decisions so far
 
 | Date | Decision | Who |
 |---|---|---|
-| 2026-10-24 | Phase 1 makes no Grain calls. | Owner |
 | 2026-10-24 | Detector default OWLv2 (faster than Grounding DINO tiny in a first measurement, comparable boxes); M9 re-measures. | Owner |
 | 2026-10-24 | Jev is required: no deterministic fusion fallback. A meter reading still wins in code. | Owner |
 | 2026-10-24 | One laptop: SQLite state, local blobs. | Owner |
@@ -243,6 +235,7 @@ Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-
 | 2026-10-25 | Flip registration on real captures (4 real flips had all failed: an Xbox controller twice, a mouse, a board). Measured causes: the object cloud was 30-60% table (each depth frame's table is flat but leans 1-4 deg in the world, and one horizontal cut at twice the noise lets each frame's noise tail through), high-confidence depth kept only the tops (90% of a dark controller's side pixels are confidence 1, and the sides are all a flip shares), and the free-space test called 42% of a cloud's own points empty (any one of 16 frames, at silhouettes and under drift). Now (`segment_align.segment_object_cloud`): each frame's table is fitted (up to 8 deg) and cut at its own noise mirrored from below, the surface takes medium confidence, a voxel needs 3 frames, and what most high-confidence views see through is carved. Free space is judged against the nearest surface within 1 cm (drift), by at least half the views that could see a point (hidden behind the surface counts for nothing), from high-confidence pixels only. New starts from the outline seen from above (FFT cross-correlation per resting pose), refined by ICP on normal-agreeing matches with both objects resting on their tables. New reasons to drop a pose: floating over 15 mm above the table it rested on, and over 2% of it outside segment 0's outline from above (the free-space margin is blind low over the table). Ties: free space, then the outline, then colour, then the phone. Accepted at fitness 0.30, or 0.10 with 150 matched points when the pose touches both tables and both segments' frames judged its free space (never without frames: a turned-about mouse fit as well). Result: 3 of 4 register (Xbox 0.19, mouse 0.14, the Xbox on the stool 0.11; under 6 s); the board (shares only a 1.6 mm rim) is refused with the reason; upright, slid-onto-the-top and 30/90/180 deg wrong headings are refused on all three. The phone's FlipAligner fails for the first reason: its target cloud is 10-27% object (the box is 3-4x the object and its floor sits 1-47 mm below the table). The mesh cuts a moved segment's table per frame too. | Coordinator |
 | 2026-10-25 | Flip registration phase 2. Phone (`FlipIsolation`, `FlipOutline`): before `FlipAligner`, each cloud is cut to the object like the server (the table fitted up to 8 deg and cut at its own noise mirrored from below, the central connected piece, a tight box whose floor is the measured table: the locked boxes' floors sat 0.5-43 mm below the table), and the aligner gets outline-from-above starts per resting pose and an outline term in its ranking. Replayed on the 4 real flips' uploaded clouds: no wrong acceptance (the old input accepted one Xbox pose 71 cm off), but the phone still refuses all 3 the server registers (ambiguous or low overlap): its fused cloud blurs the table into a 1-3 cm layer, so the cut also takes the lower sides both scans share, and the mouse's cloud stays joined to a mat beside it. The phone uploads `flip_align` with the segment (contract: how each cloud was cut, the last 6 attempts and the check that refused). Cues: "Get the sides too" after 8 s, then "Lower the phone: I need the sides" after 20 s until lined up; a flat object (locked box at most 4.5 cm tall) is asked to "Lay it on an edge, or keep the rim and sides in view"; a bottom scan is enough only with 15 depth keyframes. Mesh: the report mesh and the recreation's bottom TSDF take medium-confidence depth after the per-frame table cut (mixed pixels within 2 px of the silhouette dropped), so the sides join the bottom to the top in one piece; the served cloud's bottom comes from the same per-frame cut. A board flipped face down (Arduino) stays refused: its mirrored outline fits 4 headings within 0.01 IoU. | Coordinator |
 | 2026-10-25 | Thin objects get a photo slab (`repairos.recreation.flat`). A real board scan (scan_9fe6...) kept 57 of 30,861 points: the old horizontal cut was twice a "noise" measured on a band that the board itself filled (5.8 mm, so an 11.6 mm cut kept 774 of 24,289 in-box points; the object pieces 57), and the per-frame cut still keeps only 2,392 (the board's 1.6 mm and low parts sit in the cut band; its depth is mostly medium confidence). Now, when the object's LiDAR points lie mostly within 2 cm of the table (95th percentile), the posed full-resolution stills are rectified onto the measured table, the footprint is the part of the most top-down still whose colour is far from the table's (Mahalanobis 4, opened 3 mm, kept within 6 mm of the LiDAR footprint), fitted as its main-body rectangle when it fills it (rows at least 70% of the typical width: connectors and glints at the edge drop out), else its hull; the slab is that outline up to the measured thickness, its top textured at 0.1 mm from that one still (blending would smear raised parts), checked by a second still landing within 4 mm. It is the recreation (`flat_slab`, USDZ) and the report's mesh and cloud (hero = points); an identity's size is only compared. On the board: 54.0 x 66.0 mm measured (UNO R3 53.4 x 68.6), 3.55 mm thick, second still 1.7 mm off, labels readable; the USB and barrel jacks that overhang the board are not modelled. | Coordinator |
+| 2026-10-25 | A flipped thin object's side-cue question (`recreation.flat_flip.ask_sides`) no longer asks for three fixed features (a USB shell, a barrel jack, a gapped header: one board's layout). The model names up to four features of its own that show from both faces and sit off the middle of an edge (`cues`: name, edge and half per photo), and the same rule decides (a pose backed by a cue sure on both faces, none sure elsewhere, silhouettes and holes not against it). Recorded per-photo answers are still read. Not yet re-run live on a real flip. | Coordinator |
 
 ## 11. Open questions
 

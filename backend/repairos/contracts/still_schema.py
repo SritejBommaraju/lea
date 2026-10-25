@@ -37,7 +37,7 @@ class Intrinsics(BaseModel):
 
 class BoxMm(BaseModel):
     """
-    The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level, because Grain has no pin positions yet (G25; pins are target T7).
+    The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level.
     """
 
     model_config = ConfigDict(
@@ -62,14 +62,14 @@ class Target(BaseModel):
     target_id: str
     part_refs: list[str] | None = Field(
         None,
-        description='Grain part names (model.glb nodes, diagnose parts[].name) expected in view, e.g. J1, LOAD1.',
+        description='Part names (reference model nodes) expected in view, e.g. J1, LOAD1.',
     )
     harness_rows: list[str] | None = Field(
         None, description='harness.csv wire names expected in view, e.g. WIRE_A.'
     )
     box_mm: BoxMm | None = Field(
         None,
-        description="The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level, because Grain has no pin positions yet (G25; pins are target T7).",
+        description="The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level.",
     )
     reason: Reason | None = None
 
@@ -138,8 +138,7 @@ class Still(BaseModel):
     )
     captured_at: AwareDatetime
     image_file: str = Field(
-        ...,
-        description='JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it.',
+        ..., description='JPEG (q >= 85). HEIC is converted on the phone.'
     )
     width_px: int = Field(..., ge=1)
     height_px: int = Field(..., ge=1)

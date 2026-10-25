@@ -191,7 +191,7 @@ class Keyframe(BaseModel):
 
 class DesignPointsUnits(StrEnum):
     """
-    m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm: already design-frame millimetres (upload with units=mm).
+    m: design axes in metres. mm: design-frame millimetres.
     """
 
     m = 'm'
@@ -219,15 +219,10 @@ class Alignment(BaseModel):
     computed_at: AwareDatetime
     design_points_file: str | None = Field(
         None,
-        description="The same cloud in the design frame's axes (Z up), written in design_points_units; uploaded to Grain with name=<scan_id>.ply, units=<design_points_units>, then diagnose with align=none, crop=false.",
+        description="The same cloud in the design frame's axes (Z up), written in design_points_units.",
     )
     design_points_units: DesignPointsUnits | None = Field(
-        None,
-        description='m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm: already design-frame millimetres (upload with units=mm).',
-    )
-    grain_scan_id: str | None = Field(
-        None,
-        description="The id Grain made for the upload (GrainScanRecord.id); Grain's ids are not ours.",
+        None, description='m: design axes in metres. mm: design-frame millimetres.'
     )
 
 
@@ -344,7 +339,7 @@ class Segment(BaseModel):
 
 class ScanPackage(BaseModel):
     """
-    Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.
+    Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (the reference model) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.
     """
 
     model_config = ConfigDict(

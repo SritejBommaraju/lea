@@ -4,7 +4,7 @@ Device pairing, chunked resumable blob uploads (content-hashed), scan package / 
 validated with repairos.contracts.validate() plus the capture files themselves, read endpoints, SSE live events, the pipeline trigger and the report (B10, B11).
 Every write goes through StateStore.transition (PLAN.md invariants I1-I4 enforced there). Every object received is also written
 into a session folder (data/sessions/<session_id>/, the samples/README.md layout) so a real run is replayable.
-The gateway imports slot Protocols only; implementations come from the registry. No Grain calls in Phase 1.
+The gateway imports slot Protocols only; implementations come from the registry.
 """
 from __future__ import annotations
 

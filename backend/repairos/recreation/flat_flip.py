@@ -535,20 +535,24 @@ def decide_with_landmarks(f0: Face, f1: Face, lm: dict, table0: float, table1: f
 # --- discrete side cues (one vision call, answered per image) --------------------------------------------------------
 
 EDGES = ("top", "bottom", "left", "right", "none")
-SIDES_PROMPT = """Two photos of the SAME flat object (e.g. a circuit board), each seen straight from above: Photo A is \\
-one face, Photo B the other face (it was turned over). Answer for EACH photo on its own, in that photo's own image \\
-directions (top = the top of the image): on which image edge is the large metal connector shell (e.g. a USB socket) \\
-that sticks out past the board edge, and in which half of that edge (first = left half for top/bottom edges, top half \\
-for left/right edges); the same for the round barrel power jack; and which long edge carries the header (row of pin \\
-sockets or solder pads) that has a gap in it. Use "none" when you cannot see it. Give a confidence 0-1 for each."""
+SIDES_PROMPT = """Two photos of the SAME flat object (for example a circuit board, a panel or a card), each seen \
+straight from above: Photo A is one face, Photo B the other face (it was turned over). Pick up to four distinctive \
+features at the object's edge that show from both faces and sit away from the middle of their edge, so they tell \
+the object's ends and sides apart (for example a connector shell or socket that sticks out past the edge, a jack, a \
+notch or cut corner, a row of pins or pads with a gap in it, a switch or a large hole near one end). For EACH \
+feature give a short name and, for each photo on its own, in that photo's own image directions (top = the top of \
+the image): on which image edge it is, and in which half of that edge (first = left half for top/bottom edges, top \
+half for left/right edges; none when it spans the middle). Use edge "none" when that photo does not show it. Give a \
+confidence 0-1 for each photo's answer."""
 
+MAX_SIDE_CUES = 4         # features asked for (capped in code: the structured-output schema refuses maxItems)
 _CUE = {"type": "object", "additionalProperties": False, "required": ["edge", "half", "confidence"], "properties": {
     "edge": {"type": "string", "enum": list(EDGES)}, "half": {"type": "string", "enum": ["first", "second", "none"]},
     "confidence": {"type": "number"}}}
-_FACE_CUES = {"type": "object", "additionalProperties": False, "required": ["usb", "jack", "gap_header"],
-              "properties": {"usb": _CUE, "jack": _CUE, "gap_header": _CUE}}
-SIDES_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["photo_a", "photo_b"],
-                "properties": {"photo_a": _FACE_CUES, "photo_b": _FACE_CUES}}
+SIDES_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["cues"], "properties": {
+    "cues": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["name", "photo_a", "photo_b"],
+        "properties": {"name": {"type": "string"}, "photo_a": _CUE, "photo_b": _CUE}}}}}
 CUE_MIN_CONFIDENCE = 0.6
 CUE_TOL_M = 0.025         # a cue agrees when the two faces put it within this (cues are edge quarters: coarse)
 MIN_CUES = 2
@@ -584,6 +588,26 @@ def ask_sides(f0: Face, f1: Face, *, key: str, model: str, scan_id: str = "") ->
     return json.loads(next((b.text for b in r.content if getattr(b, "type", None) == "text"), "{}"))
 
 
+def side_cues(answers: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The side-cue answers as ({name: cue on photo A}, {name: cue on photo B}). The model names its own features
+    (`cues`: [{name, photo_a, photo_b}], at most MAX_SIDE_CUES; a repeated name gets a suffix); an answer recorded
+    per photo ({photo_a: {name: cue}, photo_b: {...}}) is read as it is."""
+    if "cues" not in answers:
+        return dict(answers.get("photo_a") or {}), dict(answers.get("photo_b") or {})
+    a: dict[str, Any] = {}
+    b: dict[str, Any] = {}
+    for i, c in enumerate([c for c in answers.get("cues") or [] if isinstance(c, Mapping)][:MAX_SIDE_CUES]):
+        name = " ".join(str(c.get("name") or "").split()) or f"cue {i + 1}"
+        if name in a:
+            name = f"{name} #{i + 1}"
+        a[name], b[name] = c.get("photo_a") or {}, c.get("photo_b") or {}
+    return a, b
+
+
+def _cue_names(a_ans: Mapping[str, Any], b_ans: Mapping[str, Any]) -> list[str]:
+    return [*a_ans, *(n for n in b_ans if n not in a_ans)]
+
+
 def cue_point(cue: Mapping[str, Any], origin: np.ndarray, size_m: np.ndarray) -> np.ndarray | None:
     """A cue as a world x, z point: the middle of its edge's half (or of the edge) of a face image whose pixel
     (0, 0) is at `origin` and which spans `size_m` (x, z) metres (columns along +x, rows along +z)."""
@@ -599,11 +623,11 @@ def choose_by_cues(answers: Mapping[str, Any], face0: Mapping[str, Any], face1: 
     """Among the candidate poses (face 1 -> face 0), the one where the most cues agree; accepted when it is unique,
     at least MIN_CUES agree, and its silhouette IoU is no worse than the best other's minus SIL_SLACK. `face0` /
     `face1`: {origin, size_m} of the images the answers refer to."""
-    a_ans, b_ans = answers.get("photo_a") or {}, answers.get("photo_b") or {}
+    a_ans, b_ans = side_cues(answers)
     counts, agree = [], []
     for a, b in poses:
         ok = []
-        for name in ("usb", "jack", "gap_header"):
+        for name in _cue_names(a_ans, b_ans):
             p0 = cue_point(a_ans.get(name) or {}, np.asarray(face0["origin"]), np.asarray(face0["size_m"]))
             p1 = cue_point(b_ans.get(name) or {}, np.asarray(face1["origin"]), np.asarray(face1["size_m"]))
             if p0 is not None and p1 is not None and np.linalg.norm(a @ p1 + b - p0) <= CUE_TOL_M:
@@ -647,9 +671,9 @@ IOU_NEAR = 0.02           # the chosen pose's silhouette IoU is within this of t
 def cue_votes(answers: Mapping[str, Any], face0: Mapping[str, Any], face1: Mapping[str, Any],
               poses: Sequence[tuple[np.ndarray, np.ndarray]], sure: float = SURE) -> dict[str, list[int]]:
     """For each side cue the model is sure of on both faces (>= `sure`), the candidate poses it agrees with."""
-    a_ans, b_ans = answers.get("photo_a") or {}, answers.get("photo_b") or {}
+    a_ans, b_ans = side_cues(answers)
     out: dict[str, list[int]] = {}
-    for name in ("usb", "jack", "gap_header"):
+    for name in _cue_names(a_ans, b_ans):
         ca, cb = a_ans.get(name) or {}, b_ans.get(name) or {}
         if min(float(ca.get("confidence") or 0), float(cb.get("confidence") or 0)) < sure:
             continue

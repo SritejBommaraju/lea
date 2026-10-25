@@ -90,7 +90,6 @@ def test_real_providers_file_resolves_phase1_by_default():
     name, slots = resolve_slots(ROOT / "config" / "providers.yaml", environ={})
     assert name == "phase1"
     assert slots["DET"] == "owlv2" and slots["FUSION"] == "jev" and slots["STATE"] == "sqlite"
-    assert "GRAIN" not in slots  # Phase 1 makes no Grain calls
 
 
 def test_registry_matches_build_tools_resolution():

@@ -18,7 +18,7 @@ Steps resolve to a kind:
   PROVE_OR_LOOK            meter test if meter-testable, else LOOK_ANGLE
 Meter-testable: a voltage expectation and two pins -> run_voltage_test (power on); a wire or net with two pins ->
 run_continuity_test (power off, expect continuity: the ~0 ohm rule for wires); an ohms expectation and two pins ->
-run_resistance_test (power off). Phase 1 has no Grain, so voltage and resistance need `expectations` from the caller.
+run_resistance_test (power off). Voltage and resistance need `expectations` from the caller.
 """
 from __future__ import annotations
 

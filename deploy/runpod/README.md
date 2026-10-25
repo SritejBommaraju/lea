@@ -258,7 +258,7 @@ The pod env then references each secret as `{{ RUNPOD_SECRET_<name> }}`. Example
 `ANTHROPIC_API_KEY={{ RUNPOD_SECRET_anthropic_api_key }}`. In the pod form, the key icon next to an env var picks a
 secret.
 
-Not needed on Runpod: `GRAIN_*` (Phase 2) and `REPAIROS_RELEASE`. Leave `REPAIROS_RELEASE` unset, because the
+Not needed on Runpod: `REPAIROS_RELEASE`. Leave `REPAIROS_RELEASE` unset, because the
 phase1 profile uses `HOST=local_mac`, which a release build refuses.
 
 ### Why not GitHub repository secrets?

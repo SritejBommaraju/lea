@@ -1,4 +1,4 @@
-"""The Phase 1 pipeline for one scan (task B10). No Grain calls.
+"""The Phase 1 pipeline for one scan (task B10).
 
     select    which photo stills to inspect (repairos.pipeline.select): near-duplicate views by pose, depth and
               sharpness are covered by the kept one (not_inspected, naming the photo that covers it, I3); close-ups

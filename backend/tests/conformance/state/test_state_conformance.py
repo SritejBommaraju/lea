@@ -18,11 +18,11 @@ from repairos.slots.state import InvariantViolation, Job, JobQueue, LiveEvents, 
 
 EXAMPLES = Path(__file__).resolve().parents[4] / "spec" / "contracts" / "examples"
 ORDER = ["scan-package", "still", "meter-reading", "finding", "finding.partly", "suspect", "next-action",
-         "repair-plan", "part-on-hand", "reference-design", "shopping-quote"]
+         "repair-plan", "part-on-hand", "shopping-quote"]
 KIND_OF = {"finding.partly": "finding"}
 ID = {"scan-package": "scan_id", "still": "still_id", "meter-reading": "reading_id", "finding": "finding_id",
       "suspect": "suspect_id", "next-action": "action_id", "repair-plan": "plan_id", "part-on-hand": "item_id",
-      "reference-design": "product_id", "shopping-quote": "quote_id"}
+      "shopping-quote": "quote_id"}
 
 
 def run(coro):

@@ -33,6 +33,5 @@
     "summary_writer": "<llm model id>",
     "jev": "not called (nothing to judge)",
     "locate": "not available"
-  },
-  "grain": "not called"
+  }
 }

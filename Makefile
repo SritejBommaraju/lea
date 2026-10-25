@@ -27,7 +27,7 @@ codegen: ## spec/contracts -> Pydantic (backend/repairos/contracts) + Swift (ios
 codegen-check: ## fail when a generated file differs from a fresh `make codegen`
 	python3 -I tools/codegen/codegen.py --check
 
-contracts: ## schemas vs examples, plus the private Grain fixtures and gap ledger when private/grain/ is present
+contracts: ## schemas vs their examples
 	python3 -I spec/contracts/check.py
 
 check: contracts codegen-check guard test ## everything that exists today (licence check: task B15)
@@ -61,8 +61,8 @@ next: ## tasks ready to start, per stream (ARGS="--stream app")
 status: ## regenerate build/STATUS.md
 	python3 -I build/status.py
 
-hooks: ## install the pre-commit guard once per clone (blocks Grain internals and private files)
+hooks: ## install the pre-commit guard once per clone (blocks private files)
 	git config core.hooksPath tools/hooks
 
-guard: ## scan every tracked + staged file (or PATHS="a b") for Grain internals and private files
+guard: ## scan every tracked + staged file (or PATHS="a b") for private files
 	python3 -I tools/guard_proprietary.py $(if $(PATHS),$(PATHS),--tracked)

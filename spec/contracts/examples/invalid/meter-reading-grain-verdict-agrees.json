@@ -1,2 +1,0 @@
-{ "schema": "meter-reading", "why": "Greptile: grain_verdict must use Grain's row vocabulary (ok|off|... ), not agrees/disagrees",
-  "base": "meter-reading.json", "patch": { "grain_verdict": "agrees" } }

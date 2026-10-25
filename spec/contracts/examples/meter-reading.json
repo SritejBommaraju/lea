@@ -11,23 +11,6 @@
   "condition": "idle",
   "expected": { "continuity": true, "ohms_max": 1.0, "source": "repairos_derived" },
   "verdict": "disagrees",
-  "grain_verdict": "open",
-  "grain_verdict_derived": true,
-  "grain_row": {
-    "net": "NET_A",
-    "known": true,
-    "continuity": false,
-    "wire": { "name": "WIRE_A", "from": "J1.1", "to": "LOAD1.1", "gauge": "22AWG", "length_mm": 41.0, "color": "red", "conductors": 1.0 }
-  },
-  "grain_findings": [
-    {
-      "severity": "error",
-      "text": "NET_A is open between J1.1 and LOAD1.1: the harness wire WIRE_A does not conduct",
-      "where": "WIRE_A",
-      "fix": "replace WIRE_A: 22AWG, 41.0 mm, red, J1.1 to LOAD1.1; re-crimp both ends"
-    }
-  ],
-  "grain_remake_wire": "WIRE_A",
   "source": "voice",
   "raw_text": "no beep",
   "recorded_at": "2026-10-23T18:15:30Z"

@@ -52,11 +52,11 @@ KINDS = ["button", "port", "pin", "header", "connector", "label", "screw", "wire
          "battery", "other"]
 
 INDEX_PROMPT = """These are photos of one real object from a scan{name}. First, in orientation, say how the object \
-lies in each photo (for example "photo s2: grips point away from the camera, so its own left is on the photo's \
+lies in each photo (for example "photo s2: its front faces away from the camera, so its own left is on the photo's \
 right"). Then list the components a person might ask \
 about that you can actually see: buttons, ports and jacks, pins and pin headers, connectors, switches, lights, \
 screws, chips, batteries, printed labels, and each visible wire end (with its colour and what it is plugged into). \
-For each give: label (its printed text when legible, e.g. "A2", "5V", "GND", "RESET", else a short name like "X \
+For each give: label (its printed text when legible, e.g. "A2", "5V", "GND", "RESET", else a short name like "power \
 button" or "red wire end"; left and right mean the object's own sides as its user holds or faces it, never the \
 photo's, and the object may lie turned round in a photo), kind, the photo it is clearest in (its name, like s4), x and y (fractions of that photo, \
 0,0 top left, on the component itself; read them from the faint grid, whose ticks mark every tenth), and a short \
@@ -64,7 +64,7 @@ note (what it is for, or for a wire what it connects to as far \
 as you can see). Only list what you can see; read printed text only when it is legible. At most 40, the most useful \
 first. Last, in mirror_pairs, for each pair of listed parts named by side (left and right, top and bottom), say from \
 what you know of this product which other listed part sits nearer to which one of the pair (for example the right \
-stick sits nearer the face buttons); none when there are no such pairs."""
+port sits nearer the power button); none when there are no such pairs."""
 
 REFINE_PROMPT = """Each crop above is a full-resolution close-up from a photo of one real object{name}. For each \
 crop, find the named component and give its centre: x and y as fractions of that crop (0,0 top left), read from \

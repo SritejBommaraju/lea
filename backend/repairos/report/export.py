@@ -124,7 +124,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             f"- Scan keyframes: {cap['keyframes']}; coverage: {cap['coverage_words']}",
             "", "## Models", ""]
     out += [f"- {k.replace('_', ' ')}: {v}" for k, v in m.items()]
-    out += [f"- summary written by {report['summary']['written_by']} from words only", "- Grain: not called", "",
+    out += [f"- summary written by {report['summary']['written_by']} from words only", "",
             "## What photos cannot tell", ""]
     out += [f"- {line}" for line in report.get("limits") or LIMITS] + [""]
     return "\n".join(out)
@@ -215,7 +215,7 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
                  f"Close-up stills: {cap['stills']} received, {cap['stills_inspected']} with a judged region. "
                  f"Scan coverage: {esc(cap['coverage_words'])}.<br>"
                  + "<br>".join(f"{esc(k.replace('_', ' '))}: {esc(v)}" for k, v in report["models"].items())
-                 + f"<br>Summary written by {esc(report['summary']['written_by'])} from words only. Grain: not called."
+                 + f"<br>Summary written by {esc(report['summary']['written_by'])} from words only."
                  "</p>")
     parts.append("<h2>What photos cannot tell</h2><ul>"
                  + "".join(f"<li>{esc(line)}</li>" for line in report.get("limits") or LIMITS) + "</ul>")

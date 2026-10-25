@@ -8,8 +8,7 @@ Steps: validate the folder; load it into a fresh STATE + BLOB (the configured sl
 data/replay/<session_id>/) through the gateway's transitions; run `repairos.pipeline.run_session` when the pipeline
 exists (task B10; until then the run says `not_built` and nothing stands in for it); score the findings against
 truth.json; write data/replay/<session_id>/summary.json and each scan's report (report_<scan_id>.json, .md, .html,
-validated against spec/contracts/report.schema.json). A failed pipeline stage is a failed run. Phase 1 makes no
-Grain calls.
+validated against spec/contracts/report.schema.json). A failed pipeline stage is a failed run.
 """
 from __future__ import annotations
 
@@ -56,8 +55,7 @@ async def _replay(path: Path, out_root: Path, allow_heldout: bool) -> dict:
     problems = validate_session(session.dir)
     stage("validate", t0, "failed" if problems else "ok", problems=problems)
     out = out_root / session.session_id
-    summary = {"session_id": session.session_id, "source": str(session.dir), "out": str(out), "stages": stages,
-               "grain": "not called (Phase 1)"}
+    summary = {"session_id": session.session_id, "source": str(session.dir), "out": str(out), "stages": stages}
     if problems:
         return summary
 
@@ -120,8 +118,7 @@ def _write_reports(reports: list[dict], out: Path, blobs, summary: dict) -> None
         summary["reports"].append({
             "scan_id": rep["scan_id"], "verdict": rep["verdict"], "rule": rep["verdict_reason"]["rule"],
             "file": str(base.with_suffix(".json")), "findings": len(rep["findings"]),
-            "not_inspected": len(rep["not_inspected"]), "insufficient_evidence": len(rep["insufficient_evidence"]),
-            "grain": rep["grain"]})
+            "not_inspected": len(rep["not_inspected"]), "insufficient_evidence": len(rep["insufficient_evidence"])})
 
 
 def main(argv: list[str] | None = None) -> int:
