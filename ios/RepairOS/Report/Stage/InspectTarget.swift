@@ -66,8 +66,16 @@ enum InspectTargets {
 /// The bridge from a circle drawn over the stage to the 3D view underneath: the view registers `resolve`, which
 /// turns a screen circle into a point and radius on the scan (nil when no scan points fall inside it).
 @MainActor
+@Observable
 final class StageProbe {
-    var resolve: ((CGPoint, CGFloat) -> (point: SIMD3<Float>, radius: Float)?)?
+    @ObservationIgnored var resolve: ((CGPoint, CGFloat) -> (point: SIMD3<Float>, radius: Float)?)?
+    /// The marker the hero's camera has (about 80%) landed on for one of Lea's moves; nil once it moved on (a touch,
+    /// the idle drift, a reset). The stage brings in the part's real photo then (the proof hand-off) and lets it go.
+    private(set) var landed: String?
+
+    func land(_ id: String?) {
+        if landed != id { landed = id }
+    }
 }
 
 /// Draws the circle while the finger moves, then hands the fitted circle back. Active only in circle mode.
@@ -80,7 +88,9 @@ struct CircleDrawLayer: View {
             guard stroke.count > 1 else { return }
             var p = Path()
             p.addLines(stroke)
-            ctx.stroke(p, with: .color(Palette.cameraAccent), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+            // The drawn stroke in `next` over a keyline, so it reads on any scan.
+            ctx.stroke(p, with: .color(Palette.keyline), style: StrokeStyle(lineWidth: Line.locked + 2, lineCap: .round, lineJoin: .round))
+            ctx.stroke(p, with: .color(Palette.next), style: StrokeStyle(lineWidth: Line.locked, lineCap: .round, lineJoin: .round))
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 0)
@@ -98,13 +108,10 @@ struct CircleDrawLayer: View {
     }
 }
 
-/// A circled target drawn on the stage: a dashed accent ring sized to its radius on screen.
+/// A circled target drawn on the stage: a dashed `next` ring (dashes: not yet checked) sized to its radius on screen,
+/// the same ring style as Lea's highlight.
 struct TargetRing: View {
     var body: some View {
-        Circle()
-            .strokeBorder(Palette.cameraAccent, style: StrokeStyle(lineWidth: 2.5, dash: [6, 5]))
-            .background(Circle().fill(Palette.cameraAccent.opacity(0.12)))
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        FocusRing(style: FocusRingStyle(tone: nil, dashed: true))
     }
 }

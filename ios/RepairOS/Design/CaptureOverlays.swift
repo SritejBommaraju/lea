@@ -2,15 +2,16 @@ import SwiftUI
 import UIKit
 
 // Overlay pieces for the live capture screen. Rules they follow (see Design/INTEGRATION.md):
-// - Driven by coarse state only (cue words, cell states, counters), at most ~10 changes a second. Nothing here
-//   reads ARFrame or runs a per-frame timer; an animation runs only for the ~0.3 s after a change.
-// - No materials, blur or shadows: solid translucent fills over the camera. The dial is flattened with
+// - Driven by coarse state only (cue words, cell states), at most ~10 changes a second. Nothing here reads ARFrame
+//   or runs a per-frame timer; an animation runs only for the ~0.3 s after a change.
+// - Chalk with keylines on smoke: no materials, blur or shadows over the camera. The dial is flattened with
 //   `.drawingGroup()` into one Metal layer.
 // - Under Reduce Motion every movement becomes a fade.
 
 // MARK: - Cue banner
 
-/// One short line of guidance with an icon, tinted by urgency. Change `text` and it cross-fades.
+/// One short line of guidance with an icon, tinted by urgency: chalk words on a smoke capsule, a tone disc with a dark
+/// glyph (the dark-mode status values, which read on smoke). Change `text` and it cross-fades.
 struct CueBanner: View {
     enum Tone: Sendable, Hashable {
         /// Ordinary guidance ("Walk slowly around it").
@@ -24,14 +25,14 @@ struct CueBanner: View {
 
         var fill: Color {
             switch self {
-            case .guide: Color.white.opacity(0.18)
-            case .caution: Color(uiColor: UIColor(hex: 0xFFB340))
-            case .stop: Color(uiColor: UIColor(hex: 0xFF5C66))
-            case .good: Color(uiColor: UIColor(hex: 0x3DDC84))
+            case .guide: Palette.next
+            case .caution: Palette.cameraCaution
+            case .stop: Palette.cameraDanger
+            case .good: Palette.cameraGood
             }
         }
 
-        var glyph: Color { self == .guide ? .white : Color(white: 0.06) }
+        var glyph: Color { Palette.cameraGlyph }
     }
 
     let text: String
@@ -48,7 +49,7 @@ struct CueBanner: View {
                 .background(tone.fill, in: Circle())
             Text(text)
                 .font(.cue)
-                .foregroundStyle(.white)
+                .foregroundStyle(Palette.chalk)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .contentTransition(.opacity)
@@ -56,8 +57,7 @@ struct CueBanner: View {
         .padding(.leading, 6)
         .padding(.trailing, 18)
         .padding(.vertical, 6)
-        .background(Color.black.opacity(0.58), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5))
+        .background { SmokeFill(shape: Capsule()) }
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .motion(Motion.fade, value: text)
         .motion(Motion.fade, value: tone)
@@ -68,8 +68,8 @@ struct CueBanner: View {
 
 // MARK: - Shot tick
 
-/// A white check that pops in and fades out each time `trigger` changes (a photo was accepted), with the shot
-/// haptic on the same frame. Invisible at rest; costs nothing between shots.
+/// A chalk check that pops in and fades out each time `trigger` changes (a photo was accepted), with the shot
+/// haptic on the same frame. Invisible at rest; costs nothing between shots. Reduce Motion: an opacity blink only.
 struct ShotTick: View {
     let trigger: Int
     var haptic = true
@@ -80,9 +80,10 @@ struct ShotTick: View {
     var body: some View {
         Image(systemName: "checkmark")
             .font(.system(size: 24, weight: .bold))
-            .foregroundStyle(Color(white: 0.06))
+            .foregroundStyle(Palette.cameraGlyph)
             .frame(width: 56, height: 56)
-            .background(Circle().fill(.white))
+            .background(Circle().fill(Palette.chalk))
+            .overlay(Circle().strokeBorder(Palette.keyline, lineWidth: 1))
             .keyframeAnimator(initialValue: Pop(scale: reduceMotion ? 1 : 0.7, opacity: 0), trigger: trigger) { view, pop in
                 view.scaleEffect(pop.scale).opacity(pop.opacity)
             } keyframes: { _ in
@@ -93,8 +94,8 @@ struct ShotTick: View {
                 }
                 KeyframeTrack(\.opacity) {
                     LinearKeyframe(1, duration: 0.08)
-                    LinearKeyframe(1, duration: 0.55)
-                    LinearKeyframe(0, duration: 0.22)
+                    LinearKeyframe(1, duration: reduceMotion ? 0.04 : 0.55)
+                    LinearKeyframe(0, duration: reduceMotion ? 0.08 : 0.22)
                 }
             }
             .sensoryFeedback(haptic ? Haptic.shot : .selection, trigger: trigger) { _, _ in haptic }
@@ -115,11 +116,13 @@ enum CellState: Sendable, Hashable {
     case next
 }
 
-/// The coverage dome seen from above: 3 rings × 12 sectors = 36 cells. `cells[ring * 12 + sector]`, ring 0 the
-/// lowest band (outer ring) up to ring 2 the view from above (inner ring); sector 0 starts at the bottom of the
-/// dial (+Z) and runs toward +X (to the right), as in `CoverageDome.cell(camera:box:)`. `here` is the sector the
-/// phone is in, already quantised; `done` turns the covered cells green. `.camera` (default) is for the live
-/// camera; `.app` draws it on an app screen (accent cells, no dark disc).
+/// The coverage dome seen from above, drawn as an astrolabe: 3 rings × 12 sectors = 36 cells inside a rim with 12
+/// ticks and a mark at sector 0. `cells[ring * 12 + sector]`, ring 0 the lowest band (outer ring) up to ring 2 the
+/// view from above (inner ring); sector 0 starts at the bottom of the dial (+Z) and runs toward +X (to the right), as
+/// in `CoverageDome.cell(camera:box:)`. Empty cells are 1 pt chalk outlines, covered cells chalk, the next cell
+/// `next` with an index tick on the rim beside it; `done` turns the covered cells leaf. `here` (the sector the
+/// phone is in, already quantised) is a compass needle on the rim. `.camera` (default) sits on a smoke disc over the
+/// live camera; `.app` draws the same astrolabe in `rule` and `accent` on an app screen.
 struct DomeDial: View {
     enum Style { case camera, app }
     nonisolated static let rings = 3
@@ -132,21 +135,26 @@ struct DomeDial: View {
     var size: CGFloat = 76
     var style: Style = .camera
 
+    private var nextSector: Int? { cells.firstIndex(of: .next).map { $0 % Self.sectors } }
+
     var body: some View {
         ZStack {
-            Circle().fill(style == .camera ? Color.black.opacity(0.45) : Palette.accent.opacity(0.07))
+            if style == .camera { Circle().fill(Palette.smoke) }
+            Rim(sectors: Self.sectors).stroke(rimColor, lineWidth: Line.hairline + (style == .camera ? 0.5 : 0.25))
             ForEach(0..<Self.cellCount, id: \.self) { i in
+                let state = i < cells.count ? cells[i] : .missing
                 DomeCell(ring: i / Self.sectors, sector: i % Self.sectors)
-                    .fill(color(i < cells.count ? cells[i] : .missing))
+                    .fill(fill(state))
+                    .overlay(DomeCell(ring: i / Self.sectors, sector: i % Self.sectors)
+                        .stroke(edge(state), lineWidth: Line.construction))
+            }
+            if let nextSector {
+                RimTick(sector: nextSector).stroke(style == .camera ? Palette.next : Palette.accent,
+                                                   style: StrokeStyle(lineWidth: Line.locked, lineCap: .butt))
             }
             if let here {
-                HereMarker(sector: here).fill(style == .camera ? Color.white : Color.primary)
+                HereNeedle(sector: here).fill(style == .camera ? Palette.chalk : Palette.ink)
             }
-            Image(systemName: "checkmark")
-                .font(.system(size: size * 0.16, weight: .heavy))
-                .foregroundStyle(Palette.good)
-                .opacity(done ? 1 : 0)
-                .scaleEffect(done ? 1 : 0.6)
         }
         .frame(width: size, height: size)
         .drawingGroup()
@@ -158,59 +166,114 @@ struct DomeDial: View {
         .accessibilityValue("\(cells.filter { $0 == .covered }.count) of \(Self.cellCount) sides")
     }
 
-    private func color(_ state: CellState) -> Color {
+    private var rimColor: Color { style == .camera ? Palette.chalk.opacity(0.7) : Palette.rule.opacity(0.55) }
+
+    private func fill(_ state: CellState) -> Color {
         switch (style, state) {
-        case (.camera, .missing): Color.white.opacity(0.2)
-        case (.camera, .covered): done ? Palette.good : Color.white
-        case (.camera, .next): Palette.cameraAccent
-        case (.app, .missing): Palette.accent.opacity(0.14)
-        case (.app, .covered): done ? Palette.good : Palette.accent
-        case (.app, .next): Palette.accent.opacity(0.45)
+        case (_, .missing): .clear
+        case (.camera, .covered): done ? Palette.cameraGood : Palette.chalk.opacity(0.85)
+        case (.camera, .next): Palette.next
+        case (.app, .covered): done ? Palette.good : Palette.accent.opacity(0.5)
+        case (.app, .next): Palette.accent
+        }
+    }
+
+    private func edge(_ state: CellState) -> Color {
+        switch (style, state) {
+        case (.camera, .missing): Palette.chalk.opacity(0.55)
+        case (.app, .missing): Palette.rule.opacity(0.35)
+        default: .clear
         }
     }
 }
 
-/// One annular sector. Rings are drawn outer (ring 0) to inner (ring 2), with small radial and angular gaps.
+/// Where the cells sit: rings drawn outer (ring 0) to inner (ring 2), inside the rim.
+private enum DomeGeometry {
+    static func rim(_ rect: CGRect) -> CGFloat { rect.width / 2 - rect.width * 0.035 }
+    static func outerCell(_ rect: CGRect) -> CGFloat { rect.width / 2 - rect.width * 0.12 }
+    static func point(_ c: CGPoint, _ r: CGFloat, _ a: Double) -> CGPoint {
+        // Top-down map: azimuth 0 at the bottom (+Z), increasing toward +X (right). Screen y grows downward.
+        CGPoint(x: c.x + r * sin(a), y: c.y + r * cos(a))
+    }
+}
+
+/// The rim: a circle with 12 short ticks pointing in, and a longer mark at sector 0.
+private struct Rim: Shape {
+    let sectors: Int
+
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let r = DomeGeometry.rim(rect)
+        var p = Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
+        for s in 0..<sectors {
+            let a = Double(s) * 2 * .pi / Double(sectors)
+            let len = rect.width * (s == 0 ? 0.07 : 0.035)
+            p.move(to: DomeGeometry.point(c, r, a))
+            p.addLine(to: DomeGeometry.point(c, r - len, a))
+        }
+        return p
+    }
+}
+
+/// One annular sector, with small radial and angular gaps.
 private struct DomeCell: Shape {
     let ring: Int
     let sector: Int
 
     func path(in rect: CGRect) -> Path {
         let c = CGPoint(x: rect.midX, y: rect.midY)
-        let outer = rect.width / 2 - rect.width * 0.08
-        let width = rect.width * 0.085
+        let outer = DomeGeometry.outerCell(rect)
+        let width = rect.width * 0.08
         let gap = rect.width * 0.025
         let r1 = outer - CGFloat(ring) * (width + gap)
         let r0 = r1 - width
         let span = 2 * Double.pi / Double(DomeDial.sectors)
-        let pad = span * 0.06
+        let pad = span * 0.07
         let a0 = Double(sector) * span + pad, a1 = Double(sector + 1) * span - pad
-        // Top-down map: azimuth 0 at the bottom (+Z), increasing toward +X (right). Screen y grows downward.
-        func point(_ r: CGFloat, _ a: Double) -> CGPoint { CGPoint(x: c.x + r * sin(a), y: c.y + r * cos(a)) }
         var p = Path()
-        p.move(to: point(r1, a0))
+        p.move(to: DomeGeometry.point(c, r1, a0))
         let steps = 6
-        for s in 1...steps { p.addLine(to: point(r1, a0 + (a1 - a0) * Double(s) / Double(steps))) }
-        for s in stride(from: steps, through: 0, by: -1) { p.addLine(to: point(r0, a0 + (a1 - a0) * Double(s) / Double(steps))) }
+        for s in 1...steps { p.addLine(to: DomeGeometry.point(c, r1, a0 + (a1 - a0) * Double(s) / Double(steps))) }
+        for s in stride(from: steps, through: 0, by: -1) { p.addLine(to: DomeGeometry.point(c, r0, a0 + (a1 - a0) * Double(s) / Double(steps))) }
         p.closeSubpath()
         return p
     }
 }
 
-/// A small triangle on the rim pointing at the centre: where the phone is.
-private struct HereMarker: Shape {
+/// The index tick on the rim beside the next cell (a shape cue, not only a colour).
+private struct RimTick: Shape {
     let sector: Int
 
     func path(in rect: CGRect) -> Path {
         let c = CGPoint(x: rect.midX, y: rect.midY)
         let a = (Double(sector) + 0.5) * 2 * .pi / Double(DomeDial.sectors)
-        let tip = rect.width / 2 - rect.width * 0.035, base = rect.width / 2 + rect.width * 0.0
-        let half = 0.09
-        func point(_ r: CGFloat, _ a: Double) -> CGPoint { CGPoint(x: c.x + r * sin(a), y: c.y + r * cos(a)) }
+        let r = DomeGeometry.rim(rect)
         var p = Path()
-        p.move(to: point(tip, a))
-        p.addLine(to: point(base, a - half))
-        p.addLine(to: point(base, a + half))
+        p.move(to: DomeGeometry.point(c, r + rect.width * 0.02, a))
+        p.addLine(to: DomeGeometry.point(c, r - rect.width * 0.06, a))
+        return p
+    }
+}
+
+/// A compass needle on the rim pointing at the centre: where the phone is.
+private struct HereNeedle: Shape {
+    let sector: Int
+
+    func path(in rect: CGRect) -> Path {
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let a = (Double(sector) + 0.5) * 2 * .pi / Double(DomeDial.sectors)
+        let r = DomeGeometry.rim(rect)
+        let tip = r - rect.width * 0.09, tail = r + rect.width * 0.03, mid = r - rect.width * 0.02
+        let half = rect.width * 0.022
+        let dir = CGPoint(x: sin(a), y: cos(a)), side = CGPoint(x: cos(a), y: -sin(a))
+        func at(_ radius: CGFloat, _ offset: CGFloat) -> CGPoint {
+            CGPoint(x: c.x + dir.x * radius + side.x * offset, y: c.y + dir.y * radius + side.y * offset)
+        }
+        var p = Path()
+        p.move(to: at(tip, 0))
+        p.addLine(to: at(mid, half))
+        p.addLine(to: at(tail, 0))
+        p.addLine(to: at(mid, -half))
         p.closeSubpath()
         return p
     }
@@ -222,9 +285,9 @@ private struct HereMarker: Shape {
 /// rect) or RealityKit (a 3D box drawn with corner segments only).
 enum LockBoxSpec {
     enum Phase: Sendable, Hashable {
-        /// Looking for the object: thin white corners.
+        /// Looking for the object: thin chalk corners.
         case searching
-        /// Locked: thicker accent corners that settle in once (scale 1.06 → 1, `Motion.settle`) with `Haptic.lock`.
+        /// Locked: heavier `next` corners that settle in once (scale 1.06 → 1, `Motion.settle`) with `Haptic.lock`.
         case locked
     }
 
@@ -232,61 +295,55 @@ enum LockBoxSpec {
     static let cornerFraction: CGFloat = 0.22
     static let cornerMin: CGFloat = 14
     static let cornerMax: CGFloat = 34
-    /// 2D stroke widths in points; in 3D use a 1.5 mm (searching) / 2.5 mm (locked) tube or line, unlit.
-    static func lineWidth(_ phase: Phase) -> CGFloat { phase == .locked ? 4 : 3 }
+    /// 2D stroke widths in points (over a keyline 2 pt wider); in 3D use a 1.5 mm (searching) / 2.5 mm (locked) tube
+    /// or line, unlit.
+    static func lineWidth(_ phase: Phase) -> CGFloat { phase == .locked ? Line.locked : Line.drawing }
     /// Unlit colours for RealityKit's `UnlitMaterial(color:)`; never lit, never with a shadow.
     static func uiColor(_ phase: Phase) -> UIColor {
-        phase == .locked ? UIColor(hex: 0x9C94FF) : UIColor(white: 1, alpha: 0.8)
+        phase == .locked ? UIColor(hex: 0xC2B1FF) : UIColor(hex: 0xF4F2EC)
     }
     static func color(_ phase: Phase) -> Color { Color(uiColor: uiColor(phase)) }
     /// Scale the box starts at when it locks, before settling to 1.
     static let lockOvershoot: CGFloat = 1.06
 }
 
-/// Four rounded corner brackets filling the view's frame. Place it over the object's projected bounds (update the
-/// frame at ≤ 10 Hz, not per frame).
+/// Four open corners with square ends and mitred corners, filling the shape's frame (the lock brackets, a defect's
+/// box on a photo).
+struct CornerBrackets: Shape {
+    func path(in rect: CGRect) -> Path {
+        let arm = min(LockBoxSpec.cornerMax, max(LockBoxSpec.cornerMin, min(rect.width, rect.height) * LockBoxSpec.cornerFraction))
+        var p = Path()
+        for (corner, dx, dy) in [(CGPoint(x: rect.minX, y: rect.minY), 1.0, 1.0), (CGPoint(x: rect.maxX, y: rect.minY), -1.0, 1.0),
+                                 (CGPoint(x: rect.maxX, y: rect.maxY), -1.0, -1.0), (CGPoint(x: rect.minX, y: rect.maxY), 1.0, -1.0)] {
+            p.move(to: CGPoint(x: corner.x, y: corner.y + dy * arm))
+            p.addLine(to: corner)
+            p.addLine(to: CGPoint(x: corner.x + dx * arm, y: corner.y))
+        }
+        return p
+    }
+}
+
+/// The lock brackets filling the view's frame: chalk 1.5 pt while searching, `next` 2.5 pt once locked, both over a
+/// keyline. Place it over the object's projected bounds (update the frame at ≤ 10 Hz, not per frame). Lock: settles
+/// once from 1.06 with `Haptic.lock`; Reduce Motion: the locked outline at once, same haptic.
 struct LockBrackets: View {
     var phase: LockBoxSpec.Phase
     @State private var settle: CGFloat = 1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack {
-            // A faint dark edge under the white searching corners so they survive light floors (a stroke, not a
-            // shadow: no blur over the camera).
-            if phase == .searching {
-                Brackets().stroke(Color.black.opacity(0.25),
-                                  style: StrokeStyle(lineWidth: LockBoxSpec.lineWidth(phase) + 1.5, lineCap: .round, lineJoin: .round))
-            }
-            Brackets()
-                .stroke(LockBoxSpec.color(phase),
-                        style: StrokeStyle(lineWidth: LockBoxSpec.lineWidth(phase), lineCap: .round, lineJoin: .round))
-        }
+        Color.clear
+            .keylined(CornerBrackets(), color: LockBoxSpec.color(phase), width: LockBoxSpec.lineWidth(phase))
             .scaleEffect(settle)
             .motion(Motion.fade, value: phase)
             .sensoryFeedback(Haptic.lock, trigger: phase) { _, new in new == .locked }
             .onChange(of: phase) { _, new in
-                guard new == .locked else { return }
+                guard new == .locked, !reduceMotion else { return }
                 settle = LockBoxSpec.lockOvershoot
                 withAnimation(Motion.settle) { settle = 1 }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
-    }
-
-    private struct Brackets: Shape {
-        func path(in rect: CGRect) -> Path {
-            let arm = min(LockBoxSpec.cornerMax, max(LockBoxSpec.cornerMin, min(rect.width, rect.height) * LockBoxSpec.cornerFraction))
-            let r = min(arm * 0.45, 10)
-            var p = Path()
-            for (corner, dx, dy) in [(CGPoint(x: rect.minX, y: rect.minY), 1.0, 1.0), (CGPoint(x: rect.maxX, y: rect.minY), -1.0, 1.0),
-                                     (CGPoint(x: rect.maxX, y: rect.maxY), -1.0, -1.0), (CGPoint(x: rect.minX, y: rect.maxY), 1.0, -1.0)] {
-                p.move(to: CGPoint(x: corner.x, y: corner.y + dy * arm))
-                p.addLine(to: CGPoint(x: corner.x, y: corner.y + dy * r))
-                p.addQuadCurve(to: CGPoint(x: corner.x + dx * r, y: corner.y), control: corner)
-                p.addLine(to: CGPoint(x: corner.x + dx * arm, y: corner.y))
-            }
-            return p
-        }
     }
 }
 
@@ -310,7 +367,7 @@ struct CameraBackdrop: View {
 struct CaptureOverlayPreview: View {
     var backdrop: UIImage?
     @State private var shots = 0
-    @State private var locked = false
+    @State var locked = false
     @State private var cells: [CellState] = (0..<36).map { [1, 2, 3, 13, 14, 15, 25, 26].contains($0) ? .covered : ($0 == 4 ? .next : .missing) }
 
     var body: some View {
@@ -327,14 +384,10 @@ struct CaptureOverlayPreview: View {
                 }
                 Spacer()
                 VStack(spacing: Spacing.m) {
-                    CueBanner(text: locked ? "Walk slowly around it" : "Tap the object to lock on",
-                              symbol: locked ? "figure.walk" : Symbol.lock)
-                    HStack(spacing: Spacing.s) {
-                        StatusPill(text: "\(shots + 8) photos", symbol: "camera.fill", onCamera: true)
-                        ProgressPill(text: "Uploading", fraction: 0.35, onCamera: true)
-                    }
+                    CueBanner(text: locked ? "Walk slowly around it" : "Point at the object",
+                              symbol: locked ? "figure.walk" : Symbol.scan)
                     Button { locked.toggle(); shots += 1; if let i = cells.firstIndex(of: .next) { cells[i] = .covered; if i + 1 < 36 { cells[i + 1] = .next } } } label: {
-                        Label(locked ? "Close-ups" : "Lock on", systemImage: locked ? Symbol.closeup : Symbol.lock)
+                        Label(locked ? "Done" : "Scan", systemImage: locked ? "checkmark" : Symbol.scan)
                     }
                     .buttonStyle(.primary(.light))
                 }

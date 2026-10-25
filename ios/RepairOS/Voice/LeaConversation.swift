@@ -15,6 +15,8 @@ final class LeaConversation {
         var text: String
         /// The real photos (crop blob shas, ringed) of the spots Lea showed in this answer.
         var photos: [String] = []
+        /// Which part each photo shows (the `photo` event's `for`: a finding or part id), for the stage's hand-off.
+        var photoFor: [String: String] = [:]
     }
 
     enum Phase: Equatable { case idle, listening, thinking, speaking, failed(String) }
@@ -308,6 +310,10 @@ final class LeaConversation {
         /// the newest sentence: a 3D move is held until its sentence is heard (StageTiming).
         var firstHeardAt: Date?
         var charsBefore = 0
+        /// Where the newest sentence starts in this answer's audio (seconds), measured from the player when its text
+        /// arrived on the gateway-audio path (the audio of the sentences before it is scheduled by then); nil when
+        /// that is unknown (Sonic, the phone's voice), where its start is estimated on the player's clock instead.
+        var sentenceAt: Double?
         /// Sonic's socket for this answer (nil: the gateway streams the audio, or the phone's voice).
         var sonic: SonicSocket?
         var sonicFailed = false
@@ -415,6 +421,7 @@ final class LeaConversation {
             st.firstSentence = st.firstSentence ?? Self.ms(since: st.start)
             st.firstHeardAt = st.firstHeardAt ?? Date()
             st.charsBefore = st.answerText.isEmpty ? 0 : st.answerText.count + 1
+            st.sentenceAt = st.sonic == nil && withAudio ? voice.scheduledSeconds(stream: st.id) : nil
             st.answerText = st.answerText.isEmpty ? s : st.answerText + " " + s
             let answer = Turn(mine: false, text: st.answerText)
             if let i = st.answerIndex, i < turns.count { turns[i].text = st.answerText } else { turns.append(answer); st.answerIndex = turns.count - 1 }
@@ -437,15 +444,31 @@ final class LeaConversation {
         case .measure(let a, let b):
             st.measured = eyes?.measure(a, b)
         case .stage(let command):
+            // The move starts as the sentence that carries it starts playing: on the audio player's own clock (the
+            // sentence's measured start, or its estimated start from the characters before it); with no audio
+            // (muted, the phone's voice) after 0.4 s at the latest, on the old estimate.
+            let target = st.sentenceAt ?? Double(st.charsBefore) / Self.charsPerSecond
             let wait = StageTiming.delay(firstHeardAt: st.firstHeardAt, charsBefore: st.charsBefore, now: Date())
-            guard wait > 0.05 else { onStage?(command); return }
+            let id = st.id
+            if let played = voice.playedSeconds(stream: id), played + 0.03 >= target { onStage?(command); return }
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(wait))
-                guard let self, self.current === st else { return }   // a newer turn took over: its moves win
+                let asked = Date()
+                while !Task.isCancelled {
+                    guard let self, self.current === st else { return }   // a newer turn took over: its moves win
+                    let elapsed = Date().timeIntervalSince(asked)
+                    if let played = LeaVoice.shared.playedSeconds(stream: id) {
+                        if played + 0.03 >= target || elapsed > 12 { break }
+                    } else if elapsed >= max(wait, 0.4) {
+                        break
+                    }
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                guard let self, self.current === st, !Task.isCancelled else { return }
                 self.onStage?(command)
             }
-        case .photo(_, let crop):
+        case .photo(let id, let crop):
             if let i = st.answerIndex, i < turns.count, !turns[i].photos.contains(crop) { turns[i].photos.append(crop) }
+            if let i = st.answerIndex, i < turns.count { turns[i].photoFor[id] = crop }
         case .done(_, let timings, let heldID):
             if !st.marks.isEmpty { eyes?.marks(st.marks) }
             if let sonic = st.sonic, !st.sonicFailed { sonic.say("", more: false) }
@@ -515,6 +538,9 @@ final class LeaConversation {
             return end > heardSeconds + 0.05
         }
     }
+
+    /// Speech rate for a sentence's estimated start when the audio carries no sentence boundaries (Sonic).
+    static let charsPerSecond: Double = 14
 
     /// Longest a held early answer waits for the person's turn to end before it is dropped.
     static let maxHold: TimeInterval = 6

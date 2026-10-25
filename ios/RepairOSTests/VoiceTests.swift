@@ -112,8 +112,9 @@ struct ReportSpeechTests {
 
     @Test func noProblemsSeenIsNotAllClear() {
         let r = Self.report("no_problems_seen")
+        // Never "it's fine"; the caveat is not said on landing (owner, 2026-10-25: no coverage caveat by default).
         #expect(ReportSpeech.lines(r, caveat: "The inside was not photographed. More.")
-                == "Nothing looked wrong in what I could see clearly. The inside was not photographed.")
+                == "Nothing looked wrong in what I could see clearly.")
     }
 
     @Test func productBriefIsSpokenBriefly() {

@@ -16,6 +16,8 @@ struct ModelPin: Identifiable, Sendable, Equatable {
     var ringRadius: Float? = nil
     /// A finding's problem area on the scan (metres): the recreation circles it. Not a circled target (`ringRadius`).
     var area: Float? = nil
+    /// The part's name while Lea is showing it: drawn as a label on the model, out along the surface normal.
+    var label: String? = nil
 }
 
 /// Points to draw (already capped), metres, the scan's ARKit frame, Y up.
@@ -82,6 +84,7 @@ enum ModelSource: Sendable {
     }
 
     var isNone: Bool { if case .none = self { true } else { false } }
+    var isPhotos: Bool { if case .photos = self { true } else { false } }
 
     /// The scan package's `crop_box` (the locked object) as a box.
     static func cropBox(in scanDir: URL) -> ObjectBox? {
@@ -318,11 +321,11 @@ struct ModelView: View {
                     .modifier(TourCutFade(nearest: frame?.nearest, on: reduceMotion, shown: $cutShown))
                     .transition(.opacity)
             } else if !failed {
-                ProgressView().tint(stage ? .white : nil)
+                ProgressView().tint(stage ? Palette.chalk : nil)
             }
             if failed || (loaded.map { if case .nothing = $0 { true } else { false } } ?? false) && pins.isEmpty {
                 Label("No 3D scan for this report", systemImage: "cube.transparent")
-                    .font(.footnote).foregroundStyle(stage ? AnyShapeStyle(Color.white.opacity(0.6)) : AnyShapeStyle(.secondary))
+                    .font(.footnote).foregroundStyle(stage ? AnyShapeStyle(Palette.chalk.opacity(0.7)) : AnyShapeStyle(Palette.secondary))
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -756,8 +759,8 @@ private struct SceneHost: UIViewRepresentable {
 
         private func place(_ pose: TourPose, animate: Bool) {
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = animate ? 0.7 : 0
-            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
+            SCNTransaction.animationTimingFunction = Motion.Scene.curve
             cameraNode.simdWorldPosition = pose.eye
             cameraNode.simdLook(at: pose.look, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))
             SCNTransaction.commit()
@@ -810,7 +813,7 @@ private struct SceneHost: UIViewRepresentable {
                 return   // the stage turns a point into a marker first; the view flies with .show
             }
             view.isPlaying = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.Scene.fly + 0.1) { [weak self] in
                 guard let self, !self.spinning else { return }
                 self.view?.isPlaying = false
             }
@@ -819,7 +822,7 @@ private struct SceneHost: UIViewRepresentable {
         /// The spin back to rest, with the camera's move.
         private func rest(animate: Bool) {
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = animate ? 0.7 : 0
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
             pivot.simdOrientation = simd_quatf(angle: 0, axis: SIMD3(0, 1, 0))
             SCNTransaction.commit()
         }
@@ -851,8 +854,8 @@ private struct SceneHost: UIViewRepresentable {
                 if simd_length(d) > 1e-4 { dir = simd_normalize(d) }
             }
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = animate ? 0.7 : 0
-            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
+            SCNTransaction.animationTimingFunction = Motion.Scene.curve
             cameraNode.simdWorldPosition = target + dir * distance
             cameraNode.simdLook(at: target, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))
             SCNTransaction.commit()
@@ -927,48 +930,15 @@ private struct SceneHost: UIViewRepresentable {
             return g
         }
 
-        /// A round severity-coloured badge with the number (or a small dot), drawn once per pin.
+        /// The shared `Marker` (or a small outlined dot), drawn once per pin; a ring pin draws the highlight ring.
         private static func badge(_ pin: ModelPin, traits: UITraitCollection) -> UIImage {
-            if pin.ringRadius != nil { return ring(traits: traits) }
-            let side: CGFloat = pin.number == nil ? 48 : 96
-            let colour = UIColor(pin.tone.color).resolvedColor(with: traits)
-            return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
-                let rect = CGRect(x: 0, y: 0, width: side, height: side)
-                UIColor.white.setFill()
-                ctx.cgContext.fillEllipse(in: rect)
-                colour.setFill()
-                ctx.cgContext.fillEllipse(in: rect.insetBy(dx: side * 0.08, dy: side * 0.08))
-                guard let number = pin.number else { return }
-                let text = "\(number)" as NSString
-                let font = UIFont.systemFont(ofSize: side * 0.5, weight: .bold).withRounded
-                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
-                let size = text.size(withAttributes: attrs)
-                text.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
+            let rgb = StageMarkImages.rgb(pin.tone)
+            if pin.ringRadius != nil {
+                return StageMarkImages.ring(rgb: rgb, dashed: pin.id.hasPrefix("target:")).map(UIImage.init(cgImage:)) ?? UIImage()
             }
+            return StageMarkImages.badge(number: pin.number, rgb: rgb, side: pin.number == nil ? 48 : 96)
+                .map(UIImage.init(cgImage:)) ?? UIImage()
         }
-    }
-}
-
-private extension SceneHost.Coordinator {
-    /// A circled target: a dashed accent ring with a faint fill (Report/Stage/InspectTarget).
-    static func ring(traits: UITraitCollection) -> UIImage {
-        let side: CGFloat = 128
-        let colour = UIColor(Palette.cameraAccent).resolvedColor(with: traits)
-        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
-            let rect = CGRect(x: 0, y: 0, width: side, height: side).insetBy(dx: 4, dy: 4)
-            colour.withAlphaComponent(0.14).setFill()
-            ctx.cgContext.fillEllipse(in: rect)
-            colour.setStroke()
-            ctx.cgContext.setLineWidth(5)
-            ctx.cgContext.setLineDash(phase: 0, lengths: [12, 9])
-            ctx.cgContext.strokeEllipse(in: rect)
-        }
-    }
-}
-
-private extension UIFont {
-    var withRounded: UIFont {
-        fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: pointSize) } ?? self
     }
 }
 

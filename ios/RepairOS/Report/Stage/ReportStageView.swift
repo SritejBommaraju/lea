@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// The redesigned report (RedesignFlags.reportStage): the scan full-bleed on the dark stage, with the report sheet
-/// rising over it. Same inputs as `ReportContent`, so swapping it in is a few lines in ReportView.
+/// The report, centred on the 3D scan and Lea (redesign plan §1.1): the scan on the flat stage (about 62% of the
+/// screen) with Lea's caption strip on it, and the report sheet below. When Lea moves the model while she answers
+/// (LeaStage), the sheet scrolls back to the stage if it was mostly off screen, and the strip shows the sentence she
+/// is on, prefixed by the part she is showing.
 ///
 /// The landing moment (`fresh`): the markers pop in 1, 2, 3 (ModelView), the sheet rises and the verdict haptic
 /// fires on the same frame, then the rows fade in. Opening a saved report shows it at once, with no haptic.
@@ -29,6 +31,11 @@ struct ReportStageView: View {
     /// The hero on the stage. `.automatic` follows `model` (3D view or the photo hero); a 3D recreation plugs in
     /// with `.custom` (see `StageHeroContext`) without touching anything else here.
     var hero: StageHero = .automatic
+    /// Lea's conversation for the caption strip (nil when she can't be asked: not paired).
+    var captions: LeaCaptionFeed? = nil
+    /// What the object is ("Category · Brand Model"): the person's correction or the backend's identification. Shown
+    /// on the stage whatever the hero (a photo, a scan, or nothing usable in 3D). nil falls back to the report's own.
+    var identity: String? = nil
 
     @Environment(\.continueScan) private var continueScan
     @Environment(\.cropSource) private var cropSource
@@ -37,8 +44,16 @@ struct ReportStageView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State var focus: String?
     @State private var sheet: ReportModel.Problem?
-    @State private var showOnObject = false
     @State private var showOthers = false
+    @State private var showTranscript = false
+    @State private var handoffZoom: HandoffZoom?
+    /// The part the current sentence is about (from Lea's `show` / `point`), for the strip's prefix.
+    @State private var captionPart: LeaCaptionStrip.Part?
+    /// The strip hides after a quiet spell (the transcript keeps everything).
+    @State private var captionIdle = false
+    /// How far the sheet is scrolled, and the screen height (to know when the stage is mostly off screen).
+    @State private var scrolled: CGFloat = 0
+    @State private var screenHeight: CGFloat = 800
     /// 0 nothing, 1 stage, 2 sheet (verdict), 3 rows.
     @State private var phase = 0
     /// Circle to inspect: drawing mode, the circled spot waiting for a choice, and the session's circled targets.
@@ -52,6 +67,8 @@ struct ReportStageView: View {
     /// Rings Lea put on parts that are not numbered problems (a part with no issue, a spot read from the photos), for
     /// a few seconds; and her camera move for the hero.
     @State private var leaPins: [ModelPin] = []
+    /// The name on the part Lea is showing (a finding's part, or a `point`'s label).
+    @State private var leaLabel: (id: String, text: String)?
     @State private var heroCue: LeaStageCue?
     static let leaRingSeconds: Double = 6
     /// Counts Lea's first sounds seen (from `voiceStarted`), read live by the landing task.
@@ -65,9 +82,16 @@ struct ReportStageView: View {
     // MARK: Derived
 
     private var pins: [ModelPin] {
-        StageMarks.pins(report) + targets.filter { !$0.checked }.compactMap { t in
+        let all = StageMarks.pins(report) + targets.filter { !$0.checked }.compactMap { t in
             t.simd.map { ModelPin(id: "target:" + t.id, number: nil, point: $0, tone: .accent, ringRadius: t.radius) }
         } + leaPins
+        // The part Lea is showing carries its name: the hero draws it as a label out along the surface.
+        guard let leaLabel else { return all }
+        return all.map { p in
+            var p = p
+            if p.id == leaLabel.id { p.label = leaLabel.text }
+            return p
+        }
     }
 
     /// The numbered findings and setup rows only (the circled rings are not problems).
@@ -79,7 +103,6 @@ struct ReportStageView: View {
     private var others: [ReportModel.Problem] { report.otherIssues + report.cosmetic }
     private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
-    private var canShowOnObject: Bool { space != nil && !findingPins.isEmpty }
     private var isCustomHero: Bool { if case .custom = hero { true } else { false } }
     private var canCircle: Bool { (isCustomHero || (!isPhotoHero && !model.isNone)) && sessionDir != nil }
     private var landingKey: String { "\(report.verdict)|\(report.mostLikely.map(\.id))" }
@@ -93,11 +116,19 @@ struct ReportStageView: View {
                     stage.id("stage")
                     sheetBody(proxy)
                         .padding(.top, -Self.overlap)
-                        .opacity(phase >= 2 && !tour.active ? 1 : 0)
-                        .offset(y: phase >= 2 || reduceMotion ? 0 : 24)
+                        .opacity(tour.active ? 0 : 1)
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
+            .onScrollGeometryChange(for: CGSize.self) { CGSize(width: $0.contentOffset.y + $0.contentInsets.top, height: $0.containerSize.height) } action: { _, g in
+                scrolled = g.width
+                screenHeight = g.height
+            }
+            // Lea moved the model while the stage was mostly scrolled away: back to the stage first (L9).
+            .onChange(of: leaCue) { _, cue in
+                guard cue != nil, scrolled > stageHeight * 0.4 else { return }
+                withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) }
+            }
             // The tour has the whole screen: the stage fills it and the sheet waits below.
             .scrollDisabled(tour.active)
             .onChange(of: tour.active) { _, on in
@@ -105,10 +136,12 @@ struct ReportStageView: View {
             }
             // Pulling down past the top shows more stage, never a strip of canvas.
             .background(alignment: .top) { StageBackground().frame(height: 700) }
-            .background(tour.active ? Palette.stageEdge : Palette.canvas)
+            .background(tour.active ? Palette.stage : Palette.canvas)
             .ignoresSafeArea(edges: .top)
             .navigationDestination(for: String.self) { id in
-                if let p = all.first(where: { $0.id == id }) { ProblemDetailView(problem: p) }
+                if let p = all.first(where: { $0.id == id }) {
+                    ProblemDetailView(problems: [p], stillsDir: sessionDir?.appending(path: "stills"), numbers: markerNumbers)
+                }
             }
         }
         .toolbarBackground(.hidden, for: .navigationBar)
@@ -122,14 +155,17 @@ struct ReportStageView: View {
         .onChange(of: voiceStarted) { heard += 1 }
         .onChange(of: walkthrough) { startTour(afterLea: true) }
         .onChange(of: leaCue) { _, cue in applyLea(cue) }
-        .onDisappear { tour.stop() }
-        .fullScreenCover(isPresented: $showOnObject) {
-            if let space {
-                ObjectMarkersView(space: space, markers: findingPins.map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },
-                                  problems: all, others: others, show3D: { showOnObject = false }, close: { showOnObject = false })
-                    .environment(\.cropSource, cropSource)
-            }
+        .sensoryFeedback(Haptic.leaShow, trigger: heroCue) { _, new in new != nil }
+        .onChange(of: captions?.question) { captionPart = nil }
+        .task(id: captions?.revision) {
+            // Hidden after 8 s of quiet once Lea has finished (the transcript keeps everything).
+            captionIdle = false
+            guard let c = captions, !c.thinking, !c.speaking else { return }
+            try? await Task.sleep(for: .seconds(8))
+            if !Task.isCancelled { withAnimation(Motion.fade) { captionIdle = true } }
         }
+        .sheet(isPresented: $showTranscript) { if let captions { LeaTranscriptSheet(feed: captions) } }
+        .onDisappear { tour.stop() }
         .sheet(isPresented: $showOthers) {
             OtherFindingsSheet(problems: others) { p in
                 showOthers = false
@@ -138,9 +174,12 @@ struct ReportStageView: View {
             .environment(\.cropSource, cropSource)
         }
         .sheet(item: $sheet) { p in
+            // Previous and next step through the numbered problems in marker order, in place.
+            let list = detailList.contains { $0.id == p.id } ? detailList : [p]
             NavigationStack {
-                ProblemDetailView(problem: p)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil }.fontWeight(.semibold) } }
+                ProblemDetailView(problems: list, index: list.firstIndex { $0.id == p.id } ?? 0,
+                                  stillsDir: sessionDir?.appending(path: "stills"), numbers: markerNumbers,
+                                  onDone: { sheet = nil })
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -167,8 +206,32 @@ struct ReportStageView: View {
         withAnimation(Motion.pop) { targets = InspectTargets.load(sessionDir) }
     }
 
-    /// How far the sheet rides up over the stage.
-    static let overlap: CGFloat = 28
+    /// The numbered problems and setup rows, in marker order (the detail's previous / next).
+    private var detailList: [ReportModel.Problem] { report.mostLikely + report.setup }
+    private var markerNumbers: [String: Int] {
+        Dictionary(detailList.enumerated().map { ($0.element.id, $0.offset + 1) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    private var objectName: String? { identity?.trimmedOrNil ?? report.objectWords }
+
+    /// The photo for the part the camera has landed on: the one Lea's answer sent for it, else the finding's own crop.
+    private var handoffPhoto: String? {
+        guard let id = probe.landed else { return nil }
+        let raw = id.hasPrefix("lea:") ? String(id.dropFirst(4)) : id
+        if let turn = captions?.turns.last(where: { !$0.mine }), let sha = turn.photoFor[raw] ?? turn.photoFor[id] { return sha }
+        return all.first { $0.id == raw }?.crops.first
+    }
+
+    /// The stage's share of the screen (the report centres on the model and Lea).
+    private var stageHeight: CGFloat { max(380, screenHeight * 0.62) }
+
+    /// The caption strip is on the stage: after the first turn, until a quiet spell, never during the walkthrough.
+    private var showsCaptions: Bool { (captions?.started ?? false) && !captionIdle && !tour.active }
+    /// Room the strip takes at the bottom of the stage.
+    static let captionBand: CGFloat = 96
+
+    /// How far the sheet rides up over the stage (its top corners are `Radius.sheet`).
+    static let overlap: CGFloat = Radius.sheet
     /// Status bar + navigation bar over the stage: the 3D view starts below them so the object is never under them.
     static let topClear: CGFloat = 96
 
@@ -182,25 +245,13 @@ struct ReportStageView: View {
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: Spacing.s) {
                     if hasTourContent {
-                        Button { startTour() } label: { Label("Walk me through it", systemImage: "play.fill") }
+                        Button { startTour() } label: { Label("Walk me through it", systemImage: "play") }
                             .buttonStyle(StageCapsuleButtonStyle())
                             .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
                     }
-                    if canShowOnObject {
-                        Button { showOnObject = true } label: { Label("Show on object", systemImage: "arkit") }
-                            .buttonStyle(StageCapsuleButtonStyle())
-                            .accessibilityHint("Places the numbered markers on the real object with the camera")
-                    }
-                    if !others.isEmpty {
-                        Button { showOthers = true } label: {
-                            Text("+\(others.count)").font(.system(.subheadline, design: .rounded, weight: .bold)).monospacedDigit()
-                        }
-                        .buttonStyle(StageCapsuleButtonStyle())
-                        .accessibilityLabel("\(others.count) more findings")
-                    }
                 }
                 .padding(.leading, Spacing.l)
-                .padding(.bottom, Self.overlap + Spacing.m)
+                .padding(.bottom, Self.overlap + Spacing.m + band)
                 .opacity(tour.active ? 0 : 1)
                 .allowsHitTesting(!tour.active)
             }
@@ -230,10 +281,8 @@ struct ReportStageView: View {
             .overlay(alignment: .top) {
                 if circling || circleMiss {
                     Text(circleMiss ? "No part of the scan there. Try again." : "Circle the spot to look closer at")
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold)).foregroundStyle(.white)
-                        .padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(Color.black.opacity(0.55), in: Capsule())
-                        .padding(.top, Self.topClear + Spacing.s)
+                        .cameraChip()
+                        .padding(.top, Self.topClear + Spacing.l)
                         .transition(.opacity)
                         .allowsHitTesting(false)
                 }
@@ -246,12 +295,61 @@ struct ReportStageView: View {
                     }
                     .buttonStyle(StageIconButtonStyle())
                     .padding(.trailing, Spacing.m + 44 + Spacing.s)
-                    .padding(.bottom, Self.overlap + Spacing.m)
+                    .padding(.bottom, Self.overlap + Spacing.m + band)
                     .accessibilityLabel(circling ? "Stop circling" : "Circle a spot to look closer at")
                 }
             }
         }
-        .containerRelativeFrame(.vertical) { [touring = tour.active] height, _ in touring ? height : max(380, height * 0.54) }
+        .overlay(alignment: .bottom) {
+            if showsCaptions, let c = captions {
+                LeaCaptionStrip(question: c.question, sentence: c.sentence, part: captionPart, thinking: c.thinking,
+                                failure: c.failure, tap: { showTranscript = true })
+                    .padding(.horizontal, Spacing.l)
+                    .padding(.bottom, Self.overlap + Spacing.s)
+                    .frame(height: Self.captionBand + Self.overlap, alignment: .bottom)
+                    .transition(.opacity)
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            // The proof hand-off: when the camera lands on the part, its real photo (ringed by the gateway, or the
+            // finding's own crop) rises in near it; it recedes when the camera moves on.
+            if let sha = handoffPhoto, !tour.active {
+                Button { handoffZoom = HandoffZoom(sha: sha) } label: {
+                    CropThumb(sha: sha, cornerRadius: Radius.card)
+                        .frame(width: 120, height: 120)
+                        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
+                            .strokeBorder(Palette.chalk.opacity(0.7), lineWidth: 1))
+                        .overlay(alignment: .bottomLeading) {
+                            if let name = leaLabel?.text { Text(name).cameraChip().padding(6) }
+                        }
+                }
+                .buttonStyle(PressableCardStyle())
+                .accessibilityLabel("Photo of \(leaLabel?.text ?? "the part")")
+                .accessibilityHint("Opens it full screen")
+                .padding(.trailing, Spacing.l)
+                .padding(.bottom, Self.overlap + Spacing.m + band + 52)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 16)).combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+                .id(sha)
+            }
+        }
+        .motion(Motion.standard, value: handoffPhoto)
+        .fullScreenCover(item: $handoffZoom) { z in CropZoomView(shas: [z.sha], index: 0).environment(\.cropSource, cropSource) }
+        .overlay(alignment: .topLeading) {
+            if let objectName, !tour.active {
+                // What it is, prominent on the stage even when there is no usable 3D (a small object shows photos).
+                Text(objectName).display(.card).foregroundStyle(Palette.chalk)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+                    .padding(.horizontal, Spacing.m).padding(.vertical, Spacing.s)
+                    .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.medium, style: .continuous)) }
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                    .padding(.leading, Spacing.l).padding(.trailing, 72)
+                    .padding(.top, Self.topClear + Spacing.s)
+                    .accessibilityLabel("This is \(objectName)")
+                    .transition(.opacity)
+            }
+        }
+        .motion(Motion.standard, value: showsCaptions)
+        .containerRelativeFrame(.vertical) { [touring = tour.active] height, _ in touring ? height : max(380, height * 0.62) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(stageLabel)
     }
@@ -283,8 +381,11 @@ struct ReportStageView: View {
                 }
             }
         }
-        .padding(.bottom, Self.overlap + (touring ? Self.deckHeight : 0))
+        .padding(.bottom, Self.overlap + (touring ? Self.deckHeight : band))
     }
+
+    /// The bottom of the stage the caption strip takes while it shows.
+    private var band: CGFloat { showsCaptions ? Self.captionBand : 0 }
 
     /// The walkthrough's cards, header and controls (WalkthroughDeck), and the room the hero leaves for them.
     static let deckHeight: CGFloat = 44 + WalkthroughCard.height + 3 + 44 + 3 * Spacing.m + Spacing.m
@@ -318,15 +419,36 @@ struct ReportStageView: View {
         if tour.active { tour.stop() }
         circling = false
         if let pin = plan.pin {
-            leaPins.removeAll { $0.id == pin.id }
-            leaPins.append(pin)
+            // One of Lea's rings at a time: the previous one fades as this move starts (the hero fades leaving rings).
+            leaPins = [pin]
             let id = pin.id
             Task {
                 try? await Task.sleep(for: .seconds(Self.leaRingSeconds))
                 leaPins.removeAll { $0.id == id }   // the camera stays where she put it
+                if leaLabel?.id == id { leaLabel = nil }
             }
         }
         if let f = plan.focus { focus = f }
+        switch cue.command {
+        case .show(let id):
+            let target = plan.pin?.id ?? id
+            if let name = all.first(where: { $0.id == id })?.part { leaLabel = (target, name) } else { leaLabel = nil }
+        case .point(let id, _, let label, _):
+            leaLabel = label.trimmedOrNil.map { (LeaStagePlan.pinID(id), $0) }
+        case .view(let side):
+            if side == .reset { leaLabel = nil }
+        case .zoom: break
+        }
+        switch cue.command {
+        case .show(let id):
+            if let p = all.first(where: { $0.id == id }) {
+                let n = markerNumbers[id]
+                captionPart = LeaCaptionStrip.Part(name: p.part, number: n, tone: n == nil ? nil : p.tone)
+            }
+        case .point(_, _, let label, _):
+            captionPart = label.trimmedOrNil.map { LeaCaptionStrip.Part(name: $0) }
+        case .view, .zoom: break
+        }
         if let camera = plan.camera { heroCue = LeaStageCue(n: cue.n, command: camera) }
     }
 
@@ -351,61 +473,63 @@ struct ReportStageView: View {
 
     // MARK: Sheet
 
+    /// The sheet, in the order of DESIGN §7.5 (owner priority first): the verdict; safety (immediate: never waits for
+    /// the landing); most likely problems; setup to check; the next step; what you suspected; in plain words; fix it;
+    /// also worth a look; underneath; the full report. What wasn't checked is in the ⋯ menu, not here.
     private func sheetBody(_ proxy: ScrollViewProxy) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xl) {
-            Capsule().fill(.tertiary).frame(width: 36, height: 5).frame(maxWidth: .infinity)
+            Capsule().fill(Palette.secondary.opacity(0.35)).frame(width: 36, height: 5).frame(maxWidth: .infinity)
                 .padding(.top, Spacing.s).padding(.bottom, -Spacing.m)
                 .accessibilityHidden(true)
             StageVerdictHeader(report: report, symptom: symptom)
-            if report.verdict == .noProblemsSeen, continueScan != nil || canCircle {
-                // Good news with a caveat: offer the two ways to check what could not be seen.
-                HStack(spacing: Spacing.s) {
-                    if let continueScan {
-                        Button { continueScan() } label: { Label("Continue scanning", systemImage: Symbol.scan) }
-                            .buttonStyle(.primary(.quiet))
-                    }
-                    if canCircle {
-                        Button {
-                            withAnimation(Motion.standard) { proxy.scrollTo("stage", anchor: .top) }
-                            withAnimation(Motion.fade) { circling = true }
-                        } label: { Label("Look closer", systemImage: "lasso") }
-                            .buttonStyle(.primary(.quiet))
-                    }
-                }
-            }
-            if !report.safety.isEmpty { StageSafetyLine(notes: report.safety) }
-            if let lead = report.userLead { UserLeadCard(lead: lead) }
-            if !report.mostLikely.isEmpty {
-                VStack(alignment: .leading, spacing: Spacing.m) {
-                    ForEach(Array(report.mostLikely.enumerated()), id: \.element.id) { i, p in
-                        problemRow(p, number: i + 1, proxy: proxy)
-                            .opacity(phase >= 3 ? 1 : 0)
-                            .animation(reduceMotion ? Motion.fade : Motion.standard.delay(Double(min(i, 2)) * 0.04), value: phase)
+                .opacity(phase >= 2 ? 1 : 0)
+                .offset(y: phase >= 2 || reduceMotion ? 0 : 24)
+            // Safety is never delayed, faded or moved (M13).
+            if !report.safety.isEmpty { StageSafetyCard(notes: report.safety) }
+            VStack(alignment: .leading, spacing: Spacing.xl) {
+                if !report.mostLikely.isEmpty {
+                    VStack(alignment: .leading, spacing: Spacing.m) {
+                        SectionHeader("Most likely problems", count: report.mostLikely.count)
+                        ForEach(Array(report.mostLikely.enumerated()), id: \.element.id) { i, p in
+                            problemRow(p, number: i + 1, proxy: proxy)
+                                .opacity(phase >= 3 ? 1 : 0)
+                                .animation(reduceMotion ? Motion.fade : Motion.standard.delay(Double(min(i, 2)) * 0.04), value: phase)
+                        }
                     }
                 }
-            }
-            if !report.setup.isEmpty {
-                setupToCheck(proxy).opacity(phase >= 3 ? 1 : 0)
-            }
-            Group {
-                if fix != nil || fixSearching || fixUnavailable {
-                    FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable).id("fix")
-                }
-                // Not enough to call it: the next step is already the headline, so no card repeats it.
-                if let next = report.nextStep, report.verdict != .insufficientEvidence { StageNextStep(step: next) }
-                if let summary = report.summary?.trimmedOrNil { StagePlainWords(text: ReportWords.sanitize(summary)) }
-                if !others.isEmpty { alsoWorthALook }
-                if !report.bottomPhotos.isEmpty { bottomPhotosSection }
-                CouldNotCheckCard(notInspected: report.notInspected, unclear: report.insufficient,
-                                  continueScan: continueScan.map { action -> () -> Void in { action() } })
-                    .id("gaps")
-                if !report.limits.isEmpty {
-                    Label { Text(report.limits.map(ReportWords.sanitize).joined(separator: " ")) } icon: { Image(systemName: "info.circle") }
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                if let openFull {
-                    Button(action: openFull) { Label("Full report with photos", systemImage: "doc.richtext") }
-                        .buttonStyle(.primary(.quiet))
+                if !report.setup.isEmpty { setupToCheck(proxy) }
+                Group {
+                    // Not enough to call it: the next step is already the headline, so it isn't repeated. A request for
+                    // more photos never leads: it is one short line at the end.
+                    if let next = report.nextStep, report.verdict != .insufficientEvidence, !ReportWords.isCaptureRequest(next) {
+                        StageNextStep(step: next)
+                    }
+                    if let lead = report.userLead { UserLeadCard(lead: lead) }
+                    if let summary = report.summary.map({ ReportWords.withoutCaveats(ReportWords.display($0)) })?.trimmedOrNil {
+                        StagePlainWords(text: summary)
+                    }
+                    if fix != nil || fixSearching || fixUnavailable {
+                        FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable).id("fix")
+                    }
+                    if !others.isEmpty { alsoWorthALook }
+                    if !report.bottomPhotos.isEmpty { bottomPhotosSection }
+                    if let next = report.nextStep, report.verdict != .insufficientEvidence, ReportWords.isCaptureRequest(next) {
+                        StageCaptureLine(step: next)
+                    }
+                    if let openFull {
+                        GroupedList {
+                            Button(action: openFull) {
+                                HStack {
+                                    Label("Full report with photos", systemImage: "doc.richtext").foregroundStyle(Palette.accent)
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PressableCardStyle())
+                        }
+                    }
                 }
             }
             .opacity(phase >= 3 ? 1 : 0)
@@ -413,7 +537,7 @@ struct ReportStageView: View {
         .padding(.horizontal, Spacing.gutter)
         .padding(.bottom, Spacing.xxl)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.canvas, in: UnevenRoundedRectangle(topLeadingRadius: Self.overlap, topTrailingRadius: Self.overlap,
+        .background(Palette.canvas, in: UnevenRoundedRectangle(topLeadingRadius: Radius.sheet, topTrailingRadius: Radius.sheet,
                                                                style: .continuous))
     }
 
@@ -438,7 +562,7 @@ struct ReportStageView: View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 SectionHeader("Setup to check", count: report.setup.count)
-                Text(ReportWords.setupNote).font(.footnote).foregroundStyle(.secondary)
+                Text(ReportWords.setupNote).font(.footnote).foregroundStyle(Palette.secondary)
             }
             ForEach(Array(report.setup.enumerated()), id: \.element.id) { i, p in
                 let number = StageMarks.setupNumber(report, i)
@@ -460,24 +584,22 @@ struct ReportStageView: View {
         .id("setup")
     }
 
-    /// The bottom scan's photos when it could not be lined up with the model: checked like the rest, just not placed
-    /// on the 3D view. A tap opens the photo full screen.
+    /// "Underneath": the bottom scan's photos that could not be placed on the model, checked like the rest. A tap opens
+    /// the photo full screen.
     private var bottomPhotosSection: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
-            SectionHeader("Bottom photos", count: report.bottomPhotos.count)
-            Text("The bottom scan didn't line up with the 3D model, so its photos are here instead. They were checked like the rest.")
-                .font(.footnote).foregroundStyle(.secondary)
+            SectionHeader("Underneath", count: report.bottomPhotos.count)
             ScrollView(.horizontal) {
                 HStack(spacing: Spacing.s) {
                     ForEach(Array(report.bottomPhotos.enumerated()), id: \.element.id) { i, b in
                         Button { bottomZoom = BottomZoom(index: i) } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 CropThumb(sha: b.crop, cornerRadius: Radius.small).frame(width: 96, height: 96)
-                                Text(b.part).font(.caption).foregroundStyle(.secondary).lineLimit(1).frame(width: 96, alignment: .leading)
+                                Text(b.part).font(.caption).foregroundStyle(Palette.secondary).lineLimit(1).frame(width: 96, alignment: .leading)
                             }
                         }
                         .buttonStyle(PressableCardStyle())
-                        .accessibilityLabel("Bottom photo: \(b.part)")
+                        .accessibilityLabel("Photo of the underside: \(b.part)")
                         .accessibilityHint("Opens the photo full screen")
                     }
                 }
@@ -489,37 +611,34 @@ struct ReportStageView: View {
         }
     }
 
+    /// The other issues and cosmetic findings: one grouped row each (crop, part, issue in its tone), the first three,
+    /// then "Show all".
     private var alsoWorthALook: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             SectionHeader("Also worth a look", count: others.count)
-            VStack(spacing: 0) {
-                ForEach(Array(others.prefix(3).enumerated()), id: \.element.id) { i, p in
-                    if i > 0 { Divider().padding(.leading, Spacing.l) }
+            GroupedList {
+                ForEach(others.prefix(3)) { p in
                     NavigationLink(value: p.id) {
                         HStack(spacing: Spacing.m) {
                             CropThumb(sha: p.crops.first, cornerRadius: Radius.small).frame(width: 48, height: 48)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                                Text(p.issue).font(.footnote).foregroundStyle(.secondary)
+                                Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+                                Text(p.issue).font(.footnote.weight(.semibold)).foregroundStyle(p.tone.text)
                             }
                             Spacer(minLength: 0)
-                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
                         }
-                        .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
+                        .padding(.vertical, Spacing.m)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(PressableCardStyle())
                 }
                 if others.count > 3 {
-                    Divider()
                     Button("Show all \(others.count)") { showOthers = true }
                         .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.accent)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(Spacing.l)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 }
             }
-            .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
         }
     }
 
@@ -586,37 +705,56 @@ enum StageMarks {
 
 // MARK: - Smaller sheet pieces
 
-/// The next step, compact: icon, title, instruction.
+/// The next step: the step itself is the section title ("Take a closer photo"), then the instruction and the reason.
+/// No "Next step" above it (an eyebrow) and no button: its action is in the pinned bar.
 struct StageNextStep: View {
     let step: ReportModel.NextStep
     var body: some View {
-        HStack(alignment: .top, spacing: Spacing.m) {
-            IconBadge(symbol: step.symbol, tone: .accent)
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text("Next step").font(.pillLabel).foregroundStyle(Palette.accent)
-                Text(step.title).font(.headline)
-                Text(ReportWords.sanitize(step.instruction)).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: Spacing.s) {
+            SectionHeader(Walkthrough.specificTitle(step) ?? step.title)
+            Text(ReportWords.display(step.instruction)).font(.body).foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if let reason = step.reason?.trimmedOrNil {
+                Text(ReportWords.display(reason)).font(.subheadline).foregroundStyle(Palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .card(tone: .accent)
         .accessibilityElement(children: .combine)
     }
 }
 
-/// The plain-words summary, cut to five lines with "Read more".
+/// A request for more capture, as one short line at the end of the report: its title and the instruction's first
+/// sentence, no reason (Continue scanning is in the pinned bar).
+struct StageCaptureLine: View {
+    let step: ReportModel.NextStep
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+                Text(ReportWords.firstSentence(ReportWords.display(step.instruction))).font(.footnote)
+                    .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: step.symbol.replacingOccurrences(of: ".fill", with: "")).foregroundStyle(Palette.secondary)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// The plain-words summary, unboxed, cut to five lines with "Read more".
 struct StagePlainWords: View {
     let text: String
     @State private var open = false
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
-            Text("In plain words").font(.headline)
-            Text(text).font(.body).lineSpacing(3).lineLimit(open ? nil : 5).textSelection(.enabled)
+            SectionHeader("In plain words")
+            Text(text).font(.body).foregroundStyle(Palette.ink).lineSpacing(3).lineLimit(open ? nil : 5).textSelection(.enabled)
             if text.count > 240 {
                 Button(open ? "Show less" : "Read more") { withAnimation(Motion.standard) { open.toggle() } }
                     .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.accent)
+                    .frame(minHeight: 44)
             }
         }
-        .card()
     }
 }
 
@@ -648,7 +786,7 @@ struct ReportStageWaiting: View {
                 StageStatus(text: line)
                 if let found, found > 0 {
                     Text(found == 1 ? "1 thing to look at so far" : "\(found) things to look at so far")
-                        .font(.subheadline).foregroundStyle(.white.opacity(0.65))
+                        .font(.subheadline).foregroundStyle(Palette.chalk.opacity(0.75))
                         .contentTransition(.numericText())
                 }
                 if let fraction { StageProgressLine(fraction: fraction).padding(.top, Spacing.xs) }
@@ -679,6 +817,11 @@ struct ReportStageWaiting: View {
         default: nil
         }
     }
+}
+
+private struct HandoffZoom: Identifiable {
+    let sha: String
+    var id: String { sha }
 }
 
 /// Which bottom photo is open full screen.

@@ -391,23 +391,25 @@ struct ObjectCaptureFlowView: View {
             }
             VStack(spacing: 12) {
                 HStack {
-                    Button(action: { flow.cancel(); close() }) {
-                        Image(systemName: "xmark").font(.headline).padding(10).background(.ultraThinMaterial, in: Circle())
-                    }
+                    Button(action: { flow.cancel(); close() }) { Image(systemName: Symbol.close) }
+                        .buttonStyle(RoundIconButtonStyle(onCamera: true))
+                        .accessibilityLabel("Close")
                     Spacer()
                     if flow.step == .capturing || flow.step == .closeups {
                         Text(flow.step == .capturing ? "\(flow.shots)/\(ObjectCaptureFlow.quickImages)" : "\(flow.shots)")
-                            .font(.headline.monospacedDigit())
-                            .padding(10).background(.ultraThinMaterial, in: Capsule())
+                            .monospacedDigit()
+                            .cameraChip()
                     }
                 }
                 Spacer()
                 if let words {
                     Text(words)
-                        .font(.largeTitle.bold()).foregroundStyle(.white).multilineTextAlignment(.center)
-                        .padding(.horizontal, 20).padding(.vertical, 12)
-                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 18))
-                        .animation(.easeInOut(duration: 0.15), value: words)
+                        .font(.cue).foregroundStyle(Palette.chalk).multilineTextAlignment(.center)
+                        .padding(.horizontal, 18).padding(.vertical, 10)
+                        .background { SmokeFill(shape: Capsule()) }
+                        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                        .contentTransition(.opacity)
+                        .motion(Motion.caption, value: words)
                 }
                 buttons
             }
@@ -434,14 +436,14 @@ struct ObjectCaptureFlowView: View {
 
     private var lightBlock: some View {
         VStack(spacing: 16) {
-            Text("More light needed").font(.largeTitle.bold())
+            Text("More light needed").display(.screen)
             Text("Turn on a light or move to a brighter spot. Dim light makes the scan slow.")
                 .multilineTextAlignment(.center)
-            Button("Continue anyway") { flow.continueInLowLight() }.buttonStyle(.borderedProminent)
+            Button("Continue anyway") { flow.continueInLowLight() }.buttonStyle(.primary(.light))
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(Palette.chalk)
         .padding(28)
-        .background(.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 24))
+        .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.card, style: .continuous)) }
         .padding()
     }
 
@@ -449,23 +451,23 @@ struct ObjectCaptureFlowView: View {
         switch flow.step {
         case .closeups:
             HStack(spacing: 20) {
-                Button(action: flow.shutter) {
-                    Circle().strokeBorder(.white, lineWidth: 4).frame(width: 72, height: 72)
-                        .overlay(Circle().fill(.white.opacity(flow.canShoot ? 0.9 : 0.3)).padding(8))
-                }
-                .disabled(!flow.canShoot)
-                Button("Finish") { flow.primary() }.buttonStyle(.borderedProminent)
+                Button(action: flow.shutter) { Shutter(enabled: flow.canShoot) }
+                    .disabled(!flow.canShoot)
+                    .accessibilityLabel("Take a close-up")
+                Button("Finish") { flow.primary() }.buttonStyle(.primary(.light))
             }
         case .detecting where flow.offerPhotosOnly:
             VStack(spacing: 10) {
                 primaryButton
                 Button("Skip 3D, just take photos") { flow.skipToPhotos() }
-                    .font(.title3.bold()).buttonStyle(.bordered).tint(.white)
+                    .font(.buttonLabel).foregroundStyle(Palette.chalk)
+                    .padding(.horizontal, Spacing.l).frame(minHeight: 44)
+                    .background { SmokeFill(shape: Capsule()) }
             }
         case .failed:
-            Button("Close", action: close).buttonStyle(.borderedProminent)
+            Button("Close", action: close).buttonStyle(.primary(.light))
         case .reconstructing:
-            ProgressView(value: flow.progress).tint(.white)
+            ProgressView(value: flow.progress).tint(Palette.next)
         default:
             primaryButton
         }
@@ -473,10 +475,18 @@ struct ObjectCaptureFlowView: View {
 
     @ViewBuilder private var primaryButton: some View {
         if let title = flow.primaryTitle {
-            Button(action: flow.primary) {
-                Text(title).font(.title3.bold()).frame(maxWidth: .infinity, minHeight: 52)
-            }
-            .buttonStyle(.borderedProminent)
+            Button(action: flow.primary) { Text(title) }
+                .buttonStyle(.primary(.light))
         }
+    }
+}
+
+/// The close-up shutter over the camera: a chalk ring over a keyline, filled chalk when it can shoot.
+struct Shutter: View {
+    var enabled = true
+    var body: some View {
+        Circle().strokeBorder(Palette.chalk, lineWidth: 4).frame(width: 72, height: 72)
+            .overlay(Circle().strokeBorder(Palette.keyline, lineWidth: 1))
+            .overlay(Circle().fill(Palette.chalk.opacity(enabled ? 0.9 : 0.3)).padding(8))
     }
 }

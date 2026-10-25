@@ -386,7 +386,8 @@ struct LeaSightOverlay: View {
     let scan: ScanSession
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30)) { context in
+        // Follows the AR camera while there is something to draw; paused (no redraws over the camera) when there isn't.
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: scan.sight.pins.isEmpty)) { context in
             Canvas { ctx, size in
                 guard let frame = scan.session.currentFrame else { return }
                 let showFindings = scan.aligned && !scan.relocalizing
@@ -400,7 +401,8 @@ struct LeaSightOverlay: View {
                         let t = min(1, context.date.timeIntervalSince(pin.born) / 0.6)
                         var arc = Path()
                         arc.addArc(center: p, radius: 26, startAngle: .degrees(-90), endAngle: .degrees(-90 + 360 * t), clockwise: false)
-                        ctx.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+                        ctx.stroke(arc, with: .color(Palette.keyline), style: StrokeStyle(lineWidth: Line.locked + 2, lineCap: .butt))
+                        ctx.stroke(arc, with: .color(tint), style: StrokeStyle(lineWidth: Line.locked, lineCap: .butt))
                         label(pin.label, at: CGPoint(x: p.x, y: p.y + 44), tint: tint, in: &ctx)
                     } else {
                         edgeArrow(toward: p, behind: cam.z >= 0, size: size, label: pin.label, tint: tint, in: &ctx)
@@ -413,10 +415,7 @@ struct LeaSightOverlay: View {
             // Privacy: photos go to Lea only inside a conversation window, and it shows.
             if scan.sight.looking {
                 Label("Lea is looking", systemImage: "eye")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(.black.opacity(0.55), in: Capsule())
+                    .cameraChip()
                     .padding(.top, 72).padding(.trailing, 12)
                     .transition(.opacity)
                     .accessibilityLabel("Lea is looking through the camera")
@@ -428,18 +427,18 @@ struct LeaSightOverlay: View {
 
     private static func tint(_ kind: LeaSight.Kind) -> Color {
         switch kind {
-        case .lea: Palette.cameraAccent
-        case .person: Color(red: 1, green: 0, blue: 1)
-        case .finding: Palette.caution
+        case .lea: Palette.next
+        case .person: Palette.chalk
+        case .finding: Palette.cameraCaution
         }
     }
 
     private func label(_ text: String, at p: CGPoint, tint: Color, in ctx: inout GraphicsContext) {
         guard !text.isEmpty else { return }
-        let t = ctx.resolve(Text(text).font(.caption.weight(.semibold)).foregroundColor(.white))
+        let t = ctx.resolve(Text(text).font(.caption.weight(.semibold)).foregroundColor(Palette.chalk))
         let s = t.measure(in: CGSize(width: 220, height: 40))
         let box = CGRect(x: p.x - s.width / 2 - 8, y: p.y - s.height / 2 - 4, width: s.width + 16, height: s.height + 8)
-        ctx.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(.black.opacity(0.6)))
+        ctx.fill(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(Palette.smoke))
         ctx.stroke(Path(roundedRect: box, cornerRadius: box.height / 2), with: .color(tint), lineWidth: 1)
         ctx.draw(t, at: p)
     }
@@ -462,6 +461,7 @@ struct LeaSightOverlay: View {
         arrow.addLine(to: CGPoint(x: back.x + side.x, y: back.y + side.y))
         arrow.addLine(to: CGPoint(x: back.x - side.x, y: back.y - side.y))
         arrow.closeSubpath()
+        ctx.stroke(arrow, with: .color(Palette.keyline), lineWidth: 2)
         ctx.fill(arrow, with: .color(tint))
         label(text, at: CGPoint(x: back.x - dx * 34, y: back.y - dy * 34), tint: tint, in: &ctx)
     }

@@ -157,11 +157,11 @@ struct ObjectMarkersView: View {
                             .rotationEffect(.degrees(90))
                             .frame(width: 90, height: 120)
                             .clipShape(RoundedRectangle(cornerRadius: Radius.medium, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: Radius.medium, style: .continuous).strokeBorder(.white.opacity(0.5), lineWidth: 1))
-                        Text("The scan started here").font(.caption.weight(.semibold)).foregroundStyle(.white)
+                            .overlay(RoundedRectangle(cornerRadius: Radius.medium, style: .continuous).strokeBorder(Palette.chalk.opacity(0.5), lineWidth: 1))
+                        Text("The scan started here").font(.label).foregroundStyle(Palette.chalk)
                     }
                     .padding(8)
-                    .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                    .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.card, style: .continuous)) }
                     .transition(.opacity)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("A photo of where the scan started")
@@ -228,7 +228,7 @@ struct ObjectMarkersView: View {
     private var timedOutCard: some View {
         VStack(alignment: .leading, spacing: Spacing.m) {
             Text("The phone hasn't recognised the scene from the scan. Stand where you scanned and point at the object, or look at it in 3D instead.")
-                .font(.subheadline).foregroundStyle(.white).fixedSize(horizontal: false, vertical: true)
+                .font(.subheadline).foregroundStyle(Palette.chalk).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: Spacing.s) {
                 Button { model.retry() } label: { Label("Keep trying", systemImage: "arrow.clockwise") }
                     .buttonStyle(.primary(.light))
@@ -237,7 +237,7 @@ struct ObjectMarkersView: View {
             }
         }
         .padding(Spacing.l)
-        .background(Color.black.opacity(0.62), in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+        .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.card, style: .continuous)) }
     }
 
     /// The numbered problems, tap for the card; plus the ones with no position.
@@ -248,19 +248,16 @@ struct ObjectMarkersView: View {
                     if let p = problems.first(where: { $0.id == m.id }) {
                         Button { card = p } label: {
                             HStack(spacing: 8) {
-                                Text("\(m.number ?? 0)")
-                                    .font(.system(.footnote, design: .rounded, weight: .bold)).monospacedDigit()
-                                    .foregroundStyle(.white)
-                                    .frame(width: 24, height: 24)
-                                    .background(m.tone.color, in: Circle())
+                                Marker(number: m.number ?? 0, tone: m.tone, size: 24, onStage: true)
                                 VStack(alignment: .leading, spacing: 0) {
                                     Text(p.part).font(.footnote.weight(.semibold)).lineLimit(1)
                                     Text(p.issue).font(.caption).opacity(0.75).lineLimit(1)
                                 }
-                                .foregroundStyle(.white)
+                                .foregroundStyle(Palette.chalk)
                             }
                             .padding(.leading, 6).padding(.trailing, 14).padding(.vertical, 6)
-                            .background(Color.black.opacity(0.58), in: Capsule())
+                            .background { SmokeFill(shape: Capsule()) }
+                            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                         }
                         .buttonStyle(PressableCardStyle())
                     }
@@ -743,17 +740,19 @@ final class MarkerScene: NSObject, ARSessionDelegate {
     private static func badgeMaterial(_ m: ObjectMarker) -> UnlitMaterial {
         let side: CGFloat = m.number == nil ? 64 : 160
         let colour = UIColor(m.tone.color).resolvedColor(with: UITraitCollection(userInterfaceStyle: .dark))
+        // The shared `Marker` (DESIGN §5): a dark-surface disc outlined in the tone, the number in the display face.
         let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: .init(for: .init(displayScale: 1))).image { ctx in
             let rect = CGRect(x: 0, y: 0, width: side, height: side)
-            UIColor.white.setFill()
-            ctx.cgContext.fillEllipse(in: rect.insetBy(dx: side * 0.02, dy: side * 0.02))
-            colour.setFill()
-            ctx.cgContext.fillEllipse(in: rect.insetBy(dx: side * 0.11, dy: side * 0.11))
+            let line = side * Line.drawing / 26
+            UIColor(hex: 0x211D30).setFill()
+            ctx.cgContext.fillEllipse(in: rect.insetBy(dx: line / 2, dy: line / 2))
+            ctx.cgContext.setStrokeColor(colour.cgColor)
+            ctx.cgContext.setLineWidth(line)
+            ctx.cgContext.strokeEllipse(in: rect.insetBy(dx: line / 2, dy: line / 2))
             guard let number = m.number else { return }
             let text = "\(number)" as NSString
-            let base = UIFont.systemFont(ofSize: side * 0.5, weight: .heavy)
-            let font = base.fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: base.pointSize) } ?? base
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
+            let font = UIFont(name: DisplayFace.bold, size: side * 0.58) ?? .systemFont(ofSize: side * 0.5, weight: .bold)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: colour]
             let size = text.size(withAttributes: attrs)
             text.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
         }

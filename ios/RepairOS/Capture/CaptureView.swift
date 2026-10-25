@@ -183,14 +183,25 @@ struct SessionFlowView: View {
     }
 }
 
+/// A scan saved on the phone with no server to send it to: what happened and what to do, on the canvas.
 struct OfflineView: View {
     let close: () -> Void
     var body: some View {
-        NavigationStack {
-            ContentUnavailableView("Saved on the phone", systemImage: "icloud.slash",
-                                   description: Text("Pair with the gateway in Settings, then open this scan again to upload it."))
-                .toolbar { Button("Done", action: close) }
+        VStack(alignment: .leading, spacing: Spacing.l) {
+            Spacer()
+            Image(systemName: "wifi.slash").font(.system(size: 34, weight: .regular)).foregroundStyle(Palette.secondary)
+                .accessibilityHidden(true)
+            Text("Saved on the phone").display(.screen).foregroundStyle(Palette.ink)
+                .accessibilityAddTraits(.isHeader)
+            Text("Pair with the gateway in Settings, then open this scan again to upload it.")
+                .font(.body).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button("Close", action: close).buttonStyle(.primary)
         }
+        .padding(.horizontal, Spacing.gutter)
+        .padding(.bottom, Spacing.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.canvas.ignoresSafeArea())
     }
 }
 
@@ -346,7 +357,7 @@ struct ScanView: View {
         LockBrackets(phase: locked ? .locked : .searching)
             .frame(width: r.width, height: r.height)
             .position(x: r.midX, y: r.midY)
-            .opacity(shown && scan.stage != .finishing ? (locked ? 0.85 : 0.7) : 0)
+            .opacity(shown && scan.stage != .finishing ? 1 : 0)
             .animation(reduceMotion ? nil : .linear(duration: 0.1), value: rect)
             .animation(Motion.fade, value: shown)
             .allowsHitTesting(false)
@@ -361,12 +372,7 @@ struct ScanView: View {
                         .imageScale(.small)
                     Text(live?.corrected == nil ? "Looks like: \(words)" : words).lineLimit(1)
                 }
-                .font(.pillLabel)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color.black.opacity(0.5), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
-                .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+                .cameraChip()
             }
             .buttonStyle(PressableCardStyle())
             .accessibilityHint("Tap to correct it")
@@ -408,11 +414,25 @@ struct ScanView: View {
                 .buttonStyle(.primary(.light))
                 .disabled(scan.stage == .locking)
         case .scanning:
+            // The scan has enough: Done settles once (1 → 1.04 → 1) and gains a `next` rim; the milestone haptic fires
+            // from the session on the same change. Nothing loops. Reduce Motion: the rim alone.
             Button(action: done) { Label("Done", systemImage: "checkmark") }
-                .symbolEffect(.pulse, options: .repeating, isActive: scan.enough)   // the scan has enough: tap Done
-                .scaleEffect(scan.enough ? 1.04 : 1)
-                .animation(scan.enough ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true) : .default, value: scan.enough)
                 .buttonStyle(.primary(.light))
+                .overlay(Capsule().strokeBorder(Palette.next, lineWidth: Line.locked).opacity(scan.enough ? 1 : 0))
+                .keyframeAnimator(initialValue: CGFloat(1), trigger: scan.enough) { view, scale in
+                    view.scaleEffect(scale)
+                } keyframes: { _ in
+                    KeyframeTrack {
+                        if scan.enough && !reduceMotion {
+                            SpringKeyframe(1.04, duration: 0.18, spring: .init(response: 0.4, dampingRatio: 0.78))
+                            SpringKeyframe(1, duration: 0.3, spring: .init(response: 0.4, dampingRatio: 0.78))
+                        } else {
+                            LinearKeyframe(1, duration: 0.01)
+                        }
+                    }
+                }
+                .motion(Motion.fade, value: scan.enough)
+                .accessibilityHint(scan.enough ? "The scan has enough. Tap to finish." : "")
         case .failed:
             Button("Close", action: close).buttonStyle(.primary(.light))
         case .finishing:

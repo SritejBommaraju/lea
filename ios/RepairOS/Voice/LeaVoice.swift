@@ -224,6 +224,19 @@ final class LeaVoice: NSObject {
         return { data, started in player.append(data, id: id, started: started) }
     }
 
+    /// Where this answer's audio has got to (the player's own clock), for timing Lea's 3D moves to the sentence that
+    /// carries them; nil while nothing of it is playing (muted, the phone's voice, not started yet).
+    func playedSeconds(stream id: Int) -> Double? {
+        guard id == utterance, !muted else { return nil }
+        return player.playedSeconds(id: id)
+    }
+
+    /// Seconds of this answer's audio already scheduled: where the next sentence's audio will start.
+    func scheduledSeconds(stream id: Int) -> Double? {
+        guard id == utterance, !muted else { return nil }
+        return player.scheduledSeconds(id: id)
+    }
+
     /// A sentence the gateway sent without audio: the phone's voice says it (queued after the others).
     func queueOnDevice(_ text: String, stream id: Int) {
         guard id == utterance, !muted else { return }

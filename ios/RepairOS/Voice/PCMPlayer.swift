@@ -15,6 +15,8 @@ final class PCMPlayer: @unchecked Sendable {
     private var current = 0
     private var carry = Data()
     private var idleStop: DispatchWorkItem?
+    /// Frames scheduled in the current utterance: where the next chunk will start in its audio.
+    private var scheduledFrames: AVAudioFramePosition = 0
 
     init(sampleRate: Double) {
         format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
@@ -27,6 +29,7 @@ final class PCMPlayer: @unchecked Sendable {
     func begin(_ id: Int) {
         queue.async { [self] in
             current = id
+            scheduledFrames = 0
             carry.removeAll(keepingCapacity: true)
             idleStop?.cancel()
             if node.isPlaying { node.stop() }
@@ -46,6 +49,7 @@ final class PCMPlayer: @unchecked Sendable {
             guard whole > 0, let buf = Self.buffer(carry.prefix(whole), format: format) else { return }
             carry = Data(carry.dropFirst(whole))
             node.scheduleBuffer(buf, completionHandler: nil)
+            scheduledFrames += AVAudioFramePosition(buf.frameLength)
             if !node.isPlaying {
                 node.play()
                 started?()
@@ -66,6 +70,20 @@ final class PCMPlayer: @unchecked Sendable {
                     done()
                 }
             }
+        }
+    }
+
+    /// Seconds of audio scheduled so far in utterance `id` (where the next chunk starts), nil for another utterance.
+    func scheduledSeconds(id: Int) -> Double? {
+        queue.sync { id == current ? Double(scheduledFrames) / format.sampleRate : nil }
+    }
+
+    /// Seconds of utterance `id` actually played (the player's own clock), nil until it plays or for another one.
+    func playedSeconds(id: Int) -> Double? {
+        queue.sync {
+            guard id == current, node.isPlaying, let now = node.lastRenderTime, let t = node.playerTime(forNodeTime: now)
+            else { return nil }
+            return max(0, Double(t.sampleTime) / t.sampleRate)
         }
     }
 

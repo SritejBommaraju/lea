@@ -1,10 +1,9 @@
 import SwiftUI
 import WebKit
 
-/// Upload and analysis progress, then the report. Leads with the verdict, the safety notes and the "Most likely
-/// problems" top 3 with their crops; then the next step, the plain-words summary, cosmetic and lower-ranked
-/// issues, and what was not inspected or could not be judged (always with the reason). Confidence is a word,
-/// never a number (A5).
+/// Upload and analysis progress, then the report: the scan on the stage with Lea's conversation (ReportStageView,
+/// the caption strip), the report sheet below it, and the pinned Ask Lea bar. What wasn't checked is one tap away in
+/// the ⋯ menu, never counted as fine. Confidence is a word, never a number (A5).
 struct ReportView: View {
     @Environment(AppState.self) private var app
     let record: SessionRecord
@@ -39,6 +38,10 @@ struct ReportView: View {
     @State private var walkthrough = 0
     /// Lea's latest move of the 3D model while she answers (LeaStage): the stage focuses, rings and flies to it.
     @State private var leaCue: LeaStageCue?
+    /// The conversation as the stage's caption strip shows it (fed by the pinned Ask Lea bar).
+    @State private var captions = LeaCaptionFeed()
+    @State private var showUnchecked = false
+    @State private var showOnObject = false
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -62,46 +65,20 @@ struct ReportView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let report, RedesignFlags.reportStage {
+                if let report {
                     ReportStageView(report: report, symptom: record.symptom, model: model, sessionDir: app.storage.dir(record),
-                                    space: ObjectSpace.load(sessionDir: app.storage.dir(record), scanPackage: app.storage.scanPackageURL(record)),
+                                    space: space,
                                     openFull: gateway == nil ? nil : { showFull = true },
                                     fix: live?.fix ?? report.fix,
                                     fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
                                     fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil,
                                     fresh: landedFresh, voiceStarted: voiceStarted, walkthrough: walkthrough, leaCue: leaCue,
-                                    hero: stageHero)
+                                    hero: stageHero, captions: talking ? captions : nil,
+                                    identity: Self.identity(corrected: record.objectName, report: report.objectWords,
+                                                            live: live?.identity?.words))
                         .transition(.opacity)
-                        .overlay(alignment: .top) {
-                            if updating {
-                                Label("Updating…", systemImage: "arrow.triangle.2.circlepath")
-                                    .font(.footnote.weight(.semibold)).foregroundStyle(.white)
-                                    .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .background(Color.black.opacity(0.55), in: Capsule())
-                                    .padding(.top, 52)
-                                    .transition(.opacity)
-                            }
-                        }
-                } else if let report {
-                    ReportContent(report: report, symptom: record.symptom, model: model, sessionDir: app.storage.dir(record),
-                                  space: ObjectSpace.load(sessionDir: app.storage.dir(record), scanPackage: app.storage.scanPackageURL(record)),
-                                  openFull: gateway == nil ? nil : { showFull = true },
-                                  fix: live?.fix ?? report.fix,
-                                  fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
-                                  fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil)
-                        .transition(.opacity)
-                        .overlay(alignment: .top) {
-                            if updating {
-                                Label("Updating…", systemImage: "arrow.triangle.2.circlepath")
-                                    .font(.footnote.weight(.semibold))
-                                    .padding(.horizontal, 12).padding(.vertical, 6)
-                                    .background(.thinMaterial, in: Capsule())
-                                    .padding(.top, 6)
-                                    .transition(.opacity)
-                            }
-                        }
-                } else if RedesignFlags.reportStage, error == nil {
-                    // While the Mac works: the person's own scan on the dark stage, one line of progress.
+                } else if error == nil {
+                    // While the Mac works: the person's own scan on the stage, one line of progress.
                     ReportStageWaiting(model: model, progress: progress, uploaded: upload?.uploadedFiles ?? 0,
                                        pending: upload?.pending.count ?? 0, found: live?.areasChecked)
                 } else {
@@ -109,40 +86,16 @@ struct ReportView: View {
                                        pending: upload?.pending.count ?? 0, error: error, retry: retry)
                 }
             }
+            .overlay(alignment: .top) { if report != nil || error == nil { topBar } }
             .motion(Motion.standard, value: report == nil)
-            .safeAreaInset(edge: .bottom) {
-                // Voice/: hold to ask Lea about this scan (needs the gateway: the answer is grounded in its report).
-                if report != nil, let gateway, app.isPaired {
-                    ConversationPanel(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
-                                      sessionID: { [upload] in upload?.state.gatewaySessionID },
-                                      onStage: { command in leaCue = LeaStageCue(n: (leaCue?.n ?? 0) + 1, command: command) }) { kind in
-                        if kind == "continue_scan" { continueScan?() }
-                        if kind == "walkthrough" { walkthrough += 1 }
-                    }
-                }
-            }
+            .safeAreaInset(edge: .bottom) { if let report { pinnedBar(report) } }
             .background(Palette.canvas.ignoresSafeArea())
-            .navigationTitle(report == nil || RedesignFlags.reportStage ? "" : "Report")
+            // The stage draws its own chalk-on-smoke controls (no glass over the scan); the error screen keeps the
+            // system bar with Done.
+            .toolbar(report == nil && error != nil ? .visible : .hidden, for: .navigationBar)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done", action: close).fontWeight(.semibold) }
-                ToolbarItem(placement: .primaryAction) { VoiceMuteToolbarButton() }
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        if report != nil, let continueScan {
-                            Button("Continue scanning", systemImage: Symbol.scan) { continueScan() }
-                        }
-                        if report != nil, let scanBottom {
-                            Button("Scan the bottom", systemImage: "arrow.up.arrow.down") { scanBottom() }
-                        }
-                        if report != nil, gateway != nil {
-                            Button("Full report with photos", systemImage: "doc.richtext") { showFull = true }
-                        }
-                        Button("Delete scan", systemImage: "trash", role: .destructive) { pendingDelete = record }
-                            .disabled(offline || !ScanLibrary.canDelete(record, app: app))
-                    } label: { Image(systemName: "ellipsis") }
-                    .accessibilityLabel("More")
-                }
             }
             .confirmDeleteScan($pendingDelete, deleted: close)
             .sheet(isPresented: $showFull) {
@@ -153,6 +106,22 @@ struct ReportView: View {
                             .navigationTitle("Full report").navigationBarTitleDisplayMode(.inline)
                             .toolbar { Button("Close") { showFull = false }.fontWeight(.semibold) }
                     }
+                    .tint(Palette.accent)
+                }
+            }
+            .sheet(isPresented: $showUnchecked) {
+                if let report {
+                    WhatWasntCheckedSheet(notInspected: report.notInspected, unclear: report.insufficient, limits: report.limits,
+                                          continueScan: continueScan.map { action -> () -> Void in { action() } })
+                }
+            }
+            .fullScreenCover(isPresented: $showOnObject) {
+                if let report, let space {
+                    let all = report.mostLikely + report.otherIssues + report.setup + report.cosmetic
+                    ObjectMarkersView(space: space,
+                                      markers: StageMarks.pins(report).map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },
+                                      problems: all, others: report.otherIssues + report.cosmetic,
+                                      show3D: { showOnObject = false }, close: { showOnObject = false })
                 }
             }
             .task { await run() }
@@ -176,7 +145,101 @@ struct ReportView: View {
             }
             .onChange(of: live?.fix) { _, fix in if let fix { keepFix(fix) } }
         }
+        .tint(Palette.accent)
         .environment(\.cropSource, CropSource.saved(in: CropSource.dir(app.storage.dir(record)), fallback: gateway.map(CropSource.gateway)))
+    }
+
+    /// What the object is, for the stage: the person's own correction first, then whichever identification names the
+    /// product ("Category · Brand Model" over a bare category), the report's before the live event's.
+    nonisolated static func identity(corrected: String?, report: String?, live: String?) -> String? {
+        if let c = corrected?.trimmedOrNil { return c }
+        let options = [report, live].compactMap { $0?.trimmedOrNil }
+        return options.first { $0.contains("·") } ?? options.first
+    }
+
+    /// The scan's place in the room for "Show on the real object" (nil without a LiDAR world map).
+    private var space: ObjectSpace? {
+        ObjectSpace.load(sessionDir: app.storage.dir(record), scanPackage: app.storage.scanPackageURL(record))
+    }
+
+    /// Lea can be asked about this report (she needs the paired server: her answers are grounded in its report).
+    private var talking: Bool { askGateway != nil }
+
+    private var askGateway: GatewayClient? {
+        if let gateway, app.isPaired { return gateway }
+        #if DEBUG
+        // Design review (`--ui-ask`): the bar as a paired phone shows it, pointed at nowhere reachable.
+        if CommandLine.arguments.contains("--ui-ask") { return GatewayClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: nil) }
+        #endif
+        return nil
+    }
+
+    /// Over the stage: "‹ Scans", the voice toggle and the ⋯ menu as chalk-on-smoke controls, and "Updating…" while a
+    /// newer revision is built.
+    private var topBar: some View {
+        VStack(spacing: Spacing.s) {
+            HStack(spacing: Spacing.s) {
+                Button(action: close) { Label("Scans", systemImage: "chevron.left") }
+                    .buttonStyle(StageCapsuleButtonStyle())
+                    .accessibilityLabel("Back to scans")
+                Spacer()
+                VoiceMuteButton(onCamera: true)
+                Menu { moreMenu } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17)).foregroundStyle(Palette.chalk)
+                        .frame(width: 44, height: 44)
+                        .background { SmokeFill(shape: Circle()) }
+                        .contentShape(Circle())
+                }
+                .accessibilityLabel("More")
+            }
+            if updating {
+                Label("Updating…", systemImage: "arrow.triangle.2.circlepath").cameraChip()
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, Spacing.l)
+        .padding(.top, Spacing.xs)
+        .motion(Motion.fade, value: updating)
+    }
+
+    /// The ⋯ menu: what is off the default path (owner, 2026-10-25: no caveats by default).
+    @ViewBuilder private var moreMenu: some View {
+        if let report {
+            if space != nil, !StageMarks.pins(report).isEmpty {
+                Button("Show on the real object", systemImage: "arkit") { showOnObject = true }
+            }
+            if let scanBottom {
+                Button("Scan the bottom", systemImage: "arrow.up.arrow.down") { scanBottom() }
+            }
+            if ReportWords.unchecked(report) > 0 {
+                Button("What wasn't checked", systemImage: Symbol.couldNotJudge) { showUnchecked = true }
+            }
+            if gateway != nil {
+                Button("Full report with photos", systemImage: "doc.richtext") { showFull = true }
+            }
+        }
+        Button("Delete scan", systemImage: "trash", role: .destructive) { pendingDelete = record }
+            .disabled(offline || !ScanLibrary.canDelete(record, app: app))
+    }
+
+    /// The report's one next thing, pinned in the frosted bar: hold to ask Lea about this scan beside Continue
+    /// scanning (violet). Not paired: Continue scanning alone, when it can go.
+    @ViewBuilder private func pinnedBar(_ report: ReportModel) -> some View {
+        if let gateway = askGateway {
+            ConversationPanel(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
+                              sessionID: { [upload] in upload?.state.gatewaySessionID },
+                              onStage: { command in leaCue = LeaStageCue(n: (leaCue?.n ?? 0) + 1, command: command) },
+                              skin: .bar, feed: captions, continueScan: continueScan != nil) { kind in
+                if kind == "continue_scan" { continueScan?() }
+                if kind == "walkthrough" { walkthrough += 1 }
+            }
+        } else if let continueScan {
+            GlassBar {
+                Button { continueScan() } label: { Label("Continue scanning", systemImage: Symbol.scan) }
+                    .buttonStyle(.primary)
+            }
+        }
     }
 
     /// A report arrived: Lea says the verdict, the top problem and the first safety note (Voice/ReportSpeech),
@@ -213,10 +276,10 @@ struct ReportView: View {
     private var heroChoice: String? { Self.heroChoice(live: live?.hero, pipeline: pipelineHero, cached: report?.hero) }
 
     /// A reopened report never polls the pipeline, so the cached report's choice has to count as much as a live one.
-    static func heroChoice(live: String?, pipeline: String?, cached: String?) -> String? { live ?? pipeline ?? cached }
+    nonisolated static func heroChoice(live: String?, pipeline: String?, cached: String?) -> String? { live ?? pipeline ?? cached }
 
     /// The recreation leads only when there is one and the backend did not choose the photos.
-    static func showsRecreation(hero: String?, available: Bool) -> Bool { available && hero != "photos" }
+    nonisolated static func showsRecreation(hero: String?, available: Bool) -> Bool { available && hero != "photos" }
 
     /// Follows the backend's hero choice: fetches its cleaned cloud (`points`) or its mesh (`mesh`), cached beside the
     /// scan; `photos` needs nothing. `rev`: a newer revision was announced (live `mesh_ready` or the pipeline's
@@ -375,6 +438,9 @@ struct PipelineProgress: Equatable {
     }
 }
 
+/// Report progress or a failure (DESIGN §7.4, screen 14): the construction orb with the real fraction, the
+/// pipeline's own step names as a numbered index, and Try again. Normal waiting shows the scan on the stage instead
+/// (ReportStageWaiting).
 struct ReportProgressView: View {
     let progress: PipelineProgress
     let uploaded: Int
@@ -384,26 +450,31 @@ struct ReportProgressView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: Spacing.xl) {
-                Spacer(minLength: Spacing.xl)
-                ProgressOrb(fraction: fraction, failed: error != nil)
-                VStack(spacing: Spacing.s) {
-                    Text(error == nil ? "Getting your report" : "Something went wrong")
-                        .font(.screenTitle).multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: Spacing.xl) {
+                ConstructionOrb(fraction: error == nil ? fraction : (fraction ?? 1), failed: error != nil)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, Spacing.xl)
+                VStack(alignment: .leading, spacing: Spacing.s) {
+                    Text(error == nil ? "Writing your report" : "Something went wrong")
+                        .display(.screen).foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
                     Text(error == nil ? "Lea looks at every photo, then writes up what it found." : (error ?? ""))
-                        .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .font(.body).foregroundStyle(error == nil ? Palette.secondary : Palette.danger)
+                        .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                 }
                 VStack(spacing: 0) {
                     ForEach(PipelineProgress.Step.allCases, id: \.self) { step in
-                        StepRow(title: step.title, detail: detail(step), state: state(step))
-                        if step != .write { Divider().padding(.leading, 52) }
+                        if step != .upload { Rectangle().fill(Palette.hairline).frame(height: Line.hairline) }
+                        StepRow(number: step.rawValue + 1, title: step.title, detail: detail(step), state: state(step))
                     }
                 }
-                .card(padding: Spacing.s)
                 if error != nil {
                     Button(action: retry) { Label("Try again", systemImage: "arrow.clockwise") }
                         .buttonStyle(.primary)
+                } else {
+                    Text("You can leave this screen. The report appears in Scans when it is ready.")
+                        .font(.footnote).foregroundStyle(Palette.secondary)
                 }
             }
             .padding(.horizontal, Spacing.gutter)
@@ -411,6 +482,7 @@ struct ReportProgressView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .background(Palette.canvas.ignoresSafeArea())
     }
 
     private var fraction: Double? {
@@ -436,317 +508,40 @@ struct ReportProgressView: View {
     }
 }
 
+/// One step as an index line: its number in a fixed 20 pt column, the title, then its state (an ink check when done,
+/// a small spinner while active, an empty circle while waiting, the warning in danger when it failed).
 private struct StepRow: View {
     enum State { case waiting, active, done, failed }
+    let number: Int
     let title: String
     let detail: String?
     let state: State
+    @ScaledMetric(relativeTo: .subheadline) private var column: CGFloat = 20
 
     var body: some View {
-        HStack(spacing: Spacing.m) {
-            ZStack {
-                switch state {
-                case .waiting: Circle().strokeBorder(Color.secondary.opacity(0.35), lineWidth: 1.5)
-                case .active: ProgressView().controlSize(.small).tint(Palette.accent)
-                case .done: Image(systemName: "checkmark.circle.fill").font(.title3).foregroundStyle(Palette.accent)
-                case .failed: Image(systemName: "exclamationmark.circle.fill").font(.title3).foregroundStyle(Palette.danger)
-                }
-            }
-            .frame(width: 26, height: 26)
-            .padding(.leading, Spacing.s)
+        HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
+            Text("\(number)").display(.number).foregroundStyle(state == .waiting ? Palette.secondary : Palette.ink)
+                .frame(width: column, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.body.weight(state == .active ? .semibold : .regular))
-                    .foregroundStyle(state == .waiting ? .secondary : .primary)
-                if let detail { Text(detail).font(.footnote).monospacedDigit().foregroundStyle(.secondary) }
+                    .foregroundStyle(state == .done || state == .waiting ? Palette.secondary : Palette.ink)
+                if let detail { Text(detail).font(.footnote).monospacedDigit().foregroundStyle(Palette.secondary) }
             }
             Spacer(minLength: 0)
+            Group {
+                switch state {
+                case .waiting: Circle().strokeBorder(Palette.secondary.opacity(0.6), lineWidth: Line.construction).frame(width: 16, height: 16)
+                case .active: ProgressView().controlSize(.small).tint(Palette.ink)
+                case .done: Image(systemName: "checkmark").foregroundStyle(Palette.ink)
+                case .failed: Image(systemName: Symbol.safety).foregroundStyle(Palette.danger)
+                }
+            }
+            .frame(width: 24)
         }
         .padding(.vertical, Spacing.m)
+        .frame(minHeight: 44)
         .accessibilityElement(children: .combine)
         .accessibilityValue(state == .done ? "done" : state == .active ? "in progress" : state == .failed ? "failed" : "waiting")
-    }
-}
-
-/// A ring that fills with progress, or turns slowly while the step has no count. Static under Reduce Motion.
-private struct ProgressOrb: View {
-    let fraction: Double?
-    let failed: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var spin = false
-
-    var body: some View {
-        ZStack {
-            Circle().fill(tint.opacity(0.1))
-            Circle().stroke(tint.opacity(0.18), lineWidth: 7).padding(14)
-            Circle()
-                .trim(from: 0, to: fraction.map { max(0.03, $0) } ?? 0.28)
-                .stroke(tint, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                .rotationEffect(.degrees(-90 + (fraction == nil && spin ? 360 : 0)))
-                .padding(14)
-                .motion(Motion.standard, value: fraction)
-            Image(systemName: failed ? "exclamationmark" : "doc.text.magnifyingglass")
-                .font(.system(size: 30, weight: .semibold))
-                .foregroundStyle(tint)
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .frame(width: 112, height: 112)
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) { spin = true }
-        }
-        .accessibilityHidden(true)
-    }
-
-    private var tint: Color { failed ? Palette.danger : Palette.accent }
-}
-
-// MARK: - Report
-
-struct ReportContent: View {
-    let report: ReportModel
-    var symptom: String?
-    var model: ModelSource = .none
-    /// The session folder (its stills, for the photo hero).
-    var sessionDir: URL?
-    /// The scan's saved world map: "Show on object" relocalises into it.
-    var space: ObjectSpace?
-    var openFull: (() -> Void)?
-    var fix: FixIt?
-    var fixSearching = false
-    var fixUnavailable = false
-    @Environment(\.continueScan) private var continueScan
-    @Environment(\.scanBottom) private var scanBottom
-    @Environment(\.cropSource) private var cropSource
-    @State var focus: String?
-    @State private var sheet: ReportModel.Problem?
-    @State private var showOnObject = false
-    @State private var showOthers = false
-
-    /// The top three located findings, numbered; the rest are behind the "+N" chip, not drawn as dots.
-    private var pins: [ModelPin] {
-        report.mostLikely.enumerated().compactMap { i, p in
-            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.severity.tone) }
-        }
-    }
-
-    /// The top three with a photo crop, numbered (the photo hero).
-    private var numberedPhotos: [PhotoHero.Mark] {
-        report.mostLikely.enumerated().compactMap { i, p in
-            guard let still = p.cropStill else { return nil }
-            return PhotoHero.Mark(id: p.id, number: i + 1, still: still, box: p.cropBox, tone: p.severity.tone)
-        }
-    }
-
-    /// Findings beyond the top three (lower-ranked, setup and cosmetic).
-    private var others: [ReportModel.Problem] { report.otherIssues + report.setup + report.cosmetic }
-
-    private var showsModel: Bool { !model.isNone || !pins.isEmpty }
-    private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
-    private var canShowOnObject: Bool { space != nil && !pins.isEmpty }
-    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            content(proxy)
-            #if DEBUG
-                .task {
-                    guard let anchor = UIGallery.scrollTo else { return }
-                    try? await Task.sleep(for: .milliseconds(400))
-                    proxy.scrollTo(anchor, anchor: .top)
-                }
-            #endif
-        }
-        .task {
-            // Developer hook (`--show-on-object`): open the AR view once the report is up (unattended measurements).
-            guard CommandLine.arguments.contains("--show-on-object"), canShowOnObject else { return }
-            try? await Task.sleep(for: .seconds(1.5))
-            showOnObject = true
-        }
-        .fullScreenCover(isPresented: $showOnObject) {
-            if let space {
-                ObjectMarkersView(space: space, markers: pins.map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },
-                                  problems: all, others: others, show3D: { showOnObject = false }, close: { showOnObject = false })
-                    .environment(\.cropSource, cropSource)
-            }
-        }
-        .sheet(isPresented: $showOthers) {
-            OtherFindingsSheet(problems: others) { p in
-                showOthers = false
-                Task { try? await Task.sleep(for: .milliseconds(350)); sheet = p }
-            }
-            .environment(\.cropSource, cropSource)
-        }
-        .sheet(item: $sheet) { p in
-            NavigationStack {
-                ProblemDetailView(problem: p)
-                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil }.fontWeight(.semibold) } }
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
-    }
-
-    private func content(_ proxy: ScrollViewProxy) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                if showsModel { modelCard.id("model") }
-                VerdictHeader(report: report, symptom: symptom)
-                if let lead = report.userLead { UserLeadCard(lead: lead) }
-                if !report.safety.isEmpty { SafetyCard(notes: report.safety) }
-                if !report.mostLikely.isEmpty {
-                    VStack(alignment: .leading, spacing: Spacing.m) {
-                        SectionHeader("Most likely problems")
-                        ForEach(Array(report.mostLikely.enumerated()), id: \.element.id) { i, p in
-                            if showsModel, isPhotoHero ? p.cropStill != nil : p.point != nil {
-                                Button {
-                                    withAnimation(Motion.standard) { proxy.scrollTo("model", anchor: .top) }
-                                    focus = p.id
-                                } label: {
-                                    ProblemCard(problem: p, rank: i + 1, located: true, selected: focus == p.id)
-                                }
-                                .buttonStyle(PressableCardStyle())
-                                .accessibilityHint("Shows it on the 3D model")
-                            } else {
-                                NavigationLink(value: p.id) { ProblemCard(problem: p, rank: i + 1, located: showsModel ? false : nil) }
-                                    .buttonStyle(PressableCardStyle())
-                            }
-                        }
-                    }
-                }
-                if fix != nil || fixSearching || fixUnavailable {
-                    FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable).id("fix")
-                }
-                if let next = report.nextStep { NextStepCard(step: next).id("next") }
-                if let summary = report.summary, !summary.isEmpty {
-                    VStack(alignment: .leading, spacing: Spacing.m) {
-                        SectionHeader("In plain words")
-                        ClampedText(text: summary).card()
-                    }
-                }
-                if !report.otherIssues.isEmpty {
-                    ProblemList(title: "Other possible problems", problems: report.otherIssues).id("other")
-                }
-                if !report.setup.isEmpty {
-                    ProblemList(title: "Setup to check", problems: report.setup,
-                                note: ReportWords.setupNote).id("setup")
-                }
-                if !report.cosmetic.isEmpty {
-                    ProblemList(title: "Cosmetic", problems: report.cosmetic,
-                                note: "Looks worn, but would not stop it working.")
-                }
-                if !report.notInspected.isEmpty {
-                    GapList(title: "Not inspected", symbol: Symbol.notInspected, gaps: report.notInspected,
-                            note: "Nobody looked at these, so they are not counted as fine.")
-                        .id("gaps")
-                }
-                if !report.insufficient.isEmpty {
-                    GapList(title: "Could not judge", symbol: Symbol.couldNotJudge, gaps: report.insufficient,
-                            note: "Looked at, but the photo was not clear enough to say.")
-                }
-                if !report.limits.isEmpty { LimitsCard(limits: report.limits) }
-                if let continueScan {
-                    Button { continueScan() } label: { Label("Continue scanning", systemImage: Symbol.scan) }
-                        .buttonStyle(.primary(.accent))
-                }
-                if let scanBottom {
-                    Button { scanBottom() } label: { Label("Scan the bottom", systemImage: "arrow.up.arrow.down") }
-                        .buttonStyle(.primary(.accent))
-                }
-                if let openFull {
-                    Button(action: openFull) { Label("Full report with photos", systemImage: "doc.richtext") }
-                        .buttonStyle(.primary(.quiet))
-                }
-            }
-            .padding(.horizontal, Spacing.gutter)
-            .padding(.top, Spacing.s)
-            .padding(.bottom, Spacing.xxl)
-        }
-        .navigationDestination(for: String.self) { id in
-            if let p = all.first(where: { $0.id == id }) { ProblemDetailView(problem: p) }
-        }
-    }
-
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    /// "+N": the findings not drawn on the hero, as a list.
-    @ViewBuilder private var othersChip: some View {
-        if !others.isEmpty {
-            Button { showOthers = true } label: {
-                Text("+\(others.count)")
-                    .font(.system(.subheadline, design: .rounded, weight: .bold)).monospacedDigit()
-                    .foregroundStyle(Palette.accent)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Palette.surface, in: Capsule())
-                    .overlay(Capsule().strokeBorder(Palette.hairline, lineWidth: 0.5))
-            }
-            .buttonStyle(PressableCardStyle())
-            .padding(Spacing.m)
-            .accessibilityLabel("\(others.count) more findings")
-        }
-    }
-
-    /// The scan in 3D with the problem pins, and the selected problem under it.
-    private var modelCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Group {
-                if case .photos = model, let sessionDir {
-                    PhotoHero(stillsDir: sessionDir.appending(path: "stills"), numbered: numberedPhotos, focus: focus) { id in
-                        focus = id
-                        sheet = all.first { $0.id == id }
-                    }
-                } else {
-                    ModelView(source: model, pins: pins, focus: focus, spin: true, showHint: !canShowOnObject) { id in
-                        focus = id
-                        sheet = all.first { $0.id == id }
-                    }
-                    .frame(height: 340)
-                }
-            }
-            .overlay(alignment: .bottomLeading) {
-                if canShowOnObject {
-                    Button { showOnObject = true } label: { Label("Show on object", systemImage: "arkit") }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 14).padding(.vertical, 9)
-                        .background(Palette.accentFill, in: Capsule())
-                        .buttonStyle(PressableCardStyle())
-                        .padding(Spacing.m)
-                        .accessibilityHint("Places the numbered problems on the real object with the camera")
-                }
-            }
-            .overlay(alignment: .bottomTrailing) { othersChip }
-            if let id = focus, let p = all.first(where: { $0.id == id }) {
-                Divider()
-                let row = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.s))
-                    : AnyLayout(HStackLayout(spacing: Spacing.m))
-                row {
-                    HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
-                        Circle().fill(p.severity.tone.color).frame(width: 10, height: 10).accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(p.part).font(.subheadline.weight(.semibold))
-                            Text(p.issue).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    Button("Details") { sheet = p }.font(.subheadline.weight(.semibold))
-                }
-                .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
-                .transition(.opacity)
-            }
-            let unplaced = report.mostLikely.filter { $0.point == nil }.count
-            if unplaced > 0, !isPhotoHero {
-                Divider()
-                Label(unplaced == report.mostLikely.count ? "These problems have no 3D position yet."
-                      : "\(unplaced) of these problems \(unplaced == 1 ? "has" : "have") no 3D position.",
-                      systemImage: "mappin.slash")
-                    .font(.footnote).foregroundStyle(.secondary)
-                    .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
-            }
-        }
-        .background(Palette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
-        .motion(Motion.standard, value: focus)
     }
 }
 
@@ -765,314 +560,7 @@ extension ReportModel.Problem {
     var tone: Tone { isSetup && severity != .safety ? .setup : severity.tone }
 }
 
-private struct VerdictHeader: View {
-    let report: ReportModel
-    let symptom: String?
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s) {
-            if let object = report.objectWords {
-                Text(object).font(.pillLabel).foregroundStyle(.secondary).textCase(nil)
-            }
-            let row = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.s))
-                : AnyLayout(HStackLayout(alignment: .center, spacing: Spacing.m))
-            row {
-                Image(systemName: symbol)
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 40, height: 40)
-                    .background(tone.color, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .accessibilityHidden(true)
-                Text(report.verdict.words).font(.screenTitle).fixedSize(horizontal: false, vertical: true)
-            }
-            if let reason = report.verdictReason {
-                Text(reason).font(.subheadline).foregroundStyle(.secondary)
-            }
-            Text(meta).font(.footnote).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var meta: String {
-        var parts: [String] = []
-        if let symptom, !symptom.isEmpty { parts.append("“\(symptom)”") }
-        if report.photos > 0 {
-            parts.append(report.photosInspected == report.photos ? "\(report.photos) photos inspected"
-                         : "\(report.photosInspected) of \(report.photos) photos inspected")
-        }
-        if let coverage = report.coverageWords { parts.append(coverage.capitalizedFirst) }
-        if let date = report.createdAt { parts.append(date.formatted(.dateTime.month(.abbreviated).day().hour().minute())) }
-        return parts.joined(separator: " · ")
-    }
-
-    private var tone: Tone {
-        switch report.verdict {
-        case .potentialIssues: report.mostLikely.contains { $0.severity == .safety } ? .danger : .caution
-        case .looksGood, .noProblemsSeen: .good
-        default: .cosmetic
-        }
-    }
-
-    private var symbol: String {
-        switch report.verdict {
-        case .potentialIssues: Symbol.safety
-        case .looksGood, .noProblemsSeen: Symbol.good
-        default: Symbol.unknown
-        }
-    }
-}
-
-/// Long text cut to a few lines with "Read more".
-private struct ClampedText: View {
-    let text: String
-    var lines = 6
-    @State private var open = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s) {
-            Text(text).font(.body).lineSpacing(3).lineLimit(open ? nil : lines).textSelection(.enabled)
-            if text.count > 280 {
-                Button(open ? "Show less" : "Read more") { withAnimation(Motion.standard) { open.toggle() } }
-                    .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.accent)
-            }
-        }
-    }
-}
-
-private struct SafetyCard: View {
-    let notes: [ReportModel.SafetyNote]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s + 2) {
-            Label("Before you touch it", systemImage: Symbol.safety)
-                .font(.headline).foregroundStyle(Palette.danger)
-            ForEach(notes) { note in
-                HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
-                    Image(systemName: note.symbol).foregroundStyle(Palette.danger).frame(width: 20).accessibilityHidden(true)
-                    Text(note.text).font(.subheadline).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .card(tone: .danger)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct ProblemCard: View {
-    let problem: ReportModel.Problem
-    let rank: Int
-    /// nil: no 3D view on this report. true: tapping flies to the pin. false: "No 3D position".
-    var located: Bool?
-    var selected = false
-    @Environment(\.dynamicTypeSize) private var typeSize
-
-    var body: some View {
-        let layout = typeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: Spacing.m))
-            : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
-        layout {
-            CropThumb(sha: problem.crops.first)
-                .frame(width: typeSize.isAccessibilitySize ? nil : 88, height: typeSize.isAccessibilitySize ? 180 : 88)
-                .overlay(alignment: .topLeading) {
-                    Text("\(rank)")
-                        .font(.system(.caption, design: .rounded, weight: .bold)).monospacedDigit()
-                        .foregroundStyle(.white)
-                        .frame(minWidth: 22, minHeight: 22)
-                        .background(problem.severity.tone.color, in: Circle())
-                        .padding(6)
-                }
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(problem.part).font(.cardTitle).foregroundStyle(.primary)
-                    Spacer(minLength: 0)
-                    Image(systemName: located == true ? "scope" : "chevron.right")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(located == true ? AnyShapeStyle(Palette.accent) : AnyShapeStyle(.tertiary))
-                }
-                Text(problem.issue).font(.subheadline.weight(.semibold)).foregroundStyle(problem.severity.tone.color)
-                if let words = problem.whereWords {
-                    Text(words).font(.footnote).foregroundStyle(.secondary).lineLimit(typeSize.isAccessibilitySize ? nil : 2)
-                }
-                ProblemChips(problem: problem, unplaced: located == false).padding(.top, 3)
-            }
-            .multilineTextAlignment(.leading)
-        }
-        .card(padding: 14)
-        .overlay {
-            RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
-                .strokeBorder(Palette.accent, lineWidth: 2)
-                .opacity(selected ? 1 : 0)
-        }
-        .motion(Motion.fade, value: selected)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Problem \(rank): \(problem.part), \(problem.issue)")
-        .accessibilityHint("Shows the photo and the evidence")
-    }
-}
-
-private struct ProblemChips: View {
-    let problem: ReportModel.Problem
-    var all = false
-    var unplaced = false
-
-    var body: some View {
-        FlowLayout(spacing: 6) {
-            if let s = problem.severity { StatusPill(text: s.words, tone: Optional(s).tone) }
-            if let c = problem.confidence { StatusPill(text: c) }
-            if all, let l = problem.likelihood { StatusPill(text: "Likelihood: \(l.lowercased())") }
-            if problem.regions > 1 { StatusPill(text: "Seen \(problem.regions) times", symbol: "square.on.square") }
-            if problem.proved { StatusPill(text: "Measured", symbol: "gauge.with.dots.needle.50percent", tone: .accent) }
-            if unplaced { StatusPill(text: "No 3D position", symbol: "mappin.slash") }
-        }
-    }
-}
-
-private struct NextStepCard: View {
-    let step: ReportModel.NextStep
-
-    var body: some View {
-        HStack(alignment: .top, spacing: Spacing.m) {
-            IconBadge(symbol: step.symbol, tone: .accent)
-            VStack(alignment: .leading, spacing: Spacing.xs) {
-                Text("Next step").font(.pillLabel).foregroundStyle(Palette.accent)
-                Text(step.title).font(.headline)
-                Text(step.instruction).font(.body).fixedSize(horizontal: false, vertical: true)
-                if let reason = step.reason {
-                    Text(reason).font(.footnote).foregroundStyle(.secondary).padding(.top, 2)
-                }
-            }
-        }
-        .card(tone: .accent)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// A list card that shows the first few rows and expands in place.
-private struct ExpandingList<Item: Identifiable, Row: View>: View {
-    let items: [Item]
-    var initial = 3
-    @ViewBuilder var row: (Item) -> Row
-    @State private var expanded = false
-
-    var body: some View {
-        VStack(spacing: 0) {
-            let shown = expanded ? items : Array(items.prefix(initial))
-            ForEach(Array(shown.enumerated()), id: \.element.id) { i, item in
-                if i > 0 { Divider().padding(.leading, Spacing.l) }
-                row(item)
-            }
-            if items.count > initial {
-                Divider()
-                Button {
-                    withAnimation(Motion.standard) { expanded.toggle() }
-                } label: {
-                    HStack {
-                        Text(expanded ? "Show fewer" : "Show all \(items.count)")
-                        Spacer()
-                        Image(systemName: "chevron.down").rotationEffect(.degrees(expanded ? 180 : 0))
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Palette.accent)
-                    .padding(Spacing.l)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
-        .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-    }
-}
-
-private struct ProblemList: View {
-    let title: String
-    let problems: [ReportModel.Problem]
-    var note: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.m) {
-            SectionHeader(title, count: problems.count)
-            if let note { Text(note).font(.footnote).foregroundStyle(.secondary) }
-            ExpandingList(items: problems) { p in
-                NavigationLink(value: p.id) {
-                    HStack(spacing: Spacing.m) {
-                        CropThumb(sha: p.crops.first, cornerRadius: Radius.small).frame(width: 48, height: 48)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                            Text([p.issue, p.confidence].compactMap { $0 }.joined(separator: " · "))
-                                .font(.footnote).foregroundStyle(.secondary)
-                            if let fix = p.fix {
-                                Text(fix).font(.footnote).foregroundStyle(.primary)
-                            }
-                        }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PressableCardStyle())
-            }
-        }
-    }
-}
-
-private struct GapList: View {
-    let title: String
-    let symbol: String
-    let gaps: [ReportModel.Gap]
-    let note: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.m) {
-            SectionHeader(title, count: gaps.count)
-            Text(note).font(.footnote).foregroundStyle(.secondary)
-            ExpandingList(items: gaps) { g in
-                HStack(alignment: .top, spacing: Spacing.m) {
-                    if let crop = g.crop {
-                        CropThumb(sha: crop, cornerRadius: Radius.small).frame(width: 44, height: 44)
-                    } else {
-                        Image(systemName: symbol).font(.body).foregroundStyle(.secondary)
-                            .frame(width: 44, height: 44)
-                            .background(Palette.well, in: RoundedRectangle(cornerRadius: Radius.small, style: .continuous))
-                            .accessibilityHidden(true)
-                    }
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
-                            Text(g.part).font(.subheadline.weight(.semibold))
-                            if let photo = g.photoLabel { Text(photo).font(.caption).foregroundStyle(.secondary) }
-                        }
-                        Text(g.reason).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        if let detail = g.detail {
-                            Text(detail).font(.footnote).foregroundStyle(.tertiary).lineLimit(3)
-                        }
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, Spacing.l).padding(.vertical, Spacing.m)
-                .accessibilityElement(children: .combine)
-            }
-        }
-    }
-}
-
-private struct LimitsCard: View {
-    let limits: [String]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s) {
-            Label("What photos can't tell", systemImage: "info.circle").font(.subheadline.weight(.semibold))
-            ForEach(limits, id: \.self) { line in
-                Text(line).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .card()
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// The findings beyond the top three, from the hero's "+N" chip (and the AR view's).
+/// "Also worth a look", all of it: one grouped row each (crop, part, issue in its tone), tap for the detail.
 struct OtherFindingsSheet: View {
     let problems: [ReportModel.Problem]
     let open: (ReportModel.Problem) -> Void
@@ -1085,174 +573,26 @@ struct OtherFindingsSheet: View {
                     HStack(spacing: Spacing.m) {
                         CropThumb(sha: p.crops.first, cornerRadius: Radius.small).frame(width: 48, height: 48)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
-                            Text([p.issue, p.confidence].compactMap { $0 }.joined(separator: " · "))
-                                .font(.footnote).foregroundStyle(.secondary)
+                            Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
+                            Text(p.issue).font(.footnote.weight(.semibold)).foregroundStyle(p.tone.text)
                         }
                         Spacer(minLength: 0)
-                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
                     }
+                    .frame(minHeight: 44)
                 }
+                .listRowBackground(Palette.surface)
             }
-            .navigationTitle("Other findings").navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Done") { dismiss() }.fontWeight(.semibold) }
+            .settingsList()
+            .navigationTitle("Also worth a look").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) } }
         }
+        .tint(Palette.accent)
         .presentationDetents([.medium, .large])
     }
 }
 
-// MARK: - Problem detail
-
-struct ProblemDetailView: View {
-    let problem: ReportModel.Problem
-    @State private var page = 0
-    @State private var zoomed: ZoomTarget?
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Spacing.xl) {
-                crops
-                VStack(alignment: .leading, spacing: Spacing.s) {
-                    Text(problem.part).font(.screenTitle)
-                    Text(problem.issue).font(.title3.weight(.semibold)).foregroundStyle(problem.tone.text)
-                    ProblemChips(problem: problem, all: true).padding(.top, Spacing.xs)
-                }
-                if let fix = problem.fix {
-                    VStack(alignment: .leading, spacing: Spacing.s) {
-                        Label(problem.isSetup ? "How to set it right" : "What to do", systemImage: "wrench.and.screwdriver")
-                            .font(.headline).foregroundStyle(problem.tone.text)
-                        Text(ReportWords.sanitize(fix)).font(.body).fixedSize(horizontal: false, vertical: true)
-                        if problem.isSetup && problem.severity != .safety {
-                            Text(ReportWords.setupNote).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    .card(tone: problem.tone)
-                    .accessibilityElement(children: .combine)
-                }
-                if let observation = problem.observation {
-                    VStack(alignment: .leading, spacing: Spacing.s) {
-                        Text("What the photo shows").font(.headline)
-                        Text(observation).font(.body).lineSpacing(2).textSelection(.enabled)
-                        if !problem.proved {
-                            Label("From photos only: a suspicion, not proof. A meter reading can confirm it.",
-                                  systemImage: "info.circle")
-                                .font(.footnote).foregroundStyle(.secondary).padding(.top, Spacing.xs)
-                        }
-                    }
-                    .card()
-                }
-                if problem.whereWords != nil || problem.locationNote != nil || !problem.photoLabels.isEmpty {
-                    VStack(alignment: .leading, spacing: Spacing.s) {
-                        Text("Where").font(.headline)
-                        if let words = problem.whereWords { Text(words).font(.body) }
-                        if !problem.photoLabels.isEmpty {
-                            Text(problem.photoLabels.joined(separator: ", ")).font(.footnote).foregroundStyle(.secondary)
-                        }
-                        if let note = problem.locationNote {
-                            Text(note.capitalizedFirst).font(.footnote).foregroundStyle(.secondary)
-                        }
-                    }
-                    .card()
-                }
-                if !problem.evidence.isEmpty {
-                    VStack(alignment: .leading, spacing: Spacing.s) {
-                        Text("Evidence").font(.headline)
-                        ForEach(problem.evidence, id: \.self) { line in
-                            HStack(alignment: .firstTextBaseline, spacing: Spacing.s) {
-                                Circle().fill(.tertiary).frame(width: 4, height: 4).accessibilityHidden(true)
-                                Text(line.capitalizedFirst).font(.footnote).foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                    .card()
-                }
-            }
-            .padding(.horizontal, Spacing.gutter)
-            .padding(.bottom, Spacing.xxl)
-        }
-        .background(Palette.canvas.ignoresSafeArea())
-        .navigationTitle(problem.part)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-
-    /// The evidence photos; a tap opens the sharp photo full screen (CropZoomView).
-    @ViewBuilder private var crops: some View {
-        Group {
-            if problem.crops.count > 1 {
-                TabView(selection: $page) {
-                    ForEach(Array(problem.crops.enumerated()), id: \.offset) { i, sha in
-                        zoomable(sha, at: i).padding(.horizontal, 2).tag(i)
-                    }
-                }
-                .tabViewStyle(.page(indexDisplayMode: .always))
-                .aspectRatio(1, contentMode: .fit)
-            } else if let sha = problem.crops.first {
-                zoomable(sha, at: 0).aspectRatio(1, contentMode: .fit)
-            }
-        }
-        .fullScreenCover(item: $zoomed) { z in CropZoomView(shas: problem.crops, index: z.index) }
-    }
-
-    private func zoomable(_ sha: String, at i: Int) -> some View {
-        CropThumb(sha: sha, cornerRadius: Radius.card)
-            .overlay(alignment: .bottomTrailing) {
-                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.footnote.weight(.semibold))
-                    .foregroundStyle(.white).padding(8).background(.ultraThinMaterial, in: Circle()).padding(Spacing.m)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { zoomed = ZoomTarget(index: i) }
-            .accessibilityElement()
-            .accessibilityLabel("Evidence photo \(i + 1)")
-            .accessibilityHint("Opens the photo full screen")
-            .accessibilityAddTraits(.isButton)
-    }
-}
-
-private struct ZoomTarget: Identifiable {
-    let index: Int
-    var id: Int { index }
-}
-
 // MARK: - Plumbing
-
-/// Wraps children onto new lines (pills, chips).
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let rows = arrange(subviews, width: proposal.width ?? .infinity)
-        return CGSize(width: rows.map(\.width).max() ?? 0, height: rows.last.map { $0.y + $0.height } ?? 0)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        for row in arrange(subviews, width: bounds.width) {
-            for item in row.items {
-                subviews[item.index].place(at: CGPoint(x: bounds.minX + item.x, y: bounds.minY + row.y),
-                                           proposal: ProposedViewSize(width: item.width, height: row.height))
-            }
-        }
-    }
-
-    private struct Row { var y: CGFloat; var height: CGFloat = 0; var width: CGFloat = 0; var items: [(index: Int, x: CGFloat, width: CGFloat)] = [] }
-
-    private func arrange(_ subviews: Subviews, width maxWidth: CGFloat) -> [Row] {
-        var rows: [Row] = [Row(y: 0)]
-        for (i, view) in subviews.enumerated() {
-            let size = view.sizeThatFits(.unspecified)
-            let w = min(size.width, maxWidth)
-            if !rows[rows.count - 1].items.isEmpty, rows[rows.count - 1].width + spacing + w > maxWidth {
-                let last = rows[rows.count - 1]
-                rows.append(Row(y: last.y + last.height + spacing))
-            }
-            let x = rows[rows.count - 1].items.isEmpty ? 0 : rows[rows.count - 1].width + spacing
-            rows[rows.count - 1].items.append((i, x, w))
-            rows[rows.count - 1].width = x + w
-            rows[rows.count - 1].height = max(rows[rows.count - 1].height, size.height)
-        }
-        return rows.filter { !$0.items.isEmpty }
-    }
-}
 
 struct WebView: UIViewRepresentable {
     let request: URLRequest

@@ -52,12 +52,7 @@ struct HandheldModeChip: View {
                 Image(systemName: symbol).imageScale(.small)
                 Text(text).lineLimit(1)
             }
-            .font(.pillLabel)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color.black.opacity(0.5), in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
-            .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+            .cameraChip()
         }
         .buttonStyle(PressableCardStyle())
     }

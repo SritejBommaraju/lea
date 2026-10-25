@@ -6,11 +6,12 @@ import simd
 /// model call), plain first person, short sentences. Pure, so it is unit-tested (WalkthroughTests).
 ///
 /// The order: the object and the verdict; each most-likely problem (the camera flies to its marker when it has a
-/// spot on the scan); the other issues, briefly; each setup item with its fix; what could not be checked (a count
-/// and the top one or two); the safety notes; the next step; a short summary. Empty sections are left out.
+/// spot on the scan); the other issues, briefly; each setup item with its fix; the safety notes; the next step; a short
+/// summary. Empty sections are left out. What could not be checked is not a step (no coverage caveat by default, owner
+/// 2026-10-25): it is behind "What wasn't checked", and Lea answers when asked.
 enum Walkthrough {
     struct Step: Identifiable, Equatable, Sendable {
-        enum Kind: String, Sendable { case intro, problem, others, setup, gaps, safety, next, outro }
+        enum Kind: String, Sendable { case intro, problem, others, setup, safety, next, outro }
 
         var id: String
         var kind: Kind
@@ -41,7 +42,6 @@ enum Walkthrough {
         for (i, p) in r.setup.prefix(maxSetup).enumerated() {
             out.append(setup(p, index: i, of: r.setup.count, last: i == min(r.setup.count, maxSetup) - 1))
         }
-        if let s = gaps(r) { out.append(s) }
         if let s = safety(r.safety) { out.append(s) }
         if let s = next(r) { out.append(s) }
         out.append(outro(r))
@@ -109,21 +109,6 @@ enum Walkthrough {
                     speech: said.joined(separator: " "), crops: p.crops, tone: .accent)
     }
 
-    /// What could not be checked: the count (never counted as fine) and the top one or two with their reason.
-    static func gaps(_ r: ReportModel) -> Step? {
-        let total = ReportWords.unchecked(r)
-        guard total > 0 else { return nil }
-        var said = [ReportWords.gapSummary(notInspected: r.notInspected.count, unclear: r.insufficient.count)]
-        let top = (r.insufficient.map { ($0, true) } + r.notInspected.map { ($0, false) }).prefix(2)
-        let named = top.map { g, unclear in
-            "\(gapName(ReportWords.gapTitle(g))), \(ReportSpeech.lowerFirst(ReportWords.gapReason(g, unclear: unclear)))"
-        }
-        if !named.isEmpty { said.append("For example, \(named.joined(separator: "; and "))."); }
-        return Step(id: "gaps", kind: .gaps, eyebrow: total == 1 ? "1 spot" : "\(total) spots", title: "What I couldn't check",
-                    speech: said.joined(separator: " "),
-                    crops: (r.insufficient + r.notInspected).compactMap(\.crop).prefix(1).map { $0 }, tone: .cosmetic)
-    }
-
     /// The safety notes, first sentence of each (at most two).
     static func safety(_ notes: [ReportModel.SafetyNote]) -> Step? {
         guard !notes.isEmpty else { return nil }
@@ -157,8 +142,6 @@ enum Walkthrough {
         case .other: said.append("To sum up: \(r.verdict.words.lowercased()).")
         }
         if !r.setup.isEmpty { said.append(r.setup.count == 1 ? "One thing needs setting up." : "\(words(r.setup.count).capitalizedFirst) things need setting up.") }
-        let gaps = ReportWords.unchecked(r)
-        if gaps > 0 { said.append(gaps == 1 ? "One spot still needs a look." : "\(words(gaps).capitalizedFirst) spots still need a look.") }
         if let step = r.nextStep {
             said.append(specificTitle(step).map { "Start with the next step: \(ReportSpeech.lowerFirst($0))." } ?? "Start with the next step.")
         }
@@ -231,11 +214,6 @@ enum Walkthrough {
             }
         }
         return [sure, "It's from photos only, so it isn't proven."].compactMap { $0 }.joined(separator: " ")
-    }
-
-    /// "the screw", "an area" (ReportWords.gapTitle's generic row title).
-    private static func gapName(_ title: String) -> String {
-        title == "An area" ? "an area" : "the \(ReportSpeech.lowerFirst(title))"
     }
 
     private static func ordinal(_ i: Int) -> String {

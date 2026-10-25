@@ -126,17 +126,18 @@ struct UsageBanner: View {
         VStack {
             if let a = alerts.banner {
                 Button { alerts.dismiss() } label: {
+                    // An opaque surface card with the caution icon and words; a hairline edge and no shadow.
                     HStack(spacing: Spacing.s) {
-                        Image(systemName: a.paused ? "pause.circle.fill" : "gauge.with.dots.needle.67percent")
-                        Text(a.words()).multilineTextAlignment(.leading)
+                        Image(systemName: a.paused ? "pause.circle" : "gauge.with.dots.needle.67percent")
+                            .foregroundStyle(Palette.caution)
+                        Text(a.words()).multilineTextAlignment(.leading).foregroundStyle(Palette.ink)
                     }
-                    .font(.pillLabel)
-                    // Near-black on the amber fill (white on amber is under 4.5:1 in both modes).
-                    .foregroundStyle(a.paused ? Color(white: 0.06) : Color.white)
+                    .font(.label)
                     .padding(.horizontal, Spacing.l)
                     .padding(.vertical, Spacing.s)
-                    .background((a.paused ? Palette.caution : Palette.accentFill), in: Capsule())
-                    .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+                    .frame(minHeight: 44)
+                    .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Palette.hairline, lineWidth: Line.hairline))
                 }
                 .buttonStyle(.plain)
                 .accessibilityHint("Dismisses this notice")
@@ -169,30 +170,32 @@ struct UsageView: View {
 
     var body: some View {
         Form {
-            if let error {
-                Section { Label(error, systemImage: "exclamationmark.circle.fill").foregroundStyle(Palette.danger) }
-            }
-            Section {
-                ForEach(rows) { r in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(r.label)
-                            Text("\(r.calls) of \(r.cap) calls").font(.footnote).foregroundStyle(.secondary)
+            Group {
+                if let error {
+                    Section { Label(error, systemImage: "exclamationmark.circle").foregroundStyle(Palette.danger) }
+                }
+                Section {
+                    ForEach(rows) { r in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(r.label)
+                                Text("\(r.calls) of \(r.cap) calls").font(.footnote).foregroundStyle(Palette.secondary)
+                            }
+                            Spacer()
+                            if r.paused { StatusPill(text: "Paused", symbol: "pause", tone: .caution) }
+                            if let usd = r.usd { Text(usd, format: .currency(code: "USD")).monospacedDigit() }
                         }
-                        Spacer()
-                        if r.paused { StatusPill(text: "Paused", symbol: "pause.fill", tone: .caution) }
-                        if let usd = r.usd { Text(usd, format: .currency(code: "USD")).monospacedDigit() }
                     }
+                    if let total {
+                        LabeledContent("Estimated cost") { Text(total, format: .currency(code: "USD")).monospacedDigit() }
+                    }
+                } header: { Text("Last 24 hours") } footer: {
+                    Text("The lea server stops a service for a while when it reaches its limit, so a runaway can't keep spending.")
                 }
-                if let total {
-                    LabeledContent("Estimated cost") { Text(total, format: .currency(code: "USD")).monospacedDigit() }
-                }
-            } header: { Text("Last 24 hours") } footer: {
-                Text("The lea server stops a service for a while when it reaches its limit, so a runaway can't keep spending.")
             }
+            .listRowBackground(Palette.surface)
         }
-        .scrollContentBackground(.hidden)
-        .background(Palette.canvas.ignoresSafeArea())
+        .settingsList()
         .navigationTitle("Usage")
         .refreshable { await load() }
         .task { await load() }

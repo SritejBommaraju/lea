@@ -22,18 +22,39 @@ struct PhotoHero: View {
 
     @State private var lead: String?
     @State private var image: StillImage?
+    /// Every still on the phone (largest first), for a report with nothing numbered on a photo (nothing looked wrong).
+    @State private var available: [String] = []
+    @State private var listed = false
+    @State private var loadFailed = false
 
-    private var stills: [String] {
-        var out: [String] = []
-        for m in numbered where !out.contains(m.still) { out.append(m.still) }
-        return out
-    }
+    private var stills: [String] { Self.heroStills(marked: numbered, available: available) }
     private var shown: String? { lead ?? stills.first }
+
+    /// The photos the hero shows: the numbered findings' stills in marker order; with none, the scan's own stills (so
+    /// the hero always has a picture when the phone has one, and never waits on a finding).
+    nonisolated static func heroStills(marked: [Mark], available: [String]) -> [String] {
+        var out: [String] = []
+        for m in marked where !out.contains(m.still) { out.append(m.still) }
+        return out.isEmpty ? Array(available.prefix(12)) : out
+    }
+
+    /// The still ids in `dir` (`<id>.jpg`), largest file first (the most detail).
+    @concurrent
+    static func stillIDs(in dir: URL) async -> [String] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey])) ?? []
+        var sized: [(id: String, bytes: Int)] = []
+        for url in files where url.pathExtension.lowercased() == "jpg" {
+            let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            sized.append((url.deletingPathExtension().lastPathComponent, bytes))
+        }
+        sized.sort { a, b in a.bytes != b.bytes ? a.bytes > b.bytes : a.id < b.id }
+        return sized.map(\.id)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
-                Palette.well
+                Palette.stage
                 if let image {
                     GeometryReader { geo in
                         let fit = image.fit(in: geo.size)
@@ -50,18 +71,29 @@ struct PhotoHero: View {
                         }
                     }
                     .transition(.opacity)
+                } else if loadFailed || (listed && shown == nil) {
+                    // Every loading state ends: no photo on the phone (or it can't be read) says so instead of spinning.
+                    Label(shown == nil ? "No photos of this scan on the phone" : "This photo can't be opened",
+                          systemImage: Symbol.photo)
+                        .font(.footnote).foregroundStyle(Palette.chalk.opacity(0.7))
                 } else {
-                    ProgressView()
+                    ProgressView().tint(Palette.chalk)
                 }
             }
             .frame(height: 340)
             .clipped()
             if stills.count > 1 { strip }
         }
+        .task(id: stillsDir) {
+            available = await Self.stillIDs(in: stillsDir)
+            listed = true
+        }
         .task(id: shown) {
             guard let shown else { return }
+            loadFailed = false
             let url = stillsDir.appending(path: "\(shown).jpg")
             let loaded = await StillImage.load(url, maxPixels: 1600)
+            loadFailed = loaded == nil
             withAnimation(Motion.fade) { image = loaded }
         }
         .onChange(of: focus) { _, id in
@@ -80,12 +112,10 @@ struct PhotoHero: View {
                             .frame(width: 56, height: 56)
                             .clipShape(RoundedRectangle(cornerRadius: Radius.small, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: Radius.small, style: .continuous)
-                                .strokeBorder(s == shown ? Palette.accent : Palette.hairline, lineWidth: s == shown ? 2 : 0.5))
+                                .strokeBorder(s == shown ? Palette.accent : Palette.hairline, lineWidth: s == shown ? 2 : Line.hairline))
                             .overlay(alignment: .topLeading) {
-                                if let n = numbered.first(where: { $0.still == s })?.number {
-                                    Text("\(n)").font(.system(.caption2, design: .rounded, weight: .bold))
-                                        .foregroundStyle(.white).frame(width: 18, height: 18)
-                                        .background(Palette.danger, in: Circle()).padding(3)
+                                if let m = numbered.first(where: { $0.still == s }) {
+                                    Marker(number: m.number, tone: m.tone, size: 18, onStage: true).padding(3)
                                 }
                             }
                     }
@@ -98,23 +128,17 @@ struct PhotoHero: View {
     }
 }
 
-/// The numbered finding on the photo: its crop box outline with the number at the corner.
+/// The numbered finding on the photo: a tone corner set around its box (the lock-bracket shape, over a keyline) with
+/// its `Marker` at the corner. Selected: the heavier locked stroke. The photo itself is never tinted.
 private struct MarkBox: View {
     let mark: PhotoHero.Mark
     let selected: Bool
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .strokeBorder(mark.tone.color, lineWidth: selected ? 3 : 2)
-            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(mark.tone.color.opacity(selected ? 0.12 : 0.04)))
+        Color.clear
+            .keylined(CornerBrackets(), color: mark.tone.cameraColor, width: selected ? Line.locked : Line.drawing)
             .overlay(alignment: .topLeading) {
-                Text("\(mark.number)")
-                    .font(.system(.footnote, design: .rounded, weight: .bold)).monospacedDigit()
-                    .foregroundStyle(.white)
-                    .frame(width: 26, height: 26)
-                    .background(mark.tone.color, in: Circle())
-                    .overlay(Circle().strokeBorder(.white, lineWidth: 2))
-                    .offset(x: -11, y: -11)
+                Marker(number: mark.number, tone: mark.tone, onStage: true).offset(x: -13, y: -13)
             }
             .contentShape(Rectangle())
             .motion(Motion.fade, value: selected)

@@ -11,22 +11,21 @@ struct LeadCueBanner: View {
     var body: some View {
         Group {
             if let shown {
-                // Same anatomy as CueBanner (icon disc + words on a dark capsule), in the accent: a lead, not a rule.
+                // Same anatomy as CueBanner (a disc + words on a smoke capsule), with Lea's mark: it is Lea speaking,
+                // a lead, not a rule.
                 HStack(spacing: 10) {
-                    Image(systemName: "scope")
-                        .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                    LeaMarkView(size: 24, tint: Palette.next)
                         .frame(width: 30, height: 30)
-                        .background(Palette.cameraAccent.opacity(0.9), in: Circle())
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(shown.spoken).font(.cue).foregroundStyle(.white).lineLimit(2)
+                        Text(shown.spoken).font(.cue).foregroundStyle(Palette.chalk).lineLimit(2)
                         if shown.from == "web", let src = shown.sourceTitle, !src.isEmpty {
-                            Text(src).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
+                            Text(src).font(.caption).foregroundStyle(Palette.chalk.opacity(0.7)).lineLimit(1)
                         }
                     }
                 }
                 .padding(.leading, 6).padding(.trailing, 18).padding(.vertical, 6)
-                .background(Color.black.opacity(0.58), in: Capsule())
-                .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 0.5))
+                .background { SmokeFill(shape: Capsule()) }
                 .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 .transition(.opacity.combined(with: .move(edge: .top)))
                 .accessibilityElement(children: .combine)

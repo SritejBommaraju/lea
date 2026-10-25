@@ -33,11 +33,7 @@ struct WalkthroughDeck: View {
 
     private var header: some View {
         HStack {
-            Label("Walkthrough", systemImage: "play.rectangle.fill")
-                .font(.pillLabel).foregroundStyle(.white.opacity(0.8))
-            Text("\(player.index + 1) of \(player.steps.count)")
-                .font(.pillLabel).monospacedDigit().foregroundStyle(.white.opacity(0.55))
-                .contentTransition(.numericText())
+            Text("Walkthrough").font(.label).foregroundStyle(Palette.chalk.opacity(0.8))
             Spacer()
             Button { player.stop() } label: { Image(systemName: Symbol.close) }
                 .buttonStyle(StageIconButtonStyle())
@@ -119,10 +115,10 @@ private struct WalkthroughProgress: View {
     let player: WalkthroughPlayer
     var body: some View {
         let n = max(1, player.steps.count - 1)
-        Capsule().fill(Color.white.opacity(0.14))
+        Capsule().fill(Palette.chalk.opacity(0.18))
             .overlay(alignment: .leading) {
                 GeometryReader { g in
-                    Capsule().fill(Palette.cameraAccent)
+                    Capsule().fill(Palette.next)
                         .frame(width: max(4, g.size.width * min(1, max(0, player.progress / Double(n)))))
                 }
             }
@@ -131,29 +127,27 @@ private struct WalkthroughProgress: View {
     }
 }
 
-/// One step: the eyebrow (with the problem's number), the title, Lea's line and the evidence photo.
+/// One step: the problem's `Marker` and where it is in the tour ("1 of 3"), the title, Lea's line and the evidence
+/// photo. Chalk on smoke: no material over the stage.
 struct WalkthroughCard: View {
     let step: Walkthrough.Step
     let position: Int
     let count: Int
     let zoom: () -> Void
-    @Environment(\.accessibilityReduceTransparency) private var solid
-
     static let height: CGFloat = 176
 
     var body: some View {
         HStack(alignment: .top, spacing: Spacing.m) {
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 HStack(spacing: 6) {
-                    if let n = step.number { StageNumber(number: n, tone: step.tone) }
-                    Text(step.eyebrow.uppercased()).font(.pillLabel).foregroundStyle(step.tone.color)
-                        .lineLimit(1).minimumScaleFactor(0.75)
+                    if let n = step.number { Marker(number: n, tone: step.tone, size: 22, onStage: true) }
+                    Text("\(position) of \(count)").font(.label).monospacedDigit().foregroundStyle(Palette.chalk.opacity(0.7))
                 }
-                Text(step.title).font(.headline).foregroundStyle(.white).lineLimit(2)
+                Text(step.title).display(.card).foregroundStyle(Palette.chalk).lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
                 // Lea's whole line, to read along (or alone when she is muted); a long one scrolls in the card.
                 ScrollView(.vertical) {
-                    Text(step.speech).font(.subheadline).foregroundStyle(.white.opacity(0.72))
+                    Text(step.speech).font(.subheadline).foregroundStyle(Palette.chalk.opacity(0.85))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollBounceBehavior(.basedOnSize)
@@ -169,7 +163,7 @@ struct WalkthroughCard: View {
                         .frame(width: 76, height: 76)
                         .overlay(alignment: .bottomTrailing) {
                             Image(systemName: "arrow.up.left.and.arrow.down.right").font(.caption2.weight(.bold))
-                                .foregroundStyle(.white).padding(5).background(.black.opacity(0.5), in: Circle()).padding(4)
+                                .foregroundStyle(Palette.chalk).padding(5).background(Palette.smoke, in: Circle()).padding(4)
                         }
                 }
                 .buttonStyle(PressableCardStyle())
@@ -179,9 +173,7 @@ struct WalkthroughCard: View {
         }
         .padding(Spacing.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(solid ? Palette.stageGlassSolid : Color.black.opacity(0.55),
-                    in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Color.white.opacity(0.14), lineWidth: 0.5))
+        .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.card, style: .continuous)) }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Step \(position) of \(count). \(step.eyebrow). \(step.title). \(step.speech)")
     }
