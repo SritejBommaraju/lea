@@ -15,18 +15,10 @@ enum ReportSpeech {
         case .looksGood:
             out.append("I didn't see any problems in these photos.")
         case .noProblemsSeen:
-            // Not "it's fine": nothing looked wrong in what the photos showed clearly, then what that leaves out.
-            // The caveat's first sentence restates the first line in the third person, so speak what follows it.
+            // Not "it's fine": nothing looked wrong in what the photos showed clearly. What that leaves out is not said
+            // on landing (owner, 2026-10-25: no coverage caveat by default); it is in "What wasn't checked", and Lea
+            // answers when asked. `caveat` stays in the signature for callers.
             out.append("Nothing looked wrong in what I could see clearly.")
-            if let c = caveat ?? r.verdictCaveat {
-                var said = firstSentence(c)
-                if said.lowercased().hasPrefix("nothing looked wrong") {
-                    let rest = String(c.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst(said.count))
-                        .trimmingCharacters(in: .whitespaces)
-                    said = rest.isEmpty ? "" : firstSentence(rest)
-                }
-                if !said.isEmpty { out.append(said) }
-            }
         case .insufficientEvidence:
             if let reason = r.verdictReason.map(firstSentence) {
                 out.append("I couldn't tell from these photos. \(reason)")

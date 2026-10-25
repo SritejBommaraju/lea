@@ -28,7 +28,7 @@ from typing import Any
 
 from repairos.fusion import words
 from repairos.report.safety import limits, safety_notes
-from repairos.report.verdict import caveat, decide, facts_of
+from repairos.report.verdict import decide, facts_of, reason_for
 from repairos.slots.blob import REF_PREFIX
 from repairos.vision.generic_classes import GENERIC_CLASSES
 from repairos.vision.ranking import MERGE_IOU
@@ -282,7 +282,9 @@ def _is_issue(e: Mapping[str, Any]) -> bool:
 def bottom_not_placed(report: Mapping[str, Any], segments: list[Mapping[str, Any]],
                       locations: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
     """The "Bottom (not placed on the model)" list: report rows (findings, cosmetic, insufficient_evidence) built
-    from findings of a flipped segment that was not aligned, each with its photo crop and why it has no 3D point."""
+    from findings of a flipped segment that is not in the model (not aligned, or its merge failed the gate: the
+    report's capture.segments says aligned false), each with its photo crop and why it has no 3D point. An aligned
+    bottom's findings are placed on the model's underside instead."""
     want = {fid: int(sg["segment"]) for sg in segments if not sg.get("aligned")
             for fid in sg.get("findings_not_placed") or []}
     if not want:
@@ -416,19 +418,12 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
             report["bottom_not_placed"] = bottom
     v = decide(facts_of(report))
     report["verdict"] = v.verdict
-    report["verdict_reason"] = v.as_reason()
-    if v.verdict in ("no_problems_seen", "insufficient_evidence") and (c := caveat(report)):
-        report["verdict_reason"]["caveat"] = c   # what was not checked: the caveat list, never the headline
+    # No problems seen: what was checked and looked fine; not enough evidence: what was not checked as its caveat.
+    report["verdict_reason"] = reason_for(report, v, scan.get("crop_box"))
     if (obj := object_header(identity)):
         report["object"] = obj
     if mesh and mesh.get("status") == "done":
-        report["mesh"] = {"url": mesh_url(scan["scan_id"], int(mesh["rev"])), "rev": int(mesh["rev"]),
-                          "format": mesh["format"], "frame": "arkit_world", "triangles": int(mesh["triangles"])}
-        if mesh.get("cloud_ref"):
-            report["mesh"].update(cloud_url=cloud_url(scan["scan_id"], int(mesh["rev"])),
-                                  cloud_points=int(mesh.get("cloud_points") or 0))
-        if mesh.get("hero"):
-            report["mesh"].update(hero=mesh["hero"], hero_reason=mesh.get("hero_reason") or mesh["hero"])
+        report["mesh"] = mesh_section(scan["scan_id"], mesh)
     if hints and hints.get("status") == "done" and hints.get("hints"):
         report["reference_hints"] = {"hints": list(hints["hints"])[:3],
                                      "sources": [{"title": x.get("title", ""), "link": x["link"]}
@@ -442,6 +437,17 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
             step["reason"] = next_action["reason"]
         report["next_step"] = step
     return report
+
+
+def mesh_section(scan_id: str, mesh: Mapping[str, Any]) -> dict:
+    """The report's `mesh` from the run row's finished mesh record."""
+    out = {"url": mesh_url(scan_id, int(mesh["rev"])), "rev": int(mesh["rev"]), "format": mesh["format"],
+           "frame": "arkit_world", "triangles": int(mesh["triangles"])}
+    if mesh.get("cloud_ref"):
+        out.update(cloud_url=cloud_url(scan_id, int(mesh["rev"])), cloud_points=int(mesh.get("cloud_points") or 0))
+    if mesh.get("hero"):
+        out.update(hero=mesh["hero"], hero_reason=mesh.get("hero_reason") or mesh["hero"])
+    return out
 
 
 def mesh_url(scan_id: str, rev: int) -> str:

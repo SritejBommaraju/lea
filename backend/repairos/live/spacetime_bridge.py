@@ -59,7 +59,9 @@ ROOT = Path(__file__).resolve().parents[3]
 NOT_AN_ISSUE = {"ok", "insufficient_evidence", "unsure", "not_inspected", "not_seen_in_photo"}
 SEVERITY_RANK = {"safety": 0, "functional": 1, "": 2, "cosmetic": 3}
 MAX_SESSIONS = 6
-DISCOVER_EVERY_S = 0.5
+DISCOVER_EVERY_S = 0.5      # GET /v1/sessions this often while a session is changing (a scan going on)
+DISCOVER_IDLE_S = 4.0       # ... and this often once nothing changed for DISCOVER_ACTIVE_S (no busy polling at rest)
+DISCOVER_ACTIVE_S = 60.0
 HEARTBEAT_EVERY_S = 10.0
 NO_RETRY = {400, 401, 403, 404, 530}   # bad arguments, not allowed, no such reducer, the reducer refused
 
@@ -80,6 +82,13 @@ def _s(v) -> str:
 
 
 # ------------------------------------------------------------------ SpacetimeDB writes
+
+def verdict_line(rep: dict) -> str:
+    """The verdict's words with its caveat (how many areas still need a closer photo): the viewer shows one line, and
+    `no_problems_seen` without its caveat would read as more certain than the report is."""
+    reason = rep.get("verdict_reason") or {}
+    return " ".join(x for x in (_s(reason.get("text")), _s(reason.get("caveat"))) if x)
+
 class Spacetime:
     """Calls reducers over HTTP (POST /v1/database/<db>/call/<reducer>, a JSON array of arguments)."""
 
@@ -346,6 +355,11 @@ class Discovery:
         return out
 
 
+def discover_interval(since_change_s: float) -> float:
+    """Seconds until the next look for sessions: fast while one changed recently, slow when all are idle."""
+    return DISCOVER_EVERY_S if since_change_s < DISCOVER_ACTIVE_S else DISCOVER_IDLE_S
+
+
 # ------------------------------------------------------------------ signed media URLs (thumbnails + mesh)
 class Media:
     def __init__(self, gw: Gateway, secret: str, port: int, base: str, ttl_s: int):
@@ -609,7 +623,7 @@ class Mirror:
         s["places"], s["members"] = {}, {}
         self._put(f"rep:{scan_id}", "set_report", [
             scan_id, s["session"], _s(rep.get("report_id")), rev, _s(rep.get("verdict")),
-            _s((rep.get("verdict_reason") or {}).get("text")), _s((rep.get("summary") or {}).get("text")),
+            verdict_line(rep), _s((rep.get("summary") or {}).get("text")),
             [_s(x.get("text")) for x in rep.get("safety") or [] if x.get("text")], len(rows),
             len(rep.get("cosmetic") or []), len(rep.get("not_inspected") or []),
             len(rep.get("insufficient_evidence") or []), rows, at])
@@ -777,6 +791,7 @@ def main(argv: list[str] | None = None) -> int:
     disc = Discovery(gw, cfg["lookback"])
     started = False
     last_beat = last_sign = 0.0
+    last_change = time.monotonic()
     try:
         while True:
             try:
@@ -785,7 +800,10 @@ def main(argv: list[str] | None = None) -> int:
                         follow(sid, after)
                     started = True
                 else:
-                    for sid in disc.poll():
+                    changed = disc.poll()
+                    if changed:
+                        last_change = time.monotonic()
+                    for sid in changed:
                         follow(sid, 0)
             except Exception as e:  # noqa: BLE001 - discovery retries; the mirror never takes the backend down
                 log.warning("session discovery: %s", type(e).__name__)
@@ -798,7 +816,7 @@ def main(argv: list[str] | None = None) -> int:
                 if last_sign:
                     mirror.resign()
                 last_sign = now
-            time.sleep(DISCOVER_EVERY_S)
+            time.sleep(discover_interval(time.monotonic() - last_change))
     except KeyboardInterrupt:
         pass
     finally:

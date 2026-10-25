@@ -27,12 +27,16 @@ import logging
 import os
 import threading
 import time
+import uuid
 from collections import OrderedDict
+from collections.abc import Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from repairos.config import ROOT
 from repairos.contracts import validate
@@ -399,8 +403,66 @@ async def _store_findings(ctx: Context, findings: list[dict]) -> tuple[list[str]
     return ids, kept
 
 
+OBJECT_ROI_GROW = 0.15   # the object box, grown by this share of each side, projected into a still: its regions
+
+
+def object_roi(scan: Mapping[str, Any] | None, still: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
+    """Where the scanned object can be in a still (x0, y0, x1, y1 full-resolution pixels): the object box of the
+    still's own capture segment (segment 0's, or a flipped segment's own box in its own world, where its photos' poses
+    are) grown by OBJECT_ROI_GROW and projected. None when there is no box or pose, or the box is partly behind the
+    camera (then the whole photo is inspected)."""
+    from repairos.locate.camera import Pinhole, Pose, project
+    from repairos.recon.tsdf import ObjectBox
+
+    if not scan or not still.get("camera") or not still.get("intrinsics"):
+        return None
+    k = int(still.get("segment") or 0)
+    box = scan.get("crop_box")
+    cap = None
+    if k and k not in segments.same_frame_segments(scan):
+        box = next((g.get("crop_box") for g in scan.get("segments") or [] if int(g.get("segment") or 0) == k), None)
+        # the phone's box round a flipped object is generous (40 x 57 cm round a controller): no side longer than
+        # the object's longest side in segment 0 (it is the same object, turned over)
+        cap = max(scan["crop_box"]["extent_m"]) if (scan.get("crop_box") or {}).get("extent_m") else None
+    if not box:
+        return None
+    try:
+        if cap:
+            box = {**box, "extent_m": [min(float(e), cap) for e in box["extent_m"]]}
+        b = ObjectBox.from_contract(box)
+        pose = Pose.from_contract(still["camera"])
+        cam = Pinhole.from_contract(still["intrinsics"], still.get("width_px"), still.get("height_px"))
+    except (KeyError, ValueError, TypeError):
+        return None
+    c = np.array([[x, y, z] for x in (-0.5, 0.5) for y in (-0.5, 0.5) for z in (-0.5, 0.5)]) * (1 + 2 * OBJECT_ROI_GROW)
+    corners = c @ b.matrix[:3, :3].T + b.matrix[:3, 3]
+    uv, z = project(corners, pose, cam)
+    if not (z > 0.05).all() or not (cam.width and cam.height):
+        return None
+    x0, y0 = np.clip(uv.min(0), 0, [cam.width, cam.height])
+    x1, y1 = np.clip(uv.max(0), 0, [cam.width, cam.height])
+    return None if x1 - x0 < 1 or y1 - y0 < 1 else (float(x0), float(y0), float(x1), float(y1))
+
+
+def on_object(dets: list, roi: tuple[float, float, float, float] | None) -> list:
+    """The detector's boxes that are on the object (at least half inside its region; all when there is none):
+    clutter beside it (a cup, a coin on the table) is not the object and is never inspected as part of it."""
+    if roi is None:
+        return list(dets)
+    out = []
+    for d in dets:
+        x0, y0, x1, y1 = (float(v) for v in d.box)
+        area = max(1e-9, (x1 - x0) * (y1 - y0))
+        w = max(0.0, min(x1, roi[2]) - max(x0, roi[0]))
+        h = max(0.0, min(y1, roi[3]) - max(y0, roi[1]))
+        if w * h >= 0.5 * area:
+            out.append(d)
+    return out
+
+
 def _inspect_sync(ctx: Context, scan_id: str, still: dict, hints: list[str] | None = None,
-                  focus: list[str] | None = None) -> tuple[list[dict], list[dict], str, str, dict, dict]:
+                  focus: list[str] | None = None, scan: Mapping[str, Any] | None = None
+                  ) -> tuple[list[dict], list[dict], str, str, dict, dict]:
     from repairos.vision.crops import load_still
     from repairos.vision.inspect import inspect_still
     from repairos.vision.scale import PixelScale
@@ -410,6 +472,7 @@ def _inspect_sync(ctx: Context, scan_id: str, still: dict, hints: list[str] | No
     im = load_still(ctx.local_file(scan_id, still["image_file"]))
     t1 = time.perf_counter()
     dets, cached = ctx.detections_for(scan_id, still["image_file"], im)
+    dets = on_object(dets, object_roi(scan, still))
     t2 = time.perf_counter()
     depth = ctx.depth(scan_id, still)
     share = ctx.share(scan_id).for_still(still, depth)
@@ -461,7 +524,7 @@ async def _inspect_one(ctx: Context, scan: dict, still: dict, covered: str | Non
         hints = (run_row.get("hints") or {}).get("hints") or None
         focus = [x["area"] for x in (run_row.get("leads") or {}).get("items") or [] if x.get("area")] or None
         findings, dets, det_id, vlm, rollups, timing = await asyncio.to_thread(_inspect_sync, ctx, scan_id, still,
-                                                                               hints, focus)
+                                                                               hints, focus, scan)
         regions = regions_for(findings, dets, "whole photo", rollups)
         stage.update(detections=dets, detector=det_id, vlm=vlm, timing=timing)
     ids, kept = await _store_findings(ctx, findings)
@@ -798,9 +861,22 @@ async def announce_progress(ctx: Context, scan: dict) -> dict:
     return counts
 
 
+def mesh_input_key(rev: int, stills: list[dict], merged: list[int]) -> str:
+    """What a mesh build used: the scan package revision, its stills (a thin object's 3D view is its photo slab, so
+    stills that land after the capture job change it) and the registered bottoms fused in."""
+    key = f"{rev}:" + ",".join(sorted(str(s["still_id"]) for s in stills))
+    return key + (f"|bottom:{','.join(str(k) for k in sorted(merged))}" if merged else "")
+
+
 async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
-    """The scan's mesh for this revision of the scan package (pipeline/mesh.py), built once per revision: a blob,
-    recorded on the run row (`mesh`) with the live event `mesh_ready`. A scan with no usable depth records why."""
+    """The scan's mesh for what the scan has now (pipeline/mesh.py, `mesh_input_key`: package revision, stills, the
+    registered bottoms that passed the merge gate), built once per input: a blob, recorded on the run row (`mesh`)
+    with the live event `mesh_ready`. A scan with no usable depth records why. One build per scan at a time."""
+    async with ctx.scan_lock(f"mesh:{scan_id}"):
+        return await _ensure_mesh(ctx, scan_id)
+
+
+async def _ensure_mesh(ctx: Context, scan_id: str) -> dict:
     from repairos.pipeline.mesh import MeshUnavailable, build_scan_mesh
 
     row = await ctx.state.get("scan-package", scan_id)
@@ -808,31 +884,44 @@ async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
         raise PipelineError(f"no scan-package {scan_id}")
     scan, rev = row.data, row.rev
     have = (await _run_row(ctx, scan_id) or {}).get("mesh") or {}
-    if have.get("scan_rev") == rev and have.get("status") in ("done", "unavailable"):
+    seg_rec = await _segment_record(ctx, scan_id, rev)
+    still_rows = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
+    merged = segments.merged_transforms(seg_rec)
+    key = mesh_input_key(rev, still_rows, list(merged))
+    if have.get("status") in ("done", "unavailable") and (
+            have.get("input_key") == key or (have.get("input_key") is None and have.get("scan_rev") == rev
+                                             and not still_rows)):
         return have
     t0 = time.monotonic()
     try:
         local = await asyncio.to_thread(_local_scan, ctx, scan)
-        seg_rec = await _segment_record(ctx, scan_id, rev)
+        local_stills = await asyncio.to_thread(   # a thin object's 3D view is built from its photos (recreation.flat)
+            lambda: [map_files("still", s, lambda v, _b: str(ctx.local_file(scan_id, v))) for s in still_rows])
         m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"],
-                                    segment_transforms=segments.aligned_transforms(seg_rec))
+                                    segment_transforms=merged, stills_local=local_stills)
     except Exception as e:  # noqa: BLE001 - the 3D view never fails the capture or the report; the row says why
         unavailable = isinstance(e, MeshUnavailable)
         if not unavailable:
             log.warning("mesh for scan %s failed: %s", scan_id, e)
         reason = str(e) if unavailable else f"building the mesh failed ({type(e).__name__}: {e})"[:500]
         if have.get("status") == "done":   # a rebuild that failed: the earlier mesh stays served
-            rec = {**have, "rebuild_error": reason, "rebuild_scan_rev": rev}
+            rec = {**have, "rebuild_error": reason, "rebuild_scan_rev": rev, "rebuild_input_key": key}
         else:
-            rec = {"status": "unavailable" if unavailable else "failed", "reason": reason, "scan_rev": rev}
+            rec = {"status": "unavailable" if unavailable else "failed", "reason": reason, "scan_rev": rev,
+                   "input_key": key}
         await _update(ctx, scan, {"mesh": rec})
         return rec
     ref = await asyncio.to_thread(ctx.blobs.put, m.ply, "application/x-ply")
     cloud_ref = await asyncio.to_thread(ctx.blobs.put, m.cloud_ply, "application/x-ply") if m.cloud_ply else None
+    why = m.hero_reason
+    left_out = segments.merge_left_out(seg_rec)
+    if left_out and not m.method.startswith("flat"):   # the gate kept a registered bottom out of the model
+        why += "; built from the top scan alone (" + "; ".join(left_out) + ")"
     rec = {"status": "done", "ref": ref, "format": "ply", "scan_rev": rev, "rev": int(have.get("rev") or 0) + 1,
-           "vertices": m.vertices, "triangles": m.triangles, "keyframes": m.keyframes, "frame": "arkit_world",
-           "bytes": len(m.ply), "cloud_ref": cloud_ref, "cloud_points": m.cloud_points, "hero": m.hero,
-           "hero_reason": m.hero_reason, "size_m": m.size_m, "method": m.method,
+           "input_key": key, "vertices": m.vertices, "triangles": m.triangles, "keyframes": m.keyframes,
+           "frame": "arkit_world", "bytes": len(m.ply), "cloud_ref": cloud_ref, "cloud_points": m.cloud_points,
+           "hero": m.hero, "hero_reason": why, "size_m": m.size_m, "method": m.method,
+           "bottom_segments": list(m.bottom_segments),
            "seconds": {**m.seconds, "with_io_s": round(time.monotonic() - t0, 3)}, "built_at": _now()}
     await _update(ctx, scan, {"mesh": rec, "announce": "mesh_ready"})
     return rec
@@ -864,7 +953,10 @@ async def ensure_segment_alignment(ctx: Context, scan_id: str) -> dict:
         t0 = time.monotonic()
         try:
             local = await asyncio.to_thread(_local_scan, ctx, scan)
-            rec, clouds = await asyncio.to_thread(segments.align_scan_segments, local)
+            still_rows = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
+            local_stills = await asyncio.to_thread(   # a thin object's flip is registered by its photos
+                lambda: [map_files("still", s, lambda v, _b: str(ctx.local_file(scan_id, v))) for s in still_rows])
+            rec, clouds = await asyncio.to_thread(segments.align_scan_segments, local, stills_local=local_stills)
             merged = await asyncio.to_thread(segments.merged_cloud_ply, local.get("points_file"), clouds)
             if merged:
                 rec["cloud_ref"] = await asyncio.to_thread(ctx.blobs.put, merged, "application/x-ply")
@@ -1183,6 +1275,7 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
                              identity=extra.get("identity"), mesh=extra.get("mesh"), hints=extra.get("hints"),
                              segments=segments.report_segments(scan, seg_rec,
                                                                findings_by_segment(stills, findings, locations)))
+        draft["build_id"] = uuid.uuid4().hex   # this build; its later patches (fix, mesh) check it (_patch_report)
         from repairos.pipeline.story import STORY_KIND
         from repairos.references.leads import user_lead
 
@@ -1226,9 +1319,45 @@ async def _run_stages(ctx: Context, scan: dict) -> dict:
         task = asyncio.create_task(attach_fix(ctx, scan, published, fix_task))
         ctx._background.add(task)
         task.add_done_callback(ctx._background.discard)
-    from repairos.recreation.service import recreation_quietly
-    ctx.spawn(recreation_quietly(ctx, scan["scan_id"]))   # stills that landed after Done: rebuilt only if new
+    ctx.spawn(_models_after_report(ctx, scan, published))   # stills that landed after capture: rebuilt only if new
     return draft
+
+
+async def _models_after_report(ctx: Context, scan: dict, published: Any) -> None:
+    """After the report: the mesh and the recreation for the scan as it is now (stills that arrived after the capture
+    job: a thin object's 3D view is its photo slab), rebuilt only when their inputs changed. A new mesh also goes into
+    the published report (one more revision of the same report; never over a newer one)."""
+    from repairos.recreation.service import recreation_quietly
+
+    sid = scan["scan_id"]
+    try:
+        mesh = await ensure_mesh(ctx, sid)
+        if mesh.get("status") == "done" and (published.data.get("mesh") or {}).get("rev") != mesh.get("rev"):
+            from repairos.report.build import mesh_section
+            await _patch_report(ctx, published, {"mesh": mesh_section(sid, mesh)})
+    except Exception as e:  # noqa: BLE001 - recorded by ensure_mesh; this only guards the task
+        log.warning("mesh after the report for scan %s: %s", sid, e)
+    await recreation_quietly(ctx, sid)
+
+
+async def _patch_report(ctx: Context, published: Any, patch: dict, tries: int = 3) -> bool:
+    """One more revision of the published report with `patch` merged in, only while it is still the same report build
+    (its `build_id`, unique per report.publish and kept by every patch: a patch from this run, like the fix or the
+    mesh, may land first, then it is re-read and patched again). False when a newer report (more photos) replaced it,
+    even one built in the same second (created_at has whole seconds)."""
+    def build(data: Mapping[str, Any]) -> tuple:
+        return data.get("build_id"), data.get("created_at")   # created_at alone only for rows from before build_id
+
+    row = published
+    for _ in range(tries):
+        try:
+            await ctx.state.put("report", {**row.data, **patch}, expect_rev=row.rev)
+            return True
+        except RevConflict:
+            row = await ctx.state.get("report", published.data["report_id"])
+            if row is None or build(row.data) != build(published.data):
+                return False
+    return False
 
 
 # ------------------------------------------------------------------------------------- "Fix it" (parts, demo)
@@ -1267,10 +1396,8 @@ async def attach_fix(ctx: Context, scan: dict, published: Any, task: asyncio.Tas
     fix, rec = _fix_result(task)
     report = published.data
     if fix and report.get("fix") != fix:
-        try:
-            await ctx.state.put("report", {**report, "fix": fix}, expect_rev=published.rev)
-        except RevConflict:   # a newer report (more photos) is out: this search was for the old one
-            await _update(ctx, scan, {"fix": {**rec, "status": "stale", "finished_at": _now()}})
+        if not await _patch_report(ctx, published, {"fix": fix}):   # a newer report (more photos) is out: this
+            await _update(ctx, scan, {"fix": {**rec, "status": "stale", "finished_at": _now()}})   # search was old
             return None
     if not fix:   # the live event ends the app's "Searching for parts…" (`limited`: "not available right now")
         await _update(ctx, scan, {"fix": {**rec, "finished_at": _now()}, "announce": "fix_ready"})
@@ -1299,6 +1426,8 @@ def not_aligned_reason(scan: dict, seg_rec: dict | None, segment: int) -> str:
         return NOT_ALIGNED
     r = next((x for x in (seg_rec or {}).get("segments") or [] if int(x["segment"]) == segment), {})
     why = r.get("why_not") or "it has not been registered to the main scan yet"
+    if r.get("aligned") and not (r.get("merge") or {}).get("ok", True):
+        why = f"its best fit does not make sense: {r['merge'].get('why')}"
     return (f"this photo is from the flipped scan of the bottom, which could not be lined up with the main scan "
             f"({why}), so it is not placed on the model")
 
@@ -1339,7 +1468,7 @@ async def locate_findings(ctx: Context, scan: dict, stills: list[dict], findings
     still_local: dict[str, dict] = {}
     part_class = {fid: r["part_class"] for fid, r in regions.items()}
 
-    moved_to0 = segments.aligned_transforms(seg_rec)   # flipped segments the server registered
+    moved_to0 = segments.merged_transforms(seg_rec)   # flipped segments the server registered (and merged)
 
     def local_still(sid: str) -> dict:
         if sid not in still_local:

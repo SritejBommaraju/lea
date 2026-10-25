@@ -255,6 +255,41 @@ def test_story_endpoint_records_the_words_and_queues_one_job(gw):  # noqa: F811
     assert gw.req("POST", f"/v1/sessions/{sid}/story", {"text": ""})[0] == 422
 
 
+def test_every_new_utterance_or_photo_queues_its_own_job_past_the_kept_lists(gw):  # noqa: F811
+    sid = new_session(gw)
+    jobs = [gw.req("POST", f"/v1/sessions/{sid}/story", {"text": f"detail {i}"})[1]["job"] for i in range(S.MAX_SAID + 3)]
+    assert len(set(jobs)) == len(jobs)                                  # past MAX_SAID kept utterances too
+    photos = [gw.upload(f"photo {i}".encode(), "image/jpeg") for i in range(5)]
+    shown = [gw.req("POST", f"/v1/sessions/{sid}/identify", {"image": p})[1]["job"] for p in photos]
+    assert len(set(shown + jobs)) == len(shown) + len(jobs)             # past the three kept photos too
+    assert gw.req("POST", f"/v1/sessions/{sid}/identify", {"image": photos[-1]})[1]["job"] == shown[-1]   # a retry
+    row = run(gw.state.get("story", sid)).data
+    assert len(row["said"]) == S.MAX_SAID and S.said_seq(row) == S.MAX_SAID + 3
+    assert len(row["photos"]) == 3 and S.photo_seq(row) == 5
+
+
+def test_the_story_is_read_again_after_the_kept_list_is_full():
+    said = [{"text": f"d{i}"} for i in range(S.MAX_SAID)]
+    read_at_full = {"said_count": S.MAX_SAID, "said_seq": S.MAX_SAID}
+    assert S.already_read({"said": said, "said_seq": S.MAX_SAID, "hypothesis": read_at_full})
+    assert not S.already_read({"said": said, "said_seq": S.MAX_SAID + 1, "hypothesis": read_at_full})   # same length
+    assert S.already_read({"said": [{"text": "a"}], "hypothesis": {"said_count": 1}})   # a row from before the counter
+
+
+def test_one_story_identity_reader_for_research_and_lea(gw):  # noqa: F811
+    sid = new_session(gw)
+    brief = {"status": "done", "name": "Desk fan 40", "brand": "Breeze", "model": "DF-40", "category": "fan",
+             "known_issues": [{"area": "speed switch", "why": "wears out"}]}
+    run(gw.state.put("story", {"session_id": sid, "said": [], "brief": brief}))
+    assert run(S.story_identity(gw.state, sid)) == {"brand": "Breeze", "model": "DF-40", "category": "fan", "confidence": "medium"}
+    full = run(S.story_identity(gw.state, sid, detail=True))
+    assert full["name"] == "Desk fan 40" and full["known_issues"] == ["speed switch"]
+    failed = {"session_id": sid, "said": [], "identity": {"status": "failed", "error": "Timeout"}}
+    run(gw.state.put("story", failed, expect_rev=run(gw.state.get("story", sid)).rev))
+    assert run(S.story_identity(gw.state, sid))["status"] == "failed"   # research gets it as before
+    assert run(S.story_identity(gw.state, sid, detail=True)) is None   # Lea does not talk about it
+
+
 def test_the_story_job_sends_the_persons_lead_first_then_research_leads(gw, monkeypatch):  # noqa: F811
     sid = new_session(gw)
     st = gw.state

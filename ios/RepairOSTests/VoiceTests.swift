@@ -1,3 +1,4 @@
+import ARKit
 import AVFoundation
 import Foundation
 import Testing
@@ -111,8 +112,9 @@ struct ReportSpeechTests {
 
     @Test func noProblemsSeenIsNotAllClear() {
         let r = Self.report("no_problems_seen")
+        // Never "it's fine"; the caveat is not said on landing (owner, 2026-10-25: no coverage caveat by default).
         #expect(ReportSpeech.lines(r, caveat: "The inside was not photographed. More.")
-                == "Nothing looked wrong in what I could see clearly. The inside was not photographed.")
+                == "Nothing looked wrong in what I could see clearly.")
     }
 
     @Test func productBriefIsSpokenBriefly() {
@@ -151,6 +153,27 @@ struct WakePhraseTests {
         #expect(WakeListener.afterWake("they leave it on the table") == nil)
         #expect(WakeListener.afterWake("hello there") == nil)
         #expect(WakeListener.afterWake("") == nil)
+    }
+}
+
+/// Answers to Lea's own question: a plain yes takes the offer on screen, and a one-word yes or no is a turn even in
+/// the follow-up window (where a single stray word is not).
+@MainActor
+struct ShortAnswerTests {
+    @Test func aPlainYesTakesTheOffer() {
+        for yes in ["Yes.", "yeah", "Yeah, let's do it", "okay go ahead", "sure please", "yes Lea"] {
+            #expect(LeaConversation.isYes(yes), "\(yes)")
+        }
+        for not in ["yes but it smells burnt", "no", "what would the scan show?", "maybe later"] {
+            #expect(!LeaConversation.isYes(not), "\(not)")
+        }
+    }
+
+    @Test func oneWordAnswersAreTurns() {
+        #expect(WakeListener.isShortAnswer("Yes."))
+        #expect(WakeListener.isShortAnswer("nope"))
+        #expect(!WakeListener.isShortAnswer("um"))
+        #expect(!WakeListener.isShortAnswer("television"))
     }
 }
 
@@ -216,6 +239,132 @@ struct StreamFallbackTests {
         var f = StreamFallback()
         _ = f.sentence("It looks fine from these photos.", withAudio: true)
         #expect(f.audioOff() == "It looks fine from these photos.")
+    }
+}
+
+/// Lea's look-and-point (Voice/LeaSight): where a mark in the photo lands on the object.
+@MainActor
+struct LeaSightTests {
+    @Test func photoAndSensorCoordinatesRoundTrip() {
+        // The photo is the sensor image turned right: its top-left is the sensor's bottom-left.
+        #expect(LeaSight.sensor(CGPoint(x: 0, y: 0)) == CGPoint(x: 0, y: 1))
+        #expect(LeaSight.sensor(CGPoint(x: 0.5, y: 0.25)) == CGPoint(x: 0.25, y: 0.5))
+        for p in [CGPoint(x: 0.1, y: 0.9), CGPoint(x: 0.42, y: 0.61)] {
+            let back = LeaSight.portrait(LeaSight.sensor(p))
+            #expect(abs(back.x - p.x) < 1e-9 && abs(back.y - p.y) < 1e-9)
+        }
+    }
+
+    @Test func aMarkIsPinnedFromTheCameraAndDepthOfItsPhoto() {
+        let k = simd_float3x3(SIMD3(1000, 0, 0), SIMD3(0, 1000, 0), SIMD3(960, 720, 1))
+        var moved = matrix_identity_float4x4
+        moved.columns.3 = SIMD4(1, 2, 3, 1)   // the phone 1 m right, 2 m up, 3 m back
+        // A 4 × 3 depth map of the 1920 × 1440 image: intrinsics scaled as DepthCopy.from does.
+        let sx: Float = 4.0 / 1920, sy: Float = 3.0 / 1440
+        let depth = DepthCopy(width: 4, height: 3, depth: [Float](repeating: 0.5, count: 12), confidence: [UInt8](repeating: 2, count: 12),
+                              fx: 1000 * sx, fy: 1000 * sy, cx: 960 * sx, cy: 720 * sy, cameraToWorld: moved, timestamp: 0)
+        let look = LeaSight.Snapshot(transform: moved, intrinsics: k, resolution: CGSize(width: 1920, height: 1440), depth: depth)
+        let centre = LeaSight.world(at: CGPoint(x: 0.5, y: 0.5), look, session: ARSession())
+        #expect(centre.map { simd_distance($0, SIMD3(1, 2, 2.5)) < 0.001 } == true)   // 0.5 m straight ahead
+        // A point right of centre in the sensor image lies right of the camera's axis.
+        let right = LeaSight.world(at: CGPoint(x: 0.75, y: 0.5), look, session: ARSession())
+        #expect(right.map { $0.x > 1.1 && abs($0.z - 2.5) < 0.001 } == true)
+    }
+
+    /// The person's pointer is drawn where the pointed spot is in the photo actually sent, wherever the phone is.
+    @Test func thePointedSpotIsFoundAgainInALaterFrame() {
+        let k = simd_float3x3(SIMD3(1000, 0, 0), SIMD3(0, 1000, 0), SIMD3(960, 720, 1))
+        let res = CGSize(width: 1920, height: 1440)
+        let spot = SIMD3<Float>(0.1, 0, -1)   // pointed at from the origin
+        let there = LeaSight.sensorPoint(of: spot, transform: matrix_identity_float4x4, intrinsics: k, resolution: res)
+        #expect(there.map { abs($0.x - 0.5521) < 0.001 && abs($0.y - 0.5) < 0.001 } == true)
+        var moved = matrix_identity_float4x4
+        moved.columns.3 = SIMD4(0.2, 0, 0, 1)   // the phone moved 20 cm right before the photo
+        let later = LeaSight.sensorPoint(of: spot, transform: moved, intrinsics: k, resolution: res)
+        #expect(later.map { $0.x < 0.5 } == true)   // the spot is now left of centre
+        var turned = matrix_identity_float4x4
+        turned.columns.3 = SIMD4(0, 0, -2, 1)       // walked past it: behind the camera, so no ring
+        #expect(LeaSight.sensorPoint(of: spot, transform: turned, intrinsics: k, resolution: res) == nil)
+    }
+
+    @Test func depthOutsideTheUsefulRangeOrLowConfidenceIsNotUsed() {
+        func one(_ metres: Float, _ conf: UInt8) -> DepthCopy {
+            DepthCopy(width: 1, height: 1, depth: [metres], confidence: [conf], fx: 1, fy: 1, cx: 0.5, cy: 0.5,
+                      cameraToWorld: matrix_identity_float4x4, timestamp: 0)
+        }
+        #expect(one(0.01, 2).worldPoint(at: CGPoint(x: 0.5, y: 0.5)) == nil)
+        #expect(one(9, 2).worldPoint(at: CGPoint(x: 0.5, y: 0.5)) == nil)
+        #expect(one(1.2, 0).worldPoint(at: CGPoint(x: 0.5, y: 0.5)) == nil)   // ARKit unsure of this pixel
+        #expect(one(1.2, 2).worldPoint(at: CGPoint(x: 2, y: -1)).map { abs($0.z + 1.2) < 0.001 } == true)   // clamped
+    }
+}
+
+/// What Lea is sent: photo size, the keyframe ring's rule, LiDAR words, measuring, and the converse query.
+@MainActor
+struct LeaLookingTests {
+    /// A 1920 x 1440 sensor frame becomes a 576 x 768 portrait photo, whatever the screen scale (a screen-scale
+    /// renderer made 2304 px).
+    @Test func thePhotoIs768PixelsOnItsLongSideAtScaleOne() throws {
+        let sensor = CIImage(color: CIColor(red: 0.4, green: 0.5, blue: 0.6)).cropped(to: CGRect(x: 0, y: 0, width: 1920, height: 1440))
+        let jpeg = try #require(LeaSight.jpeg(sensor, ring: CGPoint(x: 0.5, y: 0.5)))
+        let cg = try #require(UIImage(data: jpeg)?.cgImage)
+        #expect(cg.width == 576 && cg.height == 768)
+        #expect(jpeg.count < 150_000)
+    }
+
+    @Test func aKeyframeIsSharpNewAndAtMostOneEveryTwoSeconds() {
+        let t0 = Date()
+        var near = matrix_identity_float4x4
+        near.columns.3 = SIMD4(0.03, 0, 0, 1)    // 3 cm: not a new view
+        var far = matrix_identity_float4x4
+        far.columns.3 = SIMD4(0.09, 0, 0, 1)     // 9 cm: a new view
+        let turned = simd_float4x4(simd_quatf(angle: 12 * .pi / 180, axis: SIMD3(0, 1, 0)))   // 12 degrees
+        let last = (pose: matrix_identity_float4x4, at: t0)
+        #expect(KeyframeRule.accept(last: nil, pose: far, at: t0, sharpness: 100, medianSharpness: 100))
+        #expect(!KeyframeRule.accept(last: last, pose: far, at: t0.addingTimeInterval(1.5), sharpness: 100, medianSharpness: 100))
+        #expect(KeyframeRule.accept(last: last, pose: far, at: t0.addingTimeInterval(2.1), sharpness: 100, medianSharpness: 100))
+        #expect(KeyframeRule.accept(last: last, pose: turned, at: t0.addingTimeInterval(2.1), sharpness: 100, medianSharpness: 100))
+        #expect(!KeyframeRule.accept(last: last, pose: near, at: t0.addingTimeInterval(5), sharpness: 100, medianSharpness: 100))
+        #expect(!KeyframeRule.accept(last: last, pose: far, at: t0.addingTimeInterval(5), sharpness: 50, medianSharpness: 100))   // blurry
+    }
+
+    @Test func lidarFactsAreWordsLeaRepeats() {
+        #expect(ScanSession.boxWords(SIMD3(0.208, 0.076, 0.410)) == "208 x 410 mm footprint, 76 mm tall")
+        #expect(LeaSight.millimetres(SIMD3(0, 0, 0), SIMD3(0.03, 0.04, 0)) == 50)
+    }
+
+    @Test func measuringNeedsDepthAndNeverGuesses() {
+        let sight = LeaSight()
+        #expect(sight.measure(CGPoint(x: 0.2, y: 0.5), CGPoint(x: 0.8, y: 0.5)).contains("can't measure"))
+    }
+
+    @Test func noPhotosAreTakenOutsideAConversationWindow() async {
+        let sight = LeaSight()
+        sight.uploader = { _ in "blob://sha256:" + String(repeating: "a", count: 64) }
+        #expect(!sight.looking)
+        #expect(await sight.photosForTurn(nil) == nil)          // no frame, nothing kept
+        sight.turnStarted(nil)
+        #expect(sight.looking)
+        sight.closeWindow()
+        #expect(!sight.looking)
+    }
+
+    @Test func aTurnSendsUpToThreePhotosOldestFirst() {
+        let gateway = GatewayClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: nil)
+        let refs = (1...4).map { "blob://sha256:" + String(repeating: "\($0)", count: 64) }
+        let q = gateway.converseRequest(scanID: "scan_1", audio: nil, text: "what is this", speech: false, images: refs).url?.query ?? ""
+        let sent = q.components(separatedBy: "&").filter { $0.hasPrefix("image=") }
+        #expect(sent.count == 3 && sent.last?.contains(String(repeating: "4", count: 64)) == true)
+        #expect(sent.first?.contains(String(repeating: "2", count: 64)) == true)
+    }
+
+    @Test func aMeasureEventCarriesTwoPointsOfThePhoto() throws {
+        let json = #"{"type":"measure","x1":0.1,"y1":0.2,"x2":0.3,"y2":0.4}"#
+        guard case .measure(let a, let b)? = GatewayClient.event(UInt8(ascii: "J"), Data(json.utf8)) else {
+            Issue.record("not a measure event")
+            return
+        }
+        #expect(a == CGPoint(x: 0.1, y: 0.2) && b == CGPoint(x: 0.3, y: 0.4))
     }
 }
 

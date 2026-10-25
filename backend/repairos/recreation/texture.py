@@ -89,11 +89,6 @@ class TexturedMesh:
 
 
 # ------------------------------------------------------------------------------------------------ inputs
-def _same_frame_segments(pkg: Mapping[str, Any]) -> set[int]:
-    return {0} | {int(s["segment"]) for s in pkg.get("segments") or []
-                  if s.get("reason") == "continued" and s.get("aligned") is not False}
-
-
 def _image_size(path: Path) -> tuple[int, int]:
     from PIL import Image
 
@@ -135,11 +130,11 @@ def scan_views(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], *, b
     keyframes (evenly thinned to `max_keyframes`), with a relative sharpness per kind. `segment_transforms`
     ({segment: 4x4}, pipeline/segments.py): the stills and keyframes of a flipped segment the server registered join
     with their poses moved into segment 0's frame, so the bottom is textured from its own photos."""
-    from repairos.pipeline.segments import restate_still
+    from repairos.pipeline.segments import restate_still, same_frame_segments
     from repairos.recon.tsdf import moved_pose
 
     moved = {int(k): np.asarray(t, float) for k, t in (segment_transforms or {}).items()}
-    segs = _same_frame_segments(pkg) | set(moved)
+    segs = same_frame_segments(pkg) | set(moved)   # the one frame rule, as the mesh uses
     views: list[View] = []
     for s in stills:
         k = int(s.get("segment") or 0)

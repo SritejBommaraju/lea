@@ -19,8 +19,8 @@ ZStack {
     HStack(alignment: .top) { close button · Spacer · DomeDial }
     Spacer()
     CueBanner(text:symbol:tone:)
-    StatusPill / ProgressPill row (optional: photos, upload)
-    Button { … } label: { Label("Close-ups", systemImage: Symbol.closeup) }.buttonStyle(.primary(.light))
+    chips (.cameraChip(): identity, Scan the bottom), no counters
+    Button { … } label: { Label("Scan", systemImage: Symbol.scan) }.buttonStyle(.primary(.light))
   }
   .padding(.horizontal, Spacing.l)
 }
@@ -36,8 +36,10 @@ Close button: `Button { … } label: { Image(systemName: Symbol.close) }.buttonS
 | `CueBanner(text:symbol:tone:)` | The current cue. Tone: `.guide` for directions ("Move left", "Other side"), `.caution` for fixable (slow down, more light, too far), `.stop` for blocking (too close, object lost), `.good` when the dome is done. | the `cueText` capsule |
 | `ShotTick(trigger:)` | `shotCount` (Int, +1 per accepted photo). Fires `Haptic.shot` itself. | `.sensoryFeedback(.success, trigger: shotCount)` |
 | `LockBrackets(phase:)` | `.searching` until the box is fitted, then `.locked` (settles in once and fires `Haptic.lock`). Set its `.frame`/`.position` from the projected box at ≤ 10 Hz. | `TargetRing` / the `+` crosshair |
-| `.buttonStyle(.primary(.light))` | The one action per stage (Lock on / Close-ups / Finish). | `bigButton` |
-| `StatusPill(…, onCamera: true)`, `ProgressPill(…, onCamera: true)` | Photo count, upload progress. | — |
+| `.buttonStyle(.primary(.light))` | The one action per stage (Scan / Done / Finish): a chalk capsule, ink label. | `bigButton` |
+| `.cameraChip()`, `StatusPill(…, onCamera: true)` | A chip over the camera: chalk on smoke ("Looks like: …"). No photo or upload counters (they were removed on purpose). | — |
+| `Marker(number:tone:onStage:)`, `Marker.image(…)` | A problem's number, the same mark on cards, the stage, photos and AR. | the old filled discs |
+| `LeaMarkView(state:size:level:tint:)` | Lea's mark (`next` tint over the camera); ticks follow a real level only. | `mic.circle.fill` |
 
 Suggested symbols: walk → `figure.walk`, slow down → `tortoise.fill`, more light → `lightbulb.fill`, too close →
 `arrow.down.backward.and.arrow.up.forward`, too far → `arrow.up.forward.and.arrow.down.backward`, other side →
@@ -58,8 +60,8 @@ and fire `Haptic.lock` from SwiftUI on the same state change.
 
 - Drive every overlay from coarse published state, ≤ 10 changes a second. Never pass per-frame values (camera
   transform, raw azimuth) into these views; quantise first (cell index, cue enum).
-- No `.ultraThinMaterial` except at most one bar; these components use solid translucent fills instead. No
-  shadows or animated gradients over AR.
+- No material over the camera or the stage: chalk with keylines on `Palette.smoke` (solid under Reduce
+  Transparency). The one backdrop material per app screen is `GlassBar`. No shadows or animated gradients over AR.
 - `DomeDial` is flattened with `.drawingGroup()`; keep it a fixed size.
 - Reduce Motion is handled inside each component.
 

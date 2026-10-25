@@ -84,7 +84,9 @@ final class AppState {
     /// The still probe never blocks launch: the first close-up measures it inside the capture session (or
     /// Settings runs it on demand), and the answer is cached per iOS build.
     func reloadSessions() {
-        sessions = storage.listSessions()
+        // Unique ids only: a duplicate id in a List's ForEach also breaks its row bookkeeping.
+        var seen = Set<String>()
+        sessions = storage.listSessions().filter { seen.insert($0.id).inserted }
         stillProbe = StillProbeResult.cached()
     }
 

@@ -1192,6 +1192,10 @@ public struct Report: Codable, Sendable {
     /// can show it as a photo. Absent when every such segment was aligned or the scan has none.
     /// Why a segment was not aligned: capture.segments[].why_not.
     public let bottomNotPlaced: [BottomNotPlacedOnTheModel]?
+    /// Unique per report build (report.publish); a later revision of the same build (the fix,
+    /// the mesh) keeps it. A patch applies only while the row still carries its build's id
+    /// (created_at has whole seconds).
+    public let buildID: String?
     public let capture: Capture
     /// Issues the vision model judged cosmetic (looks worn but would not stop the device
     /// working). Listed apart; they never make the verdict potential_issues on their own.
@@ -1257,6 +1261,7 @@ public struct Report: Codable, Sendable {
 
     public enum CodingKeys: String, CodingKey {
         case bottomNotPlaced = "bottom_not_placed"
+        case buildID = "build_id"
         case capture = "capture"
         case cosmetic = "cosmetic"
         case createdAt = "created_at"
@@ -1282,8 +1287,9 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, buildID: String?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.bottomNotPlaced = bottomNotPlaced
+        self.buildID = buildID
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt
@@ -2688,6 +2694,10 @@ public struct ScanPackageSegment: Codable, Sendable {
     /// is set and must be applied to its poses and points.
     public let aligned: Bool?
     public let cropBox: CropBox?
+    /// The phone's live alignment of this flipped segment (FlipAligner), for diagnosis only and
+    /// numbers only: how each cloud was cut to the object and the last few attempts. The backend
+    /// never places anything with it.
+    public let flipAlign: FlipAlign?
     /// True when the object was moved for this segment (a flip): its keyframes, stills, crop_box
     /// and points_file are in this segment's own ARKit world frame, which says nothing about
     /// segment 0's object frame; only transform_to_segment0 relates them. Absent = false.
@@ -2715,6 +2725,7 @@ public struct ScanPackageSegment: Codable, Sendable {
     public enum CodingKeys: String, CodingKey {
         case aligned = "aligned"
         case cropBox = "crop_box"
+        case flipAlign = "flip_align"
         case objectMoved = "object_moved"
         case pointCount = "point_count"
         case pointsFile = "points_file"
@@ -2725,9 +2736,10 @@ public struct ScanPackageSegment: Codable, Sendable {
         case transformToSegment0 = "transform_to_segment0"
     }
 
-    public init(aligned: Bool?, cropBox: CropBox?, objectMoved: Bool?, pointCount: Int?, pointsFile: String?, poseSource: KeyframePoseSource?, reason: SegmentReason, segment: Int, transformQuality: Double?, transformToSegment0: [Double]?) {
+    public init(aligned: Bool?, cropBox: CropBox?, flipAlign: FlipAlign?, objectMoved: Bool?, pointCount: Int?, pointsFile: String?, poseSource: KeyframePoseSource?, reason: SegmentReason, segment: Int, transformQuality: Double?, transformToSegment0: [Double]?) {
         self.aligned = aligned
         self.cropBox = cropBox
+        self.flipAlign = flipAlign
         self.objectMoved = objectMoved
         self.pointCount = pointCount
         self.pointsFile = pointsFile
@@ -2736,6 +2748,114 @@ public struct ScanPackageSegment: Codable, Sendable {
         self.segment = segment
         self.transformQuality = transformQuality
         self.transformToSegment0 = transformToSegment0
+    }
+}
+
+/// The phone's live alignment of this flipped segment (FlipAligner), for diagnosis only and
+/// numbers only: how each cloud was cut to the object and the last few attempts. The backend
+/// never places anything with it.
+// MARK: - FlipAlign
+public struct FlipAlign: Codable, Sendable {
+    public let attempts: Int?
+    public let bottom: FlipCut?
+    public let last: [FlipAttempt]?
+    public let main: FlipCut?
+
+    public enum CodingKeys: String, CodingKey {
+        case attempts = "attempts"
+        case bottom = "bottom"
+        case last = "last"
+        case main = "main"
+    }
+
+    public init(attempts: Int?, bottom: FlipCut?, last: [FlipAttempt]?, main: FlipCut?) {
+        self.attempts = attempts
+        self.bottom = bottom
+        self.last = last
+        self.main = main
+    }
+}
+
+/// How the phone cut one cloud to the object before aligning it (FlipIsolation): the table
+/// it fitted and the tight box round the object.
+// MARK: - FlipCut
+public struct FlipCut: Codable, Sendable {
+    public let boxExtentM: [Double]?
+    /// Cut above the table: its noise below its plane, mirrored.
+    public let cutMm: Double?
+    /// How far the locked box's floor sat below the fitted table.
+    public let floorToTableMm: Double?
+    public let inputPoints: Int?
+    public let objectPoints: Int?
+    public let tableTiltDeg: Double?
+    /// The fitted table's height under the object, in this cloud's ARKit world.
+    public let tableYM: Double?
+
+    public enum CodingKeys: String, CodingKey {
+        case boxExtentM = "box_extent_m"
+        case cutMm = "cut_mm"
+        case floorToTableMm = "floor_to_table_mm"
+        case inputPoints = "input_points"
+        case objectPoints = "object_points"
+        case tableTiltDeg = "table_tilt_deg"
+        case tableYM = "table_y_m"
+    }
+
+    public init(boxExtentM: [Double]?, cutMm: Double?, floorToTableMm: Double?, inputPoints: Int?, objectPoints: Int?, tableTiltDeg: Double?, tableYM: Double?) {
+        self.boxExtentM = boxExtentM
+        self.cutMm = cutMm
+        self.floorToTableMm = floorToTableMm
+        self.inputPoints = inputPoints
+        self.objectPoints = objectPoints
+        self.tableTiltDeg = tableTiltDeg
+        self.tableYM = tableYM
+    }
+}
+
+// MARK: - FlipAttempt
+public struct FlipAttempt: Codable, Sendable {
+    /// Agreed with the attempt before (two in a row line it up).
+    public let agrees: Bool?
+    public let attempt: Int
+    public let flipDeg: Double?
+    public let inliers: Int?
+    public let margin: Double?
+    public let ms: Int?
+    public let overlap: Double?
+    /// Mini-scan points used.
+    public let points: Int?
+    public let quality: Double?
+    /// The check that refused it (inliers, rms, overlap, ambiguous, isolation); absent when
+    /// accepted.
+    public let refused: String?
+    public let rmsMm: Double?
+
+    public enum CodingKeys: String, CodingKey {
+        case agrees = "agrees"
+        case attempt = "attempt"
+        case flipDeg = "flip_deg"
+        case inliers = "inliers"
+        case margin = "margin"
+        case ms = "ms"
+        case overlap = "overlap"
+        case points = "points"
+        case quality = "quality"
+        case refused = "refused"
+        case rmsMm = "rms_mm"
+    }
+
+    public init(agrees: Bool?, attempt: Int, flipDeg: Double?, inliers: Int?, margin: Double?, ms: Int?, overlap: Double?, points: Int?, quality: Double?, refused: String?, rmsMm: Double?) {
+        self.agrees = agrees
+        self.attempt = attempt
+        self.flipDeg = flipDeg
+        self.inliers = inliers
+        self.margin = margin
+        self.ms = ms
+        self.overlap = overlap
+        self.points = points
+        self.quality = quality
+        self.refused = refused
+        self.rmsMm = rmsMm
     }
 }
 

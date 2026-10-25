@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -26,13 +27,18 @@ from typing import Annotated, Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.requests import ClientDisconnect
 
 from repairos.voice.audio import TTSCache, line_key, wav
 from repairos.voice.cartesia import Cartesia, CartesiaError
-from repairos.voice.conversation import (ACTIONS, NEEDS_REPORT, ConversationStore, SentenceSplitter, Talker, context_block,
-                                         history_view, limit_reached, messages_for)
+from repairos.voice.conversation import (ACTIONS, MAX_LOOK_IMAGES, NEEDS_REPORT, ConversationStore, SentenceSplitter,
+                                         Talker, context_block, history_view, limit_reached, live_note, look_content,
+                                         messages_for, parse_live, part_rows, searches_made, views_content,
+                                         web_search_tool)
+from repairos.voice.evidence import FINDING_RADIUS_M, POINT_RADIUS_M
 from repairos.voice.settings import SAMPLE_RATE, VoiceSettings, get_voice_settings
-from repairos.voice.spend_guard import VoicePaused
+from repairos.voice.spend_guard import VoicePaused, charge, key_of
+from repairos.voice.views import point_at
 
 log = logging.getLogger("repairos.voice")
 MAX_TEXT = 600
@@ -67,6 +73,15 @@ class VoiceRuntime:
     tasks: set = field(default_factory=set)
     conversations: ConversationStore = field(default_factory=ConversationStore)
     _talker: Any = None
+    _evidence: Any = None
+
+    def evidence(self, request: Request):
+        """A scan's photos, 3D surface and part index for report turns (repairos.voice.evidence)."""
+        if self._evidence is None:
+            from repairos.voice.evidence import Evidence
+
+            self._evidence = Evidence(request.app, self.conversations.root.parent / "voice_index")
+        return self._evidence
 
     def talker(self) -> Talker | None:
         if self._talker is None and (key := self.claude_key()):
@@ -155,6 +170,13 @@ def jframe(event: dict) -> bytes:
 
 def register_voice_routes(app: FastAPI, device_dep) -> None:
     """Adds the /v1/voice routes. `device_dep` is the gateway's device-token dependency (Annotated)."""
+
+    @app.exception_handler(ClientDisconnect)
+    async def _gone(req: Request, _e: ClientDisconnect):
+        # The phone dropped the request while its body was still coming (a barge-in cancels the turn's upload):
+        # nobody is waiting for an answer, so none is made and nothing is logged as an error. 499: client closed.
+        log.info("client went away before its request body arrived: %s %s", req.method, req.url.path)
+        return Response(status_code=499)
 
     @app.exception_handler(VoicePaused)
     async def _paused(_req, e: VoicePaused):
@@ -329,7 +351,6 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
         rt = _runtime(request)
         if not rt.cartesia_on:
             raise HTTPException(503, {"error": "voice_unavailable"})
-        from repairos.voice.spend_guard import charge, key_of
         charge("cartesia", key=key_of("stream", kind, d.get("device_id", ""), time.time()))
         return {"ok": True}
 
@@ -339,6 +360,8 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                                  scan_id: Annotated[str | None, Query(max_length=128)] = None):
         """The conversation so far (to show it again when the report reopens)."""
         rt = _runtime(request)
+        if scan_id:   # the report is opening: build its part index in the background (once per scan)
+            await _start_index(request, rt, scan_id)
         return {"turns": history_view(rt.conversations.load(_scope(scan_id, d)))}
 
     @app.delete("/v1/voice/conversation")
@@ -368,7 +391,10 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
                              audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
                              held: bool = False,
-                             commit: Annotated[str | None, Query(max_length=64)] = None):
+                             commit: Annotated[str | None, Query(max_length=64)] = None,
+                             live: Annotated[str | None, Query(max_length=2000)] = None,
+                             session_id: Annotated[str | None, Query(max_length=128)] = None,
+                             image: Annotated[list[str] | None, Query(max_length=MAX_LOOK_IMAGES)] = None):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
@@ -376,10 +402,22 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
         paused it, or `audio=none`) is for the phone to say in its own voice. `held=1`: an answer started before the
         person finished (Ink-2's eager end); it stays out of the conversation (later answers, the caps) until the
         phone commits the `held_id` its `done` event carries. `commit=<held_id>`: that confirmed early answer joins
-        before this one is answered (the phone's commit request failed)."""
+        before this one is answered (the phone's commit request failed). `live`: JSON of what the screen shows
+        now (a scan's stage, cue, progress), read for this turn only; during a scan no scan is offered. `session_id`:
+        before a scan exists, the session whose story row holds what the label photo identified and the product
+        brief, so Lea can talk about that product. `image` (repeated, up to MAX_LOOK_IMAGES, oldest first): blobs (JPEG,
+        PUT /v1/blobs first, uploaded while the person talks) of what the camera showed, the last one now; Lea sees
+        them and can point (J events {type: mark, x, y, label}) or ask the phone to measure (J event {type: measure,
+        x1, y1, x2, y2}), fractions of the last photo. On a report (not during a scan) Lea can move its 3D model: J
+        events {type: show, part} (a located finding id: fly there, light its ring, zoom in), {type: view, side}
+        (top, bottom, front, back, left, right, around, reset) and {type: zoom, dir} (in, out), each sent right after
+        the sentence it was written with. A turn with photos uses `lea_voice_look_model`; after
+        `lea_voice_look_turns_per_scan` such turns in one conversation, photos are dropped (words only)."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
+        shown = parse_live(live)
+        seen = [p for p in (_look_image(request, ref) for ref in _look_refs(image)) if p]
         question, stt_ms, paused_line = "", 0, None
         ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
         if ctype == "application/json":
@@ -395,7 +433,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             except VoicePaused:
                 paused_line = PAUSED_LINE
             stt_ms = round((time.perf_counter() - t0) * 1000)
-        report, story, identity = await _grounding(request, scan_id)
+        report, story, identity = await _grounding(request, scan_id, session_id)
         convo = rt.conversations.load(scope)
         if commit and (convo.get("held") or {}).get("id") == commit:
             # An early answer the phone confirmed but could not commit (its request failed): it joins first, so this
@@ -407,7 +445,152 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             paused_line = limit_reached(convo, rt.settings, time.time())
             if talker is None:
                 paused_line = "Answers are off on the Mac right now."
+        if seen:
+            if int(convo.get("looks") or 0) >= rt.settings.lea_voice_look_turns_per_scan:
+                seen = []   # the per-scan cap on looking turns: this one goes on words alone, and Lea is told why
+                shown["camera"] = "not sent this turn (the looking limit for this scan is reached): answer from the report, the \
+parts and what you know about the product"
+            elif question and paused_line is None:
+                convo["looks"] = int(convo.get("looks") or 0) + 1
+                rt.conversations.save(scope, convo)
+                for k, v in (await _inspected(request, scan_id) if scan_id and not report else {}).items():
+                    shown.setdefault(k, v)
         speak = audio == "stream" and rt.cartesia_on
+        # On a report (not during a scan) Lea sees the scan's own photos and renders of its 3D reconstruction, knows
+        # the located parts (the report's, the part index's, spots pointed out earlier) and can show them on the 3D
+        # model (<show>, <point>, <view>, <zoom>); an unknown id or a spot off the model is dropped.
+        on_model = report is not None and shown.get("screen") != "scan" and bool(scan_id)
+        ev = rt.evidence(request) if on_model else None
+        rows = part_rows(report) if on_model else []
+        extra: list[dict] = []
+        if ev is not None:
+            extra = (await ev.entries(scan_id)) + list(convo.get("located") or [])
+            await _start_index(request, rt, scan_id, identity)
+        known = {r["id"]: r for r in rows + extra}
+        finding_ids = {r["id"] for r in rows}
+        report_views: list = []
+        answering = bool(question) and paused_line is None
+        if ev is not None and answering and not seen and rt.settings.lea_voice_report_views > 0 \
+                and int(convo.get("looks") or 0) < rt.settings.lea_voice_look_turns_per_scan:
+            try:
+                report_views = (await ev.views(scan_id, question, rows + extra))[:rt.settings.lea_voice_report_views]
+            except Exception as e:  # noqa: BLE001 - the answer goes ahead on words
+                log.warning("report views for %s failed: %s", scan_id, e)
+            if report_views:
+                convo["looks"] = int(convo.get("looks") or 0) + 1
+                rt.conversations.save(scope, convo)
+        turn_model = rt.settings.lea_voice_look_model if (seen or report_views) else rt.settings.lea_voice_answer_model
+        tools = None
+        named = identity and any(identity.get(k) and identity.get(k) != "unknown" for k in ("name", "brand", "model"))
+        if answering and named and int(convo.get("searches") or 0) < rt.settings.lea_voice_searches_per_scan:
+            try:   # one unit per turn that may search, before the call (the spend guard's caps and breaker)
+                charge("anthropic_web_search", key=key_of("search_offer", scope, question))
+                tools = [web_search_tool(turn_model)]
+            except VoicePaused:
+                tools = None
+        used: dict[str, int] = {"searches": 0}
+        new_located: list[dict] = []
+
+        def resolve(mv: dict) -> tuple[dict, list[float] | None, float]:
+            """A marker as the phone's event, with the 3D point and ring size to photograph (None: no photo)."""
+            if mv["type"] == "show":
+                r = known.get(mv["part"])
+                if r is None:
+                    return {}, None, 0.0
+                if r["id"] in finding_ids:
+                    return {"type": "show", "part": r["id"]}, r.get("point"), FINDING_RADIUS_M
+                if r.get("point") is None:
+                    # A photo-only spot (the mesh can't place it yet): its ringed photo, and the whole object in view
+                    # rather than a ring in the wrong place.
+                    if r.get("still_id") and r.get("x") is not None:
+                        ring = 0.012 if r.get("precision") in ("pin read in a close-up", "refined in one photo",
+                                                               "confirmed in a second photo") else 0.03
+                        photos.append((r["id"], asyncio.create_task(
+                            ev.spot_photo_at(scan_id, r["still_id"], r["x"], r["y"], ring))))
+                    return {"type": "view", "side": "reset"}, None, 0.0
+                radius = float(r.get("radius") or POINT_RADIUS_M)
+                return _point_event(r, radius), r.get("point"), radius
+            if mv["type"] == "point":
+                # A spot she points at that a placed part already names (the part index read "B button"): that
+                # part's refined place, not a fresh guess from the whole photo.
+                named = _named_part(mv["label"], extra)
+                if named is not None:
+                    return resolve({"type": "show", "part": named["id"]})
+                view = next((v for v in report_views if v.key == mv["photo"]), None)
+                pt = point_at(view, mv["x"], mv["y"]) if view is not None else None
+                if pt is None:
+                    return {}, None, 0.0
+                label = mv["label"] or "this spot"
+                r = next((x for x in extra + new_located if str(x.get("label", "")).lower() == label.lower()
+                          and str(x["id"]).startswith("pt_")), None)
+                if r is None:
+                    n = 1 + max([int(str(x["id"])[3:]) for x in extra + new_located
+                                 if str(x["id"]).startswith("pt_") and str(x["id"])[3:].isdigit()] or [0])
+                    r = {"id": f"pt_{n}", "label": label, "part": label, "where": "pointed out earlier in this talk",
+                         "point": [round(float(c), 5) for c in pt], "radius": POINT_RADIUS_M,
+                         "still_id": view.still_id}
+                    new_located.append(r)
+                    known[r["id"]] = r
+                    # Refined on a full-resolution crop after the sentence is out (never before it): the phone gets
+                    # the same id again with the tighter spot.
+                    item = {"label": label, "point": r["point"], "still_id": view.still_id,
+                            "x": mv["x"] if view.still_id else None, "y": mv["y"] if view.still_id else None}
+                    refines.append((r, asyncio.create_task(ev.refine_live(
+                        scan_id, item, rt.claude_key(), rt.settings.lea_voice_index_model,
+                        http_client=rt.anthropic_http_client))))
+                radius = float(r.get("radius") or POINT_RADIUS_M)
+                return _point_event(r, radius), r["point"], radius
+            return mv, None, 0.0
+
+        photos: list[tuple[str, asyncio.Task]] = []
+        refines: list[tuple[dict, asyncio.Task]] = []
+
+        def stage_events(splitter: SentenceSplitter, sent: list[dict], through: int | None = None):
+            for mv in splitter.stage if through is None else splitter.moves_through(through):
+                if mv in sent:
+                    continue
+                sent.append(mv)
+                if not on_model:
+                    continue
+                event, point, radius = resolve(mv)
+                if not event:
+                    continue
+                yield jframe(event)
+                if point is not None:   # the real photo of the spot, ringed: sent when it is ready
+                    fid = event.get("part") or event.get("id")
+                    prefer = (known.get(fid) or {}).get("still_id")
+                    photos.append((fid, asyncio.create_task(ev.spot_photo(scan_id, point, radius, prefer))))
+
+        async def photo_events(wait: bool):
+            deadline = time.perf_counter() + 8
+            for item in list(refines):
+                r, task = item
+                if not task.done() and wait:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=max(0.1, deadline - time.perf_counter()))
+                    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                        pass
+                if task.done():
+                    refines.remove(item)
+                    got = None if task.cancelled() or task.exception() else task.result()
+                    if got:
+                        r.update(point=[round(float(c), 5) for c in got["point"]], radius=got["radius"])
+                        yield jframe(_point_event(r, float(got["radius"])))
+                        photos.append((r["id"], asyncio.create_task(ev.spot_photo(scan_id, r["point"], r["radius"],
+                                                                                  got.get("still_id")))))
+                        r["still_id"] = got.get("still_id")
+            for item in list(photos):
+                fid, task = item
+                if not task.done() and wait:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=6)
+                    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                        pass
+                if task.done():
+                    photos.remove(item)
+                    sha = None if task.cancelled() or task.exception() else task.result()
+                    if sha:
+                        yield jframe({"type": "photo", "for": fid, "crop": sha})
 
         async def tts_frames(sentence: str):
             """PCM frames for one sentence; on any failure, nothing (the phone says it in its own voice)."""
@@ -431,6 +614,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             yield jframe({"type": "transcript", "text": question})
             spoken: list[str] = []
             splitter = SentenceSplitter()
+            moved: list[dict] = []
             if not question and paused_line is None:
                 lines = ["I didn't catch that. Say it again?"]
             elif paused_line is not None:
@@ -441,8 +625,16 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
 
             async def produce():
                 try:
-                    msgs = messages_for(convo, context_block(report, identity, story), question)
-                    async for delta in talker.stream(scope, msgs):
+                    msgs = messages_for(convo, context_block(report, identity, story, parts=on_model,
+                                                             extra_parts=extra), live_note(shown) + question)
+                    if seen:   # the camera, for this turn only (the history keeps words)
+                        msgs[-1]["content"] = look_content(seen, msgs[-1]["content"])
+                    elif report_views:   # the scan's photos and 3D views, for this turn only
+                        msgs[-1]["content"] = views_content(report_views, msgs[-1]["content"])
+
+                    def on_usage(_m, usage):
+                        used["searches"] = searches_made(usage)
+                    async for delta in talker.stream(scope, msgs, model=turn_model, tools=tools, on_usage=on_usage):
                         for sentence in splitter.feed(delta):
                             await queue.put(sentence)
                     for sentence in splitter.flush():
@@ -462,10 +654,22 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 await queue.put(None)
                 producer = None
             try:
+                cut = -1
                 while (sentence := await queue.get()) is not None:
                     timings.setdefault("first_sentence", round((time.perf_counter() - t0) * 1000))
+                    cut += 1
+                    if lines is None and repeats(sentence, spoken):
+                        # A sentence that only says again what she already said (a model sometimes re-states its
+                        # answer to place markers): not spoken, but its moves still happen.
+                        for f in stage_events(splitter, moved, cut):
+                            yield f
+                        continue
                     spoken.append(sentence)
                     yield jframe({"type": "sentence", "text": sentence, "audio": speak})
+                    for f in stage_events(splitter, moved, cut):   # moves as she says that sentence
+                        yield f
+                    async for f in photo_events(wait=False):
+                        yield f
                     if speak:
                         n = 0
                         async for f in tts_frames(sentence):
@@ -479,7 +683,17 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             finally:
                 if producer is not None and not producer.done():
                     producer.cancel()
+            for f in stage_events(splitter, moved):   # a marker written after the last sentence
+                yield f
+            async for f in photo_events(wait=True):
+                yield f
             action = next((a for a in splitter.actions if report or a not in NEEDS_REPORT), None)
+            if shown.get("screen") == "scan" and action == "start_scan":   # a scan is open: never a second one
+                action = None
+            for mark in splitter.marks if seen else []:   # only a turn that came with a photo can point at it
+                yield jframe({"type": "mark", **mark})
+            if seen and splitter.measure:   # the phone measures it with LiDAR and says the number
+                yield jframe({"type": "measure", **splitter.measure})
             if action and action in ACTIONS:
                 yield jframe({"type": "action", "action": action, "label": ACTIONS[action]})
             answer = " ".join(spoken)
@@ -492,6 +706,11 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 # Onto the conversation as stored NOW, not the copy loaded when this answer started: a held answer
                 # committed while this one streamed must not be written over (Greptile P1 on #21).
                 latest = rt.conversations.load(scope)
+                if new_located:   # spots pointed out this turn: a repeat question is a lookup (<show part="pt_1"/>)
+                    latest["located"] = (list(latest.get("located") or []) + new_located)[-20:]
+                if used["searches"]:
+                    latest["searches"] = int(latest.get("searches") or 0) + used["searches"]
+                    log.info("voice converse %s: %d web search(es)", scope, used["searches"])
                 if held:   # kept aside until the phone commits it (POST /v1/voice/conversation/commit)
                     held_id = uuid.uuid4().hex
                     latest["held"] = {"id": held_id, "turns": exchange}
@@ -501,12 +720,50 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 turns = _user_turns(latest)
             else:
                 turns = _user_turns(convo)
-            log.info("voice converse %s timings %s", scope, timings)
+            log.info("voice converse %s timings %s photos %d", scope, timings, len(seen))
             yield jframe({"type": "done", "answer_text": answer, "action": action, "timings_ms": timings,
                           "turns": turns, **({"held_id": held_id} if held_id else {})})
 
         return StreamingResponse(stream(), media_type="application/x-lea-voice",
                                  headers={"Cache-Control": "no-cache", "X-Sample-Rate": str(SAMPLE_RATE)})
+
+
+def _named_part(label: str, parts: list[dict]) -> dict | None:
+    """The placed part (index entry or earlier spot) whose label is `label`, ignoring case and spacing."""
+    want = " ".join(str(label or "").lower().split())
+    if not want:
+        return None
+    return next((r for r in parts if (r.get("point") or r.get("x") is not None)
+                 and " ".join(str(r.get("label") or "").lower().split()) == want), None)
+
+
+def repeats(sentence: str, said: list[str]) -> bool:
+    """Whether a sentence of four or more words only repeats words of one sentence already said in this answer."""
+    w = set(re.findall(r"[a-z0-9']+", sentence.lower()))
+    return len(w) >= 4 and any(w <= set(re.findall(r"[a-z0-9']+", s.lower())) for s in said)
+
+
+def _point_event(r: dict, radius: float) -> dict:
+    """A spot on the 3D model (not one of the report's findings): where (scan frame, metres), what, how big a ring."""
+    x, y, z = (round(float(c), 5) for c in r["point"])
+    return {"type": "point", "id": r["id"], "x": x, "y": y, "z": z, "label": r.get("label") or r.get("part") or "",
+            "radius": round(radius, 4)}
+
+
+async def _start_index(request: Request, rt: VoiceRuntime, scan_id: str, identity: dict | None = None) -> None:
+    """The scan's part index in the background, once its report exists (never blocks the answer)."""
+    try:
+        from repairos.report import report_id_for
+
+        if await request.app.state.store.get("report", report_id_for(scan_id)) is None:
+            return
+        if identity is None:
+            run = await request.app.state.store.get("pipeline-run", f"run_{scan_id}")
+            identity = ((run.data if run else {}) or {}).get("identity")
+        await rt.evidence(request).ensure_index(scan_id, rt.claude_key(), rt.settings.lea_voice_index_model, identity,
+                                                http_client=rt.anthropic_http_client)
+    except Exception as e:  # noqa: BLE001
+        log.warning("voice index for %s not started: %s", scan_id, e)
 
 
 def _scope(scan_id: str | None, device: dict) -> str:
@@ -526,26 +783,65 @@ def _user_turns(convo: dict) -> int:
     return sum(1 for t in convo.get("turns", []) if t.get("role") == "user")
 
 
-async def _grounding(request: Request, scan_id: str | None) -> tuple[dict | None, str | None, dict | None]:
-    """(the scan's report or None, the person's story, the identified object) for a conversation turn."""
-    if not scan_id:
+async def _grounding(request: Request, scan_id: str | None,
+                     session_id: str | None = None) -> tuple[dict | None, str | None, dict | None]:
+    """(the scan's report or None, the person's story, the identified object) for a conversation turn. Before a scan
+    exists (the home conversation), the session's story row says what the label photo identified and what public
+    sources report about the product (its brief)."""
+    if not scan_id and not session_id:
         return None, None, None
     from repairos.report import report_id_for
 
     st = request.app.state.store
-    row = await st.get("report", report_id_for(scan_id))
+    row = await st.get("report", report_id_for(scan_id)) if scan_id else None
     report = row.data if row else None
-    run = await st.get("pipeline-run", f"run_{scan_id}")
+    run = await st.get("pipeline-run", f"run_{scan_id}") if scan_id else None
     identity = ((run.data if run else {}) or {}).get("identity") or (report or {}).get("object")
     story = None
-    pkg = await st.get("scan-package", scan_id)
-    sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None)
+    pkg = await st.get("scan-package", scan_id) if scan_id else None
+    sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None) or session_id
+    if sid and not identity:
+        from repairos.pipeline.story import story_identity
+
+        identity = await story_identity(st, sid, detail=True)
     if sid:
         sess = await st.get("session", sid)
         story = (sess.data.get("symptom") if sess else None) or None
     if not story and pkg:
         story = pkg.data.get("symptom") or None
     return report, story, identity
+
+
+MAX_LOOK_BYTES = 2_000_000
+_BLOB_REF = re.compile(r"^blob://sha256:[0-9a-f]{64}$")
+
+
+def _look_refs(refs: list[str] | None) -> list[str]:
+    """The turn's photo refs, oldest first: well-formed blob refs only, the last MAX_LOOK_IMAGES (the newest)."""
+    return [r for r in refs or [] if _BLOB_REF.match(r)][-MAX_LOOK_IMAGES:]
+
+
+async def _inspected(request: Request, scan_id: str) -> dict[str, str]:
+    """While a scan has no report yet: the last few parts the pipeline looked at, in its own words, for a looking
+    turn's <phone> line (nothing when none were looked at yet)."""
+    rows = await request.app.state.store.list("finding", scan_id=scan_id)
+    looked = sorted((r.data for r in rows if (r.data or {}).get("state") not in (None, "not_inspected")),
+                    key=lambda f: str(f.get("created_at") or ""), reverse=True)[:3]
+    words = [f"{f.get('part_words') or (f.get('subject') or {}).get('kind') or 'a part'}: "
+             f"{str(f.get('state')).replace('_', ' ')}" for f in looked]
+    return {"inspected so far": "; ".join(words)[:200]} if words else {}
+
+
+def _look_image(request: Request, ref: str | None) -> str | None:
+    """The look photo as base64 JPEG, or None (no photo, not uploaded, too big, or not a JPEG): the turn goes ahead
+    on words alone."""
+    import base64
+
+    blobs = request.app.state.blobs
+    if not ref or not blobs.exists(ref) or blobs.size(ref) > MAX_LOOK_BYTES:
+        return None
+    data = blobs.get(ref)
+    return base64.b64encode(data).decode() if data[:3] == b"\xff\xd8\xff" else None
 
 
 async def _report_and_story(request: Request, scan_id: str) -> tuple[dict, str | None]:

@@ -19,6 +19,20 @@ struct ScanWithLeaIntent: AppIntent {
     }
 }
 
+/// "Hey Siri, hey lea" (or hold the side button and say "hey lea"): opens the app into a conversation with Lea,
+/// already listening hands-free, and she asks what's up. From the lock screen, iOS asks to unlock first.
+struct TalkToLeaIntent: AppIntent {
+    static let title: LocalizedStringResource = "Talk to Lea"
+    static let description = IntentDescription("Opens Lea listening, so you can say what's wrong.")
+    static let openAppWhenRun = true
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        IntentInbox.shared.requestTalk()
+        return .result()
+    }
+}
+
 struct LeaShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(intent: ScanWithLeaIntent(),
@@ -26,6 +40,9 @@ struct LeaShortcuts: AppShortcutsProvider {
                               "Check my device with \(.applicationName)", "Check something with \(.applicationName)",
                               "Ask \(.applicationName) what's wrong", "Open a scan in \(.applicationName)"],
                     shortTitle: "Scan with Lea", systemImageName: "viewfinder")
+        AppShortcut(intent: TalkToLeaIntent(),
+                    phrases: ["Hey \(.applicationName)", "Talk to \(.applicationName)", "Open \(.applicationName) and listen"],
+                    shortTitle: "Talk to Lea", systemImageName: "waveform")
     }
 }
 
@@ -37,6 +54,22 @@ final class IntentInbox {
     private(set) var pending: String?
     /// Goes up on every request, so the home screen reacts even to the same words twice.
     private(set) var requests = 0
+
+    /// Goes up on every "Hey lea" from Siri (the home screen opens the conversation, listening).
+    private(set) var talks = 0
+    /// Lea greets once when that conversation opens.
+    private var greet = false
+
+    func requestTalk() {
+        greet = true
+        talks += 1
+    }
+
+    /// True once per "Hey lea".
+    func takeGreeting() -> Bool {
+        defer { greet = false }
+        return greet
+    }
 
     func requestScan(story: String) {
         pending = story.trimmingCharacters(in: .whitespacesAndNewlines)

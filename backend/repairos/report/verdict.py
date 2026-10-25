@@ -55,9 +55,10 @@ REASON_TEXT = {
     "all_inspected_ok": "Every detected region was inspected and none shows a functional or safety issue.",
     "some_not_inspected": ("Nothing that was inspected shows an issue, but some regions were not inspected or could "
                            "not be judged, so the product cannot be called good yet."),
-    "nothing_seen_wrong": ("Nothing looked wrong in the areas that could be seen clearly, and the scan covered the "
-                           "object well; some areas still need a closer photo, so this is not a clean bill of health."),
+    "nothing_seen_wrong": "Nothing looked wrong, and the scan covered the object well.",
 }
+# V8 says what was checked and found, confidently; what was not checked stays in the report's own not_inspected /
+# insufficient_evidence lists (the "What wasn't checked" view), never as a count in the headline or the summary.
 
 
 def load_config(path=None) -> dict:
@@ -122,14 +123,57 @@ def caveat(report: dict) -> str | None:
     "Nothing looked wrong in the 2 areas Lea could see clearly. 11 areas need a closer photo." Photos left out because
     another photo already covers the same view are not areas."""
     seen = judged_regions(report)
-    closer = len(report.get("insufficient_evidence") or []) + sum(
-        1 for e in report.get("not_inspected") or [] if e.get("part_class") != "whole photo")
+    closer = len(report.get("insufficient_evidence") or []) + sum(   # a grouped row stands for `regions` areas
+        int(e.get("regions", 1)) for e in report.get("not_inspected") or [] if e.get("part_class") != "whole photo")
     if not closer:
         return None
     first = (f"Nothing looked wrong in the {seen} area{'s' if seen != 1 else ''} Lea could see clearly."
              if seen and not any(e["issue"] != "none" for e in report.get("findings", [])) else "")
     tail = f"{closer} area{'s' if closer != 1 else ''} need{'s' if closer == 1 else ''} a closer photo."
     return f"{first} {tail}".strip()
+
+
+def on_object(finding: dict, box: dict | None) -> bool:
+    """Whether a finding is on the scanned object: its located point inside the object's crop box (a 10 % margin).
+    Without a box nothing can be told apart, so everything counts; with one, an unlocated finding does not."""
+    if not box or not box.get("extent_m") or not box.get("center_m"):
+        return True
+    loc = finding.get("location") or {}
+    if loc.get("status") != "computed" or not loc.get("point_m"):
+        return False
+    from repairos.recon.tsdf import ObjectBox
+
+    return bool(ObjectBox.from_contract({"quaternion_xyzw": [0, 0, 0, 1], **box}).contains([loc["point_m"]], 0.1)[0])
+
+
+def checked_text(report: dict, box: dict | None = None) -> str | None:
+    """No problems seen, said plainly: the parts that were inspected and looked fine, in the report's own words
+    ("Nothing looked wrong. The battery, button and cable all looked fine in the photos."). Only inspected findings
+    with no issue, on the object itself (`box`: the scan's crop box; a bottle or the table beside it is not the
+    object): a part that was not inspected or could not be judged is never listed as fine. None when no part has a
+    name to give."""
+    names: list[str] = []
+    for e in report.get("findings", []):
+        n = " ".join(str(e.get("part_class") or "").replace("_", " ").split())
+        if e.get("issue") == "none" and n and n not in names and n not in ("unknown part", "whole photo") \
+                and on_object(e, box):
+            names.append(n)
+    if not names:
+        return None
+    names = names[:6]
+    listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return f"Nothing looked wrong. The {listed} {'all looked' if len(names) > 1 else 'looked'} fine in the photos."
+
+
+def reason_for(report: dict, v: Verdict, box: dict | None = None) -> dict[str, str]:
+    """The report's verdict_reason. No problems seen: what was checked on the object and looked fine (checked_text,
+    `box` the scan's crop box), no caveat. Not enough evidence: the reason, with what was not checked as its caveat."""
+    out = v.as_reason()
+    if v.verdict == NO_PROBLEMS_SEEN:
+        out["text"] = checked_text(report, box) or out["text"]
+    elif v.verdict == INSUFFICIENT and (c := caveat(report)):
+        out["caveat"] = c
+    return out
 
 
 def facts_of(report: dict) -> Facts:

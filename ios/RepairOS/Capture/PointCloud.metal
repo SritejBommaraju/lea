@@ -161,7 +161,7 @@ vertex ParticleOut particleVertex(uint vid [[ vertex_id ]],
         } else {
             float k = smoothstep(0.15f, 1.0f, t);
             world = mix(world, box.center.xyz, 0.16f * k);
-            rgb = mix(rgb, float3(0.61f, 0.58f, 1.0f), 0.45f * k);
+            rgb = mix(rgb, float3(0.557f, 0.773f, 1.0f), 0.45f * k);   // FixedHex.next (#8EC5FF)
             grow = 1.0f + 0.35f * k;
         }
     }
@@ -246,7 +246,7 @@ fragment half4 markerFragment(MarkerOut in [[ stage_in ]], constant MarkerUnifor
     float pulse = (1.0f - smoothstep(0.03f - px, 0.03f + px, abs(r - pr))) * (1.0f - t) * 0.8f;
     float a = max(max(dot_, ring), pulse);
     if (a <= 0.002f) discard_fragment();
-    float3 accent = float3(0.612f, 0.580f, 1.0f);
+    float3 accent = float3(0.557f, 0.773f, 1.0f);   // FixedHex.next (#8EC5FF)
     float3 c = mix(accent, float3(1.0f), dot_);
     return half4(half3(c), half(a));
 }

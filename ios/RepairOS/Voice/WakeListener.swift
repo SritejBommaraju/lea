@@ -10,13 +10,15 @@ import UIKit
 /// any words said after the phrase as the first thing the person said. After Lea answers it listens for a
 /// follow-up for a few seconds without the phrase (hands-free turns); the turn ends when the person stops talking.
 ///
-/// It listens only in the foreground, never while Lea is speaking (she must not hear herself), never while hold to
-/// talk records, and not during an active scan capture (ScanView pauses it).
+/// It listens only in the foreground and never while the talk button records. While Lea speaks, Apple's recognizer is
+/// ignored (she must not hear herself); with the mic's echo cancellation on, Ink-2 keeps listening during her
+/// answer, and the person starting to talk (`turn.start`) stops her: barge-in by voice.
 @MainActor
 @Observable
 final class WakeListener {
     static let shared = WakeListener()
     nonisolated static let enabledKey = "leaWakeWordEnabled"
+    nonisolated static let continuousKey = "leaHandsFreeContinuous"
 
     enum Mode: Equatable { case off, wake, followUp }
     private(set) var mode: Mode = .off
@@ -28,6 +30,26 @@ final class WakeListener {
     var enabled: Bool {
         get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey); refresh() }
+    }
+
+    /// Hands-free that stays on: after each answer Lea keeps listening for the next turn, with no window and no
+    /// "Hey Lea", until it is turned off (swipe up turns it on; the ear button toggles it). Remembered.
+    var continuous: Bool = WakeListener.savedContinuous() {
+        didSet {
+            UserDefaults.standard.set(continuous, forKey: Self.continuousKey)
+            if continuous { listenForFollowUp() } else { endFollowUp() }
+        }
+    }
+
+    /// The saved hands-free switch. Once, with tap to talk (the owner, 2026-10-25), it starts off: Home's Talk button
+    /// used to turn it on without asking, which kept reopening the mic after every answer.
+    private static func savedContinuous() -> Bool {
+        let d = UserDefaults.standard, reset = "leaHandsFreeTapToTalkReset"
+        if !d.bool(forKey: reset) {
+            d.set(true, forKey: reset)
+            d.set(false, forKey: continuousKey)
+        }
+        return d.bool(forKey: continuousKey)
     }
 
     @ObservationIgnored private let mic = MicTap()
@@ -55,6 +77,10 @@ final class WakeListener {
     @ObservationIgnored private var streamWatchdog: Task<Void, Never>?
     /// Ink-2 has heard words in this turn (it owns the turn from then on).
     @ObservationIgnored private var streamHeard = false
+    /// The mic runs with voice processing (echo cancellation): Lea's own voice is taken out of what it hears.
+    @ObservationIgnored private var echoCancelled = false
+    /// Ink-2 is open during Lea's answer, for the person to cut in (barge-in).
+    @ObservationIgnored private var bargeListening = false
     /// How long Ink-2 may stay quiet after opening before Apple takes the turn back.
     static let streamGrace: TimeInterval = 3.5
     static let echoGuard: TimeInterval = 0.7
@@ -88,30 +114,40 @@ final class WakeListener {
         leaTalking = on
         if on {
             silenceTimer?.cancel()
-            closeStream()
             if heardAfterWake != nil { heardAfterWake = nil }
+            if bargeInOn {
+                // Echo cancellation keeps Lea out of the mic: Ink-2 stays open so the person can cut in.
+                bargeListening = true
+                if stream == nil { openStream(backfill: 0) }
+            } else {
+                closeStream()
+            }
         } else {
             leaStoppedAt = Date()
             if micOn { mic.restart() }   // a fresh transcript: none of Lea's words carry over
         }
     }
     func suspend(_ on: Bool) { holdToTalk = on; refresh() }
-    /// ScanView: an active capture (ARKit + camera) pauses listening unless `--wake-during-scan` is set (to measure).
+    /// ScanView: Lea keeps listening during a capture, so the person can talk to her while scanning (the scan bar).
+    /// `--no-wake-during-scan` pauses it instead, to measure the scan's frame time without the recognizer.
     func capture(_ on: Bool) {
-        capturing = on && !CommandLine.arguments.contains("--wake-during-scan")
+        capturing = on && CommandLine.arguments.contains("--no-wake-during-scan")
         refresh()
     }
 
-    /// After Lea answers: listen for the next turn without the phrase, for a few seconds.
+    /// After Lea answers: listen for the next turn without the phrase, for a few seconds (or until turned off, when
+    /// hands-free is continuous).
     func listenForFollowUp() {
         guard enabled else { return }
         mode = .followUp
         followUpTimer?.cancel()
-        followUpTimer = Task {
-            try? await Task.sleep(for: .seconds(Self.followUpWindow))
-            guard !Task.isCancelled, mode == .followUp, heardAfterWake == nil, !streamHeard else { return }
-            closeStream()
-            mode = .wake
+        if !continuous {   // continuous hands-free has no window
+            followUpTimer = Task {
+                try? await Task.sleep(for: .seconds(Self.followUpWindow))
+                guard !Task.isCancelled, mode == .followUp, heardAfterWake == nil, !streamHeard else { return }
+                closeStream()
+                mode = .wake
+            }
         }
         refresh()
         openStream(backfill: 0.3)
@@ -124,6 +160,12 @@ final class WakeListener {
     /// Ink-2 on Cartesia listens to the person's turn when the gateway has voice; Apple's recognizer is the fallback
     /// and keeps hearing the wake word. `--no-realtime` turns it off (to compare).
     var realtimeOn: Bool { LeaVoice.shared.status?.cartesia == true && !CommandLine.arguments.contains("--no-realtime") }
+    /// Barge-in by voice: only with echo cancellation on, only during an answer of the conversation on screen (not
+    /// scan cues), and not with `--no-barge-in`.
+    private var bargeInOn: Bool {
+        echoCancelled && realtimeOn && micOn && LeaConversation.active?.answering == true
+            && !CommandLine.arguments.contains("--no-barge-in")
+    }
 
     /// Opens an Ink-2 turn, sending the last `backfill` seconds of audio first (the words said while it connects).
     private func openStream(backfill: TimeInterval) {
@@ -135,8 +177,8 @@ final class WakeListener {
             let (g, ok) = await (grant, allowed)
             guard let self else { return }
             self.streamOpening = nil
-            guard !Task.isCancelled, let g, ok, self.micOn, !self.leaTalking,
-                  self.mode == .followUp || self.heardAfterWake != nil else {
+            guard !Task.isCancelled, let g, ok, self.micOn, !self.leaTalking || self.bargeListening,
+                  self.mode == .followUp || self.heardAfterWake != nil || self.bargeListening else {
                 if g == nil || !ok { Self.diag.log("realtime_open", ["ok": false, "token": g != nil, "allowed": ok]) }
                 if self.heardAfterWake != nil { self.armSilence() }   // Apple finishes the turn
                 return
@@ -149,6 +191,9 @@ final class WakeListener {
             // No words from Ink-2 in time: it is Apple's turn again (and the socket goes).
             self.streamWatchdog = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(Self.streamGrace))
+                // Open for a barge-in: it stays while Lea talks, then the usual grace after she stops.
+                while let s = self, s.leaTalking, s.bargeListening, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(250)) }
+                if self?.bargeListening == true { try? await Task.sleep(for: .seconds(Self.streamGrace)) }
                 guard let self, !Task.isCancelled, !self.streamHeard else { return }
                 Self.diag.log("realtime_quiet", ["mode": "\(self.mode)"])
                 self.closeStream()
@@ -165,6 +210,7 @@ final class WakeListener {
         stream?.cancel()
         stream = nil
         streamHeard = false
+        bargeListening = false
     }
 
     private func streamEvent(_ e: CartesiaTurns.Event) {
@@ -173,6 +219,13 @@ final class WakeListener {
         case .start:
             streamHeard = true
             followUpTimer?.cancel()
+            if leaTalking {   // the person cut in: Lea stops now, and this is their turn
+                Self.diag.log("barge_in", ["mode": "\(mode)"])
+                mode = .followUp
+                LeaConversation.active?.personStarted()
+            } else {
+                LeaConversation.active?.turnStarting()   // the camera now, uploaded while they talk
+            }
         case .update(let t):
             streamHeard = true
             silenceTimer?.cancel()
@@ -189,7 +242,7 @@ final class WakeListener {
             let words = Self.dropWake(t)
             closeStream()
             heardAfterWake = nil
-            mode = .wake
+            mode = continuous && LeaConversation.active != nil ? .followUp : .wake
             speechStart = nil
             mic.restart()
             Self.diag.log("wake_turn", ["from": from, "engine": "ink2", "words": words.split(separator: " ").count,
@@ -221,6 +274,31 @@ final class WakeListener {
         return after
     }
 
+    /// Follow-up listening ends: hands-free turned off, or its conversation left the screen. The Ink-2 stream closes
+    /// and a half-heard turn is dropped, so nothing more is sent without "Hey Lea".
+    func endFollowUp() {
+        guard mode == .followUp else { return }
+        followUpTimer?.cancel()
+        silenceTimer?.cancel()
+        closeStream()
+        heardAfterWake = nil
+        speechStart = nil
+        LeaConversation.active?.cancelSpeculation()
+        mode = .wake
+        mic.restart()
+    }
+
+    /// A typed turn took over: whatever was being heard is dropped (Apple's transcript starts over, Ink-2 closes), so
+    /// it can't become a turn of its own.
+    func dropPendingTurn() {
+        silenceTimer?.cancel()
+        guard heardAfterWake != nil || stream != nil || streamOpening != nil else { return }
+        heardAfterWake = nil
+        speechStart = nil
+        closeStream()
+        mic.restart()
+    }
+
     func refresh() {
         let should = enabled && foreground && !holdToTalk && !capturing
         if should { Task { await start() } } else { stop() }
@@ -242,7 +320,9 @@ final class WakeListener {
         let result = await mic.start { [weak self] text, final in
             Task { @MainActor in self?.heard(text, final: final) }
         }
-        Self.diag.log("wake_start", ["ok": result.ok, "engine": result.engine, "reason": result.reason])
+        echoCancelled = result.echoCancelled
+        Self.diag.log("wake_start", ["ok": result.ok, "engine": result.engine, "reason": result.reason,
+                                     "echo_cancelled": result.echoCancelled])
         if !result.ok { mode = .off; micOn = false }
         if result.ok, heartbeat == nil {
             heartbeat = Task { [weak self] in
@@ -352,20 +432,31 @@ final class WakeListener {
         silenceTimer?.cancel()
         let words = (heardAfterWake ?? "").trimmingCharacters(in: .whitespaces)
         let from = mode == .followUp ? "follow_up" : "wake"
-        // A single stray word in the follow-up window is not a turn (someone nearby, a cough).
-        let tooShort = from == "follow_up" && words.split(separator: " ").count < 2
+        // A single stray word in the follow-up window is not a turn (someone nearby, a cough), except a plain
+        // yes or no: that answers Lea's question ("Want to scan it?" "Yes.").
+        let tooShort = from == "follow_up" && words.split(separator: " ").count < 2 && !Self.isShortAnswer(words)
         heardAfterWake = nil
-        mode = .wake
+        mode = continuous && LeaConversation.active != nil ? .followUp : .wake
         speechStart = nil
         mic.restart()
         Self.diag.log("wake_turn", ["from": from, "words": words.split(separator: " ").count,
                                     "wake_to_turn_ms": wokeAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1])
         wokeAt = nil
+        // Only "Hey Lea", then a pause (Apple's path; the Ink-2 path does the same): keep listening for the request,
+        // no phrase needed (the owner's phone, 2026-10-25: two empty turns after the phrase).
+        if words.isEmpty, from == "wake" { listenForFollowUp(); return }
         guard !words.isEmpty, !tooShort else { return }
         if let convo = LeaConversation.active { convo.heard(words) } else { pendingUtterance = words }
     }
 
     // MARK: Matching
+
+    /// One-word answers that are a turn on their own: a yes (LeaConversation.isYes, the same words that take an offer)
+    /// or a no.
+    static func isShortAnswer(_ words: String) -> Bool {
+        let w = normalize(words)
+        return !w.contains(" ") && (LeaConversation.isYes(w) || w == "no" || w == "nope")
+    }
 
     /// Lower-case letters and spaces only.
     static func normalize(_ s: String) -> String {
@@ -434,7 +525,12 @@ final class MicTap: @unchecked Sendable {
         }
     }
 
-    struct StartResult: Sendable { var ok: Bool; var engine: String; var reason: String }
+    struct StartResult: Sendable {
+        var ok: Bool
+        var engine: String
+        var reason: String
+        var echoCancelled = false
+    }
 
     func start(onText: @escaping @Sendable (String, Bool) -> Void) async -> StartResult {
         await withCheckedContinuation { (c: CheckedContinuation<StartResult, Never>) in
@@ -459,27 +555,47 @@ final class MicTap: @unchecked Sendable {
                     c.resume(returning: StartResult(ok: false, engine: "sf", reason: "session: \(error.localizedDescription)"))
                     return
                 }
-                let engine = AVAudioEngine()
-                let input = engine.inputNode
-                let format = input.outputFormat(forBus: 0)
-                guard format.sampleRate > 0 else {
-                    c.resume(returning: StartResult(ok: false, engine: "sf", reason: "no input format"))
+                // Voice processing (echo cancellation): Lea's voice is taken out of the mic, so the person can cut in
+                // while she talks (other audio ducked as little as allowed). If the engine will not start with it,
+                // it starts without (no barge-in by voice). `--no-echo-cancel` skips it.
+                let wantEcho = !CommandLine.arguments.contains("--no-echo-cancel")
+                var started: (AVAudioEngine, Bool, AVAudioFormat)?
+                var failure = "no input format"
+                for echo in (wantEcho ? [true, false] : [false]) {
+                    let engine = AVAudioEngine()
+                    let input = engine.inputNode
+                    let on = echo && (try? input.setVoiceProcessingEnabled(true)) != nil && input.isVoiceProcessingEnabled
+                    if echo, !on { continue }
+                    if on, #available(iOS 17.0, *) {
+                        input.voiceProcessingOtherAudioDuckingConfiguration =
+                            AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+                    }
+                    let format = input.outputFormat(forBus: 0)
+                    guard format.sampleRate > 0 else { failure = "no input format"; continue }
+                    input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buf, _ in
+                        self?.request?.append(buf)
+                        self?.pcm.feed(buf)
+                        self?.buffers += 1
+                    }
+                    do {
+                        try engine.start()
+                        started = (engine, on, format)
+                        break
+                    } catch {
+                        input.removeTap(onBus: 0)
+                        failure = "engine: \(error.localizedDescription)"
+                    }
+                }
+                guard let got = started else {
+                    c.resume(returning: StartResult(ok: false, engine: "sf", reason: failure))
                     return
                 }
-                input.installTap(onBus: 0, bufferSize: 2048, format: format) { [weak self] buf, _ in
-                    self?.request?.append(buf)
-                    self?.pcm.feed(buf)
-                    self?.buffers += 1
-                }
-                do { try engine.start() } catch {
-                    input.removeTap(onBus: 0)
-                    c.resume(returning: StartResult(ok: false, engine: "sf", reason: "engine: \(error.localizedDescription)"))
-                    return
-                }
+                let (engine, echo, format) = got
                 self.engine = engine
                 running = true
                 beginRecognition()
-                c.resume(returning: StartResult(ok: true, engine: "sf", reason: "\(Int(format.sampleRate)) Hz"))
+                c.resume(returning: StartResult(ok: true, engine: "sf",
+                                                reason: "\(Int(format.sampleRate)) Hz \(format.channelCount) ch", echoCancelled: echo))
             }
         }
     }

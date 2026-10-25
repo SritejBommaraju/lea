@@ -194,26 +194,24 @@ struct PhotoCaptureView: View {
             CameraPreview(session: capture.session).ignoresSafeArea()
             VStack(spacing: 12) {
                 HStack {
-                    Button(action: { capture.stop(); close() }) {
-                        Image(systemName: "xmark").font(.headline).padding(10).background(.ultraThinMaterial, in: Circle())
-                    }
+                    Button(action: { capture.stop(); close() }) { Image(systemName: Symbol.close) }
+                        .buttonStyle(RoundIconButtonStyle(onCamera: true))
+                        .accessibilityLabel("Close")
                     Spacer()
-                    Text("\(capture.count)").font(.headline.monospacedDigit())
-                        .padding(10).background(.ultraThinMaterial, in: Capsule())
+                    Text("\(capture.count)").monospacedDigit().cameraChip()
                 }
                 Spacer()
                 Text(capture.error ?? "Photograph anything that looks damaged or important")
-                    .font(.title2.bold()).multilineTextAlignment(.center)
-                    .padding(.horizontal, 16).padding(.vertical, 10)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .font(.cue).foregroundStyle(Palette.chalk).multilineTextAlignment(.center)
+                    .padding(.horizontal, 18).padding(.vertical, 10)
+                    .background { SmokeFill(shape: Capsule()) }
+                    .dynamicTypeSize(...DynamicTypeSize.accessibility1)
                 HStack(spacing: 20) {
-                    Button(action: capture.shoot) {
-                        Circle().strokeBorder(.white, lineWidth: 4).frame(width: 72, height: 72)
-                            .overlay(Circle().fill(.white.opacity(capture.busy ? 0.3 : 0.9)).padding(8))
-                    }
-                    .disabled(capture.busy)
+                    Button(action: capture.shoot) { Shutter(enabled: !capture.busy) }
+                        .disabled(capture.busy)
+                        .accessibilityLabel("Take a photo")
                     Button("Finish") { finished(capture.finish()) }
-                        .buttonStyle(.borderedProminent).disabled(capture.count == 0)
+                        .buttonStyle(.primary(.light)).disabled(capture.count == 0)
                 }
             }
             .padding()

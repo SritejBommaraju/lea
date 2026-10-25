@@ -17,7 +17,8 @@ with the cut, so the model shows the object alone, as the report needs.
 
 The bottom: a flipped segment the server registered (pipeline/segments.py, `segment_transforms`) joins the TSDF with
 its poses moved into segment 0's frame. Then every segment's depth is first cut to its own object box and above its
-own table (pipeline.mesh.object_depths), because the bottom segment's table lies across the object's top in segment
+own table, each frame along its own leaning table (segment_align.segment_object_depths; medium confidence kept, so
+the sides join the bottom to the top), because the bottom segment's table lies across the object's top in segment
 0's frame, and segment 0's table would meet the bottom where it touches. A hand-held scan (pose_source object_tracked)
 already holds the underside in the object frame, where its flat bottom lies at the table's height: no table cut.
 """
@@ -324,6 +325,7 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
     import open3d as o3d
 
     from repairos.pipeline.mesh import MeshUnavailable, keyframes_in_frame, moved_segment_frames, object_depths
+    from repairos.recon.segment_align import SURFACE_MIN_CONFIDENCE, segment_object_depths
     from repairos.recon.tsdf import ObjectBox, frames_from_scan_package
 
     t = {}
@@ -339,8 +341,11 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
     region = make_region(box, ground, voxel_m)
     tracked = pkg_local.get("pose_source") == "object_tracked"   # the underside is in the frame: never cut at the table
     bottom = moved_segment_frames(pkg_local, segment_transforms or {})
-    if bottom:   # every segment cut to its object first (see the module docstring)
-        depths, _ = object_depths(frames, box, None if tracked else ground)
+    if bottom:   # every segment cut to its object first, each frame along its own table (see the module docstring)
+        if tracked:
+            depths, _ = object_depths(frames, box, None)
+        else:
+            depths, _ = segment_object_depths(frames, box, ground, min_confidence=SURFACE_MIN_CONFIDENCE)
         frames = [replace(f, depth_m=d) for f, d in zip(frames, depths, strict=True)]
         for moved, mdepths, _, _, _ in bottom:
             frames += [replace(f, depth_m=d) for f, d in zip(moved, mdepths, strict=True)]

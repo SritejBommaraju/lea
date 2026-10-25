@@ -321,6 +321,32 @@ def test_a_fix_for_an_older_report_is_dropped_and_none_is_not_announced(env, tmp
     assert "fix" not in run(state.get("report", first.id)).data
 
 
+def test_a_fix_never_reaches_a_newer_report_built_in_the_same_second(env, tmp_path):  # noqa: F811
+    """created_at has whole seconds, so two builds of the same scan can share it: the build id tells them apart. A
+    patch of the same build (the mesh landing first) still takes the fix."""
+    state, blobs, scan = env
+    from repairos.pipeline.run import _patch_report, inspect_still_stage
+
+    ctx = Context(state=state, blobs=blobs, root=tmp_path / "pipeline")
+    for s in ("s_label", "s_skip"):
+        run(inspect_still_stage(ctx, s))
+    base = _publish(state, scan)
+    first = run(state.transition("report", base.id, "report.publish", {**base.data, "build_id": "build-a"}))
+    assert run(_patch_report(ctx, first, {"limits": ["patched by build a"]}))      # its own patch, in place
+    assert run(_patch_report(ctx, first, {"limits": ["build a again"]}))           # stale rev, same build: re-read
+    second = run(state.transition("report", first.id, "report.publish", {**first.data, "build_id": "build-b"}))
+    assert second.data["created_at"] == first.data["created_at"]                   # the same second
+    fix = {"part": "knob", "searched_at": "2026-10-24T20:00:00Z",
+           "options": [{"title": "Knob", "seller": "seller.example", "link": "https://seller.example/k"}]}
+
+    async def go():
+        return await attach_fix(ctx, scan, first, _done_task((fix, {"status": "done"})))
+    assert run(go()) is None
+    row = run(state.get("report", first.id))
+    assert "fix" not in row.data and row.data["build_id"] == "build-b"
+    assert run(state.get("pipeline-run", run_id_for(scan["scan_id"]))).data["fix"]["status"] == "stale"
+
+
 def test_report_schema_takes_a_fix_with_or_without_prices():
     rep = {**ex("report"), "summary": TEST_SUMMARY}
     validate("report", {**rep, "fix": {"part": "p", "searched_at": "2026-10-24T20:00:00Z",

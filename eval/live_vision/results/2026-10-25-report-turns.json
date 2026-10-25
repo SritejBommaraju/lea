@@ -1,0 +1,657 @@
+[
+ {
+  "id": "xbox_xb_here_before",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "before",
+  "kind": "owner",
+  "question": "the X button and the B button are here.",
+  "spoken": "Okay, I've got the X and B buttons. The scan couldn't judge them, because those photos were too blurry, so I can't say anything about them yet. Would you like me to guide you to a closer, sharper photo of those two buttons? Also, what happens with them: do they not respond at all?",
+  "raw": "Okay, I've got the X and B buttons. The scan couldn't judge them, because those photos were too blurry, so I can't say anything about them yet. Would you like me to guide you to a closer, sharper photo of those two buttons? Also, what happens with them: do they not respond at all?\n\n<continue_scan/>",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [],
+  "prep_s": 0.02,
+  "first_sentence_s": 1.93,
+  "searches": 0,
+  "usd": 0.0007245
+ },
+ {
+  "id": "xbox_xb_here",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "owner",
+  "question": "the X button and the B button are here.",
+  "spoken": "You're right, the blue X is the one in the middle of the group, and the red B sits to its left. The scan couldn't judge the face buttons, though. The photos were too soft to show whether they're cracked or worn. The X button is the blue one, and the B button is the red one on the left. What's happening with them: are they not registering presses, or do they feel stuck?",
+  "raw": "You're right, the blue X is the one in the middle of the group, and the red B sits to its left. The scan couldn't judge the face buttons, though. The photos were too soft to show whether they're cracked or worn. <show part=\"ix_3\"/>The X button is the blue one, and <show part=\"ix_2\"/>the B button is the red one on the left. What's happening with them: are they not registering presses, or do they feel stuck?",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   },
+   {
+    "type": "show",
+    "part": "ix_2"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xb_here_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "B button",
+    "point": [
+     -0.0258,
+     -0.4047,
+     -0.1074
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xb_here_2.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.37,
+  "first_sentence_s": 4.44,
+  "searches": 0,
+  "usd": 0.0013131
+ },
+ {
+  "id": "xbox_xyba_before",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "before",
+  "kind": "general",
+  "question": "What does the X, Y, B, and A button do in this device?",
+  "spoken": "Those four are the face buttons on an Xbox controller. A and B are the big round ones, X is the blue one on the left, and Y is the yellow one on top. In most games A confirms and B backs out, but what X and Y do depends on the game. The scan could not judge the face buttons, because the photos were too soft to show them clearly. I'd want a closer, sharper photo of them before saying anything about them.",
+  "raw": "Those four are the face buttons on an Xbox controller. A and B are the big round ones, X is the blue one on the left, and Y is the yellow one on top. In most games A confirms and B backs out, but what X and Y do depends on the game.\n\nThe scan could not judge the face buttons, because the photos were too soft to show them clearly. I'd want a closer, sharper photo of them before saying anything about them.",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [],
+  "prep_s": 0.11,
+  "first_sentence_s": 0.8,
+  "searches": 0,
+  "usd": 0.0006183000000000001
+ },
+ {
+  "id": "xbox_xyba",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "general",
+  "question": "What does the X, Y, B, and A button do in this device?",
+  "spoken": "On an Xbox controller the four face buttons are the coloured ones on the right side of the front. A is the green one at the bottom and confirms or selects. B is the red one on the right and goes back or cancels. X is the blue one on the left and Y is the yellow one at the top. In games their jobs change, but those are the usual defaults. A is the green button, the one you press to confirm or pick something. B is the red one to its right, usually back or cancel. X is the blue button on the left, and Y is the yellow one on top.",
+  "raw": "On an Xbox controller the four face buttons are the coloured ones on the right side of the front. A is the green one at the bottom and confirms or selects. B is the red one on the right and goes back or cancels. X is the blue one on the left and Y is the yellow one at the top. In games their jobs change, but those are the usual defaults.\n\n<show part=\"ix_1\"/>A is the green button, the one you press to confirm or pick something. <show part=\"ix_2\"/>B is the red one to its right, usually back or cancel. <show part=\"ix_3\"/>X is the blue button on the left, and <show part=\"ix_4\"/>Y is the yellow one on top.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_1"
+   },
+   {
+    "type": "show",
+    "part": "ix_2"
+   },
+   {
+    "type": "show",
+    "part": "ix_3"
+   },
+   {
+    "type": "show",
+    "part": "ix_4"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_1"
+    },
+    "label": "A button",
+    "point": [
+     -0.0155,
+     -0.4027,
+     -0.0966
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "B button",
+    "point": [
+     -0.0258,
+     -0.4047,
+     -0.1074
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_2.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_3.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_4"
+    },
+    "label": "Y button",
+    "point": [
+     -0.0328,
+     -0.4032,
+     -0.0871
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_4.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.01,
+  "first_sentence_s": 1.4,
+  "searches": 0,
+  "usd": 0.0011044000000000002
+ },
+ {
+  "id": "xbox_where_x",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "locate_non_finding",
+  "question": "where's the X button",
+  "spoken": "The X button is the blue one with the letter X. It's one of the four coloured face buttons, sitting between the green A and the yellow Y. On the controller it's the left-hand button of the diamond, and in this photo it's turned, so it looks like the middle one of the cluster.",
+  "raw": "<show part=\"ix_3\"/> The X button is the blue one with the letter X. It's one of the four coloured face buttons, sitting between the green A and the yellow Y. On the controller it's the left-hand button of the diamond, and in this photo it's turned, so it looks like the middle one of the cluster.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_where_x_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.0,
+  "first_sentence_s": 3.91,
+  "searches": 0,
+  "usd": 0.0013725999999999999
+ },
+ {
+  "id": "xbox_batteries",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "general_and_locate",
+  "question": "how do I change the batteries on this",
+  "spoken": "Flip the controller face down so the back is up. Near the middle of the back, there's a battery cover. Slide it toward the bottom edge, then lift it off. Take out the two AA batteries, and put in two fresh ones with their ends matching the markings inside the bay. Put the cover back on by sliding it into place until it clicks. Don't mix old and new batteries together.",
+  "raw": "Flip the controller face down so the back is up. Near the middle of the back, there's a battery cover. Slide it toward the bottom edge, then lift it off. Take out the two AA batteries, and put in two fresh ones with their ends matching the markings inside the bay. Put the cover back on by sliding it into place until it clicks. Don't mix old and new batteries together.",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.08,
+  "first_sentence_s": 3.24,
+  "searches": 0,
+  "usd": 0.0012684
+ },
+ {
+  "id": "xbox_heldout_b",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "heldout",
+  "kind": "locate_accuracy",
+  "question": "where's the B button",
+  "spoken": "The B button is the red one on the right side of the face button cluster, to the right of the green A button. In your photo it sits at the right edge of the four coloured buttons, with X on the left, Y at the top and A at the bottom.",
+  "raw": "The B button is the red one on the right side of the face button cluster, to the right of the green A button. In your photo it sits at the right edge of the four coloured buttons, with X on the left, Y at the top and A at the bottom.",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [
+   "s4",
+   "s5",
+   "v1"
+  ],
+  "prep_s": 0.28,
+  "first_sentence_s": 0.95,
+  "searches": 0,
+  "usd": 0.0009526000000000001
+ },
+ {
+  "id": "xbox_sparse_b",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "sparse",
+  "kind": "sparse",
+  "question": "is the B button damaged?",
+  "spoken": "The B button is the red one at the lower right of the four colored face buttons. I don't see any damage on it in the scan photos, and it looks like it sits flush in the shell. The face buttons were a bit soft in the photos, though, so I can't fully rule out a hairline crack. For a sure answer, press it and see if it clicks back and registers on screen, or take a sharp close-up of it.",
+  "raw": "<show part=\"f_25c6159f83e6\"/> The B button is the red one at the lower right of the four colored face buttons. I don't see any damage on it in the scan photos, and it looks like it sits flush in the shell. The face buttons were a bit soft in the photos, though, so I can't fully rule out a hairline crack. For a sure answer, press it and see if it clicks back and registers on screen, or take a sharp close-up of it.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_25c6159f83e6"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_25c6159f83e6"
+    },
+    "label": "face button",
+    "point": [
+     -0.0154,
+     -0.358,
+     -0.0736
+    ],
+    "photo": "scan_75033ad756b7f972_s1",
+    "shot": "xbox_sparse_b_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s1",
+   "v1",
+   "v2"
+  ],
+  "prep_s": 0.16,
+  "first_sentence_s": 2.99,
+  "searches": 0,
+  "usd": 0.0012891
+ },
+ {
+  "id": "toaster_red_wire_before",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "before",
+  "kind": "wire",
+  "question": "what is this red wire doing",
+  "spoken": "I can't tell from the scan what that red wire is for. The photos suggest the red wires above the small fan motor have bare ends that look loose and not attached to any terminal, but that's only a guess from blurry photos. Before you touch anything, unplug the device, since large capacitors can stay charged. Want me to guide you to a closer, sharper photo of those red wire ends?",
+  "raw": "I can't tell from the scan what that red wire is for. The photos suggest the red wires above the small fan motor have bare ends that look loose and not attached to any terminal, but that's only a guess from blurry photos. Before you touch anything, unplug the device, since large capacitors can stay charged. Want me to guide you to a closer, sharper photo of those red wire ends?\n\n<continue_scan/>",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [],
+  "prep_s": 0.02,
+  "first_sentence_s": 3.88,
+  "searches": 0,
+  "usd": 0.0008832
+ },
+ {
+  "id": "toaster_red_wire",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "after",
+  "kind": "wire",
+  "question": "what is this red wire doing",
+  "spoken": "That red wire is a power feed for the convection fan. It is crimped to a spade terminal on the fan motor coil and runs up to the control panel, where it links into the switches that run the fan. In this photo, a red wire arcs across the middle of the motor housing, and its far end goes toward the knob panel. Before you touch it, unplug the oven and let any stored charge drain. The scan flagged some red wire ends near the motor as possibly loose, but this photo is soft, so check by hand whether the crimp is firmly on its terminal.",
+  "raw": "<show part=\"ix_2\"/>That red wire is a power feed for the convection fan. It is crimped to a spade terminal on the fan motor coil and runs up to the control panel, where it links into the switches that run the fan. In this photo, a red wire arcs across the middle of the motor housing, and its far end goes toward the knob panel. Before you touch it, unplug the oven and let any stored charge drain. The scan flagged some red wire ends near the motor as possibly loose, but this photo is soft, so check by hand whether the crimp is firmly on its terminal.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_2"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "motor red wire end",
+    "point": [
+     -0.0082,
+     -0.2962,
+     -0.2721
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_red_wire_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s21",
+   "s11",
+   "v1"
+  ],
+  "prep_s": 0.54,
+  "first_sentence_s": 2.44,
+  "searches": 0,
+  "usd": 0.0015407
+ },
+ {
+  "id": "toaster_heldout_knob",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "heldout",
+  "kind": "locate_accuracy",
+  "question": "where's the control knob",
+  "spoken": "The control knobs are on the steel front panel at the bottom of the open control assembly. There's a row of four round knobs running diagonally across the panel, and the panel is tilted open, so they're easy to see.",
+  "raw": "The control knobs are on the steel front panel at the bottom of the open control assembly. There's a row of four round knobs running diagonally across the panel, and the panel is tilted open, so they're easy to see.\n\n<show part=\"f_493185e4858a\"/>\n<mark x=\"0.36\" y=\"0.61\" label=\"control knobs\"/>\n<mark x=\"0.65\" y=\"0.71\" label=\"knob row\"/>",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_493185e4858a"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_493185e4858a"
+    },
+    "label": "oven control panel assembly",
+    "point": [
+     -0.1481,
+     -0.2804,
+     -0.3167
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s5",
+    "shot": "toaster_heldout_knob_1.jpg"
+   }
+  ],
+  "heldout_error_mm": 129.7,
+  "views": [
+   "s20",
+   "s21",
+   "v1"
+  ],
+  "prep_s": 0.35,
+  "first_sentence_s": 4.14,
+  "searches": 0,
+  "usd": 0.0014825
+ },
+ {
+  "id": "toaster_heldout_cover",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "heldout",
+  "kind": "locate_accuracy",
+  "question": "where's the outer cover with the vent slots",
+  "spoken": "The vented cover is the tall stainless panel standing upright behind the open unit, against the wall. Its slots run along the lower part, and it's separate from the front control panel and the fan housing, which are lying in the middle of the photo.",
+  "raw": "<show part=\"f_982e1efa3aef\"/> The vented cover is the tall stainless panel standing upright behind the open unit, against the wall. Its slots run along the lower part, and it's separate from the front control panel and the fan housing, which are lying in the middle of the photo.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_982e1efa3aef"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_982e1efa3aef"
+    },
+    "label": "metal housing panel",
+    "point": [
+     0.0471,
+     -0.3176,
+     -0.3241
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s8",
+    "shot": "toaster_heldout_cover_1.jpg"
+   }
+  ],
+  "heldout_error_mm": 92.8,
+  "views": [
+   "s20",
+   "s19",
+   "v1"
+  ],
+  "prep_s": 0.47,
+  "first_sentence_s": 2.03,
+  "searches": 0,
+  "usd": 0.0013438
+ },
+ {
+  "id": "toaster_heldout_motor",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "heldout",
+  "kind": "locate_accuracy",
+  "question": "where's the small motor with the pink coil",
+  "spoken": "It's the small fan motor sitting in the middle of the round grey housing. Its wound coil is the beige, pinkish part with spade tabs at the bottom. That's the one the scan flagged, and its tabs look unseated, but a meter check would be needed to confirm anything.",
+  "raw": "It's the small fan motor sitting in the middle of the round grey housing. Its wound coil is the beige, pinkish part with spade tabs at the bottom. <show part=\"f_36128a1bd09c\"/> That's the one the scan flagged, and its tabs look unseated, but a meter check would be needed to confirm anything.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_36128a1bd09c"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_36128a1bd09c"
+    },
+    "label": "motor coil",
+    "point": [
+     -0.0279,
+     -0.2656,
+     -0.2955
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_heldout_motor_1.jpg"
+   }
+  ],
+  "heldout_error_mm": 51.8,
+  "views": [
+   "s16",
+   "s4",
+   "v1"
+  ],
+  "prep_s": 0.51,
+  "first_sentence_s": 1.72,
+  "searches": 0,
+  "usd": 0.0013268
+ },
+ {
+  "id": "toaster_sparse",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "sparse",
+  "kind": "sparse",
+  "question": "is anything burnt or damaged in there?",
+  "spoken": "The clearest suspect is the small fan motor coil. It may have some brownish discoloration near its top left and a darkened end on the bobbin, which could be scorching, but the photos are soft there, so I can't confirm it. Also, the white wire near the lower right round metal part may have a frayed end. Nothing in these photos shows clear burn marks, but unplug it before you get close, and take a sharper close-up of the motor coil to check.",
+  "raw": "The clearest suspect is the small fan motor coil. <show part=\"f_36128a1bd09c\"/> It may have some brownish discoloration near its top left and a darkened end on the bobbin, which could be scorching, but the photos are soft there, so I can't confirm it. Also, <show part=\"f_3661beca1eaa\"/> the white wire near the lower right round metal part may have a frayed end. Nothing in these photos shows clear burn marks, but unplug it before you get close, and take a sharper close-up of the motor coil to check.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_36128a1bd09c"
+   },
+   {
+    "type": "show",
+    "part": "f_3661beca1eaa"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_36128a1bd09c"
+    },
+    "label": "motor coil",
+    "point": [
+     -0.0279,
+     -0.2656,
+     -0.2955
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_sparse_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_3661beca1eaa"
+    },
+    "label": "wire bundle",
+    "point": [
+     -0.1475,
+     -0.276,
+     -0.2792
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_sparse_2.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s1",
+   "v1"
+  ],
+  "prep_s": 0.31,
+  "first_sentence_s": 2.6,
+  "searches": 0,
+  "usd": 0.0015512
+ },
+ {
+  "id": "toaster_general",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "after",
+  "kind": "general",
+  "question": "how does the fan motor in this work",
+  "spoken": "This is a small AC motor, usually a shaded-pole type on a little oven fan like this. When it gets power, the coil creates a magnetic field that keeps pushing the rotor around, and the rotor spins the fan blade. That blade circulates hot air past the heating elements so the food cooks more evenly. The motor only runs when the oven's switch sends power to it, and it's controlled from the front panel.",
+  "raw": "<show part=\"ix_1\"/>This is a small AC motor, usually a shaded-pole type on a little oven fan like this. When it gets power, the coil creates a magnetic field that keeps pushing the rotor around, and the rotor spins the fan blade. That blade circulates hot air past the heating elements so the food cooks more evenly. The motor only runs when the oven's switch sends power to it, and it's controlled from the front panel.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_1"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_1"
+    },
+    "label": "fan motor",
+    "point": [
+     -0.034,
+     -0.2747,
+     -0.3238
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s5",
+    "shot": "toaster_general_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s11",
+   "s20",
+   "v1"
+  ],
+  "prep_s": 0.21,
+  "first_sentence_s": 2.69,
+  "searches": 0,
+  "usd": 0.0015024
+ },
+ {
+  "id": "trimmer_blade",
+  "scan": "scan_c56fb68570165e4f",
+  "mode": "after",
+  "kind": "general_search",
+  "question": "how do I replace the blade on this trimmer",
+  "spoken": "Before you start, make sure the trimmer is switched off and the blade is handled carefully, since the edges are sharp. Then look at the square recessed area at the top of the handle, where the blade attaches. Hold the handle firmly and pull the old blade straight off the top, without twisting. To fit the new one, line it up with that same top area and press it down until it clicks into place. Give it a gentle tug to confirm it's locked before you use it.",
+  "raw": "Before you start, make sure the trimmer is switched off and the blade is handled carefully, since the edges are sharp. Then look at the square recessed area at the top of the handle, where the blade attaches. <show part=\"ix_5\"/> Hold the handle firmly and pull the old blade straight off the top, without twisting. To fit the new one, line it up with that same top area and press it down until it clicks into place. Give it a gentle tug to confirm it's locked before you use it.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_5"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_5"
+    },
+    "label": "Top cap",
+    "point": [
+     0.009,
+     -0.392,
+     -0.2413
+    ],
+    "photo": "scan_c56fb68570165e4f_s5",
+    "shot": "trimmer_blade_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s1",
+   "s6",
+   "v1"
+  ],
+  "prep_s": 0.29,
+  "first_sentence_s": 3.89,
+  "searches": 0,
+  "usd": 0.0013842000000000001
+ },
+ {
+  "id": "trimmer_where_button",
+  "scan": "scan_c56fb68570165e4f",
+  "mode": "after",
+  "kind": "locate_non_finding",
+  "question": "where's the power button",
+  "spoken": "On this trimmer the power button should be on the front face, between the round logo and the row of small dots at the bottom end. In the photo it's the small raised button area there. I can't read the printed text on the face clearly, so press it once and feel for a click, and check whether the light or the motor responds.",
+  "raw": "On this trimmer the power button should be on the front face, between the round logo and the row of small dots at the bottom end. In the photo it's the small raised button area there. I can't read the printed text on the face clearly, so press it once and feel for a click, and check whether the light or the motor responds. <mark x=\"0.42\" y=\"0.6\" label=\"likely power button\"/>",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [
+   "s1",
+   "s6",
+   "v1"
+  ],
+  "prep_s": 0.08,
+  "first_sentence_s": 4.0,
+  "searches": 0,
+  "usd": 0.0011627
+ }
+]

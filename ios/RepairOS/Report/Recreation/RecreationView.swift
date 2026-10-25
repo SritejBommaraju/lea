@@ -42,11 +42,14 @@ struct RecreationView: View {
     var probe: StageProbe?
     /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the turntable stops.
     var tour: WalkthroughPlayer?
+    /// Lea's camera move while she answers (LeaStage): fly to a marker, look from a side, zoom.
+    var cue: LeaStageCue?
 
     init(source: RecreationSource, markers: [ModelPin], focus: String? = nil, spin: Bool = true,
          onMarkerTap: @escaping (String) -> Void = { _ in }, onLoaded: (() -> Void)? = nil, probe: StageProbe? = nil,
-         tour: WalkthroughPlayer? = nil) {
+         tour: WalkthroughPlayer? = nil, cue: LeaStageCue? = nil) {
         self.tour = tour
+        self.cue = cue
         self.source = source
         self.markers = markers
         self.focus = focus
@@ -75,7 +78,8 @@ struct RecreationView: View {
 
     /// What this build can draw: textured meshes (PLY + atlas, or USDZ). A splat needs the splat renderer.
     nonisolated static func canDraw(_ m: RecreationManifest) -> Bool {
-        m.kind == "textured_mesh" && (m.file.hasSuffix(".ply") || m.file.hasSuffix(".usdz"))
+        // `flat_slab` (a thin object's photo slab, recreation/flat.py) is a textured mesh in a USDZ too.
+        ["textured_mesh", "flat_slab"].contains(m.kind) && (m.file.hasSuffix(".ply") || m.file.hasSuffix(".usdz"))
     }
 
     var body: some View {
@@ -84,11 +88,12 @@ struct RecreationView: View {
             if let loaded {
                 RecreationHost(loaded: loaded, markers: markers.map(Self.marker), focus: focus, spin: spin && !reduceMotion,
                                animate: !reduceMotion, active: visible, probe: probe,
-                               tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), onMarkerTap: onMarkerTap)
+                               tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), cue: cue,
+                               onMarkerTap: onMarkerTap)
                     .id(loaded.id)
                     .transition(.opacity)
             } else if !failed {
-                ProgressView().tint(.white)
+                ProgressView().tint(Palette.chalk)
             }
         }
         .modifier(TourCutFade(nearest: frame?.nearest, on: reduceMotion, shown: $cutShown))
@@ -151,7 +156,8 @@ struct RecreationView: View {
         case .setup: "setup"
         default: "neutral"
         }
-        return RecreationMarker(id: p.id, number: p.number, point: p.point, rgb: RecreationMarker.rgb(tone: tone), ring: p.area ?? p.ringRadius)
+        return RecreationMarker(id: p.id, number: p.number, point: p.point, rgb: RecreationMarker.rgb(tone: tone), ring: p.area ?? p.ringRadius,
+                                label: p.label)
     }
 }
 
@@ -173,25 +179,28 @@ private struct RecreationHost: UIViewRepresentable {
     var probe: StageProbe?
     /// The walkthrough's frame: the camera follows its pager instead of `focus`.
     var tour: TourFrame?
+    var cue: LeaStageCue?
     let onMarkerTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SCNView {
         let c = context.coordinator
+        c.cueN = cue?.n   // a move from before this view existed is not replayed
         let view = FittingSCNView(frame: .zero)
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
         view.rendersContinuously = false
-        view.preferredFramesPerSecond = 60
+        view.preferredFramesPerSecond = 120   // draws only while something moves; then at the display's full rate
         view.scene = c.stage.scene
         view.pointOfView = c.stage.cameraNode
         view.allowsCameraControl = true
         let cam = view.defaultCameraController
         cam.interactionMode = .orbitTurntable
         cam.inertiaEnabled = true
-        // Stay above the table while the recreation is open underneath; a scanned bottom can be turned to.
-        cam.minimumVerticalAngle = loaded.closedBottom ? -82 : 4
+        // Turn all the way round, underneath too (the owner, 2026-10-25): an unscanned bottom shows open, and the
+        // report offers the bottom scan's own photos (ReportModel.bottomPhotos) when it could not be lined up.
+        cam.minimumVerticalAngle = -82
         cam.maximumVerticalAngle = 82
         view.addGestureRecognizer(UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap(_:))))
         let touch = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.touched(_:)))
@@ -201,9 +210,15 @@ private struct RecreationHost: UIViewRepresentable {
         view.addGestureRecognizer(touch)
         c.view = view
         c.onMarkerTap = onMarkerTap
+        c.probe = probe
+        c.animate = animate
+        let rig = CameraRig(view: view, camera: c.stage.cameraNode)
+        rig.onArrive = { [weak c] in c?.landed() }
+        rig.onSettle = { [weak c] in c?.settled() }
+        c.rig = rig
         view.delegate = c.separator   // numbered markers never cover each other on screen (Report/Stage/MarkerLayout)
-        probe?.resolve = { [weak c] center, radius in c?.resolve(center, radius) }
         c.stage.set(loaded.content, focus: loaded.focus)
+        rig.scale = max(0.02, c.stage.focusRadius)
         c.stage.place(markers, focus: focus)
         c.keepApart()
         cam.target = SCNVector3(c.stage.focusCenter)
@@ -215,6 +230,7 @@ private struct RecreationHost: UIViewRepresentable {
         let c = context.coordinator
         c.onMarkerTap = onMarkerTap
         c.active = active
+        c.animate = animate
         if let tour {
             if c.stage.markers != markers { c.stage.place(markers, focus: nil); c.keepApart() }
             c.tour(tour, animate: animate)
@@ -233,15 +249,18 @@ private struct RecreationHost: UIViewRepresentable {
             c.focus = focus
             if let focus {
                 c.stage.stopSpin()
-                c.stage.fly(to: focus, animated: animate)
-                view.defaultCameraController.target = SCNVector3(c.stage.markers.first { $0.id == focus }.map { c.stage.onSurface($0.point) } ?? c.stage.focusCenter)
+                c.flyTo(focus)
             } else {
-                c.stage.frame(animated: animate)
-                view.defaultCameraController.target = SCNVector3(c.stage.focusCenter)
+                c.arrival = nil
+                c.stage.light(nil, animated: animate)
+                c.goFrame()
             }
-            c.pulse()
         }
-        view.isPlaying = c.stage.isSpinning && active
+        if let cue, c.cueN != cue.n {
+            c.cueN = cue.n
+            c.lea(cue.command, animate: animate)
+        }
+        view.isPlaying = (c.stage.isSpinning && active) || (c.rig?.moving ?? false)
     }
 
     @MainActor
@@ -259,6 +278,84 @@ private struct RecreationHost: UIViewRepresentable {
         }
         var focus: String?
         var onMarkerTap: (String) -> Void = { _ in }
+        var rig: CameraRig?
+        weak var probe: StageProbe?
+        /// Motion on (not Reduce Motion).
+        var animate = true
+        /// The marker the camera is flying to for a move (its highlight lands on arrival).
+        var arrival: String?
+        private var touching = false
+        private var idle: Task<Void, Never>?
+
+        /// Flies the camera to marker `id` along an arc (the rig); its ring draws on and the part lights up as it lands.
+        /// Reduce Motion: a cut, everything at once.
+        func flyTo(_ id: String) {
+            guard let view, let pose = stage.markerPose(id) else { return }
+            idle?.cancel()
+            arrival = id
+            if animate, let rig {
+                stage.prepareArrival(id)
+                rig.go(eye: pose.eye, look: pose.look, seconds: Motion.Scene.fly)
+            } else {
+                stage.move(to: pose.eye, look: pose.look, animated: false)
+                view.defaultCameraController.target = SCNVector3(pose.look)
+                landed()
+                pulse()
+            }
+        }
+
+        func goFrame() {
+            guard let view else { return }
+            let p = stage.framePose()
+            if animate, let rig { rig.go(eye: p.eye, look: p.look, seconds: Motion.Scene.fly) } else {
+                stage.move(to: p.eye, look: p.look, animated: false)
+                view.defaultCameraController.target = SCNVector3(p.look)
+                pulse()
+            }
+        }
+
+        /// The move is about 80% there: the highlight lands (ring, surface light, label) and the stage hears of it.
+        func landed() {
+            guard let id = arrival else { return }
+            stage.arrive(id, animated: animate)
+            probe?.land(id)
+            placeLanded()
+        }
+
+        /// Tells the stage where the landed part is on screen (fractions of the view), so the photo card can sit in
+        /// the corner farthest from it.
+        func placeLanded() {
+            guard let id = arrival, let view, view.bounds.width > 0, view.bounds.height > 0,
+                  let m = stage.markers.first(where: { $0.id == id }) else { return }
+            let world = stage.markerRoot.presentation.simdConvertPosition(stage.onSurface(m.point), to: nil)
+            let p = view.projectPoint(SCNVector3(world))
+            guard p.z > 0, p.z < 1 else { probe?.place(nil); return }
+            probe?.place(CGPoint(x: CGFloat(p.x) / view.bounds.width, y: CGFloat(p.y) / view.bounds.height))
+        }
+
+        /// The move settled: keep drawing a moment for the draw-on to finish, then back to on-demand; the idle drift
+        /// may resume after a quiet spell.
+        func settled() {
+            placeLanded()   // where the part really ended up, for the photo card's corner
+            pulse(seconds: Motion.Scene.drawOn + 0.35)
+            scheduleIdle()
+        }
+
+        /// After `Motion.Scene.idleDriftAfter` of nobody touching and Lea silent: the gentle turntable again
+        /// (never under Reduce Motion, never during the walkthrough or a move).
+        func scheduleIdle() {
+            idle?.cancel()
+            guard animate else { return }
+            idle = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Motion.Scene.idleDriftAfter))
+                guard let self, !Task.isCancelled, !self.touching, !self.touring, self.animate,
+                      !(self.rig?.moving ?? false), !LeaVoice.shared.speaking else { return }
+                self.arrival = nil
+                self.probe?.land(nil)
+                self.stage.startSpin()
+                self.view?.isPlaying = self.active
+            }
+        }
 
         // MARK: Walkthrough
 
@@ -310,38 +407,88 @@ private struct RecreationHost: UIViewRepresentable {
             keepApart()
         }
 
-        /// Whether the hero is on screen (the tour draws continuously only then).
-        var active = true
+        // MARK: Lea
 
-        @objc func touched(_ g: UILongPressGestureRecognizer) {
-            guard g.state == .began, stage.isSpinning else { return }
+        /// The last of Lea's moves applied (LeaStageCue.n).
+        var cueN: Int?
+        /// The side the default framing looks from (RecreationStage.framePose).
+        static let front: Float = 0.6
+
+        /// One of Lea's moves: fly to a marker, look from a side (the model turned back to rest first, so "front" is
+        /// the default framing's side), turn round, zoom. Reduce Motion: a cut.
+        func lea(_ command: StageCommand, animate: Bool) {
+            guard let view else { return }
             stage.stopSpin()
-            view?.isPlaying = false
-        }
-
-        /// Camera moves are SCNTransactions: keep drawing for their duration, then back to on-demand.
-        func pulse() {
-            guard let view, !stage.isSpinning else { return }
-            view.isPlaying = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                guard let self, !self.stage.isSpinning else { return }
-                self.view?.isPlaying = false
+            let cam = view.defaultCameraController
+            let now = TourPose(eye: stage.cameraNode.simdWorldPosition, look: SIMD3<Float>(cam.target))
+            var pose: TourPose?
+            var seconds = Motion.Scene.fly
+            switch command {
+            case .show(let id):
+                flyTo(id)
+                return
+            case .view(let side):
+                if side != .around { rest(animate: animate) }
+                if side == .reset { arrival = nil; stage.light(nil, animated: animate); probe?.land(nil) }
+                pose = StageCamera.pose(side, current: now, center: stage.focusCenter, distance: stage.frameDistance,
+                                        front: Self.front) ?? stage.framePose()
+                seconds = side == .reset ? Motion.Scene.fly : Motion.Scene.orbit
+            case .zoom(let zoomIn):
+                pose = StageCamera.zoom(now, zoomIn: zoomIn, minDistance: stage.frameDistance * 0.2,
+                                        maxDistance: stage.frameDistance * 2.2)
+                seconds = Motion.Scene.zoom
+            case .point:
+                pose = nil   // the stage turns a point into a marker first; the hero flies with .show
+            }
+            guard let pose else { return }
+            idle?.cancel()
+            if animate, let rig {
+                rig.go(eye: pose.eye, look: pose.look, seconds: seconds)
+            } else {
+                stage.move(to: pose.eye, look: pose.look, animated: false)
+                cam.target = SCNVector3(pose.look)
+                pulse()
             }
         }
 
-        /// A circle on screen → the spot on the recreation's surface under its centre (scan frame), and the circle's
-        /// radius at that depth. nil when the centre misses the object.
-        func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
-            guard let view else { return nil }
-            let hits = view.hitTest(center, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue,
-                                                      .rootNode: stage.modelNode])
-            guard let hit = hits.first else { return nil }
-            let world = SIMD3<Float>(hit.worldCoordinates)
-            let z = view.projectPoint(hit.worldCoordinates).z
-            let edge = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
-            // The markers' frame is the scan frame (findings' point_m), so the target uses it too.
-            let local = stage.markerRoot.presentation.simdConvertPosition(world, from: nil)
-            return (local, max(0.01, simd_distance(world, edge)))
+        /// The turntable back to rest, with the camera's move.
+        private func rest(animate: Bool) {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
+            stage.pivot.simdOrientation = simd_quatf(angle: 0, axis: SIMD3(0, 1, 0))
+            SCNTransaction.commit()
+        }
+
+        /// Whether the hero is on screen (the tour draws continuously only then).
+        var active = true
+
+        /// Any touch takes over at once: Lea's move in flight stops where it is, the turntable stops, and the photo
+        /// hand-off lets go.
+        @objc func touched(_ g: UILongPressGestureRecognizer) {
+            switch g.state {
+            case .began:
+                touching = true
+                idle?.cancel()
+                if rig?.moving ?? false { rig?.cancel(); probe?.land(nil) }
+                if stage.isSpinning { stage.stopSpin() }
+                // Back to drawing on demand once nothing runs: a cancelled move never reaches `settled`, so nothing
+                // else would stop the full-rate drawing of a still model (the walkthrough draws per frame itself).
+                if !touring, !stage.isSpinning, !(rig?.moving ?? false) { view?.isPlaying = false }
+            case .ended, .cancelled, .failed:
+                touching = false
+                scheduleIdle()
+            default: break
+            }
+        }
+
+        /// Camera moves are SCNTransactions: keep drawing for their duration, then back to on-demand.
+        func pulse(seconds: Double = Motion.Scene.fly + 0.1) {
+            guard let view, !stage.isSpinning else { return }
+            view.isPlaying = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                guard let self, !self.stage.isSpinning, !(self.rig?.moving ?? false) else { return }
+                self.view?.isPlaying = false
+            }
         }
 
         @objc func tap(_ g: UITapGestureRecognizer) {

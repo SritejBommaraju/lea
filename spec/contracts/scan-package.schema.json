@@ -59,7 +59,13 @@
           "pose_source": { "type": "string", "enum": ["arkit", "object_tracked"], "description": "Where this segment's own poses come from (absent = arkit)." },
           "crop_box": { "$ref": "#/$defs/box" },
           "points_file": { "type": "string", "description": "Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world)." },
-          "point_count": { "type": "integer", "minimum": 0 }
+          "point_count": { "type": "integer", "minimum": 0 },
+          "flip_align": { "title": "FlipAlign", "type": "object", "additionalProperties": false, "description": "The phone's live alignment of this flipped segment (FlipAligner), for diagnosis only and numbers only: how each cloud was cut to the object and the last few attempts. The backend never places anything with it.", "properties": {
+            "attempts": { "type": "integer", "minimum": 0 },
+            "main": { "$ref": "#/$defs/flip_cut" },
+            "bottom": { "$ref": "#/$defs/flip_cut" },
+            "last": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/flip_attempt" } }
+          } }
         }
       }
     },
@@ -174,6 +180,8 @@
         "design_points_file": { "type": "string", "description": "The same cloud in the design frame's axes (Z up), written in design_points_units." },
         "design_points_units": { "type": "string", "enum": ["m", "mm"], "description": "m: design axes in metres. mm: design-frame millimetres." }
       }
-    }
+    },
+    "flip_cut": { "title": "FlipCut", "type": "object", "additionalProperties": false, "description": "How the phone cut one cloud to the object before aligning it (FlipIsolation): the table it fitted and the tight box round the object.", "properties": { "input_points": { "type": "integer", "minimum": 0 }, "object_points": { "type": "integer", "minimum": 0 }, "table_y_m": { "type": "number", "description": "The fitted table's height under the object, in this cloud's ARKit world." }, "table_tilt_deg": { "type": "number", "minimum": 0 }, "cut_mm": { "type": "number", "minimum": 0, "description": "Cut above the table: its noise below its plane, mirrored." }, "floor_to_table_mm": { "type": "number", "description": "How far the locked box's floor sat below the fitted table." }, "box_extent_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 } } },
+    "flip_attempt": { "title": "FlipAttempt", "type": "object", "additionalProperties": false, "required": ["attempt"], "properties": { "attempt": { "type": "integer", "minimum": 1 }, "refused": { "type": "string", "description": "The check that refused it (inliers, rms, overlap, ambiguous, isolation); absent when accepted." }, "points": { "type": "integer", "minimum": 0, "description": "Mini-scan points used." }, "inliers": { "type": "integer", "minimum": 0 }, "overlap": { "type": "number", "minimum": 0 }, "rms_mm": { "type": "number", "minimum": 0 }, "margin": { "type": "number" }, "quality": { "type": "number", "minimum": 0, "maximum": 1 }, "flip_deg": { "type": "number" }, "agrees": { "type": "boolean", "description": "Agreed with the attempt before (two in a row line it up)." }, "ms": { "type": "integer", "minimum": 0 } } }
   }
 }

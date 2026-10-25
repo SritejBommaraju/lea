@@ -15,6 +15,7 @@ time is ours (no paid API); nothing here calls a paid service, so nothing goes t
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import time
@@ -22,6 +23,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -109,10 +112,38 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     from repairos.recreation.texture import scan_views, texture_mesh
     from repairos.recreation.usdz import usdz_bytes
 
+    if stills_local:   # a thin object (a board, a remote, a phone): its photos on a slab from segment 0
+        # (recreation.flat); a flipped bottom, registered or not, stays photos
+        from repairos.recreation.flat import scan_flat_model
+
+        flat, why = scan_flat_model(pkg_local, stills_local)
+        if flat is not None and segment_transforms:   # its registered flip: the underside from its own photos
+            from repairos.recreation.flat_flip import with_underside
+
+            flat = with_underside(flat, pkg_local, stills_local, segment_transforms)
+        if flat is not None:
+            buf = io.BytesIO()
+            flat.atlas.save(buf, "JPEG", quality=92)
+            data = usdz_bytes(flat.vertices, flat.uv, flat.faces, buf.getvalue())
+            lo, hi = flat.vertices.min(0), flat.vertices.max(0)
+            stats = {k: v for k, v in flat.stats.items() if isinstance(v, (int, float, str))}
+            return Recreation("flat_slab", "usdz", data, [float(x) for x in (lo + hi) / 2],
+                              float(np.linalg.norm(hi - lo) / 2), {"total_s": round(time.monotonic() - t0, 3)},
+                              {**stats, "measured_mm": "x".join(str(x) for x in flat.stats["measured_mm"]),
+                               "bottom_segments": list(flat.stats.get("bottom_segments") or [])}, why)
+        if why.startswith("thin"):   # a thin object whose slab failed its checks: say why, build the usual mesh
+            note = (note + "; " if note else "") + why
     try:
         surf = scan_surface(pkg_local, segment_transforms=segment_transforms)
     except MeshUnavailable as e:
-        raise RecreationUnavailable(str(e)) from e
+        if not segment_transforms:
+            raise RecreationUnavailable(str(e)) from e
+        try:   # the merge left no surface: the top scan alone
+            surf = scan_surface(pkg_local)
+        except MeshUnavailable as e2:
+            raise RecreationUnavailable(str(e2)) from e2
+        note = (note + "; " if note else "") + f"built from the top scan alone (with the bottom: {e})"
+        segment_transforms = None
     _deadline(t0, cfg["timeout_s"], "texturing")
     views = scan_views(pkg_local, stills, box=box, max_keyframes=int(cfg["max_keyframes"]),
                        segment_transforms=segment_transforms)
@@ -167,7 +198,8 @@ async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
             raise RecreationUnavailable(f"no scan-package {scan_id}")
         scan, rev = row.data, row.rev
         stills = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
-        moved = segments.aligned_transforms(await _segment_record(ctx, scan_id, rev))   # the registered bottom
+        # the registered bottom, when its merge passed the gate (pipeline/segments.merge_gate)
+        moved = segments.merged_transforms(await _segment_record(ctx, scan_id, rev))
         key = input_key(rev, stills, list(moved))
         have = (await _run_row(ctx, scan_id) or {}).get("recreation") or {}
         if have.get("input_key") == key and have.get("status") in ("done", "unavailable"):

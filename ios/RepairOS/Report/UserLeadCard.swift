@@ -22,29 +22,34 @@ struct GuessCheck: Equatable, Sendable {
 
     var badge: (words: String, symbol: String, tone: Tone) {
         switch checked {
-        case .confirmed: ("Photos agree", "checkmark.circle.fill", .caution)
-        case .notSeen: ("Not seen in the photos", "eye", .good)
-        case .couldNotCheck: ("Could not check", "questionmark.circle", .accent)
+        case .confirmed: ("Photos agree", "checkmark.circle", .caution)
+        case .notSeen: ("Not seen in the photos", "eye", .neutral)
+        case .couldNotCheck: ("Could not check", Symbol.unknown, .neutral)
         }
     }
+
+    /// Shown on the report only when the photos said something about it (no coverage caveat by default: "could not
+    /// check" stays off the default path, and Lea answers when asked).
+    var shownByDefault: Bool { checked != .couldNotCheck }
 }
 
+/// "What you suspected": your words in quotes, then a ruled row with what Lea found and the backend's note. A section
+/// on the canvas, not a box; upright type (no italic asides).
 struct UserLeadCard: View {
     let lead: GuessCheck
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.s) {
-            Text("What you suspected").font(.pillLabel).foregroundStyle(.secondary)
-            Text("“\(lead.said)”").font(.subheadline).italic().fixedSize(horizontal: false, vertical: true)
-            Divider()
-            HStack(spacing: Spacing.xs) {
-                Image(systemName: lead.badge.symbol).foregroundStyle(lead.badge.tone.color).accessibilityHidden(true)
-                Text("What Lea found · \(lead.badge.words)").font(.pillLabel).foregroundStyle(lead.badge.tone.text)
+        if lead.shownByDefault {
+            VStack(alignment: .leading, spacing: Spacing.s) {
+                SectionHeader("What you suspected")
+                Text("\u{201C}\(lead.said)\u{201D}").font(.body).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                Rectangle().fill(Palette.hairline).frame(height: Line.hairline)
+                ToneTag(text: "What Lea found · \(lead.badge.words)", tone: lead.badge.tone, symbol: lead.badge.symbol)
+                Text(ReportWords.display(lead.note)).font(.subheadline).foregroundStyle(Palette.ink).fixedSize(horizontal: false, vertical: true)
             }
-            Text(lead.note).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .combine)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
-        .accessibilityElement(children: .combine)
     }
 }

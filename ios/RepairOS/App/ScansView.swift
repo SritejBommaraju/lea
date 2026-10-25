@@ -12,6 +12,20 @@ enum ScanLibrary {
         app.reloadSessions()
     }
 
+    /// Deletes several scans in one go (Home's selection mode): each folder once, never the one being captured, then
+    /// the list reloads once (not once per scan, so the List applies a single update). Returns how many went.
+    @discardableResult
+    static func delete(_ records: [SessionRecord], app: AppState) -> Int {
+        delete(records, storage: app.storage, reload: app.reloadSessions)
+    }
+
+    @discardableResult
+    static func delete(_ records: [SessionRecord], storage: ScanStorage, reload: () -> Void) -> Int {
+        let n = storage.delete(records)
+        reload()
+        return n
+    }
+
     /// How many scans "Delete all" would remove (all but one being captured).
     static func deletableCount(app: AppState) -> Int { app.sessions.filter(app.storage.canDelete).count }
 
@@ -42,50 +56,56 @@ enum CachedReport {
     }
 }
 
-// MARK: - List
+// MARK: - Rows
 
-/// Every scan on the phone, newest first. Tap opens it; swipe or long-press to delete (with a confirmation).
-struct ScansView: View {
-    @Environment(AppState.self) private var app
-    let open: (SessionRecord) -> Void
-    @State private var pendingDelete: SessionRecord?
-
-    var body: some View {
-        List {
-            ForEach(app.sessions) { s in
-                ScanRowButton(record: s, open: open, delete: { pendingDelete = s })
-            }
-        }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
-        .background(Palette.canvas.ignoresSafeArea())
-        .overlay {
-            if app.sessions.isEmpty {
-                ContentUnavailableView("No scans", systemImage: Symbol.scan, description: Text("Scans you take show up here."))
-            }
-        }
-        .navigationTitle("Scans")
-        .navigationBarTitleDisplayMode(.large)
-        .confirmDeleteScan($pendingDelete)
-    }
-}
-
-/// One scan row as a list row: tap opens, swipe and long-press delete.
+/// One scan row as a list row: tap opens, swipe and long-press delete; long-press → Select starts selection mode. In
+/// selection mode a tap ticks it (a checkbox at the leading edge) and there is no swipe.
 struct ScanRowButton: View {
     let record: SessionRecord
     let open: (SessionRecord) -> Void
     let delete: () -> Void
+    var selecting = false
+    var selected = false
+    var toggle: () -> Void = {}
+    var select: () -> Void = {}
     @Environment(AppState.self) private var app
 
     var body: some View {
         let deletable = ScanLibrary.canDelete(record, app: app)
-        Button { open(record) } label: { SessionRow(record: record) }
+        Button { if selecting { toggle() } else { open(record) } } label: {
+            HStack(spacing: Spacing.m) {
+                if selecting {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(selected ? Palette.accent : Palette.secondary)
+                        .opacity(deletable ? 1 : 0.35)
+                        .contentTransition(.symbolEffect(.replace))
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                        .accessibilityHidden(true)
+                }
+                SessionRow(record: record)
+            }
+        }
             .buttonStyle(PressableCardStyle())
-            .listRowInsets(EdgeInsets(top: Spacing.xs, leading: Spacing.gutter, bottom: Spacing.xs, trailing: Spacing.gutter))
-            .listRowSeparator(.hidden)
+            .disabled(selecting && !deletable)
+            .accessibilityAddTraits(selecting && selected ? .isSelected : [])
+            .accessibilityHint(selecting ? (deletable ? "Selects it for deleting" : "Being captured: can't be deleted") : "")
+            .listRowInsets(EdgeInsets(top: Spacing.m, leading: Spacing.gutter, bottom: Spacing.m, trailing: Spacing.gutter))
+            // Rows are separated by hairlines, not boxed one by one.
+            .listRowSeparator(.hidden, edges: .top)
+            .listRowSeparator(.visible, edges: .bottom)
+            .listRowSeparatorTint(Palette.hairline)
+            .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
             .listRowBackground(Color.clear)
-            .swipeActions { if deletable { Button("Delete", systemImage: "trash", role: .destructive, action: delete) } }
-            .contextMenu { Button("Delete scan", systemImage: "trash", role: .destructive, action: delete).disabled(!deletable) }
+            // Not `role: .destructive`: that removes the row optimistically while the confirmation is still open, and
+            // the real delete then leaves the list's item count out of step (UICollectionView invalid-update crash).
+            .swipeActions { if deletable, !selecting { Button("Delete", systemImage: "trash", action: delete).tint(Palette.danger) } }
+            .contextMenu {
+                if !selecting {
+                    Button("Select", systemImage: "checkmark.circle", action: select).disabled(!deletable)
+                    Button("Delete scan", systemImage: "trash", role: .destructive, action: delete).disabled(!deletable)
+                }
+            }
     }
 }
 
@@ -105,10 +125,13 @@ private struct ConfirmDeleteScan: ViewModifier {
         content.confirmationDialog("Delete this scan?", isPresented: Binding(get: { record != nil }, set: { if !$0 { record = nil } }),
                                    titleVisibility: .visible, presenting: record) { r in
             Button("Delete scan", role: .destructive) {
-                guard ScanLibrary.canDelete(r, app: app) else { record = nil; return }
-                ScanLibrary.delete(r, app: app)
                 record = nil
-                deleted()
+                guard ScanLibrary.canDelete(r, app: app) else { return }
+                // After the dialog has gone, so the list applies one update, not one mid-dismissal.
+                Task { @MainActor in
+                    withAnimation { ScanLibrary.delete(r, app: app) }
+                    deleted()
+                }
             }
             Button("Cancel", role: .cancel) { record = nil }
         } message: { r in
@@ -119,12 +142,16 @@ private struct ConfirmDeleteScan: ViewModifier {
 
 // MARK: - Row
 
+/// One scan: a 48 pt thumbnail, the person's own words as the title ("Scan" when they gave none), the date, time and
+/// photo count, and a read-only status tag. A reported scan shows its verdict ("Safety problem" when a most likely
+/// problem is a safety one; never a "closer look" prompt); anything else shows where it is on the way to a report,
+/// never in the accent.
 struct SessionRow: View {
     let record: SessionRecord
     @Environment(AppState.self) private var app
     @State private var summary: Summary?
 
-    struct Summary: Sendable { var verdict: ReportModel.Verdict?; var thumb: UIImage? }
+    struct Summary: Sendable { var verdict: ReportModel.Verdict?; var safety = false; var thumb: UIImage? }
 
     var body: some View {
         HStack(spacing: Spacing.m) {
@@ -133,30 +160,23 @@ struct SessionRow: View {
                 if let thumb = summary?.thumb {
                     Image(uiImage: thumb).resizable().scaledToFill().transition(.opacity)
                 } else {
-                    Image(systemName: look.symbol).foregroundStyle(look.tone.color)
+                    Image(systemName: Symbol.photo).foregroundStyle(Palette.secondary)
                 }
             }
-            .frame(width: 52, height: 52)
+            .frame(width: 48, height: 48)
             .clipShape(RoundedRectangle(cornerRadius: Radius.thumb, style: .continuous))
             .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(record.symptom ?? "Scan").font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
-                Text("\(record.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute())) · \(record.stillIDs.count) photos")
-                    .font(.footnote).foregroundStyle(.secondary)
-                // A reported scan shows its verdict in the verdict's colour (amber for problems, never green);
-                // anything else shows where it is on the way to a report.
-                let status: (words: String, tone: Tone) = summary?.verdict.map { ($0.words, verdictTone($0)) } ?? (look.words, look.tone)
-                HStack(spacing: 5) {
-                    Circle().fill(status.tone.color).frame(width: 7, height: 7)
-                    Text(status.words)
-                }
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(status.tone == .neutral ? Color.secondary : status.tone.text)
+                Text(record.symptom ?? "Scan").font(.body.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Text(meta).font(.footnote).foregroundStyle(Palette.secondary)
+                tag
             }
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
+                .accessibilityHidden(true)
         }
-        .card(padding: Spacing.m)
+        .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .task(id: record.status) {
             let loaded = await Self.summary(dir: app.storage.dir(record), stillIDs: record.stillIDs, scale: 3)
@@ -164,26 +184,37 @@ struct SessionRow: View {
         }
     }
 
-    private func verdictTone(_ v: ReportModel.Verdict) -> Tone {
-        switch v {
-        case .potentialIssues: .caution
-        case .looksGood, .noProblemsSeen: .good
-        default: .neutral
+    /// "24 Oct · 14:32 · 12 photos".
+    private var meta: String {
+        let day = record.createdAt.formatted(.dateTime.day().month(.abbreviated))
+        let time = record.createdAt.formatted(.dateTime.hour().minute())
+        let photos = record.stillIDs.count == 1 ? "1 photo" : "\(record.stillIDs.count) photos"
+        return "\(day) · \(time) · \(photos)"
+    }
+
+    @ViewBuilder private var tag: some View {
+        if let verdict = summary?.verdict {
+            switch verdict {
+            case .potentialIssues where summary?.safety == true:
+                ToneTag(text: "Safety problem", tone: .danger, symbol: Symbol.safety)
+            case .potentialIssues:
+                ToneTag(text: verdict.words, tone: .caution, symbol: "exclamationmark.circle")
+            default:
+                ToneTag(text: verdict.words, tone: .neutral)
+            }
+        } else {
+            switch record.status {
+            case .capturing: ToneTag(text: "Not finished", tone: .neutral)
+            case .captured: ToneTag(text: "Captured", tone: .neutral)
+            case .uploading: ToneTag(text: "Uploading", tone: .neutral)
+            case .uploaded: ToneTag(text: "Analysing", tone: .neutral)
+            case .reported: ToneTag(text: "Report ready", tone: .neutral)
+            case .failed: ToneTag(text: "Failed", tone: .danger, symbol: "exclamationmark.circle")
+            }
         }
     }
 
-    private var look: (symbol: String, words: String, tone: Tone) {
-        switch record.status {
-        case .capturing: ("record.circle", "Not finished", .caution)
-        case .captured: ("tray.full.fill", "Captured", .neutral)
-        case .uploading: ("arrow.up.circle.fill", "Uploading", .accent)
-        case .uploaded: ("hourglass", "Analysing", .accent)
-        case .reported: ("doc.text.fill", "Report ready", .good)
-        case .failed: ("exclamationmark.circle.fill", "Failed", .danger)
-        }
-    }
-
-    /// The cached verdict and a 52 pt thumbnail of the first local photo, read off the main actor.
+    /// The cached verdict (and whether a most likely problem is a safety one) and a 48 pt thumbnail of the first local photo, read off the main actor.
     @concurrent
     private static func summary(dir: URL, stillIDs: [String], scale: CGFloat) async -> Summary {
         let fm = FileManager.default
@@ -198,9 +229,56 @@ struct SessionRow: View {
         if let url = candidates.first(where: { fm.fileExists(atPath: $0.path) }), let src = CGImageSourceCreateWithURL(url as CFURL, nil) {
             let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
                                             kCGImageSourceCreateThumbnailWithTransform: true,
-                                            kCGImageSourceThumbnailMaxPixelSize: Int(52 * scale)]
+                                            kCGImageSourceThumbnailMaxPixelSize: Int(48 * scale)]
             thumb = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary).map { UIImage(cgImage: $0) }
         }
-        return Summary(verdict: (report?["verdict"] as? String).map(ReportModel.Verdict.init), thumb: thumb)
+        let model = report.map(ReportModel.init(json:))
+        return Summary(verdict: model?.verdict, safety: model?.mostLikely.contains { $0.severity == .safety } ?? false, thumb: thumb)
     }
+}
+
+// MARK: - Selecting several scans
+
+/// Home's selection mode (Select, or long-press → Select): which scans are ticked. Only scans that can be deleted can
+/// be ticked (never the one being captured: `ScanLibrary.canDelete`). Kept apart from the view so it is tested.
+struct ScanSelection: Equatable, Sendable {
+    private(set) var active = false
+    private(set) var ids: Set<String> = []
+
+    var count: Int { ids.count }
+    func contains(_ id: String) -> Bool { ids.contains(id) }
+
+    /// Selection mode on, with `first` ticked when it can be (long-press → Select on that row).
+    mutating func begin(with first: String? = nil, selectable: Set<String>) {
+        active = true
+        ids = first.map { selectable.contains($0) ? [$0] : [] } ?? []
+    }
+
+    mutating func toggle(_ id: String, selectable: Set<String>) {
+        guard active, selectable.contains(id) else { return }
+        if ids.contains(id) { ids.remove(id) } else { ids.insert(id) }
+    }
+
+    func allSelected(_ selectable: Set<String>) -> Bool { !selectable.isEmpty && selectable.isSubset(of: ids) }
+
+    /// Select all, or deselect all when everything is already ticked.
+    mutating func toggleAll(_ selectable: Set<String>) {
+        guard active else { return }
+        ids = allSelected(selectable) ? [] : selectable
+    }
+
+    /// The list changed (a reload, a delete, a capture starting): ticks on scans that are gone or no longer
+    /// deletable are dropped.
+    mutating func prune(to selectable: Set<String>) { ids.formIntersection(selectable) }
+
+    mutating func end() {
+        active = false
+        ids = []
+    }
+
+    /// "Delete 1 scan", "Delete 3 scans".
+    static func deleteTitle(_ n: Int) -> String { n == 1 ? "Delete 1 scan" : "Delete \(n) scans" }
+    /// The one confirmation's title.
+    static func confirmTitle(_ n: Int) -> String { (n == 1 ? "Delete 1 scan" : "Delete \(n) scans") + "?" }
+    static let confirmMessage = "Photos and reports are removed from this phone. Copies on the server stay."
 }

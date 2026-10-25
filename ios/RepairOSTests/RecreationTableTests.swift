@@ -87,4 +87,14 @@ struct RecreationTableTests {
         let round = try? JSONDecoder().decode(RecreationManifest.self, from: JSONEncoder().encode(m))
         #expect(round?.closedBottom == true)
     }
+
+    /// A thin object's photo slab (`flat_slab`, a USDZ) is drawn like any textured mesh; it was refused before.
+    @Test func aThinObjectsSlabIsDrawable() {
+        let slab = RecreationManifest(kind: "flat_slab", origin: "gateway", rev: 2, file: "model.usdz", texture: nil,
+                                      focusCenter: nil, focusRadius: nil)
+        #expect(RecreationView.canDraw(slab))
+        let splat = RecreationManifest(kind: "splat", origin: "gateway", rev: 2, file: "model.splat", texture: nil,
+                                       focusCenter: nil, focusRadius: nil)
+        #expect(!RecreationView.canDraw(splat))
+    }
 }

@@ -10,6 +10,10 @@ Portions adapted from lidar-scanner-ios, Copyright (c) 2026 Dominik Hagmann (MIT
 Portions adapted from Apple's sample "Displaying a point cloud using scene depth", Copyright © 2026 Apple Inc.
 (licence text in RepairOS/Capture/ThirdParty/AppleScenePointCloud/LICENSE.txt, MIT-style)
 
+Alegreya Sans (Bold, ExtraBold, Black), Copyright 2013 The Alegreya Sans Project Authors
+(https://github.com/huertatipografica/Alegreya-Sans). Licensed under the SIL Open Font License, Version 1.1
+(licence text in RepairOS/Design/Fonts/OFL.txt). Bundled unmodified as the display face; fonts only.
+
 What was taken, per file:
 
 - Apple "Displaying a point cloud using scene depth": the depth unprojection and YCbCr-to-RGB conversion in

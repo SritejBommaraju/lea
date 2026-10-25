@@ -91,7 +91,7 @@ struct CropThumb: View {
                         .frame(width: geo.size.width, height: geo.size.height)
                         .transition(.opacity)
                 } else {
-                    Image(systemName: Symbol.photo).font(.title3).foregroundStyle(.tertiary)
+                    Image(systemName: Symbol.photo).font(.title3).foregroundStyle(Palette.faint)
                 }
             }
             .task(id: "\(sha ?? "")@\(pixels)") {
@@ -102,7 +102,7 @@ struct CropThumb: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
+        .overlay(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).strokeBorder(Palette.hairline, lineWidth: Line.hairline))
         .accessibilityHidden(true)
     }
 }
@@ -121,12 +121,19 @@ struct CropZoomView: View {
                     ZoomablePhoto(sha: sha).tag(i)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: shas.count > 1 ? .always : .never))
+            .tabViewStyle(.page(indexDisplayMode: .never))
             .ignoresSafeArea()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark").font(.body.weight(.semibold)).foregroundStyle(.white)
-                    .frame(width: 44, height: 44).background(.ultraThinMaterial, in: Circle())
+            if shas.count > 1 {
+                Text("\(index + 1) of \(shas.count)").monospacedDigit().cameraChip()
+                    .contentTransition(.numericText())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Spacing.gutter)
+                    .padding(.top, 6)
             }
+            Button { dismiss() } label: {
+                Image(systemName: Symbol.close)
+            }
+            .buttonStyle(StageIconButtonStyle())
             .padding(Spacing.gutter)
             .accessibilityLabel("Close")
         }

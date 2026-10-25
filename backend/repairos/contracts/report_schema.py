@@ -838,6 +838,11 @@ class Report(BaseModel):
     scan_id: str = Field(..., min_length=1)
     session_id: str = Field(..., min_length=1)
     created_at: AwareDatetime
+    build_id: str | None = Field(
+        None,
+        description="Unique per report build (report.publish); a later revision of the same build (the fix, the mesh) keeps it. A patch applies only while the row still carries its build's id (created_at has whole seconds).",
+        min_length=1,
+    )
     verdict: Verdict = Field(
         ...,
         description='Picked in code (repairos.report.verdict truth table), never by a model. no_problems_seen (V8): nothing judged shows an issue and the capture covered the object well (config/verdict.yaml), but some regions were not checked: they are listed in verdict_reason.caveat.',

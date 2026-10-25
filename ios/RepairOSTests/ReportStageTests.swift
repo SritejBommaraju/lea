@@ -32,7 +32,7 @@ struct ReportWordsTests {
                                      Self.problem("Housing", "Looks cracked"), Self.problem("Cover", "Colour doesn't match")])
         #expect(ReportWords.eyebrow(r) == "3 likely problems · 1 safety")
         #expect(ReportWords.headline(r) == "Wire may be loose")
-        #expect(ReportWords.sentence(r) == "Seen 2 times. Two more things are worth a look.")
+        #expect(ReportWords.sentence(r) == "Three likely problems, one of them a safety problem. The first was seen 2 times.")
         #expect(ReportWords.tone(r) == .danger)
     }
 
@@ -41,14 +41,26 @@ struct ReportWordsTests {
         #expect(ReportWords.phrase(Self.problem("LED", "Looks dim")) == "LED looks dim")
     }
 
-    @Test func nothingWrongStillCountsWhatWasNotChecked() {
+    @Test func nothingWrongIsQuietAboutGapsButNeverCallsThemFine() {
+        // No coverage caveat by default (owner, 2026-10-25): the gaps stay in the model for "What wasn't checked",
+        // and no word on the default path says they were fine.
         let r = Self.report("looks_good", gaps: 12)
-        #expect(ReportWords.eyebrow(r) == "Nothing looked wrong · 12 spots unchecked")
-        #expect(ReportWords.sentence(r) == "12 spots weren't clear enough to judge, so they aren't counted as fine.")
+        #expect(ReportWords.eyebrow(r) == "Nothing looked wrong")
+        #expect(ReportWords.sentence(r) == nil)
+        #expect(ReportWords.unchecked(r) == 12)
+        #expect(!ReportWords.headline(r).lowercased().contains("fine"))
         #expect(ReportWords.tone(r) == .good)
     }
 
-    @Test func noProblemsSeenIsCalmAndKeepsItsCaveat() {
+    @Test func countsSentenceSaysHowManyAreSafety() {
+        let one = Self.report("potential_issues", likely: [Self.problem("Wire", "May be loose", severity: .safety)])
+        #expect(ReportWords.sentence(one) == "One likely problem, a safety problem.")
+        let two = Self.report("potential_issues", likely: [Self.problem("Wire", "May be loose"), Self.problem("Lid", "Looks bent")],
+                              other: [Self.problem("Knob", "Looks scratched")])
+        #expect(ReportWords.sentence(two) == "Two likely problems. One more thing is worth a look.")
+    }
+
+    @Test func noProblemsSeenIsCalmAndQuiet() {
         var r = Self.report("no_problems_seen", gaps: 11)
         r.photosInspected = 13
         r.verdictCaveat = "Nothing looked wrong in the 2 areas Lea could see clearly. 11 areas need a closer photo."
@@ -56,14 +68,13 @@ struct ReportWordsTests {
         #expect(ReportWords.headline(r) == "No problems seen")
         #expect(ReportWords.eyebrow(r) == "13 photos checked")
         #expect(ReportWords.tone(r) == .good)
-        #expect(ReportWords.sentence(r) == r.verdictCaveat)
-        // Voice/ReportSpeech owns the spoken wording: first person, then what the caveat leaves out.
+        #expect(ReportWords.sentence(r) == nil)   // the caveat is off the default path (owner, 2026-10-25)
+        // Voice/ReportSpeech owns the spoken wording: first person, never "fine", and no caveat on landing.
         let spoken = ReportSpeech.lines(r)
-        #expect(spoken.contains("Nothing looked wrong in what I could see clearly."))
-        #expect(spoken.contains("11 areas need a closer photo."))
-        #expect(!spoken.contains("Lea could see"))
+        #expect(spoken == "Nothing looked wrong in what I could see clearly.")
+        #expect(!spoken.lowercased().contains("fine"))
         r.verdictCaveat = nil
-        #expect(ReportWords.sentence(r) == "11 spots need a closer photo.")
+        #expect(ReportWords.sentence(r) == nil)
     }
 
     @Test func notEnoughUsesTheSameWordsAsTheBigScreen() {
@@ -146,9 +157,23 @@ struct ProblemRingTests {
         #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0, 0)), (badge, nil)]) == "b")   // a badge first
     }
 
+    /// A goal straight above (a part at the top centre) is clamped to the range the camera can reach, so the move
+    /// settles and the display link stops.
+    @MainActor @Test func aCameraGoalStaysWithinTheReachableElevation() {
+        let above = CameraRig.Orbit(eye: SIMD3(0, 0.5, 0.0001), look: SIMD3(0, 0, 0))
+        #expect(above.elevation > CameraRig.maxElevation)
+        let goal = CameraRig.reachable(above)
+        #expect(goal.elevation == CameraRig.maxElevation)
+        #expect(goal.azimuth == above.azimuth && goal.distance == above.distance && goal.target == above.target)
+        let below = CameraRig.reachable(CameraRig.Orbit(eye: SIMD3(0, -0.5, 0.0001), look: SIMD3(0, 0, 0)))
+        #expect(below.elevation == -CameraRig.maxElevation)
+        let side = CameraRig.Orbit(eye: SIMD3(0.3, 0.2, 0.3), look: SIMD3(0, 0, 0))
+        #expect(CameraRig.reachable(side) == side)
+    }
+
     @MainActor @Test func ringTextureDraws() {
-        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2), dashed: false) != nil)
-        #expect(RecreationStage.ring(rgb: SIMD3(0.5, 0.5, 0.6), dashed: true) != nil)
+        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2)) != nil)
+        #expect(RecreationStage.ring(rgb: FixedHex.rgb(FixedHex.next)) != nil)
     }
 }
 
@@ -214,5 +239,103 @@ struct StageHeroChoiceTests {
         #expect(ReportView.showsRecreation(hero: ReportView.heroChoice(live: nil, pipeline: nil, cached: "mesh"), available: true))
         #expect(!ReportView.showsRecreation(hero: "mesh", available: false))
         #expect(ReportView.heroChoice(live: "mesh", pipeline: "photos", cached: "photos") == "mesh")   // live first
+    }
+}
+
+/// The owner's small-board scan (2026-10-25): `mesh.hero = "photos"`, a 342-triangle mesh, nothing looked wrong. The
+/// phone looked "still loading": the photo hero showed only the numbered findings' stills, and with none it waited
+/// forever. Every path must end on a picture (or a plain line), show what the object is, and keep the caveat off.
+struct PhotoHeroPathTests {
+    static let report: ReportModel = ReportModel(json: [
+        "verdict": "no_problems_seen",
+        "verdict_reason": ["text": "No issues seen.",
+                           "caveat": "Nothing looked wrong in the 4 areas Lea could see clearly. 18 areas need a closer photo."],
+        "object": ["category": "microcontroller_board", "brand": "Acme", "model": "Board 3"],
+        "mesh": ["hero": "photos", "rev": 1] as [String: Any],
+        "capture": ["stills": 22, "stills_inspected": 22],
+    ])
+
+    @Test func photosHeroNeverWaitsOnFindings() throws {
+        let r = Self.report
+        #expect(r.mostLikely.isEmpty && StageMarks.photoMarks(r).isEmpty)
+        // The backend chose photos: no recreation, the photo hero.
+        #expect(!ReportView.showsRecreation(hero: ReportView.heroChoice(live: nil, pipeline: nil, cached: r.hero), available: true))
+        let dir = FileManager.default.temporaryDirectory.appending(path: "photo-hero-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        #expect(ModelSource.find(in: dir, hero: "photos").isPhotos)
+        // With nothing numbered, the hero falls back to the scan's own stills (so it always has a picture to show).
+        #expect(PhotoHero.heroStills(marked: [], available: ["s3", "s1"]) == ["s3", "s1"])
+        let mark = PhotoHero.Mark(id: "f", number: 1, still: "s7", box: nil, tone: .caution)
+        #expect(PhotoHero.heroStills(marked: [mark], available: ["s3"]) == ["s7"])
+        #expect(PhotoHero.heroStills(marked: [], available: []).isEmpty)   // the hero then says so, never spins
+    }
+
+    @Test func stillsAreListedLargestFirst() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "photo-stills-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(count: 10).write(to: dir.appending(path: "scan_ab_s1.jpg"))
+        try Data(count: 30).write(to: dir.appending(path: "scan_ab_s2.jpg"))
+        try Data(count: 5).write(to: dir.appending(path: "notes.txt"))
+        #expect(await PhotoHero.stillIDs(in: dir) == ["scan_ab_s2", "scan_ab_s1"])
+    }
+
+    @Test func identityShowsAndTheCaveatStaysOff() {
+        let r = Self.report
+        #expect(ReportView.identity(corrected: nil, report: r.objectWords, live: nil) == "Microcontroller board · Acme Board 3")
+        #expect(ReportView.identity(corrected: nil, report: "Microcontroller board", live: "Microcontroller board · Acme Board 3")
+                == "Microcontroller board · Acme Board 3")
+        #expect(ReportView.identity(corrected: "My board", report: r.objectWords, live: nil) == "My board")
+        #expect(ReportWords.sentence(r) == nil)
+        #expect(ReportWords.headline(r) == "No problems seen")
+        #expect(!ReportSpeech.lines(r).contains("areas"))
+    }
+}
+
+/// The person never sees numbered photos, so no photo number reaches the screen (owner, 2026-10-25).
+struct DisplayWordsTests {
+    @Test func photoNumbersNeverReachTheScreen() {
+        #expect(ReportWords.display("Take a close photo of the contact beside the label (photo 8). Hold steady.")
+                == "Take a close photo of the contact beside the label. Hold steady.")
+        #expect(ReportWords.display("The crack shows in photo 3 and on the lid (photos 4 and 5).") == "The crack shows and on the lid.")
+        #expect(ReportWords.display("could not judge the screw in still scan_ab12_s8") == "could not judge the screw")
+        #expect(ReportWords.display("Photo 2 is blurry.") == "A photo is blurry.")
+        #expect(ReportWords.display(ReportWords.gapReason(ReportWordsTests.gap("Screw", "too dark in still s4"), unclear: true)) == "Too dark")
+        let none = ReportWords.display("No numbers here.")
+        #expect(none == "No numbers here.")
+    }
+
+    @Test func theSummaryLeavesCoverageCaveatsOut() {
+        let text = "Nothing looked wrong in the areas that could be seen clearly, but this is not a clean bill of health, "
+            + "because some areas still need a closer photo. The battery, buttons, cable and grip housing all looked fine in "
+            + "the photos. Two spots need a closer photo! The case is scuffed."
+        #expect(ReportWords.withoutCaveats(text)
+                == "The battery, buttons, cable and grip housing all looked fine in the photos. The case is scuffed.")
+        #expect(ReportWords.withoutCaveats("The fan blade looks bent.") == "The fan blade looks bent.")
+        #expect(ReportWords.withoutCaveats("Some areas aren't counted as fine.") == "")
+    }
+
+    @Test func captureRequestsNeverLead() {
+        #expect(ReportWords.isCaptureRequest(ReportModel.NextStep(kind: "request_closeup", instruction: "x")))
+        #expect(ReportWords.isCaptureRequest(ReportModel.NextStep(kind: "rescan", instruction: "x")))
+        #expect(!ReportWords.isCaptureRequest(ReportModel.NextStep(kind: "run_voltage_test", instruction: "x")))
+    }
+}
+
+/// Bottom-scan photos that could not be lined up with the model (report `bottom_not_placed`).
+struct BottomPhotosTests {
+    @Test func unplacedBottomFindingsBecomePhotosOncePerCrop() {
+        let r = ReportModel(json: ["verdict": "no_problems_seen", "bottom_not_placed": [
+            ["finding_id": "f1", "segment": 1, "part_class": "battery_cover", "reason": "not aligned",
+             "photo": ["still_id": "s20", "crop_ref": "blob://sha256:aaa"]],
+            ["finding_id": "f2", "segment": 1, "part_class": "screw", "reason": "not aligned",
+             "photo": ["still_id": "s20", "crop_ref": "blob://sha256:aaa"]],
+            ["finding_id": "f3", "segment": 1, "reason": "not aligned", "photo": ["still_id": "s21", "crop_ref": "blob://sha256:bbb"]],
+        ]])
+        #expect(r.bottomPhotos.map(\.crop) == ["aaa", "bbb"])
+        #expect(r.bottomPhotos.map(\.part) == ["Battery cover", "Bottom"])
+        #expect(r.cropSHAs.contains("bbb"))
+        #expect(ReportModel(json: ["verdict": "looks_good"]).bottomPhotos.isEmpty)
     }
 }

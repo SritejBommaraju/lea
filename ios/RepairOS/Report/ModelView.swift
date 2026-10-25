@@ -12,10 +12,12 @@ struct ModelPin: Identifiable, Sendable, Equatable {
     var number: Int?
     var point: SIMD3<Float>
     var tone: Tone
-    /// A circled "look closer" area (Report/Stage/InspectTarget): drawn as a dashed ring of this radius (metres).
+    /// One of Lea's rings on a part that is not a numbered problem: a solid ring of this radius (metres).
     var ringRadius: Float? = nil
-    /// A finding's problem area on the scan (metres): the recreation circles it. Not a circled target (`ringRadius`).
+    /// A finding's problem area on the scan (metres): the recreation circles it. Not one of Lea's rings (`ringRadius`).
     var area: Float? = nil
+    /// The part's name while Lea is showing it: drawn as a label on the model, out along the surface normal.
+    var label: String? = nil
 }
 
 /// Points to draw (already capped), metres, the scan's ARKit frame, Y up.
@@ -82,6 +84,7 @@ enum ModelSource: Sendable {
     }
 
     var isNone: Bool { if case .none = self { true } else { false } }
+    var isPhotos: Bool { if case .photos = self { true } else { false } }
 
     /// The scan package's `crop_box` (the locked object) as a box.
     static func cropBox(in scanDir: URL) -> ObjectBox? {
@@ -292,6 +295,8 @@ struct ModelView: View {
     var controls = true
     /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the spin stops.
     var tour: WalkthroughPlayer? = nil
+    /// Lea's camera move while she answers (LeaStage): fly to a marker, look from a side, zoom.
+    var cue: LeaStageCue? = nil
     let onPinTap: (String) -> Void
 
     /// Reduce Motion: the walkthrough card the view shows (it cuts there while faded out).
@@ -311,16 +316,16 @@ struct ModelView: View {
             if let loaded {
                 SceneHost(content: loaded, pins: pins, focus: focus, recenter: recenter, animate: !reduceMotion,
                           spin: spin && !reduceMotion, active: visible, stage: stage, probe: probe,
-                          tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), onPinTap: onPinTap)
+                          tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), cue: cue, onPinTap: onPinTap)
                     .id(Self.loadedID(loaded))
                     .modifier(TourCutFade(nearest: frame?.nearest, on: reduceMotion, shown: $cutShown))
                     .transition(.opacity)
             } else if !failed {
-                ProgressView().tint(stage ? .white : nil)
+                ProgressView().tint(stage ? Palette.chalk : nil)
             }
             if failed || (loaded.map { if case .nothing = $0 { true } else { false } } ?? false) && pins.isEmpty {
                 Label("No 3D scan for this report", systemImage: "cube.transparent")
-                    .font(.footnote).foregroundStyle(stage ? AnyShapeStyle(Color.white.opacity(0.6)) : AnyShapeStyle(.secondary))
+                    .font(.footnote).foregroundStyle(stage ? AnyShapeStyle(Palette.chalk.opacity(0.7)) : AnyShapeStyle(Palette.secondary))
             }
         }
         .overlay(alignment: .topTrailing) {
@@ -433,11 +438,13 @@ private struct SceneHost: UIViewRepresentable {
     var probe: StageProbe?
     /// The walkthrough's frame: the camera follows its pager instead of `focus`.
     var tour: TourFrame?
+    var cue: LeaStageCue?
     let onPinTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SCNView {
+        context.coordinator.cueN = cue?.n   // a move from before this view existed is not replayed
         let view = SCNView(frame: .zero)
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling2X
@@ -458,8 +465,6 @@ private struct SceneHost: UIViewRepresentable {
         context.coordinator.stage = stage
         context.coordinator.animateIn = stage && animate
         if stage { view.delegate = context.coordinator.separator }
-        let coordinator = context.coordinator
-        probe?.resolve = { [weak coordinator] center, radius in coordinator?.resolve(center, radius) }
         context.coordinator.build(content, pins: pins, traits: view.traitCollection)
         if spin { context.coordinator.startSpin() }
         return view
@@ -492,6 +497,10 @@ private struct SceneHost: UIViewRepresentable {
             c.stopSpin()
             c.frameAll(animate: animate)
         }
+        if let cue, c.cueN != cue.n {
+            c.cueN = cue.n
+            c.lea(cue.command, animate: animate)
+        }
         c.setActive(active)
     }
 
@@ -507,35 +516,6 @@ private struct SceneHost: UIViewRepresentable {
         /// Pop the markers in one by one the first time they are placed (off under Reduce Motion).
         var animateIn = false
         let separator = MarkerSeparator()
-        /// Up to 30k of the scan's points (scan frame) for circle to inspect.
-        private var sample: [SIMD3<Float>] = []
-
-        static func thin(_ p: [SIMD3<Float>]) -> [SIMD3<Float>] {
-            let step = max(1, p.count / 30_000)
-            return stride(from: 0, to: p.count, by: step).map { p[$0] }
-        }
-
-        /// A circle on screen → the spot on the scan inside it: the centroid of the nearer half (by depth) of the
-        /// scan points that project inside, and the circle's radius at that depth. nil when no points fall inside.
-        func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
-            guard let view, !sample.isEmpty else { return nil }
-            let space = content.presentation
-            var inside: [(p: SIMD3<Float>, z: Float)] = []
-            for p in sample {
-                let s = view.projectPoint(SCNVector3(space.simdConvertPosition(p, to: nil)))
-                guard s.z > 0, s.z < 1 else { continue }
-                let dx = CGFloat(s.x) - center.x, dy = CGFloat(s.y) - center.y
-                if dx * dx + dy * dy <= r * r { inside.append((p, s.z)) }
-            }
-            guard inside.count >= 3 else { return nil }
-            inside.sort { $0.z < $1.z }
-            let front = inside.prefix(max(3, inside.count / 2))
-            let c = front.reduce(SIMD3<Float>()) { $0 + $1.p } / Float(front.count)
-            let z = front[front.startIndex + front.count / 2].z
-            let a = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x), Float(center.y), z)))
-            let b = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
-            return (c, max(0.01, simd_distance(a, b)))
-        }
         /// Turns about the model's centre (the hero spin); `content` sits inside it, offset by −centre.
         private let pivot = SCNNode()
         private let content = SCNNode()
@@ -555,11 +535,9 @@ private struct SceneHost: UIViewRepresentable {
             switch loaded {
             case .cloud(let cloud):
                 modelNode.geometry = Self.geometry(cloud, stage: stage)
-                sample = Self.thin(cloud.positions)
                 bulk = cloud.bulk
             case .triangles(let mesh):
                 modelNode.geometry = Self.geometry(mesh)
-                sample = Self.thin(mesh.positions)
                 view?.autoenablesDefaultLighting = true
             case .mesh(let url):
                 if let mesh = try? SCNScene(url: url) { mesh.rootNode.childNodes.forEach { modelNode.addChildNode($0) } }
@@ -748,8 +726,8 @@ private struct SceneHost: UIViewRepresentable {
 
         private func place(_ pose: TourPose, animate: Bool) {
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = animate ? 0.7 : 0
-            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
+            SCNTransaction.animationTimingFunction = Motion.Scene.curve
             cameraNode.simdWorldPosition = pose.eye
             cameraNode.simdLook(at: pose.look, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))
             SCNTransaction.commit()
@@ -766,6 +744,54 @@ private struct SceneHost: UIViewRepresentable {
                 node.opacity = CGFloat(rest * (0.45 + 0.55 * max(on, 1 - lit)))
                 node.simdScale = SIMD3(repeating: 1 + 0.35 * on)
             }
+        }
+
+        // MARK: Lea
+
+        /// The last of Lea's moves applied (LeaStageCue.n).
+        var cueN: Int?
+        /// The side the default framing looks from (`move`'s default direction).
+        static let front = StageCamera.azimuth(SIMD3(0.35, 0.55, 1))
+
+        /// One of Lea's moves: fly to a marker, look from a side (the spin turned back to rest first, so "front" is
+        /// the default framing's side), turn round, zoom. Reduce Motion: a cut.
+        func lea(_ command: StageCommand, animate: Bool) {
+            guard let view else { return }
+            stopSpin()
+            let now = TourPose(eye: cameraNode.simdWorldPosition, look: SIMD3<Float>(view.defaultCameraController.target))
+            let distance = radius * 3.5
+            switch command {
+            case .show(let id):
+                fly(to: id, animate: animate)
+                return
+            case .view(.reset):
+                rest(animate: animate)
+                frameAll(animate: animate)
+                return
+            case .view(let side):
+                if side != .around { rest(animate: animate) }
+                if let pose = StageCamera.pose(side, current: now, center: center, distance: distance, front: Self.front) {
+                    place(pose, animate: animate)
+                }
+            case .zoom(let zoomIn):
+                place(StageCamera.zoom(now, zoomIn: zoomIn, minDistance: radius * 0.6, maxDistance: radius * 7),
+                      animate: animate)
+            case .point:
+                return   // the stage turns a point into a marker first; the view flies with .show
+            }
+            view.isPlaying = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Motion.Scene.fly + 0.1) { [weak self] in
+                guard let self, !self.spinning else { return }
+                self.view?.isPlaying = false
+            }
+        }
+
+        /// The spin back to rest, with the camera's move.
+        private func rest(animate: Bool) {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
+            pivot.simdOrientation = simd_quatf(angle: 0, axis: SIMD3(0, 1, 0))
+            SCNTransaction.commit()
         }
 
         func frameAll(animate: Bool) {
@@ -795,8 +821,8 @@ private struct SceneHost: UIViewRepresentable {
                 if simd_length(d) > 1e-4 { dir = simd_normalize(d) }
             }
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = animate ? 0.7 : 0
-            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
+            SCNTransaction.animationDuration = animate ? Motion.Scene.fly : 0
+            SCNTransaction.animationTimingFunction = Motion.Scene.curve
             cameraNode.simdWorldPosition = target + dir * distance
             cameraNode.simdLook(at: target, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))
             SCNTransaction.commit()
@@ -846,7 +872,7 @@ private struct SceneHost: UIViewRepresentable {
             let g = SCNGeometry(sources: sources, elements: [element])
             let m = SCNMaterial()
             m.lightingModel = .constant
-            m.diffuse.contents = cloud.colors == nil ? UIColor(light: 0x8A8A96, dark: 0xB4B4C0) : UIColor.white
+            m.diffuse.contents = cloud.colors == nil ? UIColor(light: 0x8A919C, dark: 0xB4BCC8) : UIColor.white
             g.materials = [m]
             return g
         }
@@ -866,53 +892,20 @@ private struct SceneHost: UIViewRepresentable {
             let m = SCNMaterial()
             m.lightingModel = .lambert
             m.isDoubleSided = true
-            m.diffuse.contents = mesh.colors == nil ? UIColor(light: 0xA9A9B4, dark: 0xB4B4C0) : UIColor.white
+            m.diffuse.contents = mesh.colors == nil ? UIColor(light: 0xA9B0BA, dark: 0xB4BCC8) : UIColor.white
             g.materials = [m]
             return g
         }
 
-        /// A round severity-coloured badge with the number (or a small dot), drawn once per pin.
+        /// The shared `Marker` (or a small outlined dot), drawn once per pin; a ring pin draws the highlight ring.
         private static func badge(_ pin: ModelPin, traits: UITraitCollection) -> UIImage {
-            if pin.ringRadius != nil { return ring(traits: traits) }
-            let side: CGFloat = pin.number == nil ? 48 : 96
-            let colour = UIColor(pin.tone.color).resolvedColor(with: traits)
-            return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
-                let rect = CGRect(x: 0, y: 0, width: side, height: side)
-                UIColor.white.setFill()
-                ctx.cgContext.fillEllipse(in: rect)
-                colour.setFill()
-                ctx.cgContext.fillEllipse(in: rect.insetBy(dx: side * 0.08, dy: side * 0.08))
-                guard let number = pin.number else { return }
-                let text = "\(number)" as NSString
-                let font = UIFont.systemFont(ofSize: side * 0.5, weight: .bold).withRounded
-                let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white]
-                let size = text.size(withAttributes: attrs)
-                text.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
+            let rgb = StageMarkImages.rgb(pin.tone)
+            if pin.ringRadius != nil {
+                return StageMarkImages.ring(rgb: rgb).map(UIImage.init(cgImage:)) ?? UIImage()
             }
+            return StageMarkImages.badge(number: pin.number, rgb: rgb, side: pin.number == nil ? 48 : 96)
+                .map(UIImage.init(cgImage:)) ?? UIImage()
         }
-    }
-}
-
-private extension SceneHost.Coordinator {
-    /// A circled target: a dashed accent ring with a faint fill (Report/Stage/InspectTarget).
-    static func ring(traits: UITraitCollection) -> UIImage {
-        let side: CGFloat = 128
-        let colour = UIColor(Palette.cameraAccent).resolvedColor(with: traits)
-        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
-            let rect = CGRect(x: 0, y: 0, width: side, height: side).insetBy(dx: 4, dy: 4)
-            colour.withAlphaComponent(0.14).setFill()
-            ctx.cgContext.fillEllipse(in: rect)
-            colour.setStroke()
-            ctx.cgContext.setLineWidth(5)
-            ctx.cgContext.setLineDash(phase: 0, lengths: [12, 9])
-            ctx.cgContext.strokeEllipse(in: rect)
-        }
-    }
-}
-
-private extension UIFont {
-    var withRounded: UIFont {
-        fontDescriptor.withDesign(.rounded).map { UIFont(descriptor: $0, size: pointSize) } ?? self
     }
 }
 

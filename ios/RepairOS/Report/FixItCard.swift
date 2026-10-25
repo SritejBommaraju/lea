@@ -56,6 +56,8 @@ struct FixIt: Equatable, Sendable {
     }
 }
 
+/// "Fix it" as a section on the canvas: the part in `cardTitle`, named as in the problem card, then one grouped list of
+/// offers (title, seller, price as the backend gives it) and the replacement guide.
 struct FixItCard: View {
     let fix: FixIt?
     let searching: Bool
@@ -65,55 +67,46 @@ struct FixItCard: View {
 
     var body: some View {
         if let fix {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: Spacing.m) {
-                    IconBadge(symbol: "wrench.and.screwdriver.fill", tone: .accent)
-                    VStack(alignment: .leading, spacing: Spacing.xxs) {
-                        Text("Fix it").font(.pillLabel).foregroundStyle(Palette.accent)
-                        Text(fix.part.capitalizedFirst).font(.headline)
+            VStack(alignment: .leading, spacing: Spacing.s) {
+                SectionHeader("Fix it")
+                Text(fix.part.capitalizedFirst).display(.card).foregroundStyle(Palette.ink)
+                GroupedList {
+                    ForEach(fix.options) { o in
+                        Button { openURL(o.link) } label: { row(o) }
+                            .buttonStyle(PressableCardStyle())
+                            .accessibilityHint("Opens the offer in Safari")
                     }
-                }
-                .padding(.bottom, Spacing.s)
-                ForEach(fix.options) { o in
-                    Divider()
-                    Button { openURL(o.link) } label: { row(o) }
-                        .buttonStyle(PressableCardStyle())
-                        .accessibilityHint("Opens the offer in Safari")
-                }
-                if let guide = fix.guide {
-                    Divider()
-                    Button { openURL(guide) } label: {
-                        HStack {
-                            Label("Replacement guide", systemImage: "book.pages")
-                                .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.accent)
-                            Spacer(minLength: 0)
-                            Image(systemName: "arrow.up.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+                    if let guide = fix.guide {
+                        Button { openURL(guide) } label: {
+                            HStack {
+                                Label("Replacement guide", systemImage: "book.pages")
+                                    .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.accent)
+                                Spacer(minLength: 0)
+                                Image(systemName: "arrow.up.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
+                            }
+                            .padding(.vertical, Spacing.m)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, Spacing.m)
-                        .contentShape(Rectangle())
+                        .buttonStyle(PressableCardStyle())
                     }
-                    .buttonStyle(PressableCardStyle())
                 }
                 Text("Prices from a web search; check fit and seller before you buy.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.top, Spacing.xs)
+                    .font(.caption).foregroundStyle(Palette.secondary)
             }
-            .card(tone: .accent)
             .transition(.opacity)
         } else if searching {
             HStack(spacing: Spacing.m) {
                 ProgressView().controlSize(.small).tint(Palette.accent)
-                Text("Searching for parts…").font(.subheadline).foregroundStyle(.secondary)
+                Text("Searching for parts…").font(.subheadline).foregroundStyle(Palette.secondary)
                 Spacer(minLength: 0)
             }
-            .card()
+            .frame(minHeight: 44)
             .transition(.opacity)
             .accessibilityElement(children: .combine)
         } else if unavailable {
             Label("Parts search is not available right now.", systemImage: "cart")
-                .font(.subheadline).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .card()
+                .font(.subheadline).foregroundStyle(Palette.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .transition(.opacity)
         }
     }
@@ -121,15 +114,14 @@ struct FixItCard: View {
     private func row(_ o: FixIt.Option) -> some View {
         HStack(alignment: .center, spacing: Spacing.m) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(o.title).font(.subheadline).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
-                Text(o.seller).font(.footnote).foregroundStyle(.secondary).lineLimit(1)
+                Text(o.title).font(.subheadline).foregroundStyle(Palette.ink).lineLimit(2).multilineTextAlignment(.leading)
+                Text(o.seller).font(.footnote).foregroundStyle(Palette.secondary).lineLimit(1)
             }
             Spacer(minLength: Spacing.s)
             if let price = o.priceWords {
-                Text(price).font(.system(.subheadline, design: .rounded, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(.primary)
+                Text(price).font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(Palette.ink)
             }
-            Image(systemName: "arrow.up.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            Image(systemName: "arrow.up.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
         }
         .padding(.vertical, Spacing.m)
         .contentShape(Rectangle())

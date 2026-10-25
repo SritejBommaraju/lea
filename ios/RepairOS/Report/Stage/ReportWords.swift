@@ -7,8 +7,8 @@ import Foundation
 enum ReportWords {
     // MARK: Verdict
 
-    /// "3 likely problems · 1 safety", "Nothing looked wrong · 12 spots unchecked", "Not enough to call it yet".
-    /// The view shows it upper-cased; VoiceOver reads it as written.
+    /// "3 likely problems · 1 safety", "Nothing looked wrong", "Not enough to call it yet". Not shown on screen (an
+    /// eyebrow over a heading is banned, DESIGN §12): VoiceOver's landing announcement and the walkthrough read it.
     static func eyebrow(_ r: ReportModel) -> String {
         switch r.verdict {
         case .potentialIssues:
@@ -18,9 +18,8 @@ enum ReportWords {
             if safety > 0 { parts.append("\(safety) safety") }
             return parts.joined(separator: " · ")
         case .looksGood:
-            let gaps = unchecked(r)
-            let base = gaps > 0 ? "Nothing looked wrong · \(spots(gaps, digits: true)) unchecked" : "Nothing looked wrong"
-            return r.setup.isEmpty ? base : "\(base) · \(setupCount(r))"
+            // No coverage caveat by default (owner, 2026-10-25): what wasn't checked is one tap away, never counted as fine.
+            return r.setup.isEmpty ? "Nothing looked wrong" : "Nothing looked wrong · \(setupCount(r))"
         case .insufficientEvidence:
             return "Not enough to call it yet"
         case .noProblemsSeen:
@@ -54,8 +53,10 @@ enum ReportWords {
             if let s = r.setup.first { return s.fix ?? phrase(s) }   // nothing broken: lead with what to put right
             return r.photosInspected > 0 ? "Nothing looked wrong in \(r.photosInspected) photos" : "Nothing looked wrong"
         case .insufficientEvidence:
-            // Lead with what to do (the next step's title, e.g. "Take a closer photo"); the eyebrow says why.
-            return r.nextStep?.title ?? "Lea needs a closer look"
+            // Lead with what to do when it is an action (a meter check); a request for more photos never leads (the
+            // owner, 2026-10-25: no "closer photo" prompts in the default report).
+            if let step = r.nextStep, !isCaptureRequest(step) { return step.title }
+            return "Not enough to call it yet"
         case .noProblemsSeen:
             if let s = r.setup.first { return s.fix ?? phrase(s) }
             return "No problems seen"
@@ -64,38 +65,47 @@ enum ReportWords {
         }
     }
 
-    /// One sentence under the headline, from fields only: how often the top finding was seen, what else is worth a
-    /// look, and what was left unchecked when nothing looked wrong.
+    /// One sentence under the headline, from fields only: the counts (how many likely problems, how many of them are
+    /// safety problems), how sure the top one is, and what else is worth a look. No coverage caveat by default (owner,
+    /// 2026-10-25): what wasn't checked lives behind "What wasn't checked" and is never called fine.
     static func sentence(_ r: ReportModel) -> String? {
         var out: [String] = []
         switch r.verdict {
         case .potentialIssues:
+            if let counts = counts(r) { out.append(counts) }
             if let top = r.mostLikely.first {
-                if top.proved { out.append("Confirmed with a meter.") }
-                else if top.regions > 1 { out.append("Seen \(top.regions) times.") }
+                let first = r.mostLikely.count > 1
+                if top.proved { out.append(first ? "The first was confirmed with a meter." : "Confirmed with a meter.") }
+                else if top.regions > 1 { out.append(first ? "The first was seen \(top.regions) times." : "Seen \(top.regions) times.") }
             }
-            let more = max(0, r.mostLikely.count - 1) + r.otherIssues.count
+            let more = r.mostLikely.isEmpty ? max(0, r.otherIssues.count - 1) : r.otherIssues.count
             if more == 1 { out.append("One more thing is worth a look.") }
             else if (2...3).contains(more) { out.append("\(count(more).capitalizedFirst) more things are worth a look.") }
             else if more > 3 { out.append("\(more) more are listed below.") }
-        case .looksGood:
-            let gaps = unchecked(r)
-            if gaps > 0 {
-                out.append(gaps == 1 ? "One spot wasn't clear enough to judge, so it isn't counted as fine."
-                                     : "\(spots(gaps).capitalizedFirst) weren't clear enough to judge, so they aren't counted as fine.")
-            }
+        case .looksGood, .noProblemsSeen:
+            if !r.setup.isEmpty { out.append(setupCount(r).capitalizedFirst + ".") }
         case .insufficientEvidence:
             if let next = r.nextStep { out.append(sanitize(firstSentence(next.instruction))) }
             else if let reason = r.verdictReason { out.append(sanitize(firstSentence(reason))) }
-        case .noProblemsSeen:
-            // The caveat, as the backend wrote it (one quiet line); else what was left unchecked.
-            if let caveat = r.verdictCaveat { out.append(sanitize(caveat)) }
-            else if unchecked(r) == 1 { out.append("One spot needs a closer photo.") }
-            else if unchecked(r) > 1 { out.append("\(spots(unchecked(r)).capitalizedFirst) need a closer photo.") }
         case .other:
             break
         }
         return out.isEmpty ? nil : out.joined(separator: " ")
+    }
+
+    /// "Two likely problems, one of them a safety problem.", "One likely problem.", nil without a counted problem.
+    static func counts(_ r: ReportModel) -> String? {
+        let n = r.mostLikely.count
+        guard n > 0 else { return nil }
+        let safety = r.mostLikely.filter { $0.severity == .safety }.count
+        if n == 1 { return safety == 1 ? "One likely problem, a safety problem." : "One likely problem." }
+        let base = "\(count(n).capitalizedFirst) likely problems"
+        switch safety {
+        case 0: return base + "."
+        case n: return base + ", all of them safety problems."
+        case 1: return base + ", one of them a safety problem."
+        default: return base + ", \(count(safety)) of them safety problems."
+        }
     }
 
     /// The tone of the verdict: danger when a likely problem is a safety one, caution for other problems.
@@ -184,6 +194,41 @@ enum ReportWords {
         t = t.replacing(/past this photo's limit of the strongest detector regions/) { _ in "too many in this photo" }
         t = t.replacing(/\b([a-z]+)_([a-z_]+)\b/) { "\($0.1) \($0.2.replacingOccurrences(of: "_", with: " "))" }
         return t
+    }
+
+    /// Backend text as the screen shows it: `sanitize`, then no photo numbers at all (the person never sees numbered
+    /// photos, so "(photo 8)" or "in photo 3" means nothing to them): a parenthetical photo reference goes, "in photo
+    /// 3" goes, and any other "photo 3" becomes "a photo".
+    static func display(_ text: String) -> String {
+        var t = sanitize(text)
+        t = t.replacing(/\s*\((?:see |in |from )?[Pp]hotos? \d+(?:(?:, | and |-)\d+)*\)/) { _ in "" }
+        t = t.replacing(/\s+(?:in|from|on) [Pp]hotos? \d+(?:(?:, | and |-)\d+)*/) { _ in "" }
+        t = t.replacing(/\b[Pp]hotos? \d+(?:(?:, | and |-)\d+)*\b/) { m in m.output.first == "P" ? "A photo" : "a photo" }
+        t = t.replacing(/\ +([.,;:])/) { "\($0.1)" }
+        return t
+    }
+
+    /// The summary as the report shows it by default: sentences that are coverage caveats ("not a clean bill of
+    /// health", "needs a closer photo", "not counted as fine") are left out (owner, 2026-10-25: no caveats by
+    /// default; what wasn't checked is behind the ⋯ menu). Everything else stays as the backend wrote it.
+    static func withoutCaveats(_ text: String) -> String {
+        let caveats = ["clean bill of health", "closer photo", "counted as fine", "could not be checked", "couldn't be checked",
+                       "weren't checked", "were not checked", "could not be judged", "couldn't be judged"]
+        var sentences: [String] = []
+        var current = ""
+        for ch in text {
+            current.append(ch)
+            if ".!?".contains(ch) { sentences.append(current); current = "" }
+        }
+        if !current.trimmingCharacters(in: .whitespaces).isEmpty { sentences.append(current) }
+        let kept = sentences.filter { s in !caveats.contains { s.lowercased().contains($0) } }
+        return kept.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
+    }
+
+    /// Whether the next step asks for more capture (a closer photo, another angle, a rescan): shown as one short line
+    /// at the end of the report, never leading it (owner, 2026-10-25: no caveats first).
+    static func isCaptureRequest(_ step: ReportModel.NextStep) -> Bool {
+        ["request_closeup", "request_other_angle", "rescan"].contains(step.kind)
     }
 
     /// The photo number in "s8", "scan_ab12_s8", "Photo 8" or "photo 8", if any.

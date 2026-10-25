@@ -48,6 +48,18 @@ JOBS_ON = {"scan-package": ["detect"], "still": ["detect"]}
 REPORT_KIND, RUN_KIND = "report", "pipeline-run"
 
 
+def finite_json(o: Any) -> Any:
+    """`o` with every non-finite float (inf, nan) as None: strict JSON cannot carry them, and one stray stat in a stored
+    report (a ratio over nothing) otherwise turns GET .../report into a 500 for that scan."""
+    if isinstance(o, float):
+        return o if o == o and o not in (float("inf"), float("-inf")) else None
+    if isinstance(o, dict):
+        return {k: finite_json(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [finite_json(v) for v in o]
+    return o
+
+
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -429,13 +441,12 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         """What the person thinks is wrong, typed or spoken (the voice agent posts each utterance). Kept on the
         session as a lead, never a fact: the worker reads it into a hypothesis, sends the live event `lead` per
         place worth a close look, and the report's `user_lead` says what the photos showed. 202: queued."""
-        from repairos.pipeline.story import record_story
+        from repairos.pipeline.story import job_key, record_story
 
         await _session(request, session_id)
         rev, row = await record_story(store(request), session_id, body.text, body.source, body.scan_id)
         n = len(row.get("said") or [])
-        key = f"{session_id}:{n}" + (f":{len(row['photos'])}" if row.get("photos") else "")
-        job_id = f"job_story_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+        job_id = f"job_story_{hashlib.sha256(job_key(session_id, row).encode()).hexdigest()[:16]}"
         job = await store(request).enqueue(Job(kind="story", job_id=job_id, session_id=session_id,
                                                scan_id=body.scan_id, inputs={"kind": "story", "id": session_id}))
         return {"session_id": session_id, "rev": rev, "said": n, "job": job}
@@ -445,14 +456,13 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         """One photo of the product or its label, before scanning (upload it first: PUT /v1/blobs/{sha256}). The
         worker reads the label to identify the product, researches it and sends the live event `product_brief`.
         No pose or scan is needed. 202: queued."""
-        from repairos.pipeline.story import record_photo
+        from repairos.pipeline.story import job_key, record_photo
 
         await _session(request, session_id)
         if not blob_store(request).exists(body.image):
             raise HTTPException(422, f"no blob {body.image}: PUT it to /v1/blobs/{{sha256}} first")
         rev, row = await record_photo(store(request), session_id, body.image)
-        key = f"{session_id}:{len(row.get('said') or [])}:{len(row.get('photos') or [])}"
-        job_id = f"job_story_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+        job_id = f"job_story_{hashlib.sha256(job_key(session_id, row).encode()).hexdigest()[:16]}"
         job = await store(request).enqueue(Job(kind="story", job_id=job_id, session_id=session_id,
                                                inputs={"kind": "story", "id": session_id}))
         return {"session_id": session_id, "rev": rev, "photos": len(row.get("photos") or []), "job": job}
@@ -708,7 +718,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         photos) and `X-Report-Rebuilding: 1` while a newer one is pending (0 otherwise). 404 only when no report was
         ever finished (with the pipeline status); 409 when the first run failed (with the stage and the error)."""
         report, rev, view = await _report(request, scan_id)
-        return JSONResponse(content=report, headers={"X-Report-Rev": str(rev),
+        return JSONResponse(content=finite_json(report), headers={"X-Report-Rev": str(rev),
                                                      "X-Report-Rebuilding": "1" if view.get("rebuilding") else "0"})
 
     @app.get("/v1/scans/{scan_id}/report/export", responses={200: {"content": {"text/html": {}, "text/markdown": {}}}})

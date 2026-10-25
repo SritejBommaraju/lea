@@ -1,0 +1,359 @@
+[
+ {
+  "id": "xbox_xb_here",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "owner",
+  "question": "the X button and the B button are here.",
+  "spoken": "Yes, that's the X and B. The X is the blue one and the B is the red one, both in the lower group of colored face buttons. The B button's photo showed no issue, but this view can't fully rule out a sticking or worn X, so I'd like to know what's going wrong. Is one of them not registering, or is it sticking or feeling mushy? The blue X button is in the lower cluster of face buttons. The red B button sits just beside it, and the photos showed no issue with it.",
+  "raw": "Yes, that's the X and B. The X is the blue one and the B is the red one, both in the lower group of colored face buttons. The B button's photo showed no issue, but this view can't fully rule out a sticking or worn X, so I'd like to know what's going wrong. Is one of them not registering, or is it sticking or feeling mushy?\n\n<show part=\"ix_3\"/>The blue X button is in the lower cluster of face buttons.\n<show part=\"f_25c6159f83e6\"/>The red B button sits just beside it, and the photos showed no issue with it.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   },
+   {
+    "type": "show",
+    "part": "f_25c6159f83e6"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xb_here_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_25c6159f83e6"
+    },
+    "label": "face button",
+    "point": [
+     -0.0154,
+     -0.358,
+     -0.0736
+    ],
+    "photo": "scan_75033ad756b7f972_s2",
+    "shot": "xbox_xb_here_2.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.27,
+  "first_sentence_s": 5.07,
+  "searches": 0,
+  "usd": 0.0013369
+ },
+ {
+  "id": "xbox_xyba",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "general",
+  "question": "What does the X, Y, B, and A button do in this device?",
+  "spoken": "On an Xbox controller the four face buttons do the main actions in games and menus. A is the green button at the bottom and is the confirm or select button. B is the red button on the right and is back or cancel. X is the blue button on the left and is usually the main action in games, like reload or interact. Y is the yellow button at the top and is often used for extra actions or menu options. Since you mentioned something isn't working, I'll point to them now so you can see where each one sits. The A button is the green one at the bottom of the face cluster. The B button is the red one to its right. The X button is the blue one on the left. The Y button is the yellow one at the top. Which button is giving you trouble, and what happens when you press it?",
+  "raw": "On an Xbox controller the four face buttons do the main actions in games and menus. A is the green button at the bottom and is the confirm or select button. B is the red button on the right and is back or cancel. X is the blue button on the left and is usually the main action in games, like reload or interact. Y is the yellow button at the top and is often used for extra actions or menu options.\n\nSince you mentioned something isn't working, I'll point to them now so you can see where each one sits.\n\n<show part=\"ix_1\"/> The A button is the green one at the bottom of the face cluster.\n<show part=\"ix_2\"/> The B button is the red one to its right.\n<show part=\"ix_3\"/> The X button is the blue one on the left.\n<show part=\"ix_4\"/> The Y button is the yellow one at the top.\n\nWhich button is giving you trouble, and what happens when you press it?",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_1"
+   },
+   {
+    "type": "show",
+    "part": "ix_2"
+   },
+   {
+    "type": "show",
+    "part": "ix_3"
+   },
+   {
+    "type": "show",
+    "part": "ix_4"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_1"
+    },
+    "label": "A button",
+    "point": [
+     -0.0155,
+     -0.4027,
+     -0.0966
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "B button",
+    "point": [
+     -0.0258,
+     -0.4047,
+     -0.1074
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_2.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_3.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_4"
+    },
+    "label": "Y button",
+    "point": [
+     -0.0328,
+     -0.4032,
+     -0.0871
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_4.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.0,
+  "first_sentence_s": 1.29,
+  "searches": 0,
+  "usd": 0.0009767
+ },
+ {
+  "id": "xbox_where_x",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "locate_non_finding",
+  "question": "where's the X button",
+  "spoken": "The X button is the blue one with the X on it, in the cluster of four colored face buttons. It sits just to the right of the red B, and the green A is below it.",
+  "raw": "<show part=\"ix_3\"/>The X button is the blue one with the X on it, in the cluster of four colored face buttons. It sits just to the right of the red B, and the green A is below it.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_where_x_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.0,
+  "first_sentence_s": 5.46,
+  "searches": 0,
+  "usd": 0.0012909
+ },
+ {
+  "id": "xbox_sparse_b",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "sparse",
+  "kind": "sparse",
+  "question": "is the B button damaged?",
+  "spoken": "No, the photos didn't show any damage to the red B button. It sits on the right side of the colored face buttons, and it looked intact, with no cracks or scorching. The face buttons were on the list of things that are hard to judge from these photos, though, so a close, well-lit look would confirm it. To check whether it works, press it in a menu. If it doesn't respond, the problem is more likely the button's contact under the shell than the button itself.",
+  "raw": "No, the photos didn't show any damage to the red B button. It sits on the right side of the colored face buttons, and it looked intact, with no cracks or scorching. The face buttons were on the list of things that are hard to judge from these photos, though, so a close, well-lit look would confirm it. To check whether it works, press it in a menu. If it doesn't respond, the problem is more likely the button's contact under the shell than the button itself.\n\n<show part=\"f_25c6159f83e6\"/>",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_25c6159f83e6"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_25c6159f83e6"
+    },
+    "label": "face button",
+    "point": [
+     -0.0154,
+     -0.358,
+     -0.0736
+    ],
+    "photo": "scan_75033ad756b7f972_s1",
+    "shot": "xbox_sparse_b_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s1",
+   "v1",
+   "v2"
+  ],
+  "prep_s": 0.16,
+  "first_sentence_s": 4.32,
+  "searches": 0,
+  "usd": 0.0012299000000000001
+ },
+ {
+  "id": "toaster_red_wire",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "after",
+  "kind": "wire",
+  "question": "what is this red wire doing",
+  "spoken": "The red wire you're looking at runs from the convection fan motor up to the control panel. In the photo, one end is crimped to a spade terminal on the motor, and the other end runs up toward the switches. Some red wire ends above the motor look like they're hanging loose rather than sitting on a terminal, and this photo can't show whether that's true. Unplug the oven before touching anything, then check each red end by hand and see whether it snaps firmly onto its tab.",
+  "raw": "The red wire you're looking at runs from the convection fan motor up to the control panel. In the photo, one end is crimped to a spade terminal on the motor, and the other end runs up toward the switches. Some red wire ends above the motor look like they're hanging loose rather than sitting on a terminal, and this photo can't show whether that's true. Unplug the oven before touching anything, then check each red end by hand and see whether it snaps firmly onto its tab.\n\n<show part=\"ix_2\"/>",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_2"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "motor red wire end",
+    "point": [
+     -0.0082,
+     -0.2962,
+     -0.2721
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_red_wire_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s21",
+   "s11",
+   "v1"
+  ],
+  "prep_s": 0.51,
+  "first_sentence_s": 3.03,
+  "searches": 0,
+  "usd": 0.0013229000000000001
+ },
+ {
+  "id": "toaster_sparse",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "sparse",
+  "kind": "sparse",
+  "question": "is anything burnt or damaged in there?",
+  "spoken": "Unplug it before you look closer. The main things I see are wires hanging loose rather than burnt. The fan motor coil shows some orange-brown discolouration at its top left and a darkened end, which could be heat marking, but these photos are too soft to confirm a burn. A white wire at the lower right has a frayed end that may be damaged. Check the coil and that frayed wire up close in good light, looking for melted plastic or blackened copper.",
+  "raw": "Unplug it before you look closer. The main things I see are wires hanging loose rather than burnt. <show part=\"f_36128a1bd09c\"/>The fan motor coil shows some orange-brown discolouration at its top left and a darkened end, which could be heat marking, but these photos are too soft to confirm a burn. <show part=\"f_3661beca1eaa\"/>A white wire at the lower right has a frayed end that may be damaged. Check the coil and that frayed wire up close in good light, looking for melted plastic or blackened copper.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "f_36128a1bd09c"
+   },
+   {
+    "type": "show",
+    "part": "f_3661beca1eaa"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_36128a1bd09c"
+    },
+    "label": "motor coil",
+    "point": [
+     -0.0279,
+     -0.2656,
+     -0.2955
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_sparse_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "f_3661beca1eaa"
+    },
+    "label": "wire bundle",
+    "point": [
+     -0.1475,
+     -0.276,
+     -0.2792
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_sparse_2.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s1",
+   "v1"
+  ],
+  "prep_s": 0.31,
+  "first_sentence_s": 2.15,
+  "searches": 0,
+  "usd": 0.0013214000000000001
+ },
+ {
+  "id": "trimmer_where_button",
+  "scan": "scan_c56fb68570165e4f",
+  "mode": "after",
+  "kind": "locate_non_finding",
+  "question": "where's the power button",
+  "spoken": "On this trimmer, the power button is on the front face of the grey handle, below the Philips logo, roughly in the middle of the body. In this photo that area is small and a bit soft, so I can't make out the button's shape clearly. Press it once to switch on, and it usually has a small light that shows the state. If you'd like to be sure, I can guide you to a closer photo of that spot.",
+  "raw": "On this trimmer, the power button is on the front face of the grey handle, below the Philips logo, roughly in the middle of the body. In this photo that area is small and a bit soft, so I can't make out the button's shape clearly. Press it once to switch on, and it usually has a small light that shows the state. If you'd like to be sure, I can guide you to a closer photo of that spot.\n\n<mark x=\"0.42\" y=\"0.6\" label=\"power button area\"/>",
+  "moves": [],
+  "points": [],
+  "heldout_error_mm": null,
+  "views": [
+   "s1",
+   "s6",
+   "v1"
+  ],
+  "prep_s": 0.26,
+  "first_sentence_s": 3.72,
+  "searches": 0,
+  "usd": 0.0009729000000000001
+ }
+]
