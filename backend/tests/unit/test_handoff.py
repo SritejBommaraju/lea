@@ -125,7 +125,19 @@ def test_the_client_refuses_what_grain_would_refuse_before_sending():
     assert e.value.status is None and e.value.transient
 
 
-def test_the_gateway_queues_one_design_per_objective_and_follows_it(gw):
+def test_the_gateway_refuses_a_design_it_cannot_send(gw, monkeypatch):
+    monkeypatch.delenv("REPAIROS_PROFILE", raising=False)
+    monkeypatch.delenv("GRAIN_URL", raising=False)
+    pkg = make_scan(gw, new_session(gw))
+    gw.req("POST", "/v1/scans", pkg)
+    status, out, _ = gw.req("POST", f"/v1/scans/{pkg['scan_id']}/grain", {"objective": "a mounting plate"})
+    assert status == 503 and "HUMAN ACTION NEEDED" in out["detail"]["reason"]
+    assert gw.req("GET", f"/v1/scans/{pkg['scan_id']}/grain")[0] == 404          # nothing was queued
+
+
+def test_the_gateway_queues_one_design_per_objective_and_follows_it(gw, monkeypatch):
+    monkeypatch.setenv("REPAIROS_PROFILE", "phase2")
+    monkeypatch.setenv("GRAIN_URL", "http://127.0.0.1:9")
     pkg = make_scan(gw, new_session(gw))
     assert gw.req("POST", "/v1/scans", pkg)[0] in (200, 201)
     sid = pkg["scan_id"]
@@ -147,7 +159,78 @@ def test_measuring_says_why_when_no_still_can_measure(gw):
     gw.req("POST", "/v1/scans", pkg)
     st = make_still(gw, pkg)
     assert gw.req("POST", "/v1/stills", st)[0] in (200, 201, 202)
-    req = {"points": {"a": [{"still_id": st["still_id"], "uv": [10, 10]}]},
-           "dimensions": [{"name": "d", "kind": "distance", "between": ["a", "a"]}]}
+    mark = [{"still_id": st["still_id"], "uv": [10, 10]}]
+    req = {"points": {"a": mark, "b": mark}, "dimensions": [{"name": "d", "kind": "distance", "between": ["a", "b"]}]}
     status, out, _ = gw.req("POST", f"/v1/scans/{pkg['scan_id']}/measure", req)
     assert status == 422 and "no still can measure" in out["detail"]["reason"]
+
+
+@pytest.mark.parametrize("bad", [
+    {"points": {"a": [{"still_id": "s"}]}, "dimensions": [{"name": "d", "between": ["a", "a"]}]},       # no uv
+    {"points": {"a": [{"still_id": "s", "uv": [1, 2]}]}, "dimensions": [{"name": "d", "between": ["a"]}]},
+    {"points": {"a": [{"still_id": "s", "uv": [1, 2]}], "b": [{"still_id": "s", "uv": [3, 4]}]},
+     "dimensions": [{"name": "d", "between": ["a", "b"]}], "reference": {"dimension": "d", "true_mm": 0}},
+    {"points": {"a": [{"still_id": "s", "uv": [1, 2]}], "b": [{"still_id": "s", "uv": [3, 4]}]},
+     "dimensions": [{"name": "d", "between": ["a", "b"], "value_mm": 48.0}]},                 # numbers are computed
+    {"points": {"a": [{"still_id": "s", "uv": [1, 2]}]}, "dimensions": [{"name": "d", "between": ["a", "z"]}]},
+])
+def test_a_malformed_measuring_request_is_refused_before_anything_runs(gw, bad):
+    pkg = make_scan(gw, new_session(gw))
+    gw.req("POST", "/v1/scans", pkg)
+    assert gw.req("POST", f"/v1/scans/{pkg['scan_id']}/measure", bad)[0] == 422
+
+
+# ---------------------------------------------------------------- the durable row, on Lea's real store (no Grain call)
+class _Ctx:
+    """The worker context the handoff reads: the real store; any Grain call fails the test."""
+
+    def __init__(self, state):
+        self.state = state
+
+    def slot(self, name):
+        raise AssertionError(f"{name} must not be called here")
+
+
+def _run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_a_failed_design_resumes_at_the_step_that_failed_under_a_new_attempt(tmp_path):
+    from repairos.handoff import service
+    from repairos.slots.state_sqlite import SqliteState
+    st = SqliteState(tmp_path / "s.sqlite3")
+    scan = {"scan_id": "scan_r", "session_id": None}
+    row = _run(service.create(st, scan, "a plate", None, []))
+    first = service.job_key(row)
+    r = _run(st.get(service.KIND, row["handoff_id"]))
+    failed = {**r.data, "stage": "failed", "resume_stage": "project", "error": "Grain 400: bad scan",
+              "grain": {"project_id": "p1"}}
+    _run(st.put(service.KIND, failed, expect_rev=r.rev))
+    again = _run(service.create(st, scan, "a plate", None, []))
+    assert again["stage"] == "project" and again["error"] is None and again["attempt"] == 2
+    assert service.job_key(again) != first                         # a new job, so the queue runs it
+    assert _run(service.create(st, scan, "a plate", None, []))["attempt"] == 2   # running: the same attempt
+
+
+def test_a_live_lease_keeps_a_second_run_away_from_grain(tmp_path):
+    import time
+
+    from repairos.handoff import service
+    from repairos.slots.state_sqlite import SqliteState
+    st = SqliteState(tmp_path / "s.sqlite3")
+    row = _run(service.create(st, {"scan_id": "scan_l"}, "a plate", None, []))
+    r = _run(st.get(service.KIND, row["handoff_id"]))
+    _run(st.put(service.KIND, {**r.data, "lease": {"token": "other", "until": time.time() + 60}}, expect_rev=r.rev))
+    out = _run(service.run_handoff(_Ctx(st), row["handoff_id"]))   # _Ctx fails on any Grain call
+    assert out["skipped"] and out["stage"] == "queued"
+
+
+def test_a_finished_design_is_not_run_again(tmp_path):
+    from repairos.handoff import service
+    from repairos.slots.state_sqlite import SqliteState
+    st = SqliteState(tmp_path / "s.sqlite3")
+    row = _run(service.create(st, {"scan_id": "scan_d"}, "a plate", None, []))
+    r = _run(st.get(service.KIND, row["handoff_id"]))
+    _run(st.put(service.KIND, {**r.data, "stage": "done"}, expect_rev=r.rev))
+    assert _run(service.run_handoff(_Ctx(st), row["handoff_id"]))["stage"] == "done"

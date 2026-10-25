@@ -17,6 +17,12 @@ from typing import Any
 LARGE_CORRECTION = 0.05   # a factor further from 1 than this usually means a mis-placed mark; said, never hidden
 
 
+def _points(d: Mapping[str, Any]) -> frozenset | None:
+    """The points a dimension measures, in any order (None when the caller gave none)."""
+    pts = d.get("between") or d.get("rim")
+    return frozenset(pts) if pts else None
+
+
 def _shape(d: Mapping[str, Any]) -> float:
     """A dimension's sigma without the size's (its total when the caller gave no split)."""
     return float(d["shape_uncertainty_mm"] if d.get("shape_uncertainty_mm") is not None else d["uncertainty_mm"])
@@ -51,8 +57,11 @@ def apply(dims: list[dict], reference: Mapping[str, Any] | None, holdout: Mappin
         h = next((d for d in out if d["name"] == holdout["dimension"]), None)
         if h is None:
             raise ValueError(f"holdout {holdout['dimension']!r} was not measured")
-        if reference and holdout["dimension"] == reference["dimension"]:
-            raise ValueError("the holdout must be a different length from the reference")
+        same = _points(h) is not None and \
+            _points(h) == _points(next(d for d in out if d["name"] == reference["dimension"])) if reference else False
+        if reference and (holdout["dimension"] == reference["dimension"] or same):
+            raise ValueError("the holdout must measure different points from the reference: the same length "
+                             "checked twice proves nothing")
         true = float(holdout["true_mm"])
         err = h["value_mm"] - true
         passed = abs(err) <= tolerance_mm

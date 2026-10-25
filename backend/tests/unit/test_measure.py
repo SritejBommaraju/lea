@@ -217,7 +217,13 @@ def _true(name):
 
 def test_lengths_carry_an_honest_uncertainty_without_a_known_length(scene):
     stills, images, depths, truth = scene
-    rec = measure(stills, lambda s: images[s["still_id"]], lambda s: depths[s["still_id"]], _request(truth))
+    req = _request(truth)
+    rng = np.random.default_rng(11)          # one point marked on two different corners: its rays do not meet
+    req["points"]["bad"] = _marks(truth, [0], CORNERS["a"], rng) + _marks(truth, [6], CORNERS["c"], rng)
+    req["dimensions"].append({"name": "bad_ab", "kind": "distance", "between": ["bad", "b"]})
+    rec = measure(stills, lambda s: images[s["still_id"]], lambda s: depths[s["still_id"]], req)
+    assert "do not meet" in rec["points"]["bad"]["error"]
+    assert [f["name"] for f in rec["failed"]] == ["bad_ab"]
     for d in rec["dimensions"]:
         err = d["value_mm"] - _true(d["name"])
         assert abs(err) < 1.0 and abs(err) < 2.5 * d["uncertainty_mm"], (d, _true(d["name"]))
@@ -245,7 +251,7 @@ def test_a_hole_diameter_from_rim_points(scene):
     rim = {f"r{k}": centre + rad * np.array([np.cos(a), 0.0, np.sin(a)])
            for k, a in enumerate(np.radians([0, 72, 144, 216, 288]))}
     req = {"points": {k: _marks(truth, [3, 8], x, rng, 0.3) for k, x in rim.items()},
-           "dimensions": [{"name": "hole", "kind": "diameter", "rim": list(rim)}]}
+           "dimensions": [{"name": "hole", "kind": "diameter", "rim": list(rim), "value_mm": 99.0}]}   # not taken
     rec = measure(stills, lambda s: images[s["still_id"]], lambda s: depths[s["still_id"]], req)
     hole = rec["dimensions"][0]
     assert abs(hole["value_mm"] - 3.2) < 0.3 and hole["uncertainty_mm"] < 0.5
@@ -268,6 +274,9 @@ def test_reference_corrects_and_holdout_verifies():
     assert not check["passed"] and not any(d["verified"] for d in out if d["name"] in ("spacing", "loose"))
     with pytest.raises(ValueError):
         reference.apply(dims, {"dimension": "ref", "true_mm": 68.6}, {"dimension": "ref", "true_mm": 68.6}, 0.5)
+    same = [dict(dims[0], between=["a", "b"]), dict(dims[1], name="check", between=["b", "a"])]
+    with pytest.raises(ValueError, match="different points"):     # one length under two names is no holdout
+        reference.apply(same, {"dimension": "ref", "true_mm": 68.6}, {"dimension": "check", "true_mm": 68.6}, 0.5)
 
 
 def test_a_still_without_a_reliable_pose_does_not_measure(scene):
@@ -280,3 +289,15 @@ def test_a_still_without_a_reliable_pose_does_not_measure(scene):
                              Intrinsics(), None, None)
         dimension.locate_point(sc, "x", [{"still_id": "s01", "uv": [100.0, 100.0]}])
 
+
+
+def test_without_an_adjustment_a_point_carries_the_poses_own_error(scene):
+    stills, images, depths, truth = scene
+    view = make_view(stills[0], images["s00"], depths["s00"])
+    plain = dimension.Scene([view], [view.pose], Intrinsics(), None, None)
+    honest = dimension.Scene([view], [view.pose], Intrinsics(), None, None, sigma_s=0.02, pose_sigma_m=0.005,
+                             pose_sigma_rad=np.radians(0.5))
+    mark = [{"still_id": "s00", "uv": [480.0, 360.0]}]
+    a, b = dimension.locate_point(plain, "p", mark), dimension.locate_point(honest, "p", mark)
+    assert a.method == b.method == "lidar"
+    assert np.sqrt(np.trace(b.cov)) > np.sqrt(np.trace(a.cov)) + 0.005      # millimetres of pose error, said

@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The scan's design in Grain (backend handoff: POST/GET /v1/scans/{id}/grain). The person says what to make; the
 /// backend measures, sends the scan, photos and verified dimensions to a linked Grain project and starts the design.
-/// This sheet shows the stage, relays Grain's question and lists every version Grain built with its fit check and a
+/// This sheet shows the stage, relays Grain's question and lists each design turn's final build with its fit check and a
 /// STEP file to share. Every word about the design comes from the backend; the app only lays it out.
 struct GrainDesign: Equatable {
     struct Revision: Equatable, Identifiable {

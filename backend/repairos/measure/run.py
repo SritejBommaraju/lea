@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 
 from repairos.measure import dimension, reference, size
-from repairos.measure.adjust import Adjusted, Intrinsics, adjust
+from repairos.measure.adjust import PRIOR_R_RAD, PRIOR_T_M, Adjusted, Intrinsics, adjust
 from repairos.measure.tracks import Tracks, find_tracks, neighbours, surface_depth
 from repairos.measure.views import View, make_view, usable
 
@@ -33,6 +33,7 @@ SCHEMA = "lea-measurement/1"
 MAX_STILLS = 40
 MIN_TRACKS = 30
 DEFAULT_TOLERANCE_MM = 0.5
+LIDAR_ONLY_SIGMA_S = 0.02    # size from LiDAR planes alone: a couple of percent (no adjustment to check it)
 
 
 def _segment(s: Mapping) -> tuple[int, str]:
@@ -96,7 +97,10 @@ def measure(stills: Sequence[Mapping[str, Any]], image_of: Callable[[Mapping], n
     tracks, adj, first = track_and_adjust(views) if len(views) >= 2 else (None, None, None)
     rec["tracks"] = {"points": tracks.n_points if tracks else 0, "observations": len(tracks.track) if tracks else 0,
                      "first_pass_points": first.n_points if first else 0}
-    scene = dimension.Scene(views, [v.pose for v in views], Intrinsics(), None, None)
+    # without an adjustment the rays use ARKit's poses as they are: their own error (the adjustment's prior) and
+    # LiDAR's size error go into every point, so such a scan never looks surer than its poses are
+    scene = dimension.Scene(views, [v.pose for v in views], Intrinsics(), None, None, sigma_s=LIDAR_ONLY_SIGMA_S,
+                            pose_sigma_m=PRIOR_T_M, pose_sigma_rad=PRIOR_R_RAD)
     if adj is not None:
         sc = size.fit_scale(views, adj, tracks)
         rec["adjustment"] = {"rms_px_before": round(adj.rms_px_before, 3), "rms_px_after": round(adj.rms_px_after, 3),
@@ -114,7 +118,7 @@ def measure(stills: Sequence[Mapping[str, Any]], image_of: Callable[[Mapping], n
     else:
         rec["adjustment"] = {"status": "skipped", "reason": f"{rec['tracks']['points']} tracks (needs {MIN_TRACKS}):"
                              " ARKit poses and LiDAR planes only"}
-        rec["scale"] = {"s": 1.0, "status": "lidar_only"}
+        rec["scale"] = {"s": 1.0, "sigma_s": LIDAR_ONLY_SIGMA_S, "status": "lidar_only"}
 
     pts: dict[str, dimension.Point3] = {}
     rec["points"] = {}
@@ -129,7 +133,7 @@ def measure(stills: Sequence[Mapping[str, Any]], image_of: Callable[[Mapping], n
 
     dims, failed = [], []
     for d in request.get("dimensions") or []:
-        extra = {k: v for k, v in d.items() if k not in ("name", "kind")}       # between / rim stay: what was measured
+        extra = {k: d[k] for k in ("between", "rim", "fit") if k in d}   # what was measured; numbers are computed
         need = d.get("between") or d.get("rim") or []
         missing = [n for n in need if n not in pts]
         if missing:

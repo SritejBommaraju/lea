@@ -25,7 +25,7 @@ from typing import Annotated, Any, Literal
 import jsonschema
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from repairos import contracts
 from repairos.config import ROOT, get_settings
@@ -166,15 +166,70 @@ class IdentifyPhoto(BaseModel):
     image: str = Field(pattern=r"^blob://sha256:[0-9a-f]{64}$")
 
 
+Finite = Annotated[float, Field(allow_inf_nan=False)]
+PositiveMM = Annotated[float, Field(gt=0, le=10_000, allow_inf_nan=False)]
+
+
+class Mark(BaseModel):
+    """A point marked on a still, in its full-resolution pixels."""
+    model_config = ConfigDict(extra="forbid")
+    still_id: str = Field(min_length=1)
+    uv: list[Finite] = Field(min_length=2, max_length=2)
+    sigma_px: Annotated[float, Field(gt=0, le=50, allow_inf_nan=False)] | None = None
+
+
+class MeasureDimension(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=80)
+    kind: Literal["distance", "diameter"] = "distance"
+    between: list[str] | None = Field(None, min_length=2, max_length=2)
+    rim: list[str] | None = Field(None, min_length=3, max_length=32)
+    fit: Literal["spacing"] | dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _shape(self):
+        if self.kind == "distance" and (not self.between or self.between[0] == self.between[1]):
+            raise ValueError(f"{self.name}: a distance needs `between` two different points")
+        if self.kind == "diameter" and not self.rim:
+            raise ValueError(f"{self.name}: a diameter needs `rim` with at least three points")
+        return self
+
+
+class KnownLength(BaseModel):
+    """A length the person knows (calipers, a ruler, a datasheet)."""
+    model_config = ConfigDict(extra="forbid")
+    dimension: str = Field(min_length=1)
+    true_mm: PositiveMM
+    uncertainty_mm: Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)] = 0.0
+
+
 class Measure(BaseModel):
     """A measuring request (repairos.measure.run): named points marked on stills, the dimensions between them, and
     optionally a known reference length and a holdout length."""
     model_config = ConfigDict(extra="forbid")
-    points: dict[str, list[dict[str, Any]]] = Field(min_length=1, max_length=64)
-    dimensions: list[dict[str, Any]] = Field(min_length=1, max_length=64)
-    reference: dict[str, Any] | None = None
-    holdout: dict[str, Any] | None = None
-    tolerance_mm: float = Field(0.5, gt=0, le=10)
+    points: dict[str, list[Mark]] = Field(min_length=1, max_length=64)
+    dimensions: list[MeasureDimension] = Field(min_length=1, max_length=64)
+    reference: KnownLength | None = None
+    holdout: KnownLength | None = None
+    tolerance_mm: Annotated[float, Field(gt=0, le=10, allow_inf_nan=False)] = 0.5
+
+    @model_validator(mode="after")
+    def _refs(self):
+        names = [d.name for d in self.dimensions]
+        if len(set(names)) != len(names):
+            raise ValueError("dimension names must be unique")
+        for d in self.dimensions:
+            missing = [p for p in (d.between or d.rim or []) if p not in self.points]
+            if missing:
+                raise ValueError(f"{d.name}: no marks for {missing}")
+        if any(not marks for marks in self.points.values()):
+            raise ValueError("every point needs at least one mark")
+        for k in (self.reference, self.holdout):
+            if k is not None and k.dimension not in names:
+                raise ValueError(f"{k.dimension!r} is not one of the dimensions")
+        if self.reference and self.holdout and self.reference.dimension == self.holdout.dimension:
+            raise ValueError("the holdout must be a different dimension from the reference")
+        return self
 
 
 class GrainDesign(BaseModel):
@@ -709,7 +764,8 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         await _get(request, "scan-package", scan_id)
         stills = [r.data for r in await store(request).list("still", scan_id=scan_id)]
         try:
-            return await asyncio.to_thread(measure_stills, blob_store(request), stills, body.model_dump())
+            return await asyncio.to_thread(measure_stills, blob_store(request), stills,
+                                           body.model_dump(exclude_none=True))
         except ValueError as e:
             raise HTTPException(422, {"error": "unmeasurable", "reason": str(e)}) from e
 
@@ -722,14 +778,15 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         from repairos.handoff import service
 
         scan = await _get(request, "scan-package", scan_id)
+        _design_ready()
         row = await service.create(store(request), scan, body.objective,
-                                   body.measure.model_dump() if body.measure else None, body.unknowns)
+                                   body.measure.model_dump(exclude_none=True) if body.measure else None, body.unknowns)
         return {**service.payload(row), "job": await _grain_job(request, row)}
 
     @app.get("/v1/scans/{scan_id}/grain")
     async def scan_grain_state(scan_id: str, request: Request, _d: Device):
         """The latest Grain design of the scan: stage (queued, measured, project, uploaded, capture, designing,
-        asking, done, stopped, failed), Grain's open question, the measurement and every revision (its build, fit
+        asking, done, stopped, failed), Grain's open question, the measurement and each turn's final build (its fit
         check and files)."""
         from repairos.handoff import service
 
@@ -748,6 +805,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         r = await service.latest(store(request), scan_id)
         if r is None:
             raise HTTPException(404, {"error": "no_grain_design"})
+        _design_ready()
         try:
             row = await service.add_answer(store(request), r.data["handoff_id"], body.text)
         except ValueError as e:
@@ -770,10 +828,26 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         return Response(data, media_type=media, headers={
             "Content-Disposition": f'attachment; filename="{scan_id}_rev{n}_{name}"'})
 
-    async def _grain_job(request: Request, row: dict) -> dict:
-        """Queue the handoff's next advance; idempotent per stage and answer count."""
-        key = f"{row['handoff_id']}:{row['stage']}:{len(row.get('answers') or [])}:{len(row.get('turns') or [])}"
-        job_id = f"job_grain_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+    def _design_ready() -> None:
+        """503 HUMAN ACTION NEEDED before anything is queued when this backend cannot reach a Grain (the provider
+        profile selects none, or GRAIN_URL is not set)."""
+        from repairos.registry import RegistryError, resolve_slots
+        try:
+            _, slots = resolve_slots(get_settings().repairos_providers_path)
+        except RegistryError as e:
+            raise HTTPException(503, {"error": "grain_unavailable", "reason": str(e)}) from e
+        if "GRAIN" not in slots:
+            raise HTTPException(503, {"error": "grain_unavailable", "reason": "HUMAN ACTION NEEDED: this profile "
+                                      "makes no Grain calls; run with REPAIROS_PROFILE=phase2"})
+        if not (os.environ.get("GRAIN_URL") or get_settings().grain_url):
+            raise HTTPException(503, {"error": "grain_unavailable",
+                                      "reason": "HUMAN ACTION NEEDED: GRAIN_URL in backend/.env"})
+
+    async def _grain_job(request: Request, row: dict) -> str:
+        """Queue the design's current attempt (one job per attempt; the queue ignores an id it already has, and the
+        row's lease keeps a second run from touching Grain)."""
+        from repairos.handoff.service import job_key
+        job_id = job_key(row)
         return await store(request).enqueue(Job(kind="grain", job_id=job_id, session_id=row.get("session_id"),
                                                 scan_id=row["scan_id"], inputs={"kind": "grain", "id": row["handoff_id"]}))
 

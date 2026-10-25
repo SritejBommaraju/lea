@@ -25,6 +25,7 @@ MARK_SIGMA_PX = 1.5        # a tap or a detector corner, in full-resolution stil
 RADIUS_PX = 40             # neighbourhood of a mark for its local plane (working pixels)
 MIN_PLANE_POINTS = 8
 MIN_ANGLE_DEG = 3.0
+MEET_PX = 6.0              # a triangulated point must land this close to every mark (full-resolution pixels)
 MIN_INCIDENCE = 0.2        # |cos| between the ray and the plane normal; flatter is too grazing to trust
 LIDAR_FLOOR_M = 0.003      # a LiDAR plane is never trusted to better than this along its normal
 SAMPLES = 400
@@ -40,6 +41,8 @@ class Scene:
     s: float = 1.0
     sigma_s: float = 0.0
     b_m: float = 0.0
+    pose_sigma_m: float = 0.0        # error of the poses the rays come from (0 after an adjustment: it is in the points)
+    pose_sigma_rad: float = 0.0
     index: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self):
@@ -164,6 +167,16 @@ def _triangulate(scene: Scene, marks: list[tuple[int, np.ndarray]], sigma_px: fl
         return None
     uvs = [np.asarray(uv, dtype=float) for _, uv in marks]
     x = solve(uvs)
+    for (i, _), uv in zip(marks, uvs, strict=True):   # the rays must meet: in front of each still, on each mark
+        v, pose = scene.views[i], scene.poses[i]
+        pc = pose.to_camera(x[None])
+        if pc[0, 2] >= 0:
+            raise Unmeasurable(f"the marks of this point do not meet: it would lie behind still {v.still_id} "
+                               "(different spots marked?)")
+        miss = float(np.linalg.norm(scene.intr.project(pc, v.cam)[0] / v.scale - uv))
+        if miss > max(MEET_PX, 4 * sigma_px):
+            raise Unmeasurable(f"the marks of this point do not meet: {miss:.0f} px off on still {v.still_id} "
+                               "(different spots marked?)")
     jac, eps = [], 0.25
     for k in range(len(uvs)):
         for c in range(2):
@@ -189,7 +202,7 @@ def locate_point(scene: Scene, name: str, marks: Sequence[Mapping]) -> Point3:
     if len(usable) >= 2:
         tri = _triangulate(scene, [(i, uv) for i, uv, _ in usable], max(s for _, _, s in usable))
         if tri is not None:
-            return Point3(name, tri[0], tri[1], "parallax", stills, tri[2])
+            return Point3(name, tri[0], _with_pose_error(scene, usable, tri[0], tri[1]), "parallax", stills, tri[2])
     est = []
     for i, uv, sp in usable:
         got = _surface(scene, i, uv, sp)
@@ -201,7 +214,15 @@ def locate_point(scene: Scene, name: str, marks: Sequence[Mapping]) -> Point3:
     cov = np.linalg.inv(info)
     x = cov @ sum(np.linalg.inv(g[1]) @ g[0] for g, _ in est)
     method = "surface" if any(m == "surface" for _, m in est) else "lidar"
-    return Point3(name, x, cov, method, stills, est[0][0][2] | {"marks": len(est)})
+    return Point3(name, x, _with_pose_error(scene, usable, x, cov), method, stills, est[0][0][2] | {"marks": len(est)})
+
+
+def _with_pose_error(scene: Scene, usable, x: np.ndarray, cov: np.ndarray) -> np.ndarray:
+    """cov plus the error of unadjusted poses: their position error and their angle error at the point's distance."""
+    if not (scene.pose_sigma_m or scene.pose_sigma_rad):
+        return cov
+    dist = min(float(np.linalg.norm(x - scene.poses[i].t)) for i, _, _ in usable)
+    return cov + np.eye(3) * (scene.pose_sigma_m ** 2 + (dist * scene.pose_sigma_rad) ** 2)
 
 
 def _samples(p: Point3, rng: np.random.Generator) -> np.ndarray:
