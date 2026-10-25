@@ -151,6 +151,8 @@ def load_stills(stills: Sequence[Mapping[str, Any]], box: Any) -> list[Still]:
     for s in stills:
         if s.get("pose_reliable") is False or not s.get("camera") or not s.get("intrinsics"):
             continue
+        if int(s.get("segment") or 0):   # a moved segment's photo (the object flipped) shows another side
+            continue
         p = Path(s["image_file"])
         if not p.exists():
             continue
