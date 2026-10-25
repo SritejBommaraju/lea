@@ -798,7 +798,8 @@ final class ScanSession: NSObject {
 
     nonisolated static let enoughCue = "That's enough: tap Done"
     /// Cues that only say "carry on": they carry the progress number instead.
-    nonisolated static let steadyCues: Set<String> = ["Keep walking around it", "Keep turning it slowly", "Keep going around the bottom"]
+    nonisolated static let steadyCues: Set<String> = ["Keep walking around it", "Keep turning it slowly", "Keep going around the bottom",
+                                                      FlipSegmentController.sidesCue]
 
     /// "74% — keep going" (the progress number, then the steady cue or the way to the next needed view).
     nonisolated static func progressCue(_ percent: Int, _ then: String) -> String {

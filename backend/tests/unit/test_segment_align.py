@@ -396,8 +396,11 @@ def test_gravity_starts_put_a_flipped_segment_back_on_the_table():
     mov = p @ flip[:3, :3].T + flip[:3, 3]
     starts = dict(_gravity_starts(mov, p, src_plane_y=0.5, tgt_plane_y=0.0))
     for name, m in starts.items():
+        if "_side_" in name:   # a side start is centre on centre: the table alone cannot give its height
+            continue
         y = (mov @ m[:3, :3].T + m[:3, 3])[:, 1]
         assert abs(y.min()) < 0.004 and abs(y.max() - 0.06) < 0.004, name
+    assert sum("_side_" in n for n in starts) == 24
 
 
 def test_an_anchored_floor_under_a_stool_is_replaced_by_the_measured_support():
@@ -416,3 +419,21 @@ def test_an_anchored_floor_under_a_stool_is_replaced_by_the_measured_support():
     assert plane_height(near, frames, box) == 0.012
     assert abs(plane_height({}, frames, box)) < 0.003         # no anchor: the measured one
     assert plane_height({**floor, "pose_source": "object_tracked"}, frames, box) is None
+
+
+def test_an_object_laid_on_its_side_is_registered():
+    """Many things cannot rest upside down (a mouse rocks, a controller stands on its triggers): the person lays them on
+    a side. The gravity sweep's side starts find that pose, which ICP then refines like the others."""
+    rng = np.random.default_rng(3)
+    r = rot("y", 70) @ rot("z", 90)
+    p, _ = surface_points(L_BOXES)
+    lift = -float((p @ r.T)[:, 1].min())   # resting on y = 0 in its own world
+    side_world = m4(r, [-0.3, lift, 0.25])
+    ref = segment_world(np.eye(4), L_BOXES)
+    mov = segment_world(side_world, L_BOXES)
+    mov.points = mov.points + rng.normal(0, 0.001, mov.points.shape)
+    res = align_clouds(ref, mov, voxel_m=0.003, **ON_TABLE)
+    truth = np.linalg.inv(side_world)
+    assert res.aligned, res.reason
+    assert rotation_deg(res.matrix[:3, :3] @ truth[:3, :3].T) < 3.0
+    assert res.seconds["total_s"] < 10

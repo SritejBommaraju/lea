@@ -11,8 +11,14 @@ import simd
 /// capture.
 @MainActor
 final class FlipSegmentController {
-    nonisolated static let prompt = "Now flip it over and give me a quick look at the bottom"
+    /// Upside down or on a side, whichever it sits on steadily (a mouse rocks upside down; the server tries every resting
+    /// face), on a firm surface, sides too: the server lines the two scans up by the sides both saw, and a soft surface
+    /// squashes round the object (the owner's Xbox flip on a padded stool could not be lined up, 2026-10-25).
+    nonisolated static let prompt = "Turn it over or onto a side, whichever way it sits steadily on a firm surface, then scan the bottom and its sides"
     nonisolated static let linedUp = "Lined up with the first scan"
+    /// Not lined up yet after `sidesAfter`: the sides are what both scans share.
+    nonisolated static let sidesCue = "Get the sides too, so I can line it up"
+    nonisolated static let sidesAfter: TimeInterval = 8
     static let interval: Duration = .seconds(2)
 
     private weak var scan: ScanSession?
@@ -116,8 +122,13 @@ final class FlipSegmentController {
 
     func cue(replacing current: String?) -> String? {
         if let at = linedUpAt, Date().timeIntervalSince(at) < 3 { return Self.linedUp }
-        if current == "Keep walking around it" { return "Keep going around the bottom" }
-        return nil
+        return Self.steadyCue(replacing: current, aligned: aligned, elapsed: Date().timeIntervalSince(started))
+    }
+
+    /// The carry-on cue during the bottom scan: the sides until it has lined up (after a few seconds), then the bottom.
+    nonisolated static func steadyCue(replacing current: String?, aligned: Bool, elapsed: TimeInterval) -> String? {
+        guard current == "Keep walking around it" else { return nil }
+        return !aligned && elapsed >= sidesAfter ? sidesCue : "Keep going around the bottom"
     }
 }
 

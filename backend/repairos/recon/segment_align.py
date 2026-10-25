@@ -12,8 +12,8 @@ Method (Open3D, MIT):
    checkers), a few seeds. Each result is a candidate. The phone's estimate is one more candidate. It is never
    trusted as is: it is refined and scored like the others.
 3. More starts, because feature matching can miss on a plain object:
-   - Gravity sweep: both segments share one gravity-aligned ARKit world, so the object lies upright or upside
-     down at some heading. 2 x 12 headings, centre on centre.
+   - Gravity sweep: both segments share one gravity-aligned ARKit world, so the object lies upright, on a side or upside
+     down at some heading: 2 x 12 headings (upright, upside down) and 4 x 6 (a side), centre on centre.
    - Symmetric objects: the best candidate turned 180 deg about each principal axis of the segment-0 cloud. A
      box-shaped object fits equally well several ways round.
 4. Each candidate is refined by point-to-plane ICP, coarse to fine (3, 1.5 and 1 voxel; the sweep starts at 10),
@@ -278,10 +278,10 @@ def below_plane(points: np.ndarray, plane_y: float, margin_m: float) -> float:
 
 
 def _gravity_starts(src_pts: np.ndarray, tgt_pts: np.ndarray, steps: int = 12, src_plane_y: float | None = None,
-                    tgt_plane_y: float | None = None) -> list[tuple[str, np.ndarray]]:
+                    tgt_plane_y: float | None = None, side_steps: int = 6) -> list[tuple[str, np.ndarray]]:
     """Starts for an object moved on the table, in one gravity-aligned (Y up) world: upright or upside down (180 deg
     about a horizontal axis), at `steps` headings, centre on centre across the table. Global registration can miss on
-    a plain, symmetric object; these cover every resting pose on the same face or the opposite one.
+    a plain, symmetric object; these cover every resting pose on the same face, the opposite one or a side.
     With both support planes known, the height comes from them: the object rests on its table in both segments, so
     upright keeps its height above the table, and upside down puts the segment's table contact at the object's top
     (the object's height is the taller of the two clouds above their tables). A segment sees only one side of a flat
@@ -304,6 +304,20 @@ def _gravity_starts(src_pts: np.ndarray, tgt_pts: np.ndarray, steps: int = 12, s
             if planes:   # y' = r_yy y + t_y: the segment's table goes to the table (upright) or to the top (flipped)
                 m[1, 3] = (tgt_plane_y - src_plane_y) if upside == "upright" else (tgt_plane_y + height + src_plane_y)
             out.append((f"gravity_{upside}_{round(np.degrees(a))}", m))
+    # On one of its four sides (90 deg about a horizontal axis): many things cannot rest upside down (a mouse rocks,
+    # a controller stands on its triggers), so the person lays them on a side. Centre on centre, fewer headings;
+    # ICP and the free-space / under-the-table checks decide as for the others.
+    sides = {"side_px": np.array([[1.0, 0, 0], [0, 0, -1], [0, 1, 0]]), "side_nx": np.array([[1.0, 0, 0], [0, 0, 1], [0, -1, 0]]),
+             "side_pz": np.array([[0, -1.0, 0], [1, 0, 0], [0, 0, 1]]), "side_nz": np.array([[0, 1.0, 0], [-1, 0, 0], [0, 0, 1]])}
+    for name, base in sides.items():
+        for k in range(side_steps):
+            a = 2 * np.pi * k / side_steps
+            yaw = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+            r = yaw @ base
+            m = np.eye(4)
+            m[:3, :3] = r
+            m[:3, 3] = ct - r @ cs
+            out.append((f"gravity_{name}_{round(np.degrees(a))}", m))
     return out
 
 
