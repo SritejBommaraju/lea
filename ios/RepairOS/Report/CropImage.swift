@@ -106,3 +106,73 @@ struct CropThumb: View {
         .accessibilityHidden(true)
     }
 }
+
+/// The evidence photo full screen, decoded near full size: pinch or double-tap to zoom, drag to look around.
+struct CropZoomView: View {
+    let shas: [String]
+    @State var index: Int
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $index) {
+                ForEach(Array(shas.enumerated()), id: \.offset) { i, sha in
+                    ZoomablePhoto(sha: sha).tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: shas.count > 1 ? .always : .never))
+            .ignoresSafeArea()
+            Button { dismiss() } label: {
+                Image(systemName: "xmark").font(.body.weight(.semibold)).foregroundStyle(.white)
+                    .frame(width: 44, height: 44).background(.ultraThinMaterial, in: Circle())
+            }
+            .padding(Spacing.gutter)
+            .accessibilityLabel("Close")
+        }
+        .statusBarHidden()
+    }
+}
+
+private struct ZoomablePhoto: View {
+    let sha: String
+    @Environment(\.cropSource) private var source
+    @State private var image: UIImage?
+    @State private var scale: CGFloat = 1
+    @State private var lastScale: CGFloat = 1
+    @State private var offset: CGSize = .zero
+    @State private var lastOffset: CGSize = .zero
+
+    /// Enough pixels for a 3x zoom on a phone screen without decoding the full 12 MP still.
+    static let pixels = 3000
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+                    .scaleEffect(scale).offset(offset)
+                    .gesture(MagnifyGesture()
+                        .onChanged { scale = min(6, max(1, lastScale * $0.magnification)) }
+                        .onEnded { _ in lastScale = scale; if scale == 1 { reset() } })
+                    .simultaneousGesture(DragGesture()
+                        .onChanged { g in
+                            guard scale > 1 else { return }
+                            offset = CGSize(width: lastOffset.width + g.translation.width, height: lastOffset.height + g.translation.height)
+                        }
+                        .onEnded { _ in lastOffset = offset })
+                    .onTapGesture(count: 2) {
+                        withAnimation(Motion.standard) {
+                            if scale > 1 { reset() } else { scale = 2.5; lastScale = 2.5 }
+                        }
+                    }
+                    .accessibilityLabel("Evidence photo")
+            } else {
+                ProgressView().tint(.white)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: sha) { image = await CropCache.shared.image(sha, pixels: Self.pixels, source: source) }
+    }
+
+    private func reset() { scale = 1; lastScale = 1; offset = .zero; lastOffset = .zero }
+}

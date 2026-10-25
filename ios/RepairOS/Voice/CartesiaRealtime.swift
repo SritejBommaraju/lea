@@ -231,6 +231,7 @@ final class SonicSocket: @unchecked Sendable {
     private let context = UUID().uuidString
     private let lock = NSLock()
     private var closed = false
+    private var audioBytes = 0
     var onAudio: (@Sendable (Data) -> Void)?
     var onDone: (@Sendable () -> Void)?
     var onFailed: (@Sendable (String) -> Void)?
@@ -267,6 +268,9 @@ final class SonicSocket: @unchecked Sendable {
 
     private var isClosed: Bool { lock.withLock { closed } }
 
+    /// Seconds of audio received so far (s16le mono at 24 kHz): how much of the answer was already heard.
+    var audioSeconds: Double { lock.withLock { Double(audioBytes) / 48_000 } }
+
     private func fail(_ why: String) {
         let first = lock.withLock { () -> Bool in defer { closed = true }; return !closed }
         if first { onFailed?(why) }
@@ -282,7 +286,10 @@ final class SonicSocket: @unchecked Sendable {
                       let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return self.receive() }
                 switch o["type"] as? String {
                 case "chunk":
-                    if let b = o["data"] as? String, let d = Data(base64Encoded: b), !d.isEmpty { self.onAudio?(d) }
+                    if let b = o["data"] as? String, let d = Data(base64Encoded: b), !d.isEmpty {
+                        self.lock.withLock { self.audioBytes += d.count }
+                        self.onAudio?(d)
+                    }
                     if o["done"] as? Bool == true { self.finished(); return }
                 case "done": self.finished(); return
                 case "error": self.fail("\(o["message"] ?? o["error"] ?? "error")"); return

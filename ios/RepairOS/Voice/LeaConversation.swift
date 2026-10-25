@@ -204,7 +204,10 @@ final class LeaConversation {
         holding = false
         let replay = heldEvents
         heldEvents = []
-        if let st = current { for e in replay { apply(e, st) } }
+        if let st = current {
+            LeaVoice.shared.streamConfirmed(st.id)
+            for e in replay { apply(e, st) }
+        }
     }
 
     static func same(_ a: String, _ b: String) -> Bool { WakeListener.normalize(a) == WakeListener.normalize(b) }
@@ -255,6 +258,8 @@ final class LeaConversation {
         var sonic: SonicSocket?
         var sonicFailed = false
         var sonicFinished = false
+        /// The sentences handed to Sonic, so a socket that fails part-way can have the unheard ones said by the phone.
+        var sonicSent: [String] = []
         init(start: Date, id: Int, input: String, recorded: Bool) {
             self.start = start; self.id = id; self.input = input; self.recorded = recorded
         }
@@ -279,7 +284,7 @@ final class LeaConversation {
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
         let liveNow = live(), session = sessionID(), looking = look
         let voice = LeaVoice.shared
-        let st = TurnState(start: start, id: voice.beginStream(), input: audio == nil ? input : "recording",
+        let st = TurnState(start: start, id: voice.beginStream(held: hold), input: audio == nil ? input : "recording",
                            recorded: audio != nil)
         current = st
         st.offered = offered
@@ -302,7 +307,10 @@ final class LeaConversation {
                     if holding { heldEvents.append(event); continue }
                     apply(event, st)
                 }
-                while holding, !Task.isCancelled { try? await Task.sleep(for: .milliseconds(30)) }
+                // A held answer waits for turn.end / turn.resume; if neither comes, it is dropped, never stuck.
+                let holdUntil = Date().addingTimeInterval(Self.maxHold)
+                while holding, !Task.isCancelled, Date() < holdUntil { try? await Task.sleep(for: .milliseconds(30)) }
+                if holding, !Task.isCancelled { cancelSpeculation() }
                 if Task.isCancelled { return }
                 // Sonic may still be sending the last sentence's audio.
                 let waitUntil = Date().addingTimeInterval(10)
@@ -340,7 +348,7 @@ final class LeaConversation {
             let answer = Turn(mine: false, text: st.answerText)
             if let i = st.answerIndex, i < turns.count { turns[i].text = st.answerText } else { turns.append(answer); st.answerIndex = turns.count - 1 }
             phase = .speaking
-            if let sonic = st.sonic, !st.sonicFailed { sonic.say(s + " ", more: true) }
+            if let sonic = st.sonic, !st.sonicFailed { st.sonicSent.append(s); sonic.say(s + " ", more: true) }
             else if let say = st.fallback.sentence(s, withAudio: withAudio) { voice.queueOnDevice(say, stream: st.id) }
         case .audio(let pcm):
             st.fallback.audio()
@@ -379,7 +387,7 @@ final class LeaConversation {
         sonic.onAudio = { d in append(d, first.take() ? markFirst : nil) }
         sonic.onDone = { Task { @MainActor in st.sonicFinished = true } }
         sonic.onFailed = { [weak self] why in Task { @MainActor in
-            st.sonicFailed = true
+            self?.sonicFailed(st, heard: sonic.audioSeconds)
             self?.diag?.log("realtime_tts_failed", ["why": why])
         } }
         st.sonic = sonic
@@ -387,10 +395,32 @@ final class LeaConversation {
         Task {
             if !(await gateway.realtimeStream(kind: "tts")) {
                 sonic.cancel()
-                st.sonicFailed = true
+                await MainActor.run { self.sonicFailed(st, heard: sonic.audioSeconds) }
             }
         }
     }
+
+    /// Sonic stopped: the sentences it was given but the person has not heard yet are said by the phone (the gateway
+    /// was asked for no audio on this path), then later sentences go to the phone too.
+    private func sonicFailed(_ st: TurnState, heard seconds: Double) {
+        guard !st.sonicFailed else { return }
+        st.sonicFailed = true
+        for say in Self.unheard(st.sonicSent, heardSeconds: seconds) { LeaVoice.shared.queueOnDevice(say, stream: st.id) }
+        st.sonicSent = []
+    }
+
+    /// The sentences not yet heard after `heardSeconds` of audio, at about `charsPerSecond` of speech. The sentence
+    /// cut off part-way is said again whole: repeating half a sentence beats losing it.
+    nonisolated static func unheard(_ sent: [String], heardSeconds: Double, charsPerSecond: Double = 14) -> [String] {
+        var end = 0.0
+        return sent.filter { s in
+            end += Double(s.count + 1) / charsPerSecond
+            return end > heardSeconds + 0.05
+        }
+    }
+
+    /// Longest a held early answer waits for the person's turn to end before it is dropped.
+    static let maxHold: TimeInterval = 6
 
     /// What the person says is also their guess about what is wrong: the gateway turns it into a lead (404 while
     /// that route does not exist is ignored).

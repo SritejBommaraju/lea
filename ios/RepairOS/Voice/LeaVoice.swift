@@ -159,9 +159,11 @@ final class LeaVoice: NSObject {
     // MARK: - Conversation streams
 
     /// A new answer: stops anything playing; PCM chunks and phone-voice sentences of this answer follow, in order.
-    func beginStream() -> Int {
+    /// `held`: an early answer nothing plays of yet, so Lea is not "speaking" and the listener stays open for the
+    /// person's turn end (`streamConfirmed` marks her speaking once it is confirmed).
+    func beginStream(held: Bool = false) -> Int {
         pendingCue?.cancel()
-        let id = begin()
+        let id = begin(speak: !held)
         limiter.spoke(nil, at: now)
         return id
     }
@@ -197,6 +199,11 @@ final class LeaVoice: NSObject {
         }
         while synth.isSpeaking, id == utterance { try? await Task.sleep(for: .milliseconds(100)) }
         if id == utterance { speaking = false }
+    }
+
+    /// A held answer was confirmed: it plays now.
+    func streamConfirmed(_ id: Int) {
+        if id == utterance { speaking = true }
     }
 
     func endStreamNow(_ id: Int) {
@@ -312,12 +319,12 @@ final class LeaVoice: NSObject {
 
     // MARK: - Plumbing
 
-    private func begin() -> Int {
+    private func begin(speak: Bool = true) -> Int {
         utterance += 1
         streamTask?.cancel()
         if synth.isSpeaking { synth.stopSpeaking(at: .immediate) }
         player.begin(utterance)
-        speaking = true
+        if speak { speaking = true }
         return utterance
     }
 

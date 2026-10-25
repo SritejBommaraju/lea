@@ -262,3 +262,21 @@ struct LeaSightTests {
         #expect(LeaSight.Depth(width: 1, height: 1, metres: [1.2]).at(2, -1) == 1.2)   // clamped to the grid
     }
 }
+
+/// Sonic failing part-way: the sentences the person has not heard are said by the phone (Greptile, PR #13).
+struct SonicFailoverTests {
+    let sent = ["The fan looks loose.", "Unplug it first.", "Then tighten the two screws."]
+
+    @Test func nothingHeardMeansEverythingIsSaid() {
+        #expect(LeaConversation.unheard(sent, heardSeconds: 0) == sent)
+    }
+
+    @Test func theCutOffSentenceIsSaidAgainWhole() {
+        // "The fan looks loose." is about 1.5 s; 2 s in is part-way through the second sentence.
+        #expect(LeaConversation.unheard(sent, heardSeconds: 2) == Array(sent.dropFirst()))
+    }
+
+    @Test func allHeardMeansNothingRepeats() {
+        #expect(LeaConversation.unheard(sent, heardSeconds: 60).isEmpty)
+    }
+}
