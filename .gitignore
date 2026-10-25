@@ -26,7 +26,7 @@ node_modules/
 # large binaries
 *.mlpackage/
 
-# Proprietary Grain material: local only, never committed
+# Proprietary material: local only, never committed
 private/
 **/GRAIN_SPEC*
 **/GRAIN_STATUS*

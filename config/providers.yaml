@@ -23,4 +23,3 @@ profiles:
     BLOB: local      # content-addressed files under data/blobs/ (built)
     HOST: local_mac  # the dev laptop; dev only, a release build refuses it
 
-# Phase 2 adds the GRAIN slot (Grain API client); see PLAN.md §9.

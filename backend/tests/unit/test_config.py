@@ -24,11 +24,11 @@ def clean_env(monkeypatch):
 
 def test_loads_from_env_file_and_environment_wins(tmp_path, clean_env):
     env = tmp_path / ".env"
-    env.write_text(f"GRAIN_URL=http://from-file:8000\nGRAIN_KEY={SECRET}\nTYPESAFE_KEY=\n", encoding="utf-8")
-    clean_env.setenv("GRAIN_URL", "http://from-env:8000")
+    env.write_text(f"BRIGHTDATA_SERP_ZONE=from-file\nANTHROPIC_API_KEY={SECRET}\nTYPESAFE_KEY=\n", encoding="utf-8")
+    clean_env.setenv("BRIGHTDATA_SERP_ZONE", "from-env")
     s = Settings(_env_file=env)
-    assert s.grain_url == "http://from-env:8000"
-    assert s.require("GRAIN_KEY") == SECRET
+    assert s.brightdata_serp_zone == "from-env"
+    assert s.require("ANTHROPIC_API_KEY") == SECRET
     assert s.typesafe_key is None  # empty value = missing, not ""
 
 
@@ -42,25 +42,25 @@ def test_missing_key_is_a_typed_error_naming_the_key(tmp_path, clean_env):
 
 def test_secrets_never_in_repr_logs_or_errors(tmp_path, clean_env, caplog):
     env = tmp_path / ".env"
-    env.write_text(f"GRAIN_KEY={SECRET}\nANTHROPIC_API_KEY={SECRET}\nTYPESAFE_KEY={SECRET}\n", encoding="utf-8")
+    env.write_text(f"BRIGHTDATA_API_KEY={SECRET}\nANTHROPIC_API_KEY={SECRET}\nTYPESAFE_KEY={SECRET}\n", encoding="utf-8")
     s = Settings(_env_file=env)
     with caplog.at_level(logging.INFO):
         logging.getLogger("repairos.test").info("settings %s %r %s", s, s, s.redact())
     texts = [repr(s), str(s), str(s.redact()), caplog.text, s.model_dump_json()]
     try:
-        s.require("GRAIN_URL")
+        s.require("BRIGHTDATA_SERP_ZONE")
     except MissingSettingError as e:
         texts.append(str(e))
     for t in texts:
         assert SECRET not in t
-    assert s.redact()["GRAIN_KEY"] == "***"
-    assert s.redact()["GRAIN_URL"] is None
+    assert s.redact()["BRIGHTDATA_API_KEY"] == "***"
+    assert s.redact()["BRIGHTDATA_SERP_ZONE"] is None
 
 
-def test_release_with_replay_grain_exits_with_a_clear_message():
+def test_release_with_the_dev_host_exits_with_a_clear_message():
     with pytest.raises(SystemExit) as err:
-        enforce_release({**RELEASE_OK, "GRAIN": "replay"}, release=True, environ={})
-    assert "GRAIN=replay" in str(err.value.code)
+        enforce_release({**RELEASE_OK, "HOST": "local_mac"}, release=True, environ={})
+    assert "HOST=local_mac" in str(err.value.code)
 
 
 def test_release_refuses_the_phase1_profile_and_slot_overrides():
@@ -80,14 +80,3 @@ def test_env_example_lists_every_setting_and_every_doctor_key():
                    for k in re.findall(r'"([A-Z0-9_]+)"', group)}
     assert doctor_keys, "doctor env checks not found"
     assert doctor_keys <= set(keys), f"missing from .env.example: {sorted(doctor_keys - set(keys))}"
-
-
-def test_backend_starts_without_grain_keys(tmp_path, clean_env):
-    """Phase 1 has no Grain calls: missing GRAIN_* must not stop startup; only Grain-using code fails, when called."""
-    from repairos.registry import Registry
-
-    s = Settings(_env_file=tmp_path / "absent.env")
-    reg = Registry(ROOT / "config" / "providers.yaml", environ={}, release=False)
-    assert "GRAIN" not in reg.slots
-    with pytest.raises(MissingSettingError, match="GRAIN_KEY"):
-        s.require("GRAIN_KEY", "GRAIN=live")

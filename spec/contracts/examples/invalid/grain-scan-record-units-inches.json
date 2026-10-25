@@ -1,2 +1,0 @@
-{ "schema": "grain-scan-record", "why": "units are mm|cm|m, declared, never guessed",
-  "base": "grain-scan-record.json", "patch": { "units": "in" } }

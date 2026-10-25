@@ -1,2 +1,0 @@
-{ "schema": "grain-call-response", "why": "Greptile issue 8: call.electrical reuses the electrical-check response (or null), so one without readings[] (e.g. the old results[] shape) fails",
-  "base": "grain-call-response.json", "patch": { "electrical": { "readings": null, "results": [] } } }

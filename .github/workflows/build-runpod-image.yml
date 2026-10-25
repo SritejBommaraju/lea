@@ -35,7 +35,7 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
 
-      - name: Proprietary guard (no Grain internals or private files)
+      - name: Proprietary guard (no private files)
         run: python3 -I tools/guard_proprietary.py --tracked
 
       - name: Image name

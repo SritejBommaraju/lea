@@ -1,4 +1,4 @@
-"""Phase 1 pipeline orchestrator (PLAN.md task B10): inspect -> fuse -> locate -> report, no Grain.
+"""Phase 1 pipeline orchestrator (PLAN.md task B10): inspect -> fuse -> locate -> report.
 
     await run_session(session_id=..., state=..., blobs=...)    # tools/replay.py, `make replay SESSION=...`
     python -m repairos.pipeline.worker                          # `make run-workers`: the STATE job queue

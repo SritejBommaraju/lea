@@ -1,3 +1,0 @@
-{ "schema": "grain-electrical-check-response", "why": "row verdict is ok|off (+ T2 values), never agrees",
-  "base": "grain-electrical-check-response.json",
-  "patch": { "readings": [ { "net": "VIN", "known": true, "volts": 5.02, "verdict": "agrees" } ] } }

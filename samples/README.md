@@ -12,7 +12,6 @@ Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store),
 timing, the findings, the score against `truth.json` and each scan's report, and `report_<scan_id>.json` (validated
 against `spec/contracts/report.schema.json`), `.md` and `.html`. The pipeline (B10, `repairos.pipeline.run_session`)
 calls the configured detector, Claude and Jev; a stage that fails fails the replay with the stage and the error.
-Phase 1 replay makes no Grain calls.
 
 ## Where sessions come from
 
@@ -70,7 +69,6 @@ Every file path inside a JSON object is **relative to the session folder** (for 
 `scans/scan_1a2b3c4d/kf_000.jpg`). On the wire (gateway) the same fields hold blob refs instead
 (`blob://sha256:<hex>`); the writer turns refs into files and replay turns files back into refs.
 
-Phase 2 adds `grain/` (recorded real Grain responses; gitignored, never committed).
 
 ## Files
 

@@ -5,8 +5,7 @@ For every person on the team and every coding agent working for them.
 ## What this is
 
 LEA (RepairOS in the code) is an iPhone app plus a backend. It scans any hardware object with LiDAR, guides
-full-resolution close-ups, finds defects with our models and writes a report with evidence. Phase 1 makes no
-Grain calls. The plan, the invariants and every task are in [PLAN.md](PLAN.md).
+full-resolution close-ups, finds defects with our models and writes a report with evidence. The plan, the invariants and every task are in [PLAN.md](PLAN.md).
 
 ## Read order
 
@@ -40,10 +39,8 @@ Stuck on a missing key, device or service: say so in the channel and pick anothe
 ## Rules
 
 - **PRs only.** Never push to `main` or to someone else's branch.
-- **Grain is proprietary.** Only the API surface we call goes in the repo: endpoints, field shapes, units,
-  frames. Never Grain source paths, algorithms, thresholds, model names, timings or recorded responses. Write
-  a need ("Grain must return a verdict per reading") or point to `private/grain/` (ask Sritej). Never touch or
-  commit `private/`. The guard (`tools/guard_proprietary.py`) enforces it.
+- **Proprietary material stays out.** Never touch or commit `private/`. The guard
+  (`tools/guard_proprietary.py`) enforces it.
 - **Nothing fake.** No fakes, stubs or mocks of missing services, devices or data. Recorded real captures and
   responses in tests are fine.
 - **Any product.** No product names, refs or class lists in code; the one generic vocabulary is

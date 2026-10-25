@@ -52,7 +52,6 @@
     "gate_threshold_fitness": 0.5,
     "computed_at": "2026-10-23T18:10:09Z",
     "design_points_file": "scans/scan_7f3a/points_design.ply",
-    "design_points_units": "m",
-    "grain_scan_id": "20261023-181012-a1b2"
+    "design_points_units": "m"
   }
 }

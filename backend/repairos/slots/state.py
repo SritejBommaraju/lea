@@ -21,7 +21,6 @@ ID_FIELDS: dict[str, str] = {
     "meter-reading": "reading_id",
     "part-on-hand": "item_id",
     "repair-plan": "plan_id",
-    "reference-design": "product_id",
     "shopping-quote": "quote_id",
     "report": "report_id",
 }

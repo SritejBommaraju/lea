@@ -21,7 +21,7 @@ status: [build/STATUS.md](build/STATUS.md); streams: [areas/](areas/README.md).
 - Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after checking its terms.
 
 **Out (Phase 1)**
-- Anything that calls Grain: reference designs, design alignment, Grain cross-check, expected electrical values, replacement parts, simulation checks, repair plans, shopping (Phase 2, §9).
+- Reference designs, design alignment, expected electrical values, replacement parts, simulation checks, repair plans, shopping (Phase 2, §9).
 - AR probe labels and a meter wizard; speech; segmenters and renderers.
 - SpacetimeDB, GPU hosting, multi-user deployment. One laptop runs the backend.
 - Training anything except the defect classifier.
@@ -41,7 +41,7 @@ flowchart LR
   gw <--> st[("State SQLite and blobs on disk")]
   gw --> orch["Phase 1 pipeline orchestrator"]
   orch --> pose["Pose refinement if needed"]
-  subgraph Pipe["Detection pipeline, no Grain"]
+  subgraph Pipe["Detection pipeline"]
     det["Detector OWLv2, Grounding DINO alt"] --> crops["Full-res crops"]
     crops --> cls["Defect classifier, planned"]
     cls --> vlm["Claude VLM explains and settles unclear cases"]
@@ -55,7 +55,6 @@ flowchart LR
   pose -->|"coverage"| code
   code --> rep["Report builder"]
   rep --> screen
-  grain["Grain, Phase 2, not called"] -.- orch
 ```
 
 The phone talks only to the gateway. [config/providers.yaml](config/providers.yaml) picks every slot's provider.
@@ -69,7 +68,7 @@ Swift from them, `make contracts` checks every example.
 |---|---|
 | Phase 1, in use | `scan-package`, `still`, `finding`, `suspect`, `next-action`, `meter-reading` |
 | Phase 1, planned | `report` (task B9) |
-| Phase 2 | `reference-design`, `repair-plan`, `part-on-hand`, `shopping-quote`, `grain-*` (9 schemas) |
+| Phase 2 | `repair-plan`, `part-on-hand`, `shopping-quote` |
 
 Recorded sessions: [samples/README.md](samples/README.md) and `samples/session.schema.json`.
 
@@ -77,7 +76,7 @@ Recorded sessions: [samples/README.md](samples/README.md) and `samples/session.s
 
 Code that cannot keep one stops and says so. The ids are the ones code comments cite.
 
-1. **A10 Grain is proprietary.** Only the API surface we call is in the repo; internals stay in `private/` (gitignored). `tools/guard_proprietary.py` enforces it.
+1. **A10 Proprietary material stays out.** Nothing under `private/` (gitignored) is committed; `tools/guard_proprietary.py` enforces it.
 2. **GEN3 Nothing fake.** No mocks, stubs or fakes of missing services, devices or data; a missing key or device is HUMAN ACTION NEEDED.
 3. **GEN1 Any product.** No product names, refs or class lists in code; one generic vocabulary in `vision/generic_classes.py`; held-out products measure it (GEN2).
 4. **I1/I2 Vision is a suspect; the meter is proof.** Only a meter reading makes `is_proof` true or calls an electrical fault proven.
@@ -96,7 +95,7 @@ Acceptance tests work on any product. No target is invented: MS4 measures the ba
 
 | Id | Milestone | Acceptance test | Needs |
 |---|---|---|---|
-| MS1 | Replay to report | `make replay SESSION=<id>` on a recorded real session writes a report that validates against `report`; every detected region ends as exactly one of finding, `not_inspected` or `insufficient_evidence`; 0 regions shown `ok` that no model looked at; 0 Grain calls. | B9, B10, B11 |
+| MS1 | Replay to report | `make replay SESSION=<id>` on a recorded real session writes a report that validates against `report`; every detected region ends as exactly one of finding, `not_inspected` or `insufficient_evidence`; 0 regions shown `ok` that no model looked at. | B9, B10, B11 |
 | MS2 | Capture on device | On a product nobody developed against, the app scans, guides close-ups and uploads a session that passes `make sessions-check`; an upload cut mid-way resumes without re-sending finished chunks. | A1-A4 |
 | MS3 | Report on the phone | The report for that session shows in the app: verdict, each finding's crop, confidence words, `not_inspected` and `insufficient_evidence` with reasons; a meter reading on a suspect marks it proven or ruled out. | A5, A6, B11 |
 | MS4 | Benchmark baseline | `make eval` prints per-split metrics (tuned vs held-out products) for the current pipeline; the numbers and the targets chosen from them are committed with the eval results. | M4, M5 |
@@ -174,7 +173,7 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 | B7 | Fusion via Jev: word state, questions, suspects, next action in code, meter override | `fusion/**`, `slots/fusion*`, `tools/jev_smoke.py` | **Done** | B2 |
 | B8 | LLM slot (Claude Sonnet) | `slots/llm*` | **Done** | B3 |
 | B9 | `report` contract: verdict (`looks_good`, `potential_issues`, `insufficient_evidence`), findings with crop refs and confidence words, `not_inspected` regions, reasons | `spec/contracts/report*`, generated code | `make contracts` and `make codegen-check` pass; invalid examples show an uninspected region cannot be `ok` and `insufficient_evidence` needs a reason | B2 |
-| B10 | Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report; no Grain | `pipeline/**`, `make run-workers` | MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default | B9 |
+| B10 | Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report | `pipeline/**`, `make run-workers` | MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default | B9 |
 | B11 | Report generation: code picks the verdict, Claude writes plain words from words only (S5); `GET /v1/scans/{id}/report` and an SSE event | `report/**`, report route in `api/app.py` | The report validates; the verdict rule is a tested truth table; A5 renders it | B9, B10 |
 | B12 | Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after its terms are checked | `tools/import_capture.py` | A real Stray Scanner export imports into a session that passes `make sessions-check`; no closed third-party app capture is used for training or benchmarking | B6 |
 | B13 | Backend pose-graph refinement (loop closure) with Open3D and OpenCV, seeded with ARKit poses, then re-fusion; used only if on-phone drift correction (A2) measures not good enough | `recon/**` | On recorded sessions, loop-closure residual and point-to-plane error are reported per session and are lower than with raw ARKit poses | B6 |
@@ -195,26 +194,19 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 - **Tooling**: proprietary guard and hook; `build/doctor.py`, `next.py`, `status.py`.
 - **Report stage (iOS)**: the report on a dark stage (`ios/RepairOS/Report/Stage/`): verdict led by the top finding, markers kept apart on screen, one "couldn't check" card, circle to inspect, landing timed to Lea's voice; the hero is the photo-real recreation when the scan has one, else the 3D view or photo hero (`RedesignFlags.reportStage`, `--old-report` to compare).
 
-## 9. Phase 2: Grain (later)
+## 9. Phase 2 (later)
 
-Grain is the team's proprietary design engine; Phase 2 sends it our scans and findings. Internals stay in
-`private/grain/` (ask Sritej).
-
-- **Reference designs**: a product's reference (from Grain or built by it) to compare the scan and photos against.
+- **Reference designs**: a product's reference to compare the scan and photos against.
 - **Replacement parts**: is the part on hand a fit; what to buy (selection and budget in code, A5).
 - **Simulation checks**: a rebuild with a substitute is a "simulation check", never "verified" (I5).
-- **The API**: upload, diagnose, electrical check, call. A product Grain did not design has `design_trust: low` (I7).
 
-Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-response`, `grain-look-response`,
-`grain-electrical-reference`, `grain-electrical-check-request`, `grain-electrical-check-response`,
-`grain-call-request`, `grain-call-response`, `grain-error`, `reference-design`, `repair-plan`, `part-on-hand`,
-`shopping-quote`. Tasks are written when Phase 1 is done.
+Contracts already in the repo for Phase 2: `repair-plan`, `part-on-hand`, `shopping-quote`. Tasks are written when
+Phase 1 is done.
 
 ## 10. Decisions so far
 
 | Date | Decision | Who |
 |---|---|---|
-| 2026-10-24 | Phase 1 makes no Grain calls. | Owner |
 | 2026-10-24 | Detector default OWLv2 (faster than Grounding DINO tiny in a first measurement, comparable boxes); M9 re-measures. | Owner |
 | 2026-10-24 | Jev is required: no deterministic fusion fallback. A meter reading still wins in code. | Owner |
 | 2026-10-24 | One laptop: SQLite state, local blobs. | Owner |

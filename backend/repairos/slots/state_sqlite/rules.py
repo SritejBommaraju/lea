@@ -132,7 +132,7 @@ def _reading(d, prev, lookup):
 def _plan(d, prev, lookup):
     _scan(lookup, d, "repair-plan")
     if _VERIFIED.search(json.dumps(d)):
-        raise InvariantViolation("I5", f"repair-plan {d['plan_id']}: the word 'verified' is banned (a Grain "
+        raise InvariantViolation("I5", f"repair-plan {d['plan_id']}: the word 'verified' is banned (a "
                                        "rebuild is a simulation check)")
     for rc in d.get("root_causes", []):
         proof = rc.get("proof_reading_id")

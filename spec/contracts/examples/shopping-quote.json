@@ -16,11 +16,11 @@
       "shipping_estimate": 4.99,
       "in_stock": true,
       "lead_days": 2,
-      "price_source": "grain_bom",
+      "price_source": "reference_bom",
       "spec_match": "exact_mpn",
       "protective_part_check": "not_applicable",
       "eligible": true,
-      "found_by": "grain_bom",
+      "found_by": "reference_bom",
       "fetched_at": "2026-10-23T18:22:00Z"
     },
     {

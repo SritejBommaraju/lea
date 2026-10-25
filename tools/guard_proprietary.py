@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Refuse commits that would leak Grain internals. Stdlib only.
+"""Refuse commits that would leak proprietary material. Stdlib only.
 
-Grain is proprietary: only the API surface RepairOS calls (endpoints, field shapes, units, frames) may be committed.
+Proprietary material never goes in the repo.
 This guard fails on
-  - any path under private/, any file named like the private Grain spec, status or recorded-fixture folder,
+  - any path under private/, any file named like a private spec, status or recorded-fixture folder,
     and secrets files (backend/.env, *.env other than .env.example);
-  - text that names Grain source modules or commands, the model Grain calls, or protected terms for Grain's
+  - text that names proprietary source modules or commands, a protected model name, or protected terms for proprietary
     algorithms and parameters. The protected terms are stored as SHA-256 digests so this file does not publish them;
-    Sritej can add more, unhashed, in private/grain/guard-patterns.txt (one regex per line, never committed).
+    Sritej can add more, unhashed, in the private guard-patterns.txt (one regex per line, never committed).
 
 Run:  python3 -I tools/guard_proprietary.py              staged files (git diff --cached), what the pre-commit hook runs
       python3 -I tools/guard_proprietary.py --tracked    every file git tracks or has staged (make check)
@@ -26,14 +26,14 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTRA = ROOT / "private" / "grain" / "guard-patterns.txt"
 SKIP_DIRS = {".git", "node_modules", ".venv", "__pycache__", "DerivedData", ".pytest_cache"}
 
-# Grain source paths and commands, and the model it calls (written so they do not match this file).
+# Proprietary source paths and commands, and a protected model name (written so they do not match this file).
 PATTERNS = [
-    ("Grain source path", re.compile(r"\bserver/[a-z_./]+", re.I)),
-    ("Grain server command", re.compile(r"python3?\s+-m\s+server\b", re.I)),
-    ("model Grain calls", re.compile(r"\bgpt-[0-9]", re.I)),
+    ("proprietary source path", re.compile(r"\bserver/[a-z_./]+", re.I)),
+    ("proprietary server command", re.compile(r"python3?\s+-m\s+server\b", re.I)),
+    ("protected model name", re.compile(r"\bgpt-[0-9]", re.I)),
 ]
 
-# sha256 of lowercase terms (single tokens or two-token phrases) that describe Grain internals.
+# sha256 of lowercase terms (single tokens or two-token phrases) that describe proprietary internals.
 PROTECTED_DIGESTS = {
     "8105c7723ec3451b7e6b5d9a82ff4c9c4400d29cce6eb9b930a5439c6e9457c0",
     "1ecce11c3e1c10751dcf33eec24b0d1473c73718363c39add38f732b659f6ef0",
@@ -50,8 +50,8 @@ PROTECTED_DIGESTS = {
 }
 PATH_RULES = [
     ("private folder", re.compile(r"(^|/)private/")),
-    ("private Grain doc", re.compile(r"grain_(spec|status)", re.I)),
-    ("recorded Grain fixtures", re.compile(r"grain[-_]observ", re.I)),
+    ("private doc", re.compile(r"grain_(spec|status)", re.I)),
+    ("recorded private fixtures", re.compile(r"grain[-_]observ", re.I)),
     ("secrets file", re.compile(r"(^|/)(backend/)?\.env$|(^|/)(?!\.env\.example$)[^/]*\.env$")),
 ]
 
@@ -95,7 +95,7 @@ def scan_text(text: str, protected: set[str], patterns) -> list[tuple[int, str, 
                 hits.append((n, name, m.group(0)))
         for cand in _candidates(line):
             if _digest(cand) in protected:
-                hits.append((n, "protected Grain term", cand))
+                hits.append((n, "protected term", cand))
                 break
     return hits
 
@@ -165,10 +165,10 @@ def main(argv: list[str]) -> int:
         if text is not None:
             hits += [f"{rel}:{n}: {name}: {found}" for n, name, found in scan_text(text, protected, patterns)]
     if hits:
-        print("guard_proprietary: Grain internals or private files would be committed:", file=sys.stderr)
+        print("guard_proprietary: proprietary material or private files would be committed:", file=sys.stderr)
         for h in hits:
             print("  " + h, file=sys.stderr)
-        print("Rewrite as an API-level need or a pointer to private/grain/ (ask Sritej); "
+        print("Remove it or keep it under private/ (ask Sritej); "
               "keep private files out of git.", file=sys.stderr)
         return 1
     print(f"guard_proprietary: {len(files)} file(s) clean")

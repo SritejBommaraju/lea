@@ -1,2 +1,0 @@
-{ "schema": "grain-electrical-check-request", "why": "a continuity reading needs the two pins",
-  "instance": { "readings": [ { "net": "NET_A", "continuity": false } ] } }

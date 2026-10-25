@@ -3,19 +3,9 @@
 // To parse the JSON, add this file to your project and do:
 //
 //   let finding = try? JSONDecoder().decode(Finding.self, from: jsonData)
-//   let grainCallRequest = try? JSONDecoder().decode(GrainCallRequest.self, from: jsonData)
-//   let grainCallResponse = try? JSONDecoder().decode(GrainCallResponse.self, from: jsonData)
-//   let grainDiagnoseResponse = try? JSONDecoder().decode(GrainDiagnoseResponse.self, from: jsonData)
-//   let grainElectricalCheckRequest = try? JSONDecoder().decode(GrainElectricalCheckRequest.self, from: jsonData)
-//   let grainElectricalCheckResponse = try? JSONDecoder().decode(GrainElectricalCheckResponse.self, from: jsonData)
-//   let grainElectricalReference = try? JSONDecoder().decode(GrainElectricalReference.self, from: jsonData)
-//   let grainError = try? JSONDecoder().decode(GrainError.self, from: jsonData)
-//   let grainLookResponse = try? JSONDecoder().decode(GrainLookResponse.self, from: jsonData)
-//   let grainScanRecord = try? JSONDecoder().decode(GrainScanRecord.self, from: jsonData)
 //   let meterReading = try? JSONDecoder().decode(MeterReading.self, from: jsonData)
 //   let nextAction = try? JSONDecoder().decode(NextAction.self, from: jsonData)
 //   let partOnHand = try? JSONDecoder().decode(PartOnHand.self, from: jsonData)
-//   let referenceDesign = try? JSONDecoder().decode(ReferenceDesign.self, from: jsonData)
 //   let repairPlan = try? JSONDecoder().decode(RepairPlan.self, from: jsonData)
 //   let report = try? JSONDecoder().decode(Report.self, from: jsonData)
 //   let scanPackage = try? JSONDecoder().decode(ScanPackage.self, from: jsonData)
@@ -26,10 +16,7 @@
 import Foundation
 
 /// One piece of evidence about a part, wire or net from one source. A finding is a suspect,
-/// never proof, unless its source is repairos.meter (I1). Findings feed fusion, and go to
-/// Grain /call as findings[] once target T4 lands (until then as text in `question`). Grain
-/// results are wrapped as findings with a grain.* source and keep Grain's own verdict and
-/// row in `grain`.
+/// never proof, unless its source is repairos.meter (I1). Findings feed fusion.
 // MARK: - Finding
 public struct Finding: Codable, Sendable {
     /// defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or
@@ -40,16 +27,14 @@ public struct Finding: Codable, Sendable {
     /// Source's own confidence. Not calibrated; fusion recalibrates.
     public let confidence: Double
     public let createdAt: Date
-    public let designTrust: FindingDesignTrust?
-    /// Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev and Grain.
+    public let designTrust: DesignTrust?
+    /// Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev.
     public let evidence: [String]
     public let evidenceRefs: EvidenceRefs?
     public let findingID: String
     /// For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the
     /// batteries in, then test again.'). Shown to the user.
     public let fix: String?
-    /// For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.
-    public let grain: FindingGrain?
     /// True only when source is repairos.meter. Enforced in code.
     public let isProof: Bool
     /// Numbers stay here. They are converted to words before reaching Jev (S5).
@@ -64,22 +49,16 @@ public struct Finding: Codable, Sendable {
     /// cosmetic = looks worn but would not stop the device working; functional = could stop it
     /// working or working right; safety = could hurt someone. Absent = not judged (treated as
     /// functional).
-    public let severity: FindingSeverity?
-    /// Which stage produced it. Grain sources are wrapped Grain results, kept separate so they
-    /// are never merged with our measurements.
+    public let severity: Severity?
+    /// Which stage produced it.
     public let source: FindingSource
-    /// Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing
+    /// Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing
     /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
     /// open short), the assembly state reversed (a part with a polarity or orientation fitted
     /// the wrong way round, from marks visible in a photo, never from wire colour, S1), meter
     /// state out_of_range, discovery states (unexpected_*), and honesty states
-    /// (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict
-    /// ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
-    /// not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok,
-    /// off->out_of_range, open->open,
-    /// pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem,
-    /// not a fault).
-    public let state: FindingState
+    /// (not_seen_in_photo not_inspected insufficient_evidence).
+    public let state: State
     public let subject: FindingSubject
     /// Structured answer from the crop-pair question, when source is repairos.vision.
     public let vlmAnswer: VlmAnswer?
@@ -93,7 +72,6 @@ public struct Finding: Codable, Sendable {
         case evidenceRefs = "evidence_refs"
         case findingID = "finding_id"
         case fix = "fix"
-        case grain = "grain"
         case isProof = "is_proof"
         case measurements = "measurements"
         case onSymptomPowerPath = "on_symptom_power_path"
@@ -106,7 +84,7 @@ public struct Finding: Codable, Sendable {
         case vlmAnswer = "vlm_answer"
     }
 
-    public init(category: Category?, confidence: Double, createdAt: Date, designTrust: FindingDesignTrust?, evidence: [String], evidenceRefs: EvidenceRefs?, findingID: String, fix: String?, grain: FindingGrain?, isProof: Bool, measurements: Measurements?, onSymptomPowerPath: Bool?, partWords: String?, scanID: String, severity: FindingSeverity?, source: FindingSource, state: FindingState, subject: FindingSubject, vlmAnswer: VlmAnswer?) {
+    public init(category: Category?, confidence: Double, createdAt: Date, designTrust: DesignTrust?, evidence: [String], evidenceRefs: EvidenceRefs?, findingID: String, fix: String?, isProof: Bool, measurements: Measurements?, onSymptomPowerPath: Bool?, partWords: String?, scanID: String, severity: Severity?, source: FindingSource, state: State, subject: FindingSubject, vlmAnswer: VlmAnswer?) {
         self.category = category
         self.confidence = confidence
         self.createdAt = createdAt
@@ -115,7 +93,6 @@ public struct Finding: Codable, Sendable {
         self.evidenceRefs = evidenceRefs
         self.findingID = findingID
         self.fix = fix
-        self.grain = grain
         self.isProof = isProof
         self.measurements = measurements
         self.onSymptomPowerPath = onSymptomPowerPath
@@ -143,11 +120,7 @@ public enum Category: String, Codable, Sendable {
     case setup = "setup"
 }
 
-/// Target T4: low = the reference is a reconstruction; fixes are advisory.
-///
-/// high only for grain_designed. low widens tolerances and makes Grain verdicts advisory
-/// (I7).
-public enum FindingDesignTrust: String, Codable, Sendable {
+public enum DesignTrust: String, Codable, Sendable {
     case high = "high"
     case low = "low"
 }
@@ -156,8 +129,7 @@ public enum FindingDesignTrust: String, Codable, Sendable {
 public struct EvidenceRefs: Codable, Sendable {
     /// [x0, y0, x1, y1] in the source still's pixels.
     public let cropBoxPx: [Int]?
-    /// Full-resolution crop saved for the UI and for a Grain /look second opinion (Grain stores
-    /// photos downsized).
+    /// Full-resolution crop saved for the UI.
     public let cropFile: String?
     public let keyframeIDS: [String]?
     /// MeterReading id when source is repairos.meter.
@@ -185,85 +157,6 @@ public struct EvidenceRefs: Codable, Sendable {
     }
 }
 
-/// For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.
-// MARK: - FindingGrain
-public struct FindingGrain: Codable, Sendable {
-    /// As Grain gave it: a number for /look, a word (low|medium|high) for /call fixes.
-    public let confidence: ConfidenceUnion?
-    public let endpoint: Endpoint
-    /// Grain part name (diagnose parts[].name), a finding's where, or a fix's part string.
-    public let name: String?
-    /// The Grain object this came from (a part row, observation, reading row or fix).
-    public let raw: [String: JSONAny]?
-    /// Grain's BOM ref (diagnose parts[].ref); null for made parts.
-    public let ref: String?
-    /// Grain's word: a diagnose verdict, a /look state, an electrical row verdict, or a /call
-    /// fix action. null when Grain gave none (e.g. an electrical row without a verdict today,
-    /// G22).
-    public let verdict: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case confidence = "confidence"
-        case endpoint = "endpoint"
-        case name = "name"
-        case raw = "raw"
-        case ref = "ref"
-        case verdict = "verdict"
-    }
-
-    public init(confidence: ConfidenceUnion?, endpoint: Endpoint, name: String?, raw: [String: JSONAny]?, ref: String?, verdict: String?) {
-        self.confidence = confidence
-        self.endpoint = endpoint
-        self.name = name
-        self.raw = raw
-        self.ref = ref
-        self.verdict = verdict
-    }
-}
-
-/// As Grain gave it: a number for /look, a word (low|medium|high) for /call fixes.
-public enum ConfidenceUnion: Codable, Sendable {
-    case double(Double)
-    case string(String)
-    case null
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if let x = try? container.decode(Double.self) {
-            self = .double(x)
-            return
-        }
-        if let x = try? container.decode(String.self) {
-            self = .string(x)
-            return
-        }
-        if container.decodeNil() {
-            self = .null
-            return
-        }
-        throw DecodingError.typeMismatch(ConfidenceUnion.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Wrong type for ConfidenceUnion"))
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case .double(let x):
-            try container.encode(x)
-        case .string(let x):
-            try container.encode(x)
-        case .null:
-            try container.encodeNil()
-        }
-    }
-}
-
-public enum Endpoint: String, Codable, Sendable {
-    case call = "call"
-    case diagnose = "diagnose"
-    case electricalCheck = "electrical_check"
-    case look = "look"
-}
-
 /// Numbers stay here. They are converted to words before reaching Jev (S5).
 // MARK: - Measurements
 public struct Measurements: Codable, Sendable {
@@ -275,7 +168,7 @@ public struct Measurements: Codable, Sendable {
     /// Mean signed distance along the surface normal, mm.
     public let offsetMm: Double?
     public let sharpness: Double?
-    /// Translation in the design frame (mm, Z up), as Grain's shift_mm.
+    /// Translation in the design frame (mm, Z up).
     public let shiftMm: [Double]?
     public let silhouetteIou: Double?
     /// Number of stills or keyframes that saw the subject.
@@ -313,18 +206,14 @@ public struct Measurements: Codable, Sendable {
 ///
 /// How much the issue matters (the vision model's word per crop; absent = not judged,
 /// treated as functional). Cosmetic issues are listed in `cosmetic`, never in `findings`.
-public enum FindingSeverity: String, Codable, Sendable {
+public enum Severity: String, Codable, Sendable {
     case cosmetic = "cosmetic"
     case functional = "functional"
     case safety = "safety"
 }
 
-/// Which stage produced it. Grain sources are wrapped Grain results, kept separate so they
-/// are never merged with our measurements.
+/// Which stage produced it.
 public enum FindingSource: String, Codable, Sendable {
-    case grainDiagnose = "grain.diagnose"
-    case grainElectrical = "grain.electrical"
-    case grainLook = "grain.look"
     case repairosMeter = "repairos.meter"
     case repairosOcr = "repairos.ocr"
     case repairosScan = "repairos.scan"
@@ -333,18 +222,13 @@ public enum FindingSource: String, Codable, Sendable {
     case repairosWireCheck = "repairos.wire_check"
 }
 
-/// Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing
+/// Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing
 /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
 /// open short), the assembly state reversed (a part with a polarity or orientation fitted
 /// the wrong way round, from marks visible in a photo, never from wire colour, S1), meter
 /// state out_of_range, discovery states (unexpected_*), and honesty states
-/// (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict
-/// ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
-/// not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok,
-/// off->out_of_range, open->open,
-/// pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem,
-/// not a fault).
-public enum FindingState: String, Codable, Sendable {
+/// (not_seen_in_photo not_inspected insufficient_evidence).
+public enum State: String, Codable, Sendable {
     case broken = "broken"
     case colourMismatch = "colour_mismatch"
     case damaged = "damaged"
@@ -369,16 +253,14 @@ public enum FindingState: String, Codable, Sendable {
     case wrongPin = "wrong_pin"
 }
 
-/// What the finding is about. Maps onto Grain's target subject {kind, id, pins} (T3/T4) with
-/// ref -> id.
+/// What the finding is about.
 // MARK: - FindingSubject
 public struct FindingSubject: Codable, Sendable {
-    public let kind: PurpleKind
-    /// Optional REF.PIN ids in Grain's net naming, e.g. SW1.1.
+    public let kind: SubjectKind
+    /// Optional REF.PIN ids in the design's net naming, e.g. SW1.1.
     public let pins: [String]?
-    /// part: the Grain part name, i.e. the model.glb node (diagnose parts[].name, e.g. U1 or a
-    /// sub-part U1:usb) -- not the BOM ref, which is null for made parts; wire: the harness.csv
-    /// name; net: the net name.
+    /// part: the part name, i.e. the reference model's node name (e.g. U1 or a sub-part U1:usb),
+    /// not the BOM ref; wire: the harness wire name; net: the net name.
     public let ref: String
 
     public enum CodingKeys: String, CodingKey {
@@ -387,14 +269,14 @@ public struct FindingSubject: Codable, Sendable {
         case ref = "ref"
     }
 
-    public init(kind: PurpleKind, pins: [String]?, ref: String) {
+    public init(kind: SubjectKind, pins: [String]?, ref: String) {
         self.kind = kind
         self.pins = pins
         self.ref = ref
     }
 }
 
-public enum PurpleKind: String, Codable, Sendable {
+public enum SubjectKind: String, Codable, Sendable {
     case net = "net"
     case part = "part"
     case wire = "wire"
@@ -410,2018 +292,30 @@ public enum VlmAnswer: String, Codable, Sendable {
     case unplugged = "unplugged"
 }
 
-/// RepairOS -> Grain: POST /call (JSON, <= 80 MB, synchronous today) -- one call for the
-/// assistant: scan, readings, photos and loose files in; ordered fixes out. The same
-/// parameters GET /call/schema describes. Pinned against the private recorded Grain fixtures
-/// (private/grain/observed/, from Sritej; a stored-photo reference is a request Grain
-/// rejects), plus target fields marked x-target. Grain requires only `project`. RepairOS
-/// rules on top: scan by id (uploaded beforehand), align none and crop false (we pre-align
-/// and crop), never photos or rebuild in a synchronous call (slow; G3), send every reading
-/// so far. Retry safety (target T10) is an Idempotency-Key header, not a body field. Grain
-/// owns the shape: additionalProperties allowed.
-// MARK: - GrainCallRequest
-public struct GrainCallRequest: Codable, Sendable {
-    /// Default none. RepairOS sends none.
-    public let align: Align?
-    /// Default false. RepairOS sends false.
-    public let crop: Bool?
-    /// Target T4: low = the reference is a reconstruction; fixes are advisory.
-    public let designTrust: FindingDesignTrust?
-    /// Target T6: return 202 {call_id} at once; poll GET /call/{call_id}.
-    public let detach: Bool?
-    /// Loose hardware files to verify (.kicad_pcb .brd .v .ino .cir .urdf .step .stl .glb).
-    public let files: [File]?
-    /// Target T4: RepairOS findings for Grain to cross-check, not re-judge. A vision finding
-    /// with confidence >= 0.8 counts like a photo flag.
-    public let findings: [GrainCallRequestSchema]?
-    /// Target T4: subject ids no still covered or the user skipped; Grain never returns them ok.
-    public let notInspected: [String]?
-    /// Now: inline {name, data_base64} only, and slow, so RepairOS never sends photos here
-    /// (photo upload + /look instead). A stored photo cannot be referenced today (Grain answers
-    /// 400; G24). Target T5: {record, n} for a stored photo.
-    public let photos: [PhotoElement]?
-    /// Grain project id of the product model.
-    public let project: String
-    /// What the person asked; passed back unchanged. Until T4, it also carries a compact text
-    /// copy of our findings.
-    public let question: String?
-    public let readings: [GrainElectricalCheckRequestSchema]?
-    /// Default false. RepairOS never sends true in a synchronous call (slow).
-    public let rebuild: Bool?
-    /// {id} of an uploaded scan (RepairOS), or {name, units, data_base64}.
-    public let scan: Scan?
-    /// Default 2. Grain may use a larger tolerance than asked; the diagnosis reports the one it
-    /// used.
-    public let toleranceMm: Double?
-
-    public enum CodingKeys: String, CodingKey {
-        case align = "align"
-        case crop = "crop"
-        case designTrust = "design_trust"
-        case detach = "detach"
-        case files = "files"
-        case findings = "findings"
-        case notInspected = "not_inspected"
-        case photos = "photos"
-        case project = "project"
-        case question = "question"
-        case readings = "readings"
-        case rebuild = "rebuild"
-        case scan = "scan"
-        case toleranceMm = "tolerance_mm"
-    }
-
-    public init(align: Align?, crop: Bool?, designTrust: FindingDesignTrust?, detach: Bool?, files: [File]?, findings: [GrainCallRequestSchema]?, notInspected: [String]?, photos: [PhotoElement]?, project: String, question: String?, readings: [GrainElectricalCheckRequestSchema]?, rebuild: Bool?, scan: Scan?, toleranceMm: Double?) {
-        self.align = align
-        self.crop = crop
-        self.designTrust = designTrust
-        self.detach = detach
-        self.files = files
-        self.findings = findings
-        self.notInspected = notInspected
-        self.photos = photos
-        self.project = project
-        self.question = question
-        self.readings = readings
-        self.rebuild = rebuild
-        self.scan = scan
-        self.toleranceMm = toleranceMm
-    }
-}
-
-/// Default none. RepairOS sends none.
-///
-/// RepairOS sends none: it uploads in the design frame (our ICP with gravity + fit gate).
-/// icp is the cross-check on the raw scan (Q2).
-public enum Align: String, Codable, Sendable {
-    case bbox = "bbox"
-    case icp = "icp"
-    case none = "none"
-}
-
-// MARK: - File
-public struct File: Codable, Sendable {
-    public let dataBase64: String
-    public let name: String
-
-    public enum CodingKeys: String, CodingKey {
-        case dataBase64 = "data_base64"
-        case name = "name"
-    }
-
-    public init(dataBase64: String, name: String) {
-        self.dataBase64 = dataBase64
-        self.name = name
-    }
-}
-
-// MARK: - GrainCallRequestSchema
-public struct GrainCallRequestSchema: Codable, Sendable {
-    public let confidence: Double
-    public let evidence: [String]?
-    /// A photo already on the record, by name or record:n (T5).
-    public let photo: String?
-    /// A RepairOS Finding.source, e.g. repairos.vision.
-    public let source: String
-    /// A RepairOS Finding.state.
-    public let state: String
-    public let subject: FixSubject
-
-    public enum CodingKeys: String, CodingKey {
-        case confidence = "confidence"
-        case evidence = "evidence"
-        case photo = "photo"
-        case source = "source"
-        case state = "state"
-        case subject = "subject"
-    }
-
-    public init(confidence: Double, evidence: [String]?, photo: String?, source: String, state: String, subject: FixSubject) {
-        self.confidence = confidence
-        self.evidence = evidence
-        self.photo = photo
-        self.source = source
-        self.state = state
-        self.subject = subject
-    }
-}
-
-/// Target T3/T4: what a fix or finding is about. id is a Grain part name (diagnose
-/// parts[].name), a harness wire name, a net name, or a file path. RepairOS
-/// Finding.subject.ref maps onto id.
-///
-/// Target T3: structured subject; keep part as the display string.
-// MARK: - FixSubject
-public struct FixSubject: Codable, Sendable {
-    public let id: String
-    public let kind: FluffyKind
-    /// REF.PIN, net naming.
-    public let pins: [String]?
-
-    public enum CodingKeys: String, CodingKey {
-        case id = "id"
-        case kind = "kind"
-        case pins = "pins"
-    }
-
-    public init(id: String, kind: FluffyKind, pins: [String]?) {
-        self.id = id
-        self.kind = kind
-        self.pins = pins
-    }
-}
-
-public enum FluffyKind: String, Codable, Sendable {
-    case file = "file"
-    case net = "net"
-    case part = "part"
-    case wire = "wire"
-}
-
-// MARK: - PhotoElement
-public struct PhotoElement: Codable, Sendable {
-    public let dataBase64: String?
-    public let name: String?
-    public let n: Int?
-    /// Scan or photo record id.
-    public let record: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case dataBase64 = "data_base64"
-        case name = "name"
-        case n = "n"
-        case record = "record"
-    }
-
-    public init(dataBase64: String?, name: String?, n: Int?, record: String?) {
-        self.dataBase64 = dataBase64
-        self.name = name
-        self.n = n
-        self.record = record
-    }
-}
-
-// MARK: - GrainElectricalCheckRequestSchema
-public struct GrainElectricalCheckRequestSchema: Codable, Sendable {
-    public let continuity: Bool?
-    /// Target T2: our MeterReading.reading_id, echoed on the row.
-    public let id: String?
-    /// A net name from GET /electrical nets[].name.
-    public let net: String
-    public let ohms: Double?
-    public let pins: [String]?
-    public let volts: Double?
-
-    public enum CodingKeys: String, CodingKey {
-        case continuity = "continuity"
-        case id = "id"
-        case net = "net"
-        case ohms = "ohms"
-        case pins = "pins"
-        case volts = "volts"
-    }
-
-    public init(continuity: Bool?, id: String?, net: String, ohms: Double?, pins: [String]?, volts: Double?) {
-        self.continuity = continuity
-        self.id = id
-        self.net = net
-        self.ohms = ohms
-        self.pins = pins
-        self.volts = volts
-    }
-}
-
-/// {id} of an uploaded scan (RepairOS), or {name, units, data_base64}.
-// MARK: - Scan
-public struct Scan: Codable, Sendable {
-    public let dataBase64: String?
-    public let id: String?
-    /// Must end in the format's extension.
-    public let name: String?
-    public let units: ScanUnits?
-
-    public enum CodingKeys: String, CodingKey {
-        case dataBase64 = "data_base64"
-        case id = "id"
-        case name = "name"
-        case units = "units"
-    }
-
-    public init(dataBase64: String?, id: String?, name: String?, units: ScanUnits?) {
-        self.dataBase64 = dataBase64
-        self.id = id
-        self.name = name
-        self.units = units
-    }
-}
-
-public enum ScanUnits: String, Codable, Sendable {
-    case cm = "cm"
-    case m = "m"
-    case mm = "mm"
-}
-
-/// Grain -> RepairOS: the answer to POST /call. Every key is always present; diagnosis is
-/// null with no scan, electrical null with no readings, photos null with no photos, scan
-/// null with neither scan nor photos. The nested members reuse the endpoint contracts
-/// (diagnosis = GrainDiagnoseResponse, electrical = GrainElectricalCheckResponse, photos =
-/// GrainLookResponse, scan = GrainScanRecord). Pinned against the private recorded Grain
-/// fixtures (private/grain/observed/), plus target fields marked x-target. RepairOS never
-/// sends photos in /call, so `photos` is checked only against the /look shape. For
-/// electrical fixes `part` is free text today (a net with its pins, a wire name, an unknown
-/// net; G23 -> T3 subject). RepairOS compacts this (drops ok rows) before it reaches the
-/// assistant. Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainCallResponse
-public struct GrainCallResponse: Codable, Sendable {
-    public let bomTotalUsd: Double?
-    /// BOM bought rows for the fixes. Prices treated as current (owner decision 2026-10-23).
-    public let buy: [BuyElement]
-    /// The design files' build status as the last build (or a rebuild) saw them.
-    public let design: Design?
-    public let diagnosis: GrainDiagnoseResponseClass?
-    public let electrical: GrainElectricalCheckResponseClass?
-    /// One verifier report per loose file.
-    public let files: [[String: JSONAny]]
-    /// In Grain's order: scan, photos, electrical, design, files.
-    public let fixes: [FixElement]
-    public let photos: GrainLookResponseClass?
-    public let project: String
-    /// Passed back unchanged.
-    public let question: String?
-    public let remake: [Remake]
-    public let scan: GrainScanRecordClass?
-    public let seconds: Double?
-    /// Grain's plain-text summary.
-    public let summary: String
-    /// Seconds per stage: design, diagnosis, photos, electrical.
-    public let timings: [String: Double]
-    /// Target T10: interface version, also in GET /call/schema. RepairOS pins it.
-    public let version: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case bomTotalUsd = "bom_total_usd"
-        case buy = "buy"
-        case design = "design"
-        case diagnosis = "diagnosis"
-        case electrical = "electrical"
-        case files = "files"
-        case fixes = "fixes"
-        case photos = "photos"
-        case project = "project"
-        case question = "question"
-        case remake = "remake"
-        case scan = "scan"
-        case seconds = "seconds"
-        case summary = "summary"
-        case timings = "timings"
-        case version = "version"
-    }
-
-    public init(bomTotalUsd: Double?, buy: [BuyElement], design: Design?, diagnosis: GrainDiagnoseResponseClass?, electrical: GrainElectricalCheckResponseClass?, files: [[String: JSONAny]], fixes: [FixElement], photos: GrainLookResponseClass?, project: String, question: String?, remake: [Remake], scan: GrainScanRecordClass?, seconds: Double?, summary: String, timings: [String: Double], version: String?) {
-        self.bomTotalUsd = bomTotalUsd
-        self.buy = buy
-        self.design = design
-        self.diagnosis = diagnosis
-        self.electrical = electrical
-        self.files = files
-        self.fixes = fixes
-        self.photos = photos
-        self.project = project
-        self.question = question
-        self.remake = remake
-        self.scan = scan
-        self.seconds = seconds
-        self.summary = summary
-        self.timings = timings
-        self.version = version
-    }
-}
-
-// MARK: - BuyElement
-public struct BuyElement: Codable, Sendable {
-    public let datasheet: String?
-    public let dimensionsMm: [Double]?
-    public let lineTotal: Double?
-    public let mpn: String?
-    public let name: String?
-    public let price: Double?
-    public let qty: Int?
-    public let ref: String?
-    public let refs: [String]?
-    public let supplier: String?
-    public let url: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case datasheet = "datasheet"
-        case dimensionsMm = "dimensions_mm"
-        case lineTotal = "line_total"
-        case mpn = "mpn"
-        case name = "name"
-        case price = "price"
-        case qty = "qty"
-        case ref = "ref"
-        case refs = "refs"
-        case supplier = "supplier"
-        case url = "url"
-    }
-
-    public init(datasheet: String?, dimensionsMm: [Double]?, lineTotal: Double?, mpn: String?, name: String?, price: Double?, qty: Int?, ref: String?, refs: [String]?, supplier: String?, url: String?) {
-        self.datasheet = datasheet
-        self.dimensionsMm = dimensionsMm
-        self.lineTotal = lineTotal
-        self.mpn = mpn
-        self.name = name
-        self.price = price
-        self.qty = qty
-        self.ref = ref
-        self.refs = refs
-        self.supplier = supplier
-        self.url = url
-    }
-}
-
-// MARK: - Design
-public struct Design: Codable, Sendable {
-    public let bboxMm: ModelBboxMmClass?
-    public let domains: [String: String?]?
-    public let findings: [FindingElement]?
-    public let fresh: Bool?
-    /// ok, error, or absent.
-    public let status: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case bboxMm = "bbox_mm"
-        case domains = "domains"
-        case findings = "findings"
-        case fresh = "fresh"
-        case status = "status"
-    }
-
-    public init(bboxMm: ModelBboxMmClass?, domains: [String: String?]?, findings: [FindingElement]?, fresh: Bool?, status: String?) {
-        self.bboxMm = bboxMm
-        self.domains = domains
-        self.findings = findings
-        self.fresh = fresh
-        self.status = status
-    }
-}
-
-// MARK: - ModelBboxMmClass
-public struct ModelBboxMmClass: Codable, Sendable {
-    public let max: [Double]
-    public let min: [Double]
-    public let size: [Double]?
-
-    public enum CodingKeys: String, CodingKey {
-        case max = "max"
-        case min = "min"
-        case size = "size"
-    }
-
-    public init(max: [Double], min: [Double], size: [Double]?) {
-        self.max = max
-        self.min = min
-        self.size = size
-    }
-}
-
-// MARK: - FindingElement
-public struct FindingElement: Codable, Sendable {
-    public let severity: GrainFindingSeverity
-    public let text: String
-
-    public enum CodingKeys: String, CodingKey {
-        case severity = "severity"
-        case text = "text"
-    }
-
-    public init(severity: GrainFindingSeverity, text: String) {
-        self.severity = severity
-        self.text = text
-    }
-}
-
-public enum GrainFindingSeverity: String, Codable, Sendable {
-    case error = "error"
-    case info = "info"
-    case warning = "warning"
-}
-
-/// Grain -> RepairOS: POST
-/// /projects/{id}/scans/{sid}/diagnose?tolerance_mm=&align=none|bbox|icp&crop= -- the scan
-/// judged part by part against out/model.glb. Used as a cross-check of our own coverage
-/// result. Pinned against the private recorded Grain fixtures (private/grain/observed/),
-/// plus target fields marked x-target (none yet: T9 and T12 change verdict quality, not the
-/// shape). Every *_mm field is in the design frame: millimetres, Z up. Parts are keyed by
-/// `name` (the GLB node; sub-parts carry a colon, e.g. U1:usb); `ref` is the BOM ref or null
-/// for made parts. Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainDiagnoseResponseClass
-public struct GrainDiagnoseResponseClass: Codable, Sendable {
-    /// RepairOS sends none: it uploads in the design frame (our ICP with gravity + fit gate).
-    /// icp is the cross-check on the raw scan (Q2).
-    public let align: Align
-    public let alignment: GrainDiagnoseResponseAlignment
-    public let bomTotalUsd: Double?
-    /// not_seen + damaged + shifted.
-    public let broken: [String]
-    /// Mean coverage over judged parts; null when none could be judged.
-    public let coverage: Double?
-    public let crop: PurpleCrop?
-    public let damaged: [String]
-    /// Grain's own visibility bookkeeping; RepairOS does not read it.
-    public let exterior: PurpleExterior?
-    public let extraFraction: Double?
-    /// Scan points far from every designed surface.
-    public let extraPoints: Int?
-    public let findings: [FindingClass]
-    public let modelBboxMm: ModelBboxMmClass?
-    public let notSeen: [String]
-    public let notVisible: [String]
-    public let ok: [String]
-    public let partly: [String]
-    public let parts: [PartElement]
-    public let pointsUsed: Int?
-    /// The scan id.
-    public let scan: String?
-    public let scanBboxMm: ModelBboxMmClass?
-    public let scanNoiseMm: Double?
-    public let scanSpacingMm: Double?
-    public let shiftMm: [Double]?
-    public let shifted: [String]
-    public let thresholds: PurpleThresholds?
-    /// The tolerance Grain used for the whole scan, mm.
-    public let toleranceGlobalMm: Double?
-    /// As asked.
-    public let toleranceMm: Double
-    /// verdict -> [part names].
-    public let verdicts: [String: [String]]
-
-    public enum CodingKeys: String, CodingKey {
-        case align = "align"
-        case alignment = "alignment"
-        case bomTotalUsd = "bom_total_usd"
-        case broken = "broken"
-        case coverage = "coverage"
-        case crop = "crop"
-        case damaged = "damaged"
-        case exterior = "exterior"
-        case extraFraction = "extra_fraction"
-        case extraPoints = "extra_points"
-        case findings = "findings"
-        case modelBboxMm = "model_bbox_mm"
-        case notSeen = "not_seen"
-        case notVisible = "not_visible"
-        case ok = "ok"
-        case partly = "partly"
-        case parts = "parts"
-        case pointsUsed = "points_used"
-        case scan = "scan"
-        case scanBboxMm = "scan_bbox_mm"
-        case scanNoiseMm = "scan_noise_mm"
-        case scanSpacingMm = "scan_spacing_mm"
-        case shiftMm = "shift_mm"
-        case shifted = "shifted"
-        case thresholds = "thresholds"
-        case toleranceGlobalMm = "tolerance_global_mm"
-        case toleranceMm = "tolerance_mm"
-        case verdicts = "verdicts"
-    }
-
-    public init(align: Align, alignment: GrainDiagnoseResponseAlignment, bomTotalUsd: Double?, broken: [String], coverage: Double?, crop: PurpleCrop?, damaged: [String], exterior: PurpleExterior?, extraFraction: Double?, extraPoints: Int?, findings: [FindingClass], modelBboxMm: ModelBboxMmClass?, notSeen: [String], notVisible: [String], ok: [String], partly: [String], parts: [PartElement], pointsUsed: Int?, scan: String?, scanBboxMm: ModelBboxMmClass?, scanNoiseMm: Double?, scanSpacingMm: Double?, shiftMm: [Double]?, shifted: [String], thresholds: PurpleThresholds?, toleranceGlobalMm: Double?, toleranceMm: Double, verdicts: [String: [String]]) {
-        self.align = align
-        self.alignment = alignment
-        self.bomTotalUsd = bomTotalUsd
-        self.broken = broken
-        self.coverage = coverage
-        self.crop = crop
-        self.damaged = damaged
-        self.exterior = exterior
-        self.extraFraction = extraFraction
-        self.extraPoints = extraPoints
-        self.findings = findings
-        self.modelBboxMm = modelBboxMm
-        self.notSeen = notSeen
-        self.notVisible = notVisible
-        self.ok = ok
-        self.partly = partly
-        self.parts = parts
-        self.pointsUsed = pointsUsed
-        self.scan = scan
-        self.scanBboxMm = scanBboxMm
-        self.scanNoiseMm = scanNoiseMm
-        self.scanSpacingMm = scanSpacingMm
-        self.shiftMm = shiftMm
-        self.shifted = shifted
-        self.thresholds = thresholds
-        self.toleranceGlobalMm = toleranceGlobalMm
-        self.toleranceMm = toleranceMm
-        self.verdicts = verdicts
-    }
-}
-
-// MARK: - GrainDiagnoseResponseAlignment
-public struct GrainDiagnoseResponseAlignment: Codable, Sendable {
-    public let inlierMm: Double?
-    public let inlierShare: Double?
-    public let medianMm: Double?
-    public let method: Align
-    public let note: String?
-    public let rmsMm: Double?
-    public let start: String?
-    public let startsTried: Int?
-    /// 4x4 applied to the scan, mm.
-    public let transform: [[Double]]?
-
-    public enum CodingKeys: String, CodingKey {
-        case inlierMm = "inlier_mm"
-        case inlierShare = "inlier_share"
-        case medianMm = "median_mm"
-        case method = "method"
-        case note = "note"
-        case rmsMm = "rms_mm"
-        case start = "start"
-        case startsTried = "starts_tried"
-        case transform = "transform"
-    }
-
-    public init(inlierMm: Double?, inlierShare: Double?, medianMm: Double?, method: Align, note: String?, rmsMm: Double?, start: String?, startsTried: Int?, transform: [[Double]]?) {
-        self.inlierMm = inlierMm
-        self.inlierShare = inlierShare
-        self.medianMm = medianMm
-        self.method = method
-        self.note = note
-        self.rmsMm = rmsMm
-        self.start = start
-        self.startsTried = startsTried
-        self.transform = transform
-    }
-}
-
-// MARK: - PurpleCrop
-public struct PurpleCrop: Codable, Sendable {
-    public let outsideRemoved: Int?
-    public let planeRemoved: Int?
-
-    public enum CodingKeys: String, CodingKey {
-        case outsideRemoved = "outside_removed"
-        case planeRemoved = "plane_removed"
-    }
-
-    public init(outsideRemoved: Int?, planeRemoved: Int?) {
-        self.outsideRemoved = outsideRemoved
-        self.planeRemoved = planeRemoved
-    }
-}
-
-/// Grain's own visibility bookkeeping; RepairOS does not read it.
-// MARK: - PurpleExterior
-public struct PurpleExterior: Codable, Sendable {
-    public let cameraMatch: [Double]?
-    public let cameras: Int?
-    public let camerasSwept: Int?
-
-    public enum CodingKeys: String, CodingKey {
-        case cameraMatch = "camera_match"
-        case cameras = "cameras"
-        case camerasSwept = "cameras_swept"
-    }
-
-    public init(cameraMatch: [Double]?, cameras: Int?, camerasSwept: Int?) {
-        self.cameraMatch = cameraMatch
-        self.cameras = cameras
-        self.camerasSwept = camerasSwept
-    }
-}
-
-// MARK: - FindingClass
-public struct FindingClass: Codable, Sendable {
-    public let fix: String?
-    public let severity: GrainFindingSeverity
-    public let text: String
-    /// A part verdict, or 'alignment' / 'extra'.
-    public let verdict: String?
-    /// Part name(s), 'scan', or a bbox in mm.
-    public let grainDiagnoseResponseSchemaWhere: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case fix = "fix"
-        case severity = "severity"
-        case text = "text"
-        case verdict = "verdict"
-        case grainDiagnoseResponseSchemaWhere = "where"
-    }
-
-    public init(fix: String?, severity: GrainFindingSeverity, text: String, verdict: String?, grainDiagnoseResponseSchemaWhere: String?) {
-        self.fix = fix
-        self.severity = severity
-        self.text = text
-        self.verdict = verdict
-        self.grainDiagnoseResponseSchemaWhere = grainDiagnoseResponseSchemaWhere
-    }
-}
-
-// MARK: - PartElement
-public struct PartElement: Codable, Sendable {
-    public let bought: Bool?
-    public let buy: Buy?
-    /// Null when not_visible.
-    public let coverage: Double?
-    public let coverageIfShifted: Double?
-    public let expectedPoints: Int?
-    public let exteriorPoints: Int?
-    public let extraPointsNear: Int?
-    public let make: Make?
-    public let material: String?
-    public let medianGapMm: Double?
-    public let missingRegionMm: MissingRegionMmClass?
-    /// model.glb node name; the key RepairOS joins on.
-    public let name: String
-    public let process: String?
-    /// BOM ref (several nodes can share one, e.g. M1 and M1:cap); null for made parts.
-    public let ref: String?
-    /// Design frame, mm.
-    public let shiftMm: [Double]?
-    public let sizeMm: [Double]?
-    public let toleranceUsedMm: Double?
-    public let verdict: PartGrainVerdict
-    public let visibleShare: Double?
-    /// For not_visible: a short reason in words.
-    public let why: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case bought = "bought"
-        case buy = "buy"
-        case coverage = "coverage"
-        case coverageIfShifted = "coverage_if_shifted"
-        case expectedPoints = "expected_points"
-        case exteriorPoints = "exterior_points"
-        case extraPointsNear = "extra_points_near"
-        case make = "make"
-        case material = "material"
-        case medianGapMm = "median_gap_mm"
-        case missingRegionMm = "missing_region_mm"
-        case name = "name"
-        case process = "process"
-        case ref = "ref"
-        case shiftMm = "shift_mm"
-        case sizeMm = "size_mm"
-        case toleranceUsedMm = "tolerance_used_mm"
-        case verdict = "verdict"
-        case visibleShare = "visible_share"
-        case why = "why"
-    }
-
-    public init(bought: Bool?, buy: Buy?, coverage: Double?, coverageIfShifted: Double?, expectedPoints: Int?, exteriorPoints: Int?, extraPointsNear: Int?, make: Make?, material: String?, medianGapMm: Double?, missingRegionMm: MissingRegionMmClass?, name: String, process: String?, ref: String?, shiftMm: [Double]?, sizeMm: [Double]?, toleranceUsedMm: Double?, verdict: PartGrainVerdict, visibleShare: Double?, why: String?) {
-        self.bought = bought
-        self.buy = buy
-        self.coverage = coverage
-        self.coverageIfShifted = coverageIfShifted
-        self.expectedPoints = expectedPoints
-        self.exteriorPoints = exteriorPoints
-        self.extraPointsNear = extraPointsNear
-        self.make = make
-        self.material = material
-        self.medianGapMm = medianGapMm
-        self.missingRegionMm = missingRegionMm
-        self.name = name
-        self.process = process
-        self.ref = ref
-        self.shiftMm = shiftMm
-        self.sizeMm = sizeMm
-        self.toleranceUsedMm = toleranceUsedMm
-        self.verdict = verdict
-        self.visibleShare = visibleShare
-        self.why = why
-    }
-}
-
-// MARK: - Buy
-public struct Buy: Codable, Sendable {
-    public let datasheet: String?
-    public let mpn: String?
-    public let name: String?
-    public let price: Double?
-    public let supplier: String?
-    public let url: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case datasheet = "datasheet"
-        case mpn = "mpn"
-        case name = "name"
-        case price = "price"
-        case supplier = "supplier"
-        case url = "url"
-    }
-
-    public init(datasheet: String?, mpn: String?, name: String?, price: Double?, supplier: String?, url: String?) {
-        self.datasheet = datasheet
-        self.mpn = mpn
-        self.name = name
-        self.price = price
-        self.supplier = supplier
-        self.url = url
-    }
-}
-
-// MARK: - Make
-public struct Make: Codable, Sendable {
-    /// Today out/model.step (the whole model; the part is its node).
-    public let file: String?
-    public let material: String?
-    public let process: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case file = "file"
-        case material = "material"
-        case process = "process"
-    }
-
-    public init(file: String?, material: String?, process: String?) {
-        self.file = file
-        self.material = material
-        self.process = process
-    }
-}
-
-// MARK: - MissingRegionMmClass
-public struct MissingRegionMmClass: Codable, Sendable {
-    public let max: [Double]
-    public let min: [Double]
-    public let share: Double?
-
-    public enum CodingKeys: String, CodingKey {
-        case max = "max"
-        case min = "min"
-        case share = "share"
-    }
-
-    public init(max: [Double], min: [Double], share: Double?) {
-        self.max = max
-        self.min = min
-        self.share = share
-    }
-}
-
-/// ok, partly, damaged (may name missing_region_mm), not_seen (the scan should have shown
-/// the part and did not), shifted (shift_mm says by how much), not_visible (the scan could
-/// not have seen it; `why` says why). How Grain decides is private (private/grain/, ask
-/// Sritej). RepairOS maps these onto Finding.state: ok->ok, partly->partly,
-/// shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected.
-public enum PartGrainVerdict: String, Codable, Sendable {
-    case damaged = "damaged"
-    case notSeen = "not_seen"
-    case notVisible = "not_visible"
-    case ok = "ok"
-    case partly = "partly"
-    case shifted = "shifted"
-}
-
-// MARK: - PurpleThresholds
-public struct PurpleThresholds: Codable, Sendable {
-    public let notSeen: Double
-    public let note: String?
-    public let ok: Double
-    public let partly: Double
-    public let shifted: Double
-
-    public enum CodingKeys: String, CodingKey {
-        case notSeen = "not_seen"
-        case note = "note"
-        case ok = "ok"
-        case partly = "partly"
-        case shifted = "shifted"
-    }
-
-    public init(notSeen: Double, note: String?, ok: Double, partly: Double, shifted: Double) {
-        self.notSeen = notSeen
-        self.note = note
-        self.ok = ok
-        self.partly = partly
-        self.shifted = shifted
-    }
-}
-
-/// Grain -> RepairOS: the result of POST /projects/{id}/electrical/check, and the
-/// `electrical` member of a /call response. Two lists with no index between them today:
-/// readings[] (one row per reading that named a net; a reading with no net yields only a
-/// finding) and findings[]. Pinned against the private recorded Grain fixtures
-/// (private/grain/observed/), plus target fields marked x-target. Known gaps: a voltage is
-/// judged against the single expected.volts value, not [min, max] (G2 -> T1: RepairOS judges
-/// the range itself); rows for an open, a pin not on the net, an unknown net or a net with
-/// no expected value carry no verdict (G22 -> T2: RepairOS derives it: continuity false +
-/// wire = open, known false = unknown_net, expected null = no_expected, a 'not on net'
-/// finding = pin_not_on_net). Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainElectricalCheckResponseClass
-public struct GrainElectricalCheckResponseClass: Codable, Sendable {
-    public let expectedVolts: [String: GrainElectricalReferenceSchema]
-    public let findings: [GrainElectricalCheckResponseSchema]
-    public let readings: [Grain]
-    public let sources: Sources
-    /// The worst finding severity (info counts as ok).
-    public let status: GrainElectricalCheckResponseStatus
-
-    public enum CodingKeys: String, CodingKey {
-        case expectedVolts = "expected_volts"
-        case findings = "findings"
-        case readings = "readings"
-        case sources = "sources"
-        case status = "status"
-    }
-
-    public init(expectedVolts: [String: GrainElectricalReferenceSchema], findings: [GrainElectricalCheckResponseSchema], readings: [Grain], sources: Sources, status: GrainElectricalCheckResponseStatus) {
-        self.expectedVolts = expectedVolts
-        self.findings = findings
-        self.readings = readings
-        self.sources = sources
-        self.status = status
-    }
-}
-
-// MARK: - GrainElectricalReferenceSchema
-public struct GrainElectricalReferenceSchema: Codable, Sendable {
-    public let from: From
-    public let max: Double?
-    /// Signal minimum over the run; absent when from is measurement.
-    public let min: Double?
-    /// Target T8: for a reading between two pins of a wire, fuse or closed switch.
-    public let ohmsMax: Double?
-    /// The SPICE final value (or a .meas figure). Not the judgement basis (G2).
-    public let volts: Double
-
-    public enum CodingKeys: String, CodingKey {
-        case from = "from"
-        case max = "max"
-        case min = "min"
-        case ohmsMax = "ohms_max"
-        case volts = "volts"
-    }
-
-    public init(from: From, max: Double?, min: Double?, ohmsMax: Double?, volts: Double) {
-        self.from = from
-        self.max = max
-        self.min = min
-        self.ohmsMax = ohmsMax
-        self.volts = volts
-    }
-}
-
-public enum From: String, Codable, Sendable {
-    case measurement = "measurement"
-    case simulation = "simulation"
-}
-
-// MARK: - GrainElectricalCheckResponseSchema
-public struct GrainElectricalCheckResponseSchema: Codable, Sendable {
-    public let fix: String?
-    /// Target T2: index i of the reading this finding is about.
-    public let reading: Int?
-    public let severity: GrainFindingSeverity
-    public let text: String
-    /// A net, a net with its pins in brackets, or a wire name.
-    public let grainElectricalCheckResponseSchemaWhere: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case fix = "fix"
-        case reading = "reading"
-        case severity = "severity"
-        case text = "text"
-        case grainElectricalCheckResponseSchemaWhere = "where"
-    }
-
-    public init(fix: String?, reading: Int?, severity: GrainFindingSeverity, text: String, grainElectricalCheckResponseSchemaWhere: String?) {
-        self.fix = fix
-        self.reading = reading
-        self.severity = severity
-        self.text = text
-        self.grainElectricalCheckResponseSchemaWhere = grainElectricalCheckResponseSchemaWhere
-    }
-}
-
-/// The raw Grain row for this reading, as returned.
-// MARK: - Grain
-public struct Grain: Codable, Sendable {
-    /// For a continuity or ohms reading: whether it conducts.
-    public let continuity: Bool?
-    /// For a voltage reading: the net's expected value, or null when the design states none
-    /// (G13).
-    public let expected: GrainElectricalReferenceSchema?
-    /// Target T2: index of the reading in the request.
-    public let i: Int?
-    /// Target T2: the request reading's id, if sent.
-    public let id: String?
-    /// False: the net is not in the design.
-    public let known: Bool
-    /// As sent.
-    public let net: String
-    /// Now: ok or off for a judged voltage, ok for a conducting continuity/ohms reading, absent
-    /// otherwise. Target T2 adds open, pin_not_on_net, unknown_net, no_expected so every row has
-    /// one; target T1 makes ok mean inside [min - tol, max + tol].
-    public let verdict: GrainRowVerdict?
-    /// For a voltage reading.
-    public let volts: Double?
-    /// For an open on a harness wire: the wire to remake (gauge, length, colour, both ends).
-    public let wire: Wire?
-
-    public enum CodingKeys: String, CodingKey {
-        case continuity = "continuity"
-        case expected = "expected"
-        case i = "i"
-        case id = "id"
-        case known = "known"
-        case net = "net"
-        case verdict = "verdict"
-        case volts = "volts"
-        case wire = "wire"
-    }
-
-    public init(continuity: Bool?, expected: GrainElectricalReferenceSchema?, i: Int?, id: String?, known: Bool, net: String, verdict: GrainRowVerdict?, volts: Double?, wire: Wire?) {
-        self.continuity = continuity
-        self.expected = expected
-        self.i = i
-        self.id = id
-        self.known = known
-        self.net = net
-        self.verdict = verdict
-        self.volts = volts
-        self.wire = wire
-    }
-}
-
-/// Now: ok or off for a judged voltage, ok for a conducting continuity/ohms reading, absent
-/// otherwise. Target T2 adds open, pin_not_on_net, unknown_net, no_expected so every row has
-/// one; target T1 makes ok mean inside [min - tol, max + tol].
-public enum GrainRowVerdict: String, Codable, Sendable {
-    case noExpected = "no_expected"
-    case off = "off"
-    case ok = "ok"
-    case pinNotOnNet = "pin_not_on_net"
-    case unknownNet = "unknown_net"
-    case verdictOpen = "open"
-}
-
-/// For an open on a harness wire: the wire to remake (gauge, length, colour, both ends).
-// MARK: - Wire
-public struct Wire: Codable, Sendable {
-    /// A colour word or #rrggbb.
-    public let color: String?
-    public let conductors: Double?
-    /// Target T7: one entry per conductor, in net pin naming.
-    public let ends: [End]?
-    /// A harness end: a part (e.g. BT1), a pin (e.g. M1.+) or a board-prefixed connector pin
-    /// (e.g. <board>.J1.1). Not net pin naming (G26).
-    public let from: String?
-    /// e.g. 22AWG.
-    public let gauge: String?
-    public let lengthMm: Double?
-    public let name: String
-    /// Target T8: expected end-to-end resistance ceiling.
-    public let ohmsMax: Double?
-    public let to: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case color = "color"
-        case conductors = "conductors"
-        case ends = "ends"
-        case from = "from"
-        case gauge = "gauge"
-        case lengthMm = "length_mm"
-        case name = "name"
-        case ohmsMax = "ohms_max"
-        case to = "to"
-    }
-
-    public init(color: String?, conductors: Double?, ends: [End]?, from: String?, gauge: String?, lengthMm: Double?, name: String, ohmsMax: Double?, to: String?) {
-        self.color = color
-        self.conductors = conductors
-        self.ends = ends
-        self.from = from
-        self.gauge = gauge
-        self.lengthMm = lengthMm
-        self.name = name
-        self.ohmsMax = ohmsMax
-        self.to = to
-    }
-}
-
-// MARK: - End
-public struct End: Codable, Sendable {
-    public let from: String
-    public let to: String
-
-    public enum CodingKeys: String, CodingKey {
-        case from = "from"
-        case to = "to"
-    }
-
-    public init(from: String, to: String) {
-        self.from = from
-        self.to = to
-    }
-}
-
-// MARK: - Sources
-public struct Sources: Codable, Sendable {
-    public let harness: Bool?
-    public let nets: Bool?
-    public let sim: Bool?
-
-    public enum CodingKeys: String, CodingKey {
-        case harness = "harness"
-        case nets = "nets"
-        case sim = "sim"
-    }
-
-    public init(harness: Bool?, nets: Bool?, sim: Bool?) {
-        self.harness = harness
-        self.nets = nets
-        self.sim = sim
-    }
-}
-
-/// The worst finding severity (info counts as ok).
-public enum GrainElectricalCheckResponseStatus: String, Codable, Sendable {
-    case error = "error"
-    case ok = "ok"
-    case warning = "warning"
-}
-
-// MARK: - FixElement
-public struct FixElement: Codable, Sendable {
-    public let action: Action
-    /// The part's buy row plus ref and qty.
-    public let buy: [String: JSONAny]?
-    /// A word: low, medium or high. Never compared with /look's numeric confidence.
-    public let confidence: ConfidenceWordEnum
-    public let coverage: Double?
-    public let detail: String?
-    public let how: String?
-    public let missingRegionMm: MissingRegionMmClass?
-    public let note: String?
-    /// Display string. A Grain part name for scan and photo fixes; free text for electrical
-    /// fixes; null for a design-wide or wrong-product fix.
-    public let part: String?
-    /// A diagnose verdict (not_seen, damaged, shifted), photo:<state>, photo:not_this_product,
-    /// electrical, design_error, or <kind>_error for a loose file.
-    public let problem: String
-    public let remake: Remake?
-    /// photo, photo and scan, scan and photo.
-    public let seenBy: String?
-    public let shiftMm: [Double]?
-    /// Target T3: which evidence produced the fix.
-    public let sources: [FixSource]?
-    /// Target T3: structured subject; keep part as the display string.
-    public let subject: FixSubject?
-
-    public enum CodingKeys: String, CodingKey {
-        case action = "action"
-        case buy = "buy"
-        case confidence = "confidence"
-        case coverage = "coverage"
-        case detail = "detail"
-        case how = "how"
-        case missingRegionMm = "missing_region_mm"
-        case note = "note"
-        case part = "part"
-        case problem = "problem"
-        case remake = "remake"
-        case seenBy = "seen_by"
-        case shiftMm = "shift_mm"
-        case sources = "sources"
-        case subject = "subject"
-    }
-
-    public init(action: Action, buy: [String: JSONAny]?, confidence: ConfidenceWordEnum, coverage: Double?, detail: String?, how: String?, missingRegionMm: MissingRegionMmClass?, note: String?, part: String?, problem: String, remake: Remake?, seenBy: String?, shiftMm: [Double]?, sources: [FixSource]?, subject: FixSubject?) {
-        self.action = action
-        self.buy = buy
-        self.confidence = confidence
-        self.coverage = coverage
-        self.detail = detail
-        self.how = how
-        self.missingRegionMm = missingRegionMm
-        self.note = note
-        self.part = part
-        self.problem = problem
-        self.remake = remake
-        self.seenBy = seenBy
-        self.shiftMm = shiftMm
-        self.sources = sources
-        self.subject = subject
-    }
-}
-
-public enum Action: String, Codable, Sendable {
-    case buy = "buy"
-    case check = "check"
-    case fixDesign = "fix_design"
-    case remake = "remake"
-    case rescan = "rescan"
-    case reseat = "reseat"
-    case rewire = "rewire"
-}
-
-/// A word: low, medium or high. Never compared with /look's numeric confidence.
-///
-/// The locator's own word (uncalibrated, I6).
-public enum ConfidenceWordEnum: String, Codable, Sendable {
-    case high = "high"
-    case low = "low"
-    case medium = "medium"
-}
-
-// MARK: - Remake
-public struct Remake: Codable, Sendable {
-    /// Today out/model.step (the whole model).
-    public let file: String?
-    public let massG: Double?
-    public let material: String?
-    /// Grain part name.
-    public let name: String?
-    public let process: String?
-    public let sizeMm: [Double]?
-
-    public enum CodingKeys: String, CodingKey {
-        case file = "file"
-        case massG = "mass_g"
-        case material = "material"
-        case name = "name"
-        case process = "process"
-        case sizeMm = "size_mm"
-    }
-
-    public init(file: String?, massG: Double?, material: String?, name: String?, process: String?, sizeMm: [Double]?) {
-        self.file = file
-        self.massG = massG
-        self.material = material
-        self.name = name
-        self.process = process
-        self.sizeMm = sizeMm
-    }
-}
-
-public enum FixSource: String, Codable, Sendable {
-    case design = "design"
-    case meter = "meter"
-    case photo = "photo"
-    case repairos = "repairos"
-    case scan = "scan"
-}
-
-/// Grain -> RepairOS: POST /projects/{id}/scans/{sid}/look -- Grain's judgement of the
-/// photos of one record against the design. Also the `photos` member of a /call response. A
-/// judgement, not a measurement: observation confidence is a number 0-1, unlike fix
-/// confidence (a word). Synchronous and slow today, cached by content (cached: true). Pinned
-/// against a private recorded Grain fixture (private/grain/observed/), plus target fields
-/// marked x-target. status is ok, error (judgement carries error/raw) or not_checked
-/// (judgement null, reason says why). Camera poses, crop boxes and harness rows are not
-/// inputs yet (target T5). Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainLookResponseClass
-public struct GrainLookResponseClass: Codable, Sendable {
-    public let cached: Bool?
-    /// Target T6: with detach: true, a 202 carries call_id; poll GET /call/{call_id}.
-    public let callID: String?
-    public let judgement: PurpleJudgement?
-    /// An identifier Grain reports; RepairOS does not read it.
-    public let model: String?
-    public let note: String?
-    /// How many photos were judged.
-    public let photos: Int?
-    /// An identifier Grain reports; RepairOS does not read it.
-    public let provider: String?
-    /// For not_checked.
-    public let reason: String?
-    public let seconds: Double?
-    public let status: GrainLookResponseStatus
-
-    public enum CodingKeys: String, CodingKey {
-        case cached = "cached"
-        case callID = "call_id"
-        case judgement = "judgement"
-        case model = "model"
-        case note = "note"
-        case photos = "photos"
-        case provider = "provider"
-        case reason = "reason"
-        case seconds = "seconds"
-        case status = "status"
-    }
-
-    public init(cached: Bool?, callID: String?, judgement: PurpleJudgement?, model: String?, note: String?, photos: Int?, provider: String?, reason: String?, seconds: Double?, status: GrainLookResponseStatus) {
-        self.cached = cached
-        self.callID = callID
-        self.judgement = judgement
-        self.model = model
-        self.note = note
-        self.photos = photos
-        self.provider = provider
-        self.reason = reason
-        self.seconds = seconds
-        self.status = status
-    }
-}
-
-// MARK: - PurpleJudgement
-public struct PurpleJudgement: Codable, Sendable {
-    public let differences: [String]?
-    public let error: String?
-    /// False with mostly missing/unsure observations means photos of another product.
-    public let matchesDesign: Bool?
-    public let observations: [GrainLookResponseSchema]
-    public let raw: String?
-    public let summary: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case differences = "differences"
-        case error = "error"
-        case matchesDesign = "matches_design"
-        case observations = "observations"
-        case raw = "raw"
-        case summary = "summary"
-    }
-
-    public init(differences: [String]?, error: String?, matchesDesign: Bool?, observations: [GrainLookResponseSchema], raw: String?, summary: String?) {
-        self.differences = differences
-        self.error = error
-        self.matchesDesign = matchesDesign
-        self.observations = observations
-        self.raw = raw
-        self.summary = summary
-    }
-}
-
-// MARK: - GrainLookResponseSchema
-public struct GrainLookResponseSchema: Codable, Sendable {
-    public let confidence: Double
-    /// A Grain part name, or null when none could be named.
-    public let part: String?
-    /// 1-based photo index on the record (photos[].n).
-    public let photo: Int?
-    /// Maps 1:1 onto Finding.state (source grain.look). /call turns loose into reseat.
-    public let state: ObservationState
-    public let what: String
-
-    public enum CodingKeys: String, CodingKey {
-        case confidence = "confidence"
-        case part = "part"
-        case photo = "photo"
-        case state = "state"
-        case what = "what"
-    }
-
-    public init(confidence: Double, part: String?, photo: Int?, state: ObservationState, what: String) {
-        self.confidence = confidence
-        self.part = part
-        self.photo = photo
-        self.state = state
-        self.what = what
-    }
-}
-
-/// Maps 1:1 onto Finding.state (source grain.look). /call turns loose into reseat.
-public enum ObservationState: String, Codable, Sendable {
-    case broken = "broken"
-    case damaged = "damaged"
-    case dirty = "dirty"
-    case loose = "loose"
-    case missing = "missing"
-    case ok = "ok"
-    case shifted = "shifted"
-    case unsure = "unsure"
-    case worn = "worn"
-}
-
-public enum GrainLookResponseStatus: String, Codable, Sendable {
-    case error = "error"
-    case notChecked = "not_checked"
-    case ok = "ok"
-}
-
-/// Grain -> RepairOS: the stored scan record returned by POST
-/// /projects/{id}/scans?name=&units= (body = the file), GET .../scans/{sid}, and photo
-/// uploads (which return the record plus photos[]). Pinned against the private recorded
-/// Grain fixtures (private/grain/observed/), plus target fields marked x-target. Grain makes
-/// the id; name is only a label and must end in the format's extension (else 400). bbox_mm
-/// and centroid_mm are in the design frame's units (mm) after Grain applies `units` (an
-/// upload with units=m is multiplied by 1000). A photo-only record (POST
-/// /projects/{id}/photos) has kind 'photos', file and units null, points 0 and no bbox.
-/// Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainScanRecordClass
-public struct GrainScanRecordClass: Codable, Sendable {
-    public let bboxMm: GrainScanRecordBboxMm?
-    public let bytes: Int?
-    public let centroidMm: [Double]?
-    /// Unix seconds.
-    public let created: Double
-    /// Stored file name; null for a photo-only record.
-    public let file: String?
-    /// Target T9: echo of the upload's frame=design|world.
-    public let frame: GrainScanRecordFrame?
-    /// Target T9: echo of the upload's gravity=x,y,z (unit vector, down).
-    public let gravity: [Double]?
-    /// Grain's scan id, YYYYmmdd-HHMMSS-xxxx.
-    public let id: String
-    /// 'photos' for a photo-only record; absent for a scan.
-    public let kind: String?
-    /// The label from the upload query, e.g. scan_7f3a.ply.
-    public let name: String
-    /// Photos attached to this record (<= 8), stored downsized (px is the stored size).
-    public let photos: [GrainScanRecordSchema]?
-    /// Points stored (a mesh upload is sampled to points).
-    public let points: Int
-    /// As declared at upload; never guessed.
-    public let units: ScanUnits?
-
-    public enum CodingKeys: String, CodingKey {
-        case bboxMm = "bbox_mm"
-        case bytes = "bytes"
-        case centroidMm = "centroid_mm"
-        case created = "created"
-        case file = "file"
-        case frame = "frame"
-        case gravity = "gravity"
-        case id = "id"
-        case kind = "kind"
-        case name = "name"
-        case photos = "photos"
-        case points = "points"
-        case units = "units"
-    }
-
-    public init(bboxMm: GrainScanRecordBboxMm?, bytes: Int?, centroidMm: [Double]?, created: Double, file: String?, frame: GrainScanRecordFrame?, gravity: [Double]?, id: String, kind: String?, name: String, photos: [GrainScanRecordSchema]?, points: Int, units: ScanUnits?) {
-        self.bboxMm = bboxMm
-        self.bytes = bytes
-        self.centroidMm = centroidMm
-        self.created = created
-        self.file = file
-        self.frame = frame
-        self.gravity = gravity
-        self.id = id
-        self.kind = kind
-        self.name = name
-        self.photos = photos
-        self.points = points
-        self.units = units
-    }
-}
-
-// MARK: - GrainScanRecordBboxMm
-public struct GrainScanRecordBboxMm: Codable, Sendable {
-    public let max: [Double]
-    public let min: [Double]
-    public let size: [Double]?
-
-    public enum CodingKeys: String, CodingKey {
-        case max = "max"
-        case min = "min"
-        case size = "size"
-    }
-
-    public init(max: [Double], min: [Double], size: [Double]?) {
-        self.max = max
-        self.min = min
-        self.size = size
-    }
-}
-
-/// Target T9: echo of the upload's frame=design|world.
-public enum GrainScanRecordFrame: String, Codable, Sendable {
-    case design = "design"
-    case world = "world"
-}
-
-// MARK: - GrainScanRecordSchema
-public struct GrainScanRecordSchema: Codable, Sendable {
-    /// Target T5: [x0, y0, x1, y1] crop box in the original image.
-    public let boxPx: [Int]?
-    /// Target T5: camera pose and intrinsics. position_m and quaternion_xyzw are in the frame
-    /// the scan was uploaded in.
-    public let camera: PhotoCamera?
-    public let file: String
-    /// Target T5: harness wire names in view.
-    public let harness: [String]?
-    /// 1-based index on the record; with the record id it names the photo (target T5: {record,
-    /// n} in /call).
-    public let n: Int
-    /// The label from the upload; the only metadata a photo has today.
-    public let name: String
-    public let originalPx: [Int]?
-    /// Target T5: Grain part names the photo shows (diagnose parts[].name).
-    public let parts: [String]?
-    /// Stored size [w, h].
-    public let px: [Int]?
-    public let sha1: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case boxPx = "box_px"
-        case camera = "camera"
-        case file = "file"
-        case harness = "harness"
-        case n = "n"
-        case name = "name"
-        case originalPx = "original_px"
-        case parts = "parts"
-        case px = "px"
-        case sha1 = "sha1"
-    }
-
-    public init(boxPx: [Int]?, camera: PhotoCamera?, file: String, harness: [String]?, n: Int, name: String, originalPx: [Int]?, parts: [String]?, px: [Int]?, sha1: String?) {
-        self.boxPx = boxPx
-        self.camera = camera
-        self.file = file
-        self.harness = harness
-        self.n = n
-        self.name = name
-        self.originalPx = originalPx
-        self.parts = parts
-        self.px = px
-        self.sha1 = sha1
-    }
-}
-
-/// Target T5: camera pose and intrinsics. position_m and quaternion_xyzw are in the frame
-/// the scan was uploaded in.
-// MARK: - PhotoCamera
-public struct PhotoCamera: Codable, Sendable {
-    public let intrinsics: [String: JSONAny]?
-    public let positionM: [Double]?
-    public let quaternionXyzw: [Double]?
-
-    public enum CodingKeys: String, CodingKey {
-        case intrinsics = "intrinsics"
-        case positionM = "position_m"
-        case quaternionXyzw = "quaternion_xyzw"
-    }
-
-    public init(intrinsics: [String: JSONAny]?, positionM: [Double]?, quaternionXyzw: [Double]?) {
-        self.intrinsics = intrinsics
-        self.positionM = positionM
-        self.quaternionXyzw = quaternionXyzw
-    }
-}
-
-/// Grain -> RepairOS: POST
-/// /projects/{id}/scans/{sid}/diagnose?tolerance_mm=&align=none|bbox|icp&crop= -- the scan
-/// judged part by part against out/model.glb. Used as a cross-check of our own coverage
-/// result. Pinned against the private recorded Grain fixtures (private/grain/observed/),
-/// plus target fields marked x-target (none yet: T9 and T12 change verdict quality, not the
-/// shape). Every *_mm field is in the design frame: millimetres, Z up. Parts are keyed by
-/// `name` (the GLB node; sub-parts carry a colon, e.g. U1:usb); `ref` is the BOM ref or null
-/// for made parts. Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainDiagnoseResponse
-public struct GrainDiagnoseResponse: Codable, Sendable {
-    /// RepairOS sends none: it uploads in the design frame (our ICP with gravity + fit gate).
-    /// icp is the cross-check on the raw scan (Q2).
-    public let align: Align
-    public let alignment: GrainDiagnoseResponseAlignment
-    public let bomTotalUsd: Double?
-    /// not_seen + damaged + shifted.
-    public let broken: [String]
-    /// Mean coverage over judged parts; null when none could be judged.
-    public let coverage: Double?
-    public let crop: FluffyCrop?
-    public let damaged: [String]
-    /// Grain's own visibility bookkeeping; RepairOS does not read it.
-    public let exterior: FluffyExterior?
-    public let extraFraction: Double?
-    /// Scan points far from every designed surface.
-    public let extraPoints: Int?
-    public let findings: [FindingClass]
-    public let modelBboxMm: ModelBboxMmClass?
-    public let notSeen: [String]
-    public let notVisible: [String]
-    public let ok: [String]
-    public let partly: [String]
-    public let parts: [PartElement]
-    public let pointsUsed: Int?
-    /// The scan id.
-    public let scan: String?
-    public let scanBboxMm: ModelBboxMmClass?
-    public let scanNoiseMm: Double?
-    public let scanSpacingMm: Double?
-    public let shiftMm: [Double]?
-    public let shifted: [String]
-    public let thresholds: FluffyThresholds?
-    /// The tolerance Grain used for the whole scan, mm.
-    public let toleranceGlobalMm: Double?
-    /// As asked.
-    public let toleranceMm: Double
-    /// verdict -> [part names].
-    public let verdicts: [String: [String]]
-
-    public enum CodingKeys: String, CodingKey {
-        case align = "align"
-        case alignment = "alignment"
-        case bomTotalUsd = "bom_total_usd"
-        case broken = "broken"
-        case coverage = "coverage"
-        case crop = "crop"
-        case damaged = "damaged"
-        case exterior = "exterior"
-        case extraFraction = "extra_fraction"
-        case extraPoints = "extra_points"
-        case findings = "findings"
-        case modelBboxMm = "model_bbox_mm"
-        case notSeen = "not_seen"
-        case notVisible = "not_visible"
-        case ok = "ok"
-        case partly = "partly"
-        case parts = "parts"
-        case pointsUsed = "points_used"
-        case scan = "scan"
-        case scanBboxMm = "scan_bbox_mm"
-        case scanNoiseMm = "scan_noise_mm"
-        case scanSpacingMm = "scan_spacing_mm"
-        case shiftMm = "shift_mm"
-        case shifted = "shifted"
-        case thresholds = "thresholds"
-        case toleranceGlobalMm = "tolerance_global_mm"
-        case toleranceMm = "tolerance_mm"
-        case verdicts = "verdicts"
-    }
-
-    public init(align: Align, alignment: GrainDiagnoseResponseAlignment, bomTotalUsd: Double?, broken: [String], coverage: Double?, crop: FluffyCrop?, damaged: [String], exterior: FluffyExterior?, extraFraction: Double?, extraPoints: Int?, findings: [FindingClass], modelBboxMm: ModelBboxMmClass?, notSeen: [String], notVisible: [String], ok: [String], partly: [String], parts: [PartElement], pointsUsed: Int?, scan: String?, scanBboxMm: ModelBboxMmClass?, scanNoiseMm: Double?, scanSpacingMm: Double?, shiftMm: [Double]?, shifted: [String], thresholds: FluffyThresholds?, toleranceGlobalMm: Double?, toleranceMm: Double, verdicts: [String: [String]]) {
-        self.align = align
-        self.alignment = alignment
-        self.bomTotalUsd = bomTotalUsd
-        self.broken = broken
-        self.coverage = coverage
-        self.crop = crop
-        self.damaged = damaged
-        self.exterior = exterior
-        self.extraFraction = extraFraction
-        self.extraPoints = extraPoints
-        self.findings = findings
-        self.modelBboxMm = modelBboxMm
-        self.notSeen = notSeen
-        self.notVisible = notVisible
-        self.ok = ok
-        self.partly = partly
-        self.parts = parts
-        self.pointsUsed = pointsUsed
-        self.scan = scan
-        self.scanBboxMm = scanBboxMm
-        self.scanNoiseMm = scanNoiseMm
-        self.scanSpacingMm = scanSpacingMm
-        self.shiftMm = shiftMm
-        self.shifted = shifted
-        self.thresholds = thresholds
-        self.toleranceGlobalMm = toleranceGlobalMm
-        self.toleranceMm = toleranceMm
-        self.verdicts = verdicts
-    }
-}
-
-// MARK: - FluffyCrop
-public struct FluffyCrop: Codable, Sendable {
-    public let outsideRemoved: Int?
-    public let planeRemoved: Int?
-
-    public enum CodingKeys: String, CodingKey {
-        case outsideRemoved = "outside_removed"
-        case planeRemoved = "plane_removed"
-    }
-
-    public init(outsideRemoved: Int?, planeRemoved: Int?) {
-        self.outsideRemoved = outsideRemoved
-        self.planeRemoved = planeRemoved
-    }
-}
-
-/// Grain's own visibility bookkeeping; RepairOS does not read it.
-// MARK: - FluffyExterior
-public struct FluffyExterior: Codable, Sendable {
-    public let cameraMatch: [Double]?
-    public let cameras: Int?
-    public let camerasSwept: Int?
-
-    public enum CodingKeys: String, CodingKey {
-        case cameraMatch = "camera_match"
-        case cameras = "cameras"
-        case camerasSwept = "cameras_swept"
-    }
-
-    public init(cameraMatch: [Double]?, cameras: Int?, camerasSwept: Int?) {
-        self.cameraMatch = cameraMatch
-        self.cameras = cameras
-        self.camerasSwept = camerasSwept
-    }
-}
-
-// MARK: - FluffyThresholds
-public struct FluffyThresholds: Codable, Sendable {
-    public let notSeen: Double
-    public let note: String?
-    public let ok: Double
-    public let partly: Double
-    public let shifted: Double
-
-    public enum CodingKeys: String, CodingKey {
-        case notSeen = "not_seen"
-        case note = "note"
-        case ok = "ok"
-        case partly = "partly"
-        case shifted = "shifted"
-    }
-
-    public init(notSeen: Double, note: String?, ok: Double, partly: Double, shifted: Double) {
-        self.notSeen = notSeen
-        self.note = note
-        self.ok = ok
-        self.partly = partly
-        self.shifted = shifted
-    }
-}
-
-/// RepairOS -> Grain: POST /projects/{id}/electrical/check {readings: [...]}, <= 200. The
-/// check is stateless: the meter wizard sends every reading so far each time (H4). Each
-/// reading is exactly one of {net, volts}, {net, pins: [a, b], continuity}, {net, pins: [a,
-/// b], ohms}. Pins use net naming REF.PIN (e.g. J1.1), which is what Grain checks against,
-/// not harness end names. Pinned against the private recorded Grain fixtures
-/// (private/grain/observed/), plus target fields marked x-target. GET /call/schema requires
-/// only `net`; the one-of rule is RepairOS's, so we never send a reading Grain can only
-/// half-judge. Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainElectricalCheckRequest
-public struct GrainElectricalCheckRequest: Codable, Sendable {
-    public let readings: [GrainElectricalCheckRequestSchema]
-
-    public enum CodingKeys: String, CodingKey {
-        case readings = "readings"
-    }
-
-    public init(readings: [GrainElectricalCheckRequestSchema]) {
-        self.readings = readings
-    }
-}
-
-/// Grain -> RepairOS: the result of POST /projects/{id}/electrical/check, and the
-/// `electrical` member of a /call response. Two lists with no index between them today:
-/// readings[] (one row per reading that named a net; a reading with no net yields only a
-/// finding) and findings[]. Pinned against the private recorded Grain fixtures
-/// (private/grain/observed/), plus target fields marked x-target. Known gaps: a voltage is
-/// judged against the single expected.volts value, not [min, max] (G2 -> T1: RepairOS judges
-/// the range itself); rows for an open, a pin not on the net, an unknown net or a net with
-/// no expected value carry no verdict (G22 -> T2: RepairOS derives it: continuity false +
-/// wire = open, known false = unknown_net, expected null = no_expected, a 'not on net'
-/// finding = pin_not_on_net). Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainElectricalCheckResponse
-public struct GrainElectricalCheckResponse: Codable, Sendable {
-    public let expectedVolts: [String: GrainElectricalReferenceSchema]
-    public let findings: [GrainElectricalCheckResponseSchema]
-    public let readings: [Grain]
-    public let sources: Sources
-    /// The worst finding severity (info counts as ok).
-    public let status: GrainElectricalCheckResponseStatus
-
-    public enum CodingKeys: String, CodingKey {
-        case expectedVolts = "expected_volts"
-        case findings = "findings"
-        case readings = "readings"
-        case sources = "sources"
-        case status = "status"
-    }
-
-    public init(expectedVolts: [String: GrainElectricalReferenceSchema], findings: [GrainElectricalCheckResponseSchema], readings: [Grain], sources: Sources, status: GrainElectricalCheckResponseStatus) {
-        self.expectedVolts = expectedVolts
-        self.findings = findings
-        self.readings = readings
-        self.sources = sources
-        self.status = status
-    }
-}
-
-/// Grain -> RepairOS: GET /projects/{id}/electrical -- what the design says a meter should
-/// read: nets with pins, harness wires, expected voltages from the SPICE run, the run's
-/// measurements and signals. Fetched once per product model and cached (H1, H4). Pinned
-/// against the private recorded Grain fixtures (private/grain/observed/), plus target fields
-/// marked x-target. Pins are REF.PIN as the nets list them (e.g. J1.1); harness ends are
-/// written differently today (a part, or a board-prefixed connector; G26) and have no 3D
-/// position (G25). expected_volts covers only some nets today (G13): RepairOS judges against
-/// [min, max], never against `volts` alone (G2). Grain owns the shape: additionalProperties
-/// allowed.
-// MARK: - GrainElectricalReference
-public struct GrainElectricalReference: Codable, Sendable {
-    /// net name -> expected voltage.
-    public let expectedVolts: [String: GrainElectricalReferenceSchema]
-    /// SPICE .meas results by name.
-    public let measurements: [String: JSONAny]?
-    public let nets: [Net]
-    /// SPICE node or branch -> {min, max, final}.
-    public let signals: [String: Signal]?
-    /// e.g. ok, absent.
-    public let simStatus: String?
-    public let simTool: String?
-    public let sources: Sources
-    /// harness.csv rows; empty when the project has no harness.
-    public let wires: [Wire]
-
-    public enum CodingKeys: String, CodingKey {
-        case expectedVolts = "expected_volts"
-        case measurements = "measurements"
-        case nets = "nets"
-        case signals = "signals"
-        case simStatus = "sim_status"
-        case simTool = "sim_tool"
-        case sources = "sources"
-        case wires = "wires"
-    }
-
-    public init(expectedVolts: [String: GrainElectricalReferenceSchema], measurements: [String: JSONAny]?, nets: [Net], signals: [String: Signal]?, simStatus: String?, simTool: String?, sources: Sources, wires: [Wire]) {
-        self.expectedVolts = expectedVolts
-        self.measurements = measurements
-        self.nets = nets
-        self.signals = signals
-        self.simStatus = simStatus
-        self.simTool = simTool
-        self.sources = sources
-        self.wires = wires
-    }
-}
-
-// MARK: - Net
-public struct Net: Codable, Sendable {
-    public let name: String
-    public let pins: [String]
-    public let power: Bool?
-
-    public enum CodingKeys: String, CodingKey {
-        case name = "name"
-        case pins = "pins"
-        case power = "power"
-    }
-
-    public init(name: String, pins: [String], power: Bool?) {
-        self.name = name
-        self.pins = pins
-        self.power = power
-    }
-}
-
-// MARK: - Signal
-public struct Signal: Codable, Sendable {
-    public let signalFinal: Double?
-    public let max: Double?
-    public let min: Double?
-
-    public enum CodingKeys: String, CodingKey {
-        case signalFinal = "final"
-        case max = "max"
-        case min = "min"
-    }
-
-    public init(signalFinal: Double?, max: Double?, min: Double?) {
-        self.signalFinal = signalFinal
-        self.max = max
-        self.min = min
-    }
-}
-
-/// Grain -> RepairOS: the body of every 4xx (400 bad input, 401/403 auth, 404 not found, 409
-/// busy or no build, 413 too large). The sentence says what to send instead. Pinned against
-/// the private recorded Grain fixtures (e.g. a scan name without its extension, a photo
-/// referenced by id). Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainError
-public struct GrainError: Codable, Sendable {
-    public let detail: String
-
-    public enum CodingKeys: String, CodingKey {
-        case detail = "detail"
-    }
-
-    public init(detail: String) {
-        self.detail = detail
-    }
-}
-
-/// Grain -> RepairOS: POST /projects/{id}/scans/{sid}/look -- Grain's judgement of the
-/// photos of one record against the design. Also the `photos` member of a /call response. A
-/// judgement, not a measurement: observation confidence is a number 0-1, unlike fix
-/// confidence (a word). Synchronous and slow today, cached by content (cached: true). Pinned
-/// against a private recorded Grain fixture (private/grain/observed/), plus target fields
-/// marked x-target. status is ok, error (judgement carries error/raw) or not_checked
-/// (judgement null, reason says why). Camera poses, crop boxes and harness rows are not
-/// inputs yet (target T5). Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainLookResponse
-public struct GrainLookResponse: Codable, Sendable {
-    public let cached: Bool?
-    /// Target T6: with detach: true, a 202 carries call_id; poll GET /call/{call_id}.
-    public let callID: String?
-    public let judgement: FluffyJudgement?
-    /// An identifier Grain reports; RepairOS does not read it.
-    public let model: String?
-    public let note: String?
-    /// How many photos were judged.
-    public let photos: Int?
-    /// An identifier Grain reports; RepairOS does not read it.
-    public let provider: String?
-    /// For not_checked.
-    public let reason: String?
-    public let seconds: Double?
-    public let status: GrainLookResponseStatus
-
-    public enum CodingKeys: String, CodingKey {
-        case cached = "cached"
-        case callID = "call_id"
-        case judgement = "judgement"
-        case model = "model"
-        case note = "note"
-        case photos = "photos"
-        case provider = "provider"
-        case reason = "reason"
-        case seconds = "seconds"
-        case status = "status"
-    }
-
-    public init(cached: Bool?, callID: String?, judgement: FluffyJudgement?, model: String?, note: String?, photos: Int?, provider: String?, reason: String?, seconds: Double?, status: GrainLookResponseStatus) {
-        self.cached = cached
-        self.callID = callID
-        self.judgement = judgement
-        self.model = model
-        self.note = note
-        self.photos = photos
-        self.provider = provider
-        self.reason = reason
-        self.seconds = seconds
-        self.status = status
-    }
-}
-
-// MARK: - FluffyJudgement
-public struct FluffyJudgement: Codable, Sendable {
-    public let differences: [String]?
-    public let error: String?
-    /// False with mostly missing/unsure observations means photos of another product.
-    public let matchesDesign: Bool?
-    public let observations: [GrainLookResponseSchema]
-    public let raw: String?
-    public let summary: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case differences = "differences"
-        case error = "error"
-        case matchesDesign = "matches_design"
-        case observations = "observations"
-        case raw = "raw"
-        case summary = "summary"
-    }
-
-    public init(differences: [String]?, error: String?, matchesDesign: Bool?, observations: [GrainLookResponseSchema], raw: String?, summary: String?) {
-        self.differences = differences
-        self.error = error
-        self.matchesDesign = matchesDesign
-        self.observations = observations
-        self.raw = raw
-        self.summary = summary
-    }
-}
-
-/// Grain -> RepairOS: the stored scan record returned by POST
-/// /projects/{id}/scans?name=&units= (body = the file), GET .../scans/{sid}, and photo
-/// uploads (which return the record plus photos[]). Pinned against the private recorded
-/// Grain fixtures (private/grain/observed/), plus target fields marked x-target. Grain makes
-/// the id; name is only a label and must end in the format's extension (else 400). bbox_mm
-/// and centroid_mm are in the design frame's units (mm) after Grain applies `units` (an
-/// upload with units=m is multiplied by 1000). A photo-only record (POST
-/// /projects/{id}/photos) has kind 'photos', file and units null, points 0 and no bbox.
-/// Grain owns the shape: additionalProperties allowed.
-// MARK: - GrainScanRecord
-public struct GrainScanRecord: Codable, Sendable {
-    public let bboxMm: GrainScanRecordBboxMm?
-    public let bytes: Int?
-    public let centroidMm: [Double]?
-    /// Unix seconds.
-    public let created: Double
-    /// Stored file name; null for a photo-only record.
-    public let file: String?
-    /// Target T9: echo of the upload's frame=design|world.
-    public let frame: GrainScanRecordFrame?
-    /// Target T9: echo of the upload's gravity=x,y,z (unit vector, down).
-    public let gravity: [Double]?
-    /// Grain's scan id, YYYYmmdd-HHMMSS-xxxx.
-    public let id: String
-    /// 'photos' for a photo-only record; absent for a scan.
-    public let kind: String?
-    /// The label from the upload query, e.g. scan_7f3a.ply.
-    public let name: String
-    /// Photos attached to this record (<= 8), stored downsized (px is the stored size).
-    public let photos: [GrainScanRecordSchema]?
-    /// Points stored (a mesh upload is sampled to points).
-    public let points: Int
-    /// As declared at upload; never guessed.
-    public let units: ScanUnits?
-
-    public enum CodingKeys: String, CodingKey {
-        case bboxMm = "bbox_mm"
-        case bytes = "bytes"
-        case centroidMm = "centroid_mm"
-        case created = "created"
-        case file = "file"
-        case frame = "frame"
-        case gravity = "gravity"
-        case id = "id"
-        case kind = "kind"
-        case name = "name"
-        case photos = "photos"
-        case points = "points"
-        case units = "units"
-    }
-
-    public init(bboxMm: GrainScanRecordBboxMm?, bytes: Int?, centroidMm: [Double]?, created: Double, file: String?, frame: GrainScanRecordFrame?, gravity: [Double]?, id: String, kind: String?, name: String, photos: [GrainScanRecordSchema]?, points: Int, units: ScanUnits?) {
-        self.bboxMm = bboxMm
-        self.bytes = bytes
-        self.centroidMm = centroidMm
-        self.created = created
-        self.file = file
-        self.frame = frame
-        self.gravity = gravity
-        self.id = id
-        self.kind = kind
-        self.name = name
-        self.photos = photos
-        self.points = points
-        self.units = units
-    }
-}
-
 /// One multimeter reading typed or spoken by the user in response to a NextAction. The only
-/// kind of evidence that counts as proof (I1, I2). Sent to Grain /electrical/check as {net,
-/// volts} | {net, pins, continuity} | {net, pins, ohms} (GrainElectricalCheckRequest) and
-/// into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity ->
-/// {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's own
-/// verdict (`verdict`, judged against [min, max]) is kept apart from Grain's
-/// (`grain_verdict`, plus the raw row).
+/// kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape
+/// of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required;
+/// resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against
+/// [min, max] in code.
 // MARK: - MeterReading
 public struct MeterReading: Codable, Sendable {
     /// The NextAction this answers.
     public let actionID: String?
-    /// Operating condition when read. RepairOS-side only: Grain's electrical check has no
-    /// condition input today; we use it to pick which part of the SPICE [min, max] applies.
+    /// Operating condition when read. We use it to pick which part of the SPICE [min, max]
+    /// applies.
     public let condition: Condition?
-    /// What RepairOS judged against. volts_min/volts_max come from Grain's expected{min, max}
-    /// (never from expected.volts alone; G2).
+    /// What RepairOS judged against. volts_min/volts_max come from the reference's expected
+    /// {min, max}, never from a single expected value.
     public let expected: MeterReadingExpected?
-    /// Grain findings about this reading (matched by text until T2 adds finding.reading).
-    public let grainFindings: [GrainElectricalCheckResponseSchema]?
-    /// grain_row.wire.name for an open on a harness wire, if any.
-    public let grainRemakeWire: String?
-    /// The raw Grain row for this reading, as returned.
-    public let grainRow: Grain?
-    /// Grain's row verdict (GrainElectricalCheckResponse readings[].verdict). Grain sends only
-    /// ok|off today; the other values are T2 and, until then, derived by RepairOS
-    /// (grain_verdict_derived true): continuity false + wire = open, known false = unknown_net,
-    /// expected null = no_expected, a 'not on net' finding = pin_not_on_net. null when Grain has
-    /// not been asked or gave nothing to derive from.
-    public let grainVerdict: GrainRowVerdict?
-    /// True when grain_verdict was derived by RepairOS (G22 fallback), not sent by Grain.
-    public let grainVerdictDerived: Bool?
     public let kind: MeterReadingKind
-    /// Grain net name (GET /electrical nets[].name). Not a harness wire name.
+    /// Net name from the design's electrical reference. Not a harness wire name.
     public let net: String
-    /// REF.PIN ids probed, in Grain's net naming (e.g. J1.1), not harness end names. Required
-    /// for continuity and resistance; optional for voltage_dc ([probe +, probe -]).
+    /// REF.PIN ids probed, in the design's net naming (e.g. J1.1), not harness end names.
+    /// Required for continuity and resistance; optional for voltage_dc ([probe +, probe -]).
     public let pins: [String]?
     public let powerState: MeterReadingPowerState
     /// What the user said or typed, before parsing.
     public let rawText: String?
-    /// Sent to Grain as the reading's id once T2 lands.
     public let readingID: String
     public let recordedAt: Date
     public let scanID: String
@@ -2430,19 +324,13 @@ public struct MeterReading: Codable, Sendable {
     /// Exactly the field that matches kind (see allOf).
     public let value: Value
     /// RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol
-    /// = 0.25 V or 5 %; under 5 ohm conducts). Ours wins over Grain's for a rail while G2 is
-    /// open.
-    public let verdict: PurpleVerdict?
+    /// = 0.25 V or 5 %; under 5 ohm conducts).
+    public let verdict: MeterReadingVerdict?
 
     public enum CodingKeys: String, CodingKey {
         case actionID = "action_id"
         case condition = "condition"
         case expected = "expected"
-        case grainFindings = "grain_findings"
-        case grainRemakeWire = "grain_remake_wire"
-        case grainRow = "grain_row"
-        case grainVerdict = "grain_verdict"
-        case grainVerdictDerived = "grain_verdict_derived"
         case kind = "kind"
         case net = "net"
         case pins = "pins"
@@ -2457,15 +345,10 @@ public struct MeterReading: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(actionID: String?, condition: Condition?, expected: MeterReadingExpected?, grainFindings: [GrainElectricalCheckResponseSchema]?, grainRemakeWire: String?, grainRow: Grain?, grainVerdict: GrainRowVerdict?, grainVerdictDerived: Bool?, kind: MeterReadingKind, net: String, pins: [String]?, powerState: MeterReadingPowerState, rawText: String?, readingID: String, recordedAt: Date, scanID: String, sessionID: String, source: MeterReadingSource, value: Value, verdict: PurpleVerdict?) {
+    public init(actionID: String?, condition: Condition?, expected: MeterReadingExpected?, kind: MeterReadingKind, net: String, pins: [String]?, powerState: MeterReadingPowerState, rawText: String?, readingID: String, recordedAt: Date, scanID: String, sessionID: String, source: MeterReadingSource, value: Value, verdict: MeterReadingVerdict?) {
         self.actionID = actionID
         self.condition = condition
         self.expected = expected
-        self.grainFindings = grainFindings
-        self.grainRemakeWire = grainRemakeWire
-        self.grainRow = grainRow
-        self.grainVerdict = grainVerdict
-        self.grainVerdictDerived = grainVerdictDerived
         self.kind = kind
         self.net = net
         self.pins = pins
@@ -2481,8 +364,8 @@ public struct MeterReading: Codable, Sendable {
     }
 }
 
-/// Operating condition when read. RepairOS-side only: Grain's electrical check has no
-/// condition input today; we use it to pick which part of the SPICE [min, max] applies.
+/// Operating condition when read. We use it to pick which part of the SPICE [min, max]
+/// applies.
 public enum Condition: String, Codable, Sendable {
     case charging = "charging"
     case idle = "idle"
@@ -2490,8 +373,8 @@ public enum Condition: String, Codable, Sendable {
     case unknown = "unknown"
 }
 
-/// What RepairOS judged against. volts_min/volts_max come from Grain's expected{min, max}
-/// (never from expected.volts alone; G2).
+/// What RepairOS judged against. volts_min/volts_max come from the reference's expected
+/// {min, max}, never from a single expected value.
 // MARK: - MeterReadingExpected
 public struct MeterReadingExpected: Codable, Sendable {
     public let continuity: Bool?
@@ -2521,7 +404,6 @@ public struct MeterReadingExpected: Codable, Sendable {
 /// ~0 ohm rule for wires, fuses, closed switches.
 public enum ExpectedSource: String, Codable, Sendable {
     case datasheet = "datasheet"
-    case grainElectrical = "grain_electrical"
     case repairosDerived = "repairos_derived"
     case reportJSONMinmax = "report_json_minmax"
 }
@@ -2564,9 +446,8 @@ public struct Value: Codable, Sendable {
 }
 
 /// RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol
-/// = 0.25 V or 5 %; under 5 ohm conducts). Ours wins over Grain's for a rail while G2 is
-/// open.
-public enum PurpleVerdict: String, Codable, Sendable {
+/// = 0.25 V or 5 %; under 5 ohm conducts).
+public enum MeterReadingVerdict: String, Codable, Sendable {
     case agrees = "agrees"
     case disagrees = "disagrees"
     case unknown = "unknown"
@@ -2584,7 +465,7 @@ public struct NextAction: Codable, Sendable {
     public let chosenBy: ChosenBy
     public let createdAt: Date
     /// What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come
-    /// from Grain's expected{min, max}, never from expected.volts alone (G2).
+    /// from the reference's expected {min, max}, never from a single expected value.
     public let expected: NextActionExpected?
     /// User-facing text. For meter steps it states the power state first.
     public let instruction: String
@@ -2644,7 +525,7 @@ public enum ChosenBy: String, Codable, Sendable {
 }
 
 /// What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come
-/// from Grain's expected{min, max}, never from expected.volts alone (G2).
+/// from the reference's expected {min, max}, never from a single expected value.
 // MARK: - NextActionExpected
 public struct NextActionExpected: Codable, Sendable {
     public let continuity: Bool?
@@ -2691,7 +572,6 @@ public enum NextActionKind: String, Codable, Sendable {
     case requestOtherAngle = "request_other_angle"
     case rescan = "rescan"
     case runContinuityTest = "run_continuity_test"
-    case runGrainSecondOpinion = "run_grain_second_opinion"
     case runReferenceCompare = "run_reference_compare"
     case runResistanceTest = "run_resistance_test"
     case runVoltageTest = "run_voltage_test"
@@ -2709,16 +589,15 @@ public enum NextActionPowerState: String, Codable, Sendable {
 public struct NextActionTarget: Codable, Sendable {
     /// Labels drawn on the real product for these pins or parts.
     public let arLabels: [String]?
-    /// harness.csv wire name (GrainElectricalReference wires[].name).
+    /// Harness wire name from the design's electrical reference.
     public let harnessRow: String?
-    /// Grain net name.
+    /// Net name from the design's electrical reference.
     public let net: String?
-    /// Grain part names (model.glb nodes).
+    /// Part names (the reference model's node names).
     public let partRefs: [String]?
-    /// REF.PIN ids to probe in Grain's net naming (e.g. J1.1), the form /electrical/check
-    /// accepts; never shown to the user bare.
+    /// REF.PIN ids to probe in the design's net naming (e.g. J1.1); never shown to the user bare.
     public let pins: [String]?
-    /// Crops to send for a Grain second opinion.
+    /// Crops this action is about.
     public let stillIDS: [String]?
 
     public enum CodingKeys: String, CodingKey {
@@ -2746,8 +625,7 @@ public struct NextActionTarget: Codable, Sendable {
 // MARK: - PartOnHand
 public struct PartOnHand: Codable, Sendable {
     public let addedAt: Date
-    /// Ratings table text we pre-extracted, so a long datasheet's tables reach Grain's design
-    /// turn intact.
+    /// Ratings table text we pre-extracted, so a long datasheet's tables stay intact.
     public let datasheetExtract: String?
     public let datasheetURL: String?
     /// What the user said.
@@ -2806,8 +684,8 @@ public struct PartOnHand: Codable, Sendable {
 /// Result of checking this item against a part in the current plan.
 // MARK: - Match
 public struct Match: Codable, Sendable {
-    /// simulation_check means Grain's simulation check passed on a project copy with the swap; a
-    /// limited check, never 'verified' (I5).
+    /// simulation_check means a simulation check passed with the swap; a limited check, never
+    /// 'verified' (I5).
     public let basis: Basis
     /// For yes_with_changes.
     public let changesRequired: [String]?
@@ -2851,8 +729,8 @@ public struct Match: Codable, Sendable {
     }
 }
 
-/// simulation_check means Grain's simulation check passed on a project copy with the swap; a
-/// limited check, never 'verified' (I5).
+/// simulation_check means a simulation check passed with the swap; a limited check, never
+/// 'verified' (I5).
 public enum Basis: String, Codable, Sendable {
     case quickCheck = "quick_check"
     case simulationCheck = "simulation_check"
@@ -2959,189 +837,6 @@ public struct Protective: Codable, Sendable {
     }
 }
 
-/// The cached Grain reference for one product model. Built once per product model and never
-/// re-run for a product already seen (a design turn takes minutes). Files are Grain's
-/// reference artefacts fetched through the API and stored on the backend (handshake H1,
-/// private/grain/); the cache is keyed by grain_project_id + last_build until Grain reports
-/// last_build.hash (target T11).
-// MARK: - ReferenceDesign
-public struct ReferenceDesign: Codable, Sendable {
-    /// Grain's last_build.hash (target T11). null until Grain reports it; then last_build below
-    /// is the cache key.
-    public let buildHash: String?
-    /// Discovery-mode corrections sent back to Grain, newest last.
-    public let corrections: [Correction]?
-    /// high only for grain_designed. low widens tolerances and makes Grain verdicts advisory
-    /// (I7).
-    public let designTrust: FindingDesignTrust
-    /// Grain design turns spent on this reference (first turn + corrections). Each takes minutes.
-    public let designTurnsUsed: Int?
-    public let fetchedAt: Date
-    /// Backend paths of the cached Grain artefacts. Missing keys mean Grain did not produce that
-    /// file.
-    public let files: Files
-    /// Grain project id, or null when origin is none.
-    public let grainProjectID: String?
-    /// True when harness data exists for this project.
-    public let hasHarness: Bool?
-    /// Copy of GET /projects/{id} last_build at fetch time (the cache key until T11).
-    public let lastBuild: LastBuild?
-    /// Human name as printed on the product label (make and model), or the user's description.
-    public let makeModel: String
-    public let notes: String?
-    /// grain_designed: built by the team in Grain. grain_reconstructed: Grain modelled a bought
-    /// product from our brief. none: no reference; discovery mode only.
-    public let origin: Origin
-    /// True only once files.pins_json exists (target T7). Until then stills target connectors by
-    /// model.glb node bounds (G25).
-    public let pinPositionsAvailable: Bool?
-    /// RepairOS id for the product model (not a unit).
-    public let productID: String
-
-    public enum CodingKeys: String, CodingKey {
-        case buildHash = "build_hash"
-        case corrections = "corrections"
-        case designTrust = "design_trust"
-        case designTurnsUsed = "design_turns_used"
-        case fetchedAt = "fetched_at"
-        case files = "files"
-        case grainProjectID = "grain_project_id"
-        case hasHarness = "has_harness"
-        case lastBuild = "last_build"
-        case makeModel = "make_model"
-        case notes = "notes"
-        case origin = "origin"
-        case pinPositionsAvailable = "pin_positions_available"
-        case productID = "product_id"
-    }
-
-    public init(buildHash: String?, corrections: [Correction]?, designTrust: FindingDesignTrust, designTurnsUsed: Int?, fetchedAt: Date, files: Files, grainProjectID: String?, hasHarness: Bool?, lastBuild: LastBuild?, makeModel: String, notes: String?, origin: Origin, pinPositionsAvailable: Bool?, productID: String) {
-        self.buildHash = buildHash
-        self.corrections = corrections
-        self.designTrust = designTrust
-        self.designTurnsUsed = designTurnsUsed
-        self.fetchedAt = fetchedAt
-        self.files = files
-        self.grainProjectID = grainProjectID
-        self.hasHarness = hasHarness
-        self.lastBuild = lastBuild
-        self.makeModel = makeModel
-        self.notes = notes
-        self.origin = origin
-        self.pinPositionsAvailable = pinPositionsAvailable
-        self.productID = productID
-    }
-}
-
-// MARK: - Correction
-public struct Correction: Codable, Sendable {
-    public let applied: Bool?
-    public let sentAt: Date
-    public let text: String
-
-    public enum CodingKeys: String, CodingKey {
-        case applied = "applied"
-        case sentAt = "sent_at"
-        case text = "text"
-    }
-
-    public init(applied: Bool?, sentAt: Date, text: String) {
-        self.applied = applied
-        self.sentAt = sentAt
-        self.text = text
-    }
-}
-
-/// Backend paths of the cached Grain artefacts. Missing keys mean Grain did not produce that
-/// file.
-// MARK: - Files
-public struct Files: Codable, Sendable {
-    /// GET /bom: bought[{refs, name, mpn, supplier, url, datasheet, price, qty, line_total,
-    /// dimensions_mm, why, footprint}], made[{name, process, material, mass_g, size_mm, file,
-    /// finish}], total_usd.
-    public let bomJSON: String?
-    /// Parts, nets and pins (REF.PIN), ERC, BOM rows. No 3D pin positions (G25).
-    public let elecJSON: String?
-    /// GET /electrical (GrainElectricalReference): nets, harness wires, expected_volts {volts,
-    /// min, max, from}, SPICE signals.
-    public let electricalJSON: String?
-    /// name, from, to, gauge, length_mm, color, conductors. Ends are not in net pin naming (a
-    /// part, or a board-prefixed connector; G26).
-    public let harnessCSV: String?
-    /// Board parts: ref, x, y, rot, side, footprint, in board millimetres (not the design frame).
-    public let mainPlacementCSV: String?
-    /// Reference geometry, design frame: millimetres, Z up. Node names are Grain part names
-    /// (diagnose parts[].name; sub-parts like U1:usb); the BOM ref is a separate field
-    /// (parts[].ref, null for made parts).
-    public let modelGlb: String?
-    /// The whole model as a solid (Grain made[].file points here); a replacement part is cut
-    /// from its node.
-    public let modelStep: String?
-    public let netlistNet: String?
-    /// Target T7: out/pins.json, REF.PIN -> {xyz_mm, normal, part} in the design frame.
-    public let pinsJSON: String?
-    /// Build report; domains.sim holds the SPICE run, where RepairOS reads [min, max] for nets
-    /// electrical_json has no expected value for.
-    public let reportJSON: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case bomJSON = "bom_json"
-        case elecJSON = "elec_json"
-        case electricalJSON = "electrical_json"
-        case harnessCSV = "harness_csv"
-        case mainPlacementCSV = "main_placement_csv"
-        case modelGlb = "model_glb"
-        case modelStep = "model_step"
-        case netlistNet = "netlist_net"
-        case pinsJSON = "pins_json"
-        case reportJSON = "report_json"
-    }
-
-    public init(bomJSON: String?, elecJSON: String?, electricalJSON: String?, harnessCSV: String?, mainPlacementCSV: String?, modelGlb: String?, modelStep: String?, netlistNet: String?, pinsJSON: String?, reportJSON: String?) {
-        self.bomJSON = bomJSON
-        self.elecJSON = elecJSON
-        self.electricalJSON = electricalJSON
-        self.harnessCSV = harnessCSV
-        self.mainPlacementCSV = mainPlacementCSV
-        self.modelGlb = modelGlb
-        self.modelStep = modelStep
-        self.netlistNet = netlistNet
-        self.pinsJSON = pinsJSON
-        self.reportJSON = reportJSON
-    }
-}
-
-/// Copy of GET /projects/{id} last_build at fetch time (the cache key until T11).
-// MARK: - LastBuild
-public struct LastBuild: Codable, Sendable {
-    public let artifacts: [String]
-    public let errors: Int?
-    public let ok: Bool
-    public let seconds: Double
-
-    public enum CodingKeys: String, CodingKey {
-        case artifacts = "artifacts"
-        case errors = "errors"
-        case ok = "ok"
-        case seconds = "seconds"
-    }
-
-    public init(artifacts: [String], errors: Int?, ok: Bool, seconds: Double) {
-        self.artifacts = artifacts
-        self.errors = errors
-        self.ok = ok
-        self.seconds = seconds
-    }
-}
-
-/// grain_designed: built by the team in Grain. grain_reconstructed: Grain modelled a bought
-/// product from our brief. none: no reference; discovery mode only.
-public enum Origin: String, Codable, Sendable {
-    case grainDesigned = "grain_designed"
-    case grainReconstructed = "grain_reconstructed"
-    case none = "none"
-}
-
 /// The plan shown to the user. The LLM writes the prose from these structured fields; it
 /// does not decide them. Every electrical root cause carries a proof reading or is marked
 /// unproven (I2). not_inspected and insufficient_evidence are listed, never hidden (I3, I4).
@@ -3154,7 +849,6 @@ public struct RepairPlan: Codable, Sendable {
     public let costToBuy: CostToBuy?
     public let createdAt: Date
     public let generatedBy: GeneratedBy?
-    public let grain: RepairPlanGrain
     public let insufficientEvidence: [InsufficientEvidence]
     /// Part refs or wires no still covered or the user skipped. Never reported ok.
     public let notInspected: [String]
@@ -3179,7 +873,6 @@ public struct RepairPlan: Codable, Sendable {
         case costToBuy = "cost_to_buy"
         case createdAt = "created_at"
         case generatedBy = "generated_by"
-        case grain = "grain"
         case insufficientEvidence = "insufficient_evidence"
         case notInspected = "not_inspected"
         case parts = "parts"
@@ -3195,13 +888,12 @@ public struct RepairPlan: Codable, Sendable {
         case tools = "tools"
     }
 
-    public init(confidenceStatement: String, confirm: Confirm, costToBuy: CostToBuy?, createdAt: Date, generatedBy: GeneratedBy?, grain: RepairPlanGrain, insufficientEvidence: [InsufficientEvidence], notInspected: [String], parts: [Part], planID: String, productID: String, rootCauses: [RootCause], safety: [String], scanID: String, sessionID: String, steps: [Step], summary: String, symptom: String, tools: [String]?) {
+    public init(confidenceStatement: String, confirm: Confirm, costToBuy: CostToBuy?, createdAt: Date, generatedBy: GeneratedBy?, insufficientEvidence: [InsufficientEvidence], notInspected: [String], parts: [Part], planID: String, productID: String, rootCauses: [RootCause], safety: [String], scanID: String, sessionID: String, steps: [Step], summary: String, symptom: String, tools: [String]?) {
         self.confidenceStatement = confidenceStatement
         self.confirm = confirm
         self.costToBuy = costToBuy
         self.createdAt = createdAt
         self.generatedBy = generatedBy
-        self.grain = grain
         self.insufficientEvidence = insufficientEvidence
         self.notInspected = notInspected
         self.parts = parts
@@ -3280,51 +972,6 @@ public enum Fusion: String, Codable, Sendable {
     case jev = "jev"
 }
 
-// MARK: - RepairPlanGrain
-public struct RepairPlanGrain: Codable, Sendable {
-    /// ReferenceDesign.build_hash: Grain last_build.hash (target T11); null until then.
-    public let buildHash: String?
-    /// GrainCallResponse.version (target T10); null until Grain sends one.
-    public let callVersion: String?
-    /// Whether Grain diagnose and /call ran for this plan.
-    public let crossCheck: CrossCheck
-    public let designTrust: GrainDesignTrust
-    /// Where Grain's verdict differed from ours, in words.
-    public let disagreements: [String]?
-    public let projectID: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case buildHash = "build_hash"
-        case callVersion = "call_version"
-        case crossCheck = "cross_check"
-        case designTrust = "design_trust"
-        case disagreements = "disagreements"
-        case projectID = "project_id"
-    }
-
-    public init(buildHash: String?, callVersion: String?, crossCheck: CrossCheck, designTrust: GrainDesignTrust, disagreements: [String]?, projectID: String?) {
-        self.buildHash = buildHash
-        self.callVersion = callVersion
-        self.crossCheck = crossCheck
-        self.designTrust = designTrust
-        self.disagreements = disagreements
-        self.projectID = projectID
-    }
-}
-
-/// Whether Grain diagnose and /call ran for this plan.
-public enum CrossCheck: String, Codable, Sendable {
-    case done = "done"
-    case failed = "failed"
-    case skipped = "skipped"
-}
-
-public enum GrainDesignTrust: String, Codable, Sendable {
-    case high = "high"
-    case low = "low"
-    case none = "none"
-}
-
 // MARK: - InsufficientEvidence
 public struct InsufficientEvidence: Codable, Sendable {
     public let reason: String
@@ -3344,11 +991,11 @@ public struct InsufficientEvidence: Codable, Sendable {
     }
 }
 
-/// Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name
+/// Same as Finding.subject: ref is the part name (reference model node), harness wire name
 /// or net name.
 // MARK: - RootCauseSubject
 public struct RootCauseSubject: Codable, Sendable {
-    public let kind: PurpleKind
+    public let kind: SubjectKind
     public let pins: [String]?
     public let ref: String
 
@@ -3358,7 +1005,7 @@ public struct RootCauseSubject: Codable, Sendable {
         case ref = "ref"
     }
 
-    public init(kind: PurpleKind, pins: [String]?, ref: String) {
+    public init(kind: SubjectKind, pins: [String]?, ref: String) {
         self.kind = kind
         self.pins = pins
         self.ref = ref
@@ -3536,7 +1183,7 @@ public struct Step: Codable, Sendable {
 /// once: in `findings` (a model judged its state), `not_inspected` (nobody looked at it, I3)
 /// or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No
 /// probability number appears anywhere: confidence is a word (I6). A vision finding is a
-/// suspect; only a meter reading proves or rules out (I1, I2). Phase 1 makes no Grain calls.
+/// suspect; only a meter reading proves or rules out (I1, I2).
 // MARK: - Report
 public struct Report: Codable, Sendable {
     /// Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the
@@ -3559,8 +1206,6 @@ public struct Report: Codable, Sendable {
     /// kept; no page, text or image. Added when the search is ready; never evidence and never
     /// delays the report.
     public let fix: FixClass?
-    /// Phase 1 makes no Grain calls.
-    public let grain: GrainEnum
     /// Regions looked at that could not be judged (I4), each with the reason.
     public let insufficientEvidence: [InsufficientEvidenceElement]
     /// What photos cannot tell (always shown), plus a meter suggestion when a reported symptom
@@ -3617,7 +1262,6 @@ public struct Report: Codable, Sendable {
         case createdAt = "created_at"
         case findings = "findings"
         case fix = "fix"
-        case grain = "grain"
         case insufficientEvidence = "insufficient_evidence"
         case limits = "limits"
         case mesh = "mesh"
@@ -3638,14 +1282,13 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.bottomNotPlaced = bottomNotPlaced
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt
         self.findings = findings
         self.fix = fix
-        self.grain = grain
         self.insufficientEvidence = insufficientEvidence
         self.limits = limits
         self.mesh = mesh
@@ -3675,7 +1318,7 @@ public struct BottomNotPlacedOnTheModel: Codable, Sendable {
     public let issue: String?
     public let partClass: String?
     /// The still and crop box the finding was seen in.
-    public let photo: BottomNotPlacedPhoto
+    public let photo: Photo
     /// Why it has no 3D point.
     public let reason: String
     public let segment: Int
@@ -3691,7 +1334,7 @@ public struct BottomNotPlacedOnTheModel: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(findingID: String, issue: String?, partClass: String?, photo: BottomNotPlacedPhoto, reason: String, segment: Int, subject: BottomNotPlacedSubject?) {
+    public init(findingID: String, issue: String?, partClass: String?, photo: Photo, reason: String, segment: Int, subject: BottomNotPlacedSubject?) {
         self.findingID = findingID
         self.issue = issue
         self.partClass = partClass
@@ -3703,8 +1346,8 @@ public struct BottomNotPlacedOnTheModel: Codable, Sendable {
 }
 
 /// The still and crop box the finding was seen in.
-// MARK: - BottomNotPlacedPhoto
-public struct BottomNotPlacedPhoto: Codable, Sendable {
+// MARK: - Photo
+public struct Photo: Codable, Sendable {
     public let boxPx: [Int]?
     public let cropRef: String?
     public let stillID: String
@@ -3725,7 +1368,7 @@ public struct BottomNotPlacedPhoto: Codable, Sendable {
 /// Same as Finding.subject.
 // MARK: - BottomNotPlacedSubject
 public struct BottomNotPlacedSubject: Codable, Sendable {
-    public let kind: PurpleKind
+    public let kind: SubjectKind
     public let pins: [String]?
     public let ref: String
 
@@ -3735,7 +1378,7 @@ public struct BottomNotPlacedSubject: Codable, Sendable {
         case ref = "ref"
     }
 
-    public init(kind: PurpleKind, pins: [String]?, ref: String) {
+    public init(kind: SubjectKind, pins: [String]?, ref: String) {
         self.kind = kind
         self.pins = pins
         self.ref = ref
@@ -3880,10 +1523,10 @@ public struct CosmeticElement: Codable, Sendable {
     /// a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse
     /// missing (repairos.vision.assembly). Code decides it from the state, never a model word.
     public let category: Category?
-    public let confidenceWord: ConfidenceWordEnum
-    public let crop: CosmeticCrop
+    public let confidenceWord: ConfidenceWord
+    public let crop: Crop
     /// The crops of the other findings in a collapsed row (`crop` is the first).
-    public let crops: [CosmeticCrop]?
+    public let crops: [Crop]?
     public let evidence: [String]
     public let findingID: String
     /// A collapsed row: the findings of one physical issue (same still and overlapping crops, or
@@ -3911,7 +1554,7 @@ public struct CosmeticElement: Codable, Sendable {
     public let regions: Int?
     /// How much the issue matters (the vision model's word per crop; absent = not judged,
     /// treated as functional). Cosmetic issues are listed in `cosmetic`, never in `findings`.
-    public let severity: FindingSeverity?
+    public let severity: Severity?
     public let subject: BottomNotPlacedSubject
     /// Findings of the same place on the scan that could not be judged in another photo
     /// (insufficient_evidence) and are judged in this row's photo instead, e.g. a closer photo
@@ -3941,7 +1584,7 @@ public struct CosmeticElement: Codable, Sendable {
         case supersededIDS = "superseded_ids"
     }
 
-    public init(category: Category?, confidenceWord: ConfidenceWordEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
+    public init(category: Category?, confidenceWord: ConfidenceWord, crop: Crop, crops: [Crop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: Severity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
         self.category = category
         self.confidenceWord = confidenceWord
         self.crop = crop
@@ -3965,8 +1608,15 @@ public struct CosmeticElement: Codable, Sendable {
     }
 }
 
-// MARK: - CosmeticCrop
-public struct CosmeticCrop: Codable, Sendable {
+/// The locator's own word (uncalibrated, I6).
+public enum ConfidenceWord: String, Codable, Sendable {
+    case high = "high"
+    case low = "low"
+    case medium = "medium"
+}
+
+// MARK: - Crop
+public struct Crop: Codable, Sendable {
     public let boxPx: [Int]
     /// blob://sha256:<hex> of the full-resolution crop (GET /v1/blobs/<sha256>).
     public let cropRef: String?
@@ -4062,7 +1712,7 @@ public enum JudgmentVerdict: String, Codable, Sendable {
 // MARK: - Location
 public struct Location: Codable, Sendable {
     /// The locator's own word (uncalibrated, I6).
-    public let confidenceWord: ConfidenceWordEnum?
+    public let confidenceWord: ConfidenceWord?
     /// From the still's camera to point_m.
     public let distanceM: Double?
     /// The scan's frame: metres, Y up.
@@ -4094,7 +1744,7 @@ public struct Location: Codable, Sendable {
         case reason = "reason"
     }
 
-    public init(confidenceWord: ConfidenceWordEnum?, distanceM: Double?, frame: LocationFrame?, method: LocationMethod?, normal: [Double]?, notes: [String]?, pointM: [Double]?, regionMaxM: [Double]?, regionMinM: [Double]?, status: LocationStatus, reason: String?) {
+    public init(confidenceWord: ConfidenceWord?, distanceM: Double?, frame: LocationFrame?, method: LocationMethod?, normal: [Double]?, notes: [String]?, pointM: [Double]?, regionMaxM: [Double]?, regionMinM: [Double]?, status: LocationStatus, reason: String?) {
         self.confidenceWord = confidenceWord
         self.distanceM = distanceM
         self.frame = frame
@@ -4208,10 +1858,6 @@ public struct Option: Codable, Sendable {
     }
 }
 
-public enum GrainEnum: String, Codable, Sendable {
-    case notCalled = "not called"
-}
-
 // MARK: - InsufficientEvidenceElement
 public struct InsufficientEvidenceElement: Codable, Sendable {
     public let findingID: String
@@ -4221,7 +1867,7 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
     public let inspectedBy: [InspectedBy]
     public let location: Location?
     public let partClass: String
-    public let photo: BottomNotPlacedPhoto?
+    public let photo: Photo?
     public let reason: String
     public let subject: BottomNotPlacedSubject
 
@@ -4236,7 +1882,7 @@ public struct InsufficientEvidenceElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: BottomNotPlacedPhoto?, reason: String, subject: BottomNotPlacedSubject) {
+    public init(findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], location: Location?, partClass: String, photo: Photo?, reason: String, subject: BottomNotPlacedSubject) {
         self.findingID = findingID
         self.findingIDS = findingIDS
         self.inspectedBy = inspectedBy
@@ -4375,7 +2021,7 @@ public struct NotInspectedElement: Codable, Sendable {
     public let findingIDS: [String]?
     public let location: Location?
     public let partClass: String
-    public let photo: BottomNotPlacedPhoto?
+    public let photo: Photo?
     public let reason: String
     /// How many detector regions this row stands for. Absent means one.
     public let regions: Int?
@@ -4392,7 +2038,7 @@ public struct NotInspectedElement: Codable, Sendable {
         case subject = "subject"
     }
 
-    public init(findingID: String, findingIDS: [String]?, location: Location?, partClass: String, photo: BottomNotPlacedPhoto?, reason: String, regions: Int?, subject: BottomNotPlacedSubject) {
+    public init(findingID: String, findingIDS: [String]?, location: Location?, partClass: String, photo: Photo?, reason: String, regions: Int?, subject: BottomNotPlacedSubject) {
         self.findingID = findingID
         self.findingIDS = findingIDS
         self.location = location
@@ -4411,7 +2057,7 @@ public struct Object: Codable, Sendable {
     public let brand: String?
     /// A short generic kind of product, or unknown.
     public let category: String
-    public let confidenceWord: ConfidenceWordEnum
+    public let confidenceWord: ConfidenceWord
     public let fromStillIDS: [String]?
     /// That printed text, as read.
     public let labelText: String?
@@ -4429,7 +2075,7 @@ public struct Object: Codable, Sendable {
         case model = "model"
     }
 
-    public init(brand: String?, category: String, confidenceWord: ConfidenceWordEnum, fromStillIDS: [String]?, labelText: String?, labelVisible: Bool, model: String?) {
+    public init(brand: String?, category: String, confidenceWord: ConfidenceWord, fromStillIDS: [String]?, labelText: String?, labelVisible: Bool, model: String?) {
         self.brand = brand
         self.category = category
         self.confidenceWord = confidenceWord
@@ -4645,12 +2291,12 @@ public enum VerdictReasonCode: String, Codable, Sendable {
 
 /// Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame
 /// plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up
-/// (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is
+/// (ARKit) unless a field name says otherwise. The design frame (the reference model) is
 /// millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.
 // MARK: - ScanPackage
 public struct ScanPackage: Codable, Sendable {
     /// Filled by the backend after ICP. Absent before alignment.
-    public let alignment: ScanPackageAlignment?
+    public let alignment: Alignment?
     public let capturedAt: Date
     /// Fraction of visible voxels with >= 3 high-confidence hits (the on-phone heat map).
     public let coverageHint: Double?
@@ -4713,7 +2359,7 @@ public struct ScanPackage: Codable, Sendable {
     public let supportingPlaneRemoved: Bool?
     /// One line from the user. Goes into model state, never instructions (A9).
     public let symptom: String?
-    public let units: ScanPackageUnits
+    public let units: Units
     /// Voxel pitch in millimetres when points_file is voxel-fused (3 default; 1-2 with PromptDA
     /// TSDF). Absent when the cloud keeps raw samples (the app's live LiDAR accumulation,
     /// photogrammetry).
@@ -4744,7 +2390,7 @@ public struct ScanPackage: Codable, Sendable {
         case voxelMm = "voxel_mm"
     }
 
-    public init(alignment: ScanPackageAlignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: ScanPackagePoseSource?, productID: String, scanID: String, segments: [ScanPackageSegment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: ScanPackageUnits, voxelMm: Double?) {
+    public init(alignment: Alignment?, capturedAt: Date, coverageHint: Double?, cropBox: CropBox?, depthSource: DepthSource?, device: Device, frame: LocationFrame, gravityArkitWorld: [Double], keyframes: [ScanPackageSchema], meshFile: String?, pointCount: Int?, pointsFile: String?, poseSource: ScanPackagePoseSource?, productID: String, scanID: String, segments: [ScanPackageSegment]?, sessionID: String, supportPlane: SupportPlane?, supportingPlaneRemoved: Bool?, symptom: String?, units: Units, voxelMm: Double?) {
         self.alignment = alignment
         self.capturedAt = capturedAt
         self.coverageHint = coverageHint
@@ -4771,23 +2417,18 @@ public struct ScanPackage: Codable, Sendable {
 }
 
 /// Filled by the backend after ICP. Absent before alignment.
-// MARK: - ScanPackageAlignment
-public struct ScanPackageAlignment: Codable, Sendable {
+// MARK: - Alignment
+public struct Alignment: Codable, Sendable {
     public let computedAt: Date
-    /// The same cloud in the design frame's axes (Z up), written in design_points_units;
-    /// uploaded to Grain with name=<scan_id>.ply, units=<design_points_units>, then diagnose
-    /// with align=none, crop=false.
+    /// The same cloud in the design frame's axes (Z up), written in design_points_units.
     public let designPointsFile: String?
-    /// m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm:
-    /// already design-frame millimetres (upload with units=mm).
+    /// m: design axes in metres. mm: design-frame millimetres.
     public let designPointsUnits: DesignPointsUnits?
     /// Inlier fraction.
     public let fitness: Double
     /// False means no part verdicts are made from this scan (fit gate).
     public let gatePassed: Bool
     public let gateThresholdFitness: Double?
-    /// The id Grain made for the upload (GrainScanRecord.id); Grain's ids are not ours.
-    public let grainScanID: String?
     /// e.g. open3d_robust_point_to_plane_icp
     public let method: String
     public let rmseMm: Double
@@ -4803,28 +2444,25 @@ public struct ScanPackageAlignment: Codable, Sendable {
         case fitness = "fitness"
         case gatePassed = "gate_passed"
         case gateThresholdFitness = "gate_threshold_fitness"
-        case grainScanID = "grain_scan_id"
         case method = "method"
         case rmseMm = "rmse_mm"
         case transformArkitWorldToDesign = "transform_arkit_world_to_design"
     }
 
-    public init(computedAt: Date, designPointsFile: String?, designPointsUnits: DesignPointsUnits?, fitness: Double, gatePassed: Bool, gateThresholdFitness: Double?, grainScanID: String?, method: String, rmseMm: Double, transformArkitWorldToDesign: [Double]) {
+    public init(computedAt: Date, designPointsFile: String?, designPointsUnits: DesignPointsUnits?, fitness: Double, gatePassed: Bool, gateThresholdFitness: Double?, method: String, rmseMm: Double, transformArkitWorldToDesign: [Double]) {
         self.computedAt = computedAt
         self.designPointsFile = designPointsFile
         self.designPointsUnits = designPointsUnits
         self.fitness = fitness
         self.gatePassed = gatePassed
         self.gateThresholdFitness = gateThresholdFitness
-        self.grainScanID = grainScanID
         self.method = method
         self.rmseMm = rmseMm
         self.transformArkitWorldToDesign = transformArkitWorldToDesign
     }
 }
 
-/// m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm:
-/// already design-frame millimetres (upload with units=mm).
+/// m: design axes in metres. mm: design-frame millimetres.
 public enum DesignPointsUnits: String, Codable, Sendable {
     case m = "m"
     case mm = "mm"
@@ -5130,15 +2768,14 @@ public struct SupportPlane: Codable, Sendable {
     }
 }
 
-public enum ScanPackageUnits: String, Codable, Sendable {
+public enum Units: String, Codable, Sendable {
     case m = "m"
 }
 
 /// Sourcing decision for one part to buy. Selection and budget enforcement are deterministic
 /// (A5): the chosen candidate is the one selection_rule picks from the candidates, and total
 /// never exceeds budget.cap. AI may only discover candidates and extract datasheet fields;
-/// ai_assist records where it was used. Grain BOM prices are treated as current (owner
-/// decision 2026-10-23).
+/// ai_assist records where it was used.
 // MARK: - ShoppingQuote
 public struct ShoppingQuote: Codable, Sendable {
     public let aiAssist: AIAssist
@@ -5147,7 +2784,7 @@ public struct ShoppingQuote: Codable, Sendable {
     /// Index into candidates, or null when nothing is eligible within budget.
     public let chosenIndex: Int?
     public let createdAt: Date
-    /// Print-it option from Grain's made[] / model.step, when one exists.
+    /// Print-it option from the reference model, when one exists.
     public let madeAlternative: MadeAlternative?
     public let originalMpn: String?
     /// BOM ref being replaced.
@@ -5250,7 +2887,7 @@ public struct Candidate: Codable, Sendable {
     public let leadDays: Int?
     public let minQty: Int?
     public let mpn: String?
-    /// grain_bom prices are treated as current.
+    /// reference_bom prices are treated as current.
     public let priceSource: PriceSource
     /// A substitute for a protective part must be passed or it is ineligible (S2).
     public let protectivePartCheck: ProtectivePartCheck?
@@ -5305,12 +2942,12 @@ public struct Candidate: Codable, Sendable {
 public enum FoundBy: String, Codable, Sendable {
     case aiDiscovery = "ai_discovery"
     case deterministicSearch = "deterministic_search"
-    case grainBOM = "grain_bom"
+    case referenceBOM = "reference_bom"
 }
 
-/// grain_bom prices are treated as current.
+/// reference_bom prices are treated as current.
 public enum PriceSource: String, Codable, Sendable {
-    case grainBOM = "grain_bom"
+    case referenceBOM = "reference_bom"
     case searchSnippet = "search_snippet"
     case supplierPage = "supplier_page"
 }
@@ -5323,16 +2960,14 @@ public enum SpecMatch: String, Codable, Sendable {
     case substitute = "substitute"
 }
 
-/// Print-it option from Grain's made[] / model.step, when one exists.
+/// Print-it option from the reference model, when one exists.
 // MARK: - MadeAlternative
 public struct MadeAlternative: Codable, Sendable {
     public let estCost: Double?
-    /// Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes,
-    /// material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain
-    /// is kept for a future priced made[] row.
+    /// pilot_estimate = a rough print estimate (PLA grams, minutes, material $; not sliced) for
+    /// simple printed parts; otherwise unknown ('no price').
     public let estCostSource: EstCostSource?
-    /// STEP or STL path from the reference cache: Grain's made[].file (today the whole
-    /// out/model.step; the part is its node) or a pilot export.
+    /// STEP or STL path for the part, or a pilot export.
     public let file: String?
     public let massG: Double?
     public let material: String?
@@ -5361,12 +2996,10 @@ public struct MadeAlternative: Codable, Sendable {
     }
 }
 
-/// Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes,
-/// material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain
-/// is kept for a future priced made[] row.
+/// pilot_estimate = a rough print estimate (PLA grams, minutes, material $; not sliced) for
+/// simple printed parts; otherwise unknown ('no price').
 public enum EstCostSource: String, Codable, Sendable {
-    case grain = "grain"
-    case grainPilotEstimate = "grain_pilot_estimate"
+    case pilotEstimate = "pilot_estimate"
     case repairosEstimate = "repairos_estimate"
     case unknown = "unknown"
 }
@@ -5400,7 +3033,7 @@ public struct Still: Codable, Sendable {
     /// Exposure duration of the still (ARKit camera).
     public let exposureS: Double?
     public let heightPx: Int
-    /// JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it.
+    /// JPEG (q >= 85). HEIC is converted on the phone.
     public let imageFile: String
     /// Pinhole intrinsics in pixels of the width_px x height_px image. May be absent only when
     /// pose_reliable is false and the focal length is unknown (a plain photo without EXIF focal
@@ -5615,12 +3248,11 @@ public enum StillKind: String, Codable, Sendable {
 // MARK: - TargetElement
 public struct TargetElement: Codable, Sendable {
     /// The target's box in the design frame (mm, Z up), from the model.glb node bounds.
-    /// Connector-level, because Grain has no pin positions yet (G25; pins are target T7).
+    /// Connector-level.
     public let boxMm: BoxMm?
     /// harness.csv wire names expected in view, e.g. WIRE_A.
     public let harnessRows: [String]?
-    /// Grain part names (model.glb nodes, diagnose parts[].name) expected in view, e.g. J1,
-    /// LOAD1.
+    /// Part names (reference model nodes) expected in view, e.g. J1, LOAD1.
     public let partRefs: [String]?
     public let reason: TargetReason?
     public let targetID: String
@@ -5643,7 +3275,7 @@ public struct TargetElement: Codable, Sendable {
 }
 
 /// The target's box in the design frame (mm, Z up), from the model.glb node bounds.
-/// Connector-level, because Grain has no pin positions yet (G25; pins are target T7).
+/// Connector-level.
 // MARK: - BoxMm
 public struct BoxMm: Codable, Sendable {
     public let max: [Double]
@@ -5676,18 +3308,11 @@ public struct Suspect: Codable, Sendable {
     /// True only after a reliability diagram on our labelled scans for this product class. Until
     /// then the UI shows p_fault_word only.
     public let calibrationValidated: Bool
-    public let designTrust: FindingDesignTrust?
+    public let designTrust: DesignTrust?
     public let faultKind: FaultKind?
     /// Findings fused into this suspect.
     public let findingIDS: [String]
     public let fusionSource: Fusion
-    /// The Grain /call fix merged into this suspect, if any (joined by part name, wire name or
-    /// net name until T3 adds fixes[].subject).
-    public let grainFix: GrainFix?
-    /// Grain diagnose verdict for the same part (GrainDiagnoseResponse parts[].verdict, joined
-    /// on parts[].name = subject.ref), if any. Kept separate; advisory when design_trust is low.
-    /// null when Grain has no row for it.
-    public let grainVerdict: PartGrainVerdict?
     /// e.g. jev-1.14.0.
     public let jevModel: String?
     public let onSymptomPowerPath: Bool?
@@ -5712,8 +3337,6 @@ public struct Suspect: Codable, Sendable {
         case faultKind = "fault_kind"
         case findingIDS = "finding_ids"
         case fusionSource = "fusion_source"
-        case grainFix = "grain_fix"
-        case grainVerdict = "grain_verdict"
         case jevModel = "jev_model"
         case onSymptomPowerPath = "on_symptom_power_path"
         case pFault = "p_fault"
@@ -5727,14 +3350,12 @@ public struct Suspect: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(calibrationValidated: Bool, designTrust: FindingDesignTrust?, faultKind: FaultKind?, findingIDS: [String], fusionSource: Fusion, grainFix: GrainFix?, grainVerdict: PartGrainVerdict?, jevModel: String?, onSymptomPowerPath: Bool?, pFault: Double, pFaultWord: Word, proofReadingID: String?, rank: Int, scanID: String, subject: SuspectSubject, suspectID: String, updatedAt: Date, verdict: JudgmentVerdict) {
+    public init(calibrationValidated: Bool, designTrust: DesignTrust?, faultKind: FaultKind?, findingIDS: [String], fusionSource: Fusion, jevModel: String?, onSymptomPowerPath: Bool?, pFault: Double, pFaultWord: Word, proofReadingID: String?, rank: Int, scanID: String, subject: SuspectSubject, suspectID: String, updatedAt: Date, verdict: JudgmentVerdict) {
         self.calibrationValidated = calibrationValidated
         self.designTrust = designTrust
         self.faultKind = faultKind
         self.findingIDS = findingIDS
         self.fusionSource = fusionSource
-        self.grainFix = grainFix
-        self.grainVerdict = grainVerdict
         self.jevModel = jevModel
         self.onSymptomPowerPath = onSymptomPowerPath
         self.pFault = pFault
@@ -5771,33 +3392,11 @@ public struct FaultKind: Codable, Sendable {
     }
 }
 
-/// The Grain /call fix merged into this suspect, if any (joined by part name, wire name or
-/// net name until T3 adds fixes[].subject).
-// MARK: - GrainFix
-public struct GrainFix: Codable, Sendable {
-    public let action: Action
-    public let confidence: ConfidenceWordEnum
-    /// Grain's display string, as sent.
-    public let part: String?
-
-    public enum CodingKeys: String, CodingKey {
-        case action = "action"
-        case confidence = "confidence"
-        case part = "part"
-    }
-
-    public init(action: Action, confidence: ConfidenceWordEnum, part: String?) {
-        self.action = action
-        self.confidence = confidence
-        self.part = part
-    }
-}
-
-/// Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name
+/// Same as Finding.subject: ref is the part name (reference model node), harness wire name
 /// or net name.
 // MARK: - SuspectSubject
 public struct SuspectSubject: Codable, Sendable {
-    public let kind: PurpleKind
+    public let kind: SubjectKind
     public let pins: [String]?
     public let ref: String
 
@@ -5807,255 +3406,9 @@ public struct SuspectSubject: Codable, Sendable {
         case ref = "ref"
     }
 
-    public init(kind: PurpleKind, pins: [String]?, ref: String) {
+    public init(kind: SubjectKind, pins: [String]?, ref: String) {
         self.kind = kind
         self.pins = pins
         self.ref = ref
-    }
-}
-
-// MARK: - Encode/decode helpers
-
-public final class JSONNull: Codable, Hashable, Sendable {
-
-    public static func == (lhs: JSONNull, rhs: JSONNull) -> Bool {
-        return true
-    }
-
-    public var hashValue: Int {
-        return 0
-    }
-
-    public func hash(into hasher: inout Hasher) {
-        // No-op
-    }
-
-    public init() {}
-
-    public required init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        if !container.decodeNil() {
-            throw DecodingError.typeMismatch(JSONNull.self, DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Wrong type for JSONNull"))
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        var container = encoder.singleValueContainer()
-        try container.encodeNil()
-    }
-}
-
-final class JSONCodingKey: CodingKey {
-    let key: String
-
-    required init?(intValue: Int) {
-        return nil
-    }
-
-    required init?(stringValue: String) {
-        key = stringValue
-    }
-
-    var intValue: Int? {
-        return nil
-    }
-
-    var stringValue: String {
-        return key
-    }
-}
-
-public final class JSONAny: Codable, @unchecked Sendable {
-
-    public let value: Any
-
-    static func decodingError(forCodingPath codingPath: [CodingKey]) -> DecodingError {
-        let context = DecodingError.Context(codingPath: codingPath, debugDescription: "Cannot decode JSONAny")
-        return DecodingError.typeMismatch(JSONAny.self, context)
-    }
-
-    static func encodingError(forValue value: Any, codingPath: [CodingKey]) -> EncodingError {
-        let context = EncodingError.Context(codingPath: codingPath, debugDescription: "Cannot encode JSONAny")
-        return EncodingError.invalidValue(value, context)
-    }
-
-    static func decode(from container: SingleValueDecodingContainer) throws -> Any {
-        if let value = try? container.decode(Bool.self) {
-            return value
-        }
-        if let value = try? container.decode(Int64.self) {
-            return value
-        }
-        if let value = try? container.decode(Double.self) {
-            return value
-        }
-        if let value = try? container.decode(String.self) {
-            return value
-        }
-        if container.decodeNil() {
-            return JSONNull()
-        }
-        throw decodingError(forCodingPath: container.codingPath)
-    }
-
-    static func decode(from container: inout UnkeyedDecodingContainer) throws -> Any {
-        if let value = try? container.decode(Bool.self) {
-            return value
-        }
-        if let value = try? container.decode(Int64.self) {
-            return value
-        }
-        if let value = try? container.decode(Double.self) {
-            return value
-        }
-        if let value = try? container.decode(String.self) {
-            return value
-        }
-        if let value = try? container.decodeNil() {
-            if value {
-                return JSONNull()
-            }
-        }
-        if var container = try? container.nestedUnkeyedContainer() {
-            return try decodeArray(from: &container)
-        }
-        if var container = try? container.nestedContainer(keyedBy: JSONCodingKey.self) {
-            return try decodeDictionary(from: &container)
-        }
-        throw decodingError(forCodingPath: container.codingPath)
-    }
-
-    static func decode(from container: inout KeyedDecodingContainer<JSONCodingKey>, forKey key: JSONCodingKey) throws -> Any {
-        if let value = try? container.decode(Bool.self, forKey: key) {
-            return value
-        }
-        if let value = try? container.decode(Int64.self, forKey: key) {
-            return value
-        }
-        if let value = try? container.decode(Double.self, forKey: key) {
-            return value
-        }
-        if let value = try? container.decode(String.self, forKey: key) {
-            return value
-        }
-        if let value = try? container.decodeNil(forKey: key) {
-            if value {
-                return JSONNull()
-            }
-        }
-        if var container = try? container.nestedUnkeyedContainer(forKey: key) {
-            return try decodeArray(from: &container)
-        }
-        if var container = try? container.nestedContainer(keyedBy: JSONCodingKey.self, forKey: key) {
-            return try decodeDictionary(from: &container)
-        }
-        throw decodingError(forCodingPath: container.codingPath)
-    }
-
-    static func decodeArray(from container: inout UnkeyedDecodingContainer) throws -> [Any] {
-        var arr: [Any] = []
-        while !container.isAtEnd {
-            let value = try decode(from: &container)
-            arr.append(value)
-        }
-        return arr
-    }
-
-    static func decodeDictionary(from container: inout KeyedDecodingContainer<JSONCodingKey>) throws -> [String: Any] {
-        var dict = [String: Any]()
-        for key in container.allKeys {
-            let value = try decode(from: &container, forKey: key)
-            dict[key.stringValue] = value
-        }
-        return dict
-    }
-
-    static func encode(to container: inout UnkeyedEncodingContainer, array: [Any]) throws {
-        for value in array {
-            if let value = value as? Bool {
-                try container.encode(value)
-            } else if let value = value as? Int64 {
-                try container.encode(value)
-            } else if let value = value as? Double {
-                try container.encode(value)
-            } else if let value = value as? String {
-                try container.encode(value)
-            } else if value is JSONNull {
-                try container.encodeNil()
-            } else if let value = value as? [Any] {
-                var container = container.nestedUnkeyedContainer()
-                try encode(to: &container, array: value)
-            } else if let value = value as? [String: Any] {
-                var container = container.nestedContainer(keyedBy: JSONCodingKey.self)
-                try encode(to: &container, dictionary: value)
-            } else {
-                throw encodingError(forValue: value, codingPath: container.codingPath)
-            }
-        }
-    }
-
-    static func encode(to container: inout KeyedEncodingContainer<JSONCodingKey>, dictionary: [String: Any]) throws {
-        for (key, value) in dictionary {
-            let key = JSONCodingKey(stringValue: key)!
-            if let value = value as? Bool {
-                try container.encode(value, forKey: key)
-            } else if let value = value as? Int64 {
-                try container.encode(value, forKey: key)
-            } else if let value = value as? Double {
-                try container.encode(value, forKey: key)
-            } else if let value = value as? String {
-                try container.encode(value, forKey: key)
-            } else if value is JSONNull {
-                try container.encodeNil(forKey: key)
-            } else if let value = value as? [Any] {
-                var container = container.nestedUnkeyedContainer(forKey: key)
-                try encode(to: &container, array: value)
-            } else if let value = value as? [String: Any] {
-                var container = container.nestedContainer(keyedBy: JSONCodingKey.self, forKey: key)
-                try encode(to: &container, dictionary: value)
-            } else {
-                throw encodingError(forValue: value, codingPath: container.codingPath)
-            }
-        }
-    }
-
-    static func encode(to container: inout SingleValueEncodingContainer, value: Any) throws {
-        if let value = value as? Bool {
-            try container.encode(value)
-        } else if let value = value as? Int64 {
-            try container.encode(value)
-        } else if let value = value as? Double {
-            try container.encode(value)
-        } else if let value = value as? String {
-            try container.encode(value)
-        } else if value is JSONNull {
-            try container.encodeNil()
-        } else {
-            throw encodingError(forValue: value, codingPath: container.codingPath)
-        }
-    }
-
-    public required init(from decoder: Decoder) throws {
-        if var arrayContainer = try? decoder.unkeyedContainer() {
-            self.value = try JSONAny.decodeArray(from: &arrayContainer)
-        } else if var container = try? decoder.container(keyedBy: JSONCodingKey.self) {
-            self.value = try JSONAny.decodeDictionary(from: &container)
-        } else {
-            let container = try decoder.singleValueContainer()
-            self.value = try JSONAny.decode(from: container)
-        }
-    }
-
-    public func encode(to encoder: Encoder) throws {
-        if let arr = self.value as? [Any] {
-            var container = encoder.unkeyedContainer()
-            try JSONAny.encode(to: &container, array: arr)
-        } else if let dict = self.value as? [String: Any] {
-            var container = encoder.container(keyedBy: JSONCodingKey.self)
-            try JSONAny.encode(to: &container, dictionary: dict)
-        } else {
-            var container = encoder.singleValueContainer()
-            try JSONAny.encode(to: &container, value: self.value)
-        }
     }
 }

@@ -14,8 +14,8 @@ from repairos.contracts import MODELS, validate
 
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACTS = ROOT / "spec" / "contracts"
-# Public examples, plus the private Grain examples when present (private/ is gitignored; Grain is proprietary).
-EXAMPLE_DIRS = [d for d in (CONTRACTS / "examples", ROOT / "private" / "grain" / "examples") if d.is_dir()]
+# The public contract examples.
+EXAMPLE_DIRS = [d for d in (CONTRACTS / "examples",) if d.is_dir()]
 EXAMPLES = sorted(p for d in EXAMPLE_DIRS for p in d.glob("*.json"))
 INVALID = sorted((p for d in EXAMPLE_DIRS for p in (d / "invalid").glob("*.json")), key=lambda p: p.name)
 SWIFT = ROOT / "ios" / "RepairOS" / "Contracts" / "Contracts.swift"
@@ -66,7 +66,7 @@ def invalid_instance(path: Path) -> tuple[str, object]:
         if (d / case["base"]).exists():
             base = json.loads((d / case["base"]).read_text(encoding="utf-8"))
             return case["schema"], merge_patch(base, case["patch"])
-    pytest.skip(f"base example {case['base']} not present (private Grain examples absent?)")
+    pytest.skip(f"base example {case['base']} not present")
 
 
 def test_every_schema_has_a_model():

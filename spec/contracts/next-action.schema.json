@@ -14,7 +14,6 @@
       "enum": [
         "request_closeup", "request_other_angle", "rescan",
         "run_reference_compare", "run_continuity_test", "run_voltage_test", "run_resistance_test",
-        "run_grain_second_opinion",
         "report_insufficient_evidence", "report_finding", "ask_user"
       ]
     },
@@ -23,12 +22,12 @@
       "additionalProperties": false,
       "description": "What the action is about. Fields used depend on kind.",
       "properties": {
-        "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Grain part names (model.glb nodes)." },
-        "harness_row": { "type": "string", "description": "harness.csv wire name (GrainElectricalReference wires[].name)." },
-        "net": { "type": "string", "description": "Grain net name." },
-        "pins": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "REF.PIN ids to probe in Grain's net naming (e.g. J1.1), the form /electrical/check accepts; never shown to the user bare." },
+        "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Part names (the reference model's node names)." },
+        "harness_row": { "type": "string", "description": "Harness wire name from the design's electrical reference." },
+        "net": { "type": "string", "description": "Net name from the design's electrical reference." },
+        "pins": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "REF.PIN ids to probe in the design's net naming (e.g. J1.1); never shown to the user bare." },
         "ar_labels": { "type": "array", "items": { "type": "string" }, "description": "Labels drawn on the real product for these pins or parts." },
-        "still_ids": { "type": "array", "items": { "type": "string" }, "description": "Crops to send for a Grain second opinion." }
+        "still_ids": { "type": "array", "items": { "type": "string" }, "description": "Crops this action is about." }
       }
     },
     "instruction": { "type": "string", "minLength": 1, "description": "User-facing text. For meter steps it states the power state first." },
@@ -37,13 +36,13 @@
     "expected": {
       "type": "object",
       "additionalProperties": false,
-      "description": "What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from Grain's expected{min, max}, never from expected.volts alone (G2).",
+      "description": "What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from the reference's expected {min, max}, never from a single expected value.",
       "properties": {
         "continuity": { "type": "boolean" },
         "ohms_max": { "type": "number", "minimum": 0 },
         "volts_min": { "type": "number" },
         "volts_max": { "type": "number" },
-        "source": { "type": "string", "enum": ["grain_electrical", "report_json_minmax", "repairos_derived", "datasheet"], "description": "report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches." }
+        "source": { "type": "string", "enum": ["report_json_minmax", "repairos_derived", "datasheet"], "description": "report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches." }
       }
     },
     "safety_notes": { "type": "array", "items": { "type": "string" }, "description": "Shown before the step. Always present when power_state is on or the step touches a supply (S1, S3)." },
