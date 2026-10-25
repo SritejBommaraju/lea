@@ -158,8 +158,8 @@ struct ProblemRingTests {
     }
 
     @MainActor @Test func ringTextureDraws() {
-        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2), dashed: false) != nil)
-        #expect(RecreationStage.ring(rgb: SIMD3(0.5, 0.5, 0.6), dashed: true) != nil)
+        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2)) != nil)
+        #expect(RecreationStage.ring(rgb: FixedHex.rgb(FixedHex.next)) != nil)
     }
 }
 

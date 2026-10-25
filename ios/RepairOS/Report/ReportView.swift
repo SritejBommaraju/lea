@@ -223,8 +223,8 @@ struct ReportView: View {
             .disabled(offline || !ScanLibrary.canDelete(record, app: app))
     }
 
-    /// The report's one next thing, pinned in the frosted bar: hold to ask Lea about this scan beside Continue
-    /// scanning (violet). Not paired: Continue scanning alone, when it can go.
+    /// The report's one next thing, pinned in the frosted bar: tap to talk to Lea about this scan beside Continue
+    /// scanning (blue). Not paired: Continue scanning alone, when it can go.
     @ViewBuilder private func pinnedBar(_ report: ReportModel) -> some View {
         if let gateway = askGateway {
             ConversationPanel(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),

@@ -14,6 +14,7 @@ import SwiftUI
 ///                           moment), the first problem's detail, and the capture overlay over one of its real stills.
 ///     --ui-walkthrough       on the stage screens: start "Walk me through it" two seconds after opening.
 ///     --ui-locked            on `overlay`: the locked state.
+///     --ui-select            on Home: selection mode with the first deletable scan ticked.
 ///     --ui-lea-replay <eval.json> --ui-lea-turn <id>
 ///                           on `stage`: replays one recorded real report turn (eval/live_vision results: the question,
 ///                           Lea's words with their `<show/>` markers, and the 3D points the gateway resolved them to)
@@ -215,7 +216,9 @@ private struct GalleryLeaReplay<Content: View>: View {
             return Move(id: part, label: p["label"] as? String ?? part, point: SIMD3(xyz[0].floatValue, xyz[1].floatValue, xyz[2].floatValue),
                         pixel: pixel)
         }
-        // Sentences of the raw answer; a marker belongs to the sentence it opens or sits in.
+        // Sentences of the raw answer, cut and cleaned the way the gateway and the phone do it (LeaText: a stop only
+        // before a space, so "1.5 mm" stays whole; markers, image names and ids never shown); a marker belongs to the
+        // sentence it opens or sits in.
         var out: [(String, [Move])] = []
         let flat = raw.replacingOccurrences(of: "\n", with: " ")
         var current = "", moves: [Move] = []
@@ -229,15 +232,16 @@ private struct GalleryLeaReplay<Content: View>: View {
                 continue
             }
             current.append(flat[i])
-            if ".!?".contains(flat[i]) {
-                let text = current.trimmingCharacters(in: .whitespaces)
+            let next = flat.index(after: i)
+            if ".!?".contains(flat[i]), next == flat.endIndex || flat[next].isWhitespace {
+                let text = LeaText.clean(current)
                 if !text.isEmpty { out.append((text, moves)); moves = [] }
                 current = ""
             }
-            i = flat.index(after: i)
+            i = next
         }
-        let rest = current.trimmingCharacters(in: .whitespaces)
-        if !rest.isEmpty { out.append((rest, moves)) }
+        let rest = LeaText.clean(current)
+        if !rest.isEmpty { out.append((rest, moves)) } else if !moves.isEmpty, !out.isEmpty { out[out.count - 1].1 += moves }
         let photo = points.first?["photo"] as? String
         return Turn(question: question, sentences: out.map { (text: $0.0, moves: $0.1) }, photo: photo)
     }
@@ -273,10 +277,10 @@ private struct GalleryLeaReplay<Content: View>: View {
             let k = out.width / side
             upright.draw(in: CGRect(x: -window.minX * k, y: -window.minY * k, width: size.width * k, height: size.height * k))
             let ring = CGRect(x: out.width * 0.2, y: out.height * 0.2, width: out.width * 0.6, height: out.height * 0.6)
-            ctx.cgContext.setStrokeColor(UIColor(hex: 0x0E1214, alpha: 0.8).cgColor)
+            ctx.cgContext.setStrokeColor(UIColor(hex: FixedHex.keyline, alpha: 0.8).cgColor)
             ctx.cgContext.setLineWidth(14)
             ctx.cgContext.strokeEllipse(in: ring)
-            ctx.cgContext.setStrokeColor(UIColor(hex: 0xC2B1FF).cgColor)
+            ctx.cgContext.setStrokeColor(UIColor(hex: FixedHex.next).cgColor)
             ctx.cgContext.setLineWidth(8)
             ctx.cgContext.strokeEllipse(in: ring)
         }
@@ -300,7 +304,7 @@ private struct GalleryLeaReplay<Content: View>: View {
             for m in s.moves { if let crop = spotCrop(m) ?? sha { photoFor[m.id] = crop } }
             said.append(s.text)
             feed.replay(question: t.question, sentence: s.text, thinking: false, speaking: true, photoFor: photoFor,
-                        answer: said.joined(separator: " "))
+                        answer: said)
             for m in s.moves {
                 n += 1
                 cue = LeaStageCue(n: n, command: .point(id: m.id, at: m.point, label: m.label, radius: 0.012))
@@ -309,7 +313,7 @@ private struct GalleryLeaReplay<Content: View>: View {
             try? await Task.sleep(for: .seconds(max(1.2, Double(s.text.count) / 14)))
         }
         feed.replay(question: t.question, sentence: t.sentences.last?.text, thinking: false, speaking: false,
-                    photoFor: photoFor, answer: said.joined(separator: " "))
+                    photoFor: photoFor, answer: said)
     }
 }
 

@@ -10,7 +10,7 @@ import UIKit
 /// any words said after the phrase as the first thing the person said. After Lea answers it listens for a
 /// follow-up for a few seconds without the phrase (hands-free turns); the turn ends when the person stops talking.
 ///
-/// It listens only in the foreground and never while hold to talk records. While Lea speaks, Apple's recognizer is
+/// It listens only in the foreground and never while the talk button records. While Lea speaks, Apple's recognizer is
 /// ignored (she must not hear herself); with the mic's echo cancellation on, Ink-2 keeps listening during her
 /// answer, and the person starting to talk (`turn.start`) stops her: barge-in by voice.
 @MainActor
@@ -34,11 +34,22 @@ final class WakeListener {
 
     /// Hands-free that stays on: after each answer Lea keeps listening for the next turn, with no window and no
     /// "Hey Lea", until it is turned off (swipe up turns it on; the ear button toggles it). Remembered.
-    var continuous: Bool = UserDefaults.standard.bool(forKey: WakeListener.continuousKey) {
+    var continuous: Bool = WakeListener.savedContinuous() {
         didSet {
             UserDefaults.standard.set(continuous, forKey: Self.continuousKey)
             if continuous { listenForFollowUp() } else { endFollowUp() }
         }
+    }
+
+    /// The saved hands-free switch. Once, with tap to talk (the owner, 2026-10-25), it starts off: Home's Talk button
+    /// used to turn it on without asking, which kept reopening the mic after every answer.
+    private static func savedContinuous() -> Bool {
+        let d = UserDefaults.standard, reset = "leaHandsFreeTapToTalkReset"
+        if !d.bool(forKey: reset) {
+            d.set(true, forKey: reset)
+            d.set(false, forKey: continuousKey)
+        }
+        return d.bool(forKey: continuousKey)
     }
 
     @ObservationIgnored private let mic = MicTap()

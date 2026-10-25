@@ -216,7 +216,6 @@ private struct RecreationHost: UIViewRepresentable {
         rig.onSettle = { [weak c] in c?.settled() }
         c.rig = rig
         view.delegate = c.separator   // numbered markers never cover each other on screen (Report/Stage/MarkerLayout)
-        probe?.resolve = { [weak c] center, radius in c?.resolve(center, radius) }
         c.stage.set(loaded.content, focus: loaded.focus)
         rig.scale = max(0.02, c.stage.focusRadius)
         c.stage.place(markers, focus: focus)
@@ -473,21 +472,6 @@ private struct RecreationHost: UIViewRepresentable {
                 guard let self, !self.stage.isSpinning, !(self.rig?.moving ?? false) else { return }
                 self.view?.isPlaying = false
             }
-        }
-
-        /// A circle on screen → the spot on the recreation's surface under its centre (scan frame), and the circle's
-        /// radius at that depth. nil when the centre misses the object.
-        func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
-            guard let view else { return nil }
-            let hits = view.hitTest(center, options: [.searchMode: SCNHitTestSearchMode.closest.rawValue,
-                                                      .rootNode: stage.modelNode])
-            guard let hit = hits.first else { return nil }
-            let world = SIMD3<Float>(hit.worldCoordinates)
-            let z = view.projectPoint(hit.worldCoordinates).z
-            let edge = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
-            // The markers' frame is the scan frame (findings' point_m), so the target uses it too.
-            let local = stage.markerRoot.presentation.simdConvertPosition(world, from: nil)
-            return (local, max(0.01, simd_distance(world, edge)))
         }
 
         @objc func tap(_ g: UITapGestureRecognizer) {

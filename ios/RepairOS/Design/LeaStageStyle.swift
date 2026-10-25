@@ -12,10 +12,9 @@ import UIKit
 /// How Lea's highlight ring looks: a finding's ring in its severity tone, any other part or point in `next`. Chalk
 /// keyline under it so it reads on any scan. It settles once (scale 0.85 → 1, stroke 1.5 → 2.5 pt) and never pulses.
 struct FocusRingStyle: Equatable, Sendable {
-    /// The finding's tone; nil for a part or point that is not a finding.
+    /// The finding's tone; nil for a part or point that is not a finding. Always a solid ring: the stage never draws
+    /// a dashed "look closer" ring (the owner, 2026-10-25; unchecked areas live behind ⋯ "What wasn't checked").
     var tone: Tone?
-    /// Dashed: a circled target not yet checked (unknown).
-    var dashed = false
 
     static let startScale: CGFloat = 0.85
     static let startWidth: CGFloat = Line.drawing
@@ -26,13 +25,13 @@ struct FocusRingStyle: Equatable, Sendable {
     var color: Color { tone?.cameraColor ?? Palette.next }
 
     func stroke(width: CGFloat) -> StrokeStyle {
-        StrokeStyle(lineWidth: width, lineCap: .butt, dash: dashed ? [6, 5] : [])
+        StrokeStyle(lineWidth: width, lineCap: .butt)
     }
 
     /// The settled ring as an image for a SceneKit or RealityKit plane (rendered once per style and size).
     @MainActor
     func image(diameter: CGFloat = 128, scale: CGFloat = 2) -> UIImage {
-        let key = "\(String(describing: tone))|\(dashed)|\(diameter)|\(scale)"
+        let key = "\(String(describing: tone))|\(diameter)|\(scale)"
         if let hit = Self.cache[key] { return hit }
         let view = Circle()
             .stroke(Palette.keyline, style: stroke(width: Self.endWidth + 2))
@@ -155,7 +154,9 @@ struct LeaCaptionStrip: View {
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: Spacing.xs) {
                 if let question = question?.trimmedOrNil {
-                    Text(question).font(.subheadline).foregroundStyle(Palette.chalk.opacity(0.7)).lineLimit(1)
+                    // Two lines, so a real question is not cut to its first few words; the transcript has it whole.
+                    Text(question).font(.subheadline).foregroundStyle(Palette.chalk.opacity(0.7)).lineLimit(2)
+                        .truncationMode(.head)
                 }
                 if let failure = failure?.trimmedOrNil {
                     Label(failure, systemImage: Symbol.safety).font(.subheadline.weight(.semibold))
@@ -165,7 +166,8 @@ struct LeaCaptionStrip: View {
                 } else if let sentence {
                     VStack(alignment: .leading, spacing: 4) {
                         if let part { partLine(part) }
-                        Text(sentence).font(.body).foregroundStyle(Palette.chalk).lineLimit(3)
+                        // One sentence at a time, whole: the stage measures the strip and makes room for it.
+                        Text(sentence).font(.body).foregroundStyle(Palette.chalk).lineLimit(6)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .id(sentence)
@@ -316,20 +318,20 @@ struct EvidencePhoto: View {
 
 /// The stage's marks as images for the 3D heroes (RecreationScene, ModelView, AR), drawn with CoreGraphics so they can
 /// be made off the main actor: the `Marker` (a dark-surface disc outlined in the tone, the number in the display face)
-/// and the `FocusRingStyle` ring (the tone over a keyline, dashed for a circled target; no glow). Colours are the
+/// and the `FocusRingStyle` ring (the tone over a keyline, solid; no glow). Colours are the
 /// fixed stage values (the dark-mode tones; `next` for a part or point that is not a finding).
 enum StageMarkImages {
     /// The stage colour for a tone, as sRGB.
     static func rgb(_ tone: Tone) -> SIMD3<Float> {
         let hex: UInt32 = switch tone {
-        case .danger: 0xF0785C
-        case .caution: 0xE9B24F
-        case .good: 0xB5D58A
-        case .cosmetic: 0xC2B3DB
-        case .setup: 0x5CCAD3
-        case .accent, .neutral: 0xC2B1FF
+        case .danger: FixedHex.danger
+        case .caution: FixedHex.caution
+        case .good: FixedHex.good
+        case .cosmetic: FixedHex.cosmetic
+        case .setup: FixedHex.setup
+        case .accent, .neutral: FixedHex.next
         }
-        return SIMD3(Float((hex >> 16) & 0xFF) / 255, Float((hex >> 8) & 0xFF) / 255, Float(hex & 0xFF) / 255)
+        return FixedHex.rgb(hex)
     }
 
     private static func context(_ side: Int) -> CGContext? {
@@ -347,7 +349,7 @@ enum StageMarkImages {
         let s = CGFloat(side)
         let line = s * Line.drawing / 26
         let rect = CGRect(x: 0, y: 0, width: s, height: s).insetBy(dx: line / 2 + 1, dy: line / 2 + 1)
-        ctx.setFillColor(CGColor(srgbRed: 0x21 / 255, green: 0x1D / 255, blue: 0x30 / 255, alpha: 1))
+        ctx.setFillColor(FixedHex.cgColor(FixedHex.stageRaised))
         ctx.fillEllipse(in: rect)
         ctx.setStrokeColor(colour(rgb))
         ctx.setLineWidth(max(2, line))
@@ -370,12 +372,11 @@ enum StageMarkImages {
     }
 
     /// The highlight ring: the circle at 1/1.3 of the image (the heroes size their planes for that margin).
-    static func ring(rgb: SIMD3<Float>, dashed: Bool, side: Int = 256) -> CGImage? {
+    static func ring(rgb: SIMD3<Float>, side: Int = 256) -> CGImage? {
         guard let ctx = context(side) else { return nil }
         let s = CGFloat(side), c = s / 2, r = s / 2 / 1.3
         let circle = CGRect(x: c - r, y: c - r, width: 2 * r, height: 2 * r)
-        if dashed { ctx.setLineDash(phase: 0, lengths: [s * 0.07, s * 0.045]) }
-        ctx.setStrokeColor(CGColor(srgbRed: 0x0E / 255, green: 0x12 / 255, blue: 0x14 / 255, alpha: 0.8))
+        ctx.setStrokeColor(FixedHex.cgColor(FixedHex.keyline, alpha: 0.8))
         ctx.setLineWidth(s * 0.05)
         ctx.strokeEllipse(in: circle)
         ctx.setStrokeColor(colour(rgb))

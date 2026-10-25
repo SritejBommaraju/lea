@@ -16,6 +16,11 @@ struct RootView: View {
     @State private var askCamera = false
     @State private var starts = 0
     @State private var pendingDelete: SessionRecord?
+    /// Selecting several scans to delete at once (Select in the Scans header, or long-press → Select).
+    @State private var selection = ScanSelection()
+    @State private var confirmBatch = false
+    /// The Talk button opened the sheet: it starts listening (a tap toggle; the mic stays off after the answer).
+    @State private var talkListens = false
     @State private var replay: SessionRecord?
     /// "Hey Lea" (or the Talk button) on the home screen: Voice/HomeConversationSheet.
     @State private var talking = false
@@ -38,12 +43,18 @@ struct RootView: View {
                 } else {
                     // Every scan, newest first (a lazy list): no "See all" screen.
                     VStack(spacing: Spacing.m) {
-                        SectionHeader("Scans", count: app.sessions.count)
+                        HStack(alignment: .firstTextBaseline, spacing: Spacing.m) {
+                            SectionHeader("Scans", count: app.sessions.count)
+                            selectControls
+                        }
                         Rectangle().fill(Palette.hairline).frame(height: Line.hairline)
                     }
                     .plainRow(top: Spacing.xl, bottom: 0)
                     ForEach(app.sessions) { s in
-                        ScanRowButton(record: s, open: { active = $0 }, delete: { pendingDelete = s })
+                        ScanRowButton(record: s, open: { active = $0 }, delete: { pendingDelete = s },
+                                      selecting: selection.active, selected: selection.contains(s.id),
+                                      toggle: { withAnimation(Motion.fade) { selection.toggle(s.id, selectable: selectable) } },
+                                      select: { withAnimation(Motion.standard) { selection.begin(with: s.id, selectable: selectable) } })
                     }
                 }
             }
@@ -51,9 +62,17 @@ struct RootView: View {
             .scrollContentBackground(.hidden)
             .scrollDismissesKeyboard(.interactively)
             .background(Palette.canvas.ignoresSafeArea())
-            .safeAreaInset(edge: .bottom) { startBar }
+            .safeAreaInset(edge: .bottom) { if selection.active { selectBar } else { startBar } }
             .toolbar(.hidden, for: .navigationBar)
             .confirmDeleteScan($pendingDelete)
+            .confirmationDialog(ScanSelection.confirmTitle(selection.count), isPresented: $confirmBatch, titleVisibility: .visible) {
+                Button(ScanSelection.deleteTitle(selection.count), role: .destructive, action: deleteSelected)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(ScanSelection.confirmMessage)
+            }
+            // A scan gone or being captured can't stay ticked.
+            .onChange(of: app.sessions.map(\.id)) { selection.prune(to: selectable) }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPairing) { PairingView() }
             .fullScreenCover(isPresented: $showConsent) {
@@ -92,16 +111,22 @@ struct RootView: View {
                 talksSeen = talks
                 talkToLea()
             }
-            .onChange(of: WakeListener.shared.wakes) { if active == nil, replay == nil, app.gateway != nil { talking = true } }
+            .onChange(of: WakeListener.shared.wakes) { if active == nil, replay == nil, app.gateway != nil { talkListens = false; talking = true } }
             .sheet(isPresented: $talking) {
                 if let gateway = app.gateway {
-                    HomeConversationSheet(gateway: gateway) { said in
+                    HomeConversationSheet(gateway: gateway, listenOnOpen: talkListens) { said in
                         symptom = said
                         newScan()
                     }
                 }
             }
             .onAppear {
+                #if DEBUG
+                // Design review only: open in selection mode with the first deletable scan ticked.
+                if CommandLine.arguments.contains("--ui-select") {
+                    selection.begin(with: app.sessions.first { ScanLibrary.canDelete($0, app: app) }?.id, selectable: selectable)
+                }
+                #endif
                 if !Consent.accepted && !devAutostart {
                     showConsent = true
                 } else {
@@ -112,7 +137,7 @@ struct RootView: View {
         .tint(Palette.accent)
     }
 
-    /// The talk bar (DESIGN §7.1): the optional symptom, then Talk to Lea (a quiet capsule) beside Start scan (violet,
+    /// The talk bar (DESIGN §7.1): the optional symptom, then Talk to Lea (a quiet capsule) beside Start scan (blue,
     /// the wider). The one frosted bar on the screen. Not paired: Start scan alone, and a way to set up.
     private var startBar: some View {
         GlassBar {
@@ -121,7 +146,7 @@ struct RootView: View {
                     .focused($symptomFocused)
                     .submitLabel(.go)
                     .onSubmit(newScan)
-                StoryMicButton(text: $symptom, gateway: app.isPaired ? app.gateway : nil)   // Voice/: hold to dictate
+                StoryMicButton(text: $symptom, gateway: app.isPaired ? app.gateway : nil)   // Voice/: tap to dictate
             }
             HStack(spacing: Spacing.s) {
                 if app.isPaired, app.gateway != nil {
@@ -156,13 +181,63 @@ struct RootView: View {
         .accessibilityAction(named: "Talk to Lea") { talkToLea() }
     }
 
-    /// Talk to Lea (or swipe up on the bar): Lea's conversation opens already listening, hands-free, and keeps listening after
-    /// each answer (no "Hey Lea" needed; the ear button turns that off).
+    /// Talk to Lea (or swipe up on the bar): Lea's conversation opens already listening (the talk button's recording:
+    /// tap Lea's mark to send). After she answers the mic stays off until the next tap (the owner, 2026-10-25).
     private func talkToLea() {
-        guard app.isPaired, app.gateway != nil, active == nil else { return }
-        WakeListener.shared.continuous = true
-        WakeListener.shared.listenForFollowUp()
+        guard app.isPaired, app.gateway != nil, active == nil, !selection.active else { return }
+        talkListens = true
         talking = true
+    }
+
+    // MARK: Selecting scans
+
+    /// The scans that can be ticked (never the one being captured).
+    private var selectable: Set<String> { Set(app.sessions.filter { ScanLibrary.canDelete($0, app: app) }.map(\.id)) }
+
+    /// "Select" in the Scans header; in selection mode "Select all" / "Deselect all" and "Done".
+    @ViewBuilder private var selectControls: some View {
+        if selection.active {
+            Button(selection.allSelected(selectable) ? "Deselect all" : "Select all") {
+                withAnimation(Motion.fade) { selection.toggleAll(selectable) }
+            }
+            .disabled(selectable.isEmpty)
+            Button("Done") { withAnimation(Motion.standard) { selection.end() } }
+                .fontWeight(.semibold)
+        } else {
+            Button("Select") { withAnimation(Motion.standard) { selection.begin(selectable: selectable) } }
+                .disabled(selectable.isEmpty)
+        }
+    }
+
+    /// Selection mode's bar, in place of the talk bar: Delete N scans (danger) and Cancel.
+    private var selectBar: some View {
+        GlassBar {
+            HStack(spacing: Spacing.s) {
+                Button("Cancel") { withAnimation(Motion.standard) { selection.end() } }
+                    .buttonStyle(.primary(.quiet))
+                Button { confirmBatch = true } label: {
+                    Label(ScanSelection.deleteTitle(selection.count), systemImage: "trash")
+                }
+                .buttonStyle(.primary(.danger))
+                .disabled(selection.count == 0)
+            }
+            Text(selection.count == 0 ? "Tap scans to select them." : "\(selection.count) selected")
+                .font(.footnote).foregroundStyle(Palette.secondary)
+                .contentTransition(.numericText())
+        }
+    }
+
+    /// One batched delete, after the confirmation has gone (so the List applies one update, not one mid-dismissal),
+    /// with selection mode ending in the same update: the list and the bar change together, never racing.
+    private func deleteSelected() {
+        let doomed = app.sessions.filter { selection.contains($0.id) && ScanLibrary.canDelete($0, app: app) }
+        guard !doomed.isEmpty else { return }
+        Task { @MainActor in
+            withAnimation {
+                ScanLibrary.delete(doomed, app: app)
+                selection.end()
+            }
+        }
     }
 
     private func scanFromIntent() {
@@ -225,7 +300,7 @@ private extension View {
 
 // MARK: - Header
 
-/// The masthead (the `lea` wordmark with her violet point, Settings as a round outline button), and on first run the
+/// The masthead (the `lea` wordmark with her blue point, Settings as a round outline button), and on first run the
 /// title and the line from `main`.
 private struct HomeHeader: View {
     let firstRun: Bool

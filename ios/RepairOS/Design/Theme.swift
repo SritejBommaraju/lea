@@ -2,12 +2,21 @@ import QuartzCore
 import SwiftUI
 import UIKit
 
-// lea's design tokens (DESIGN.md §3-§6, UXHarness/palette.json): violet actions on lavender by day and deep violet by
-// night, four status tones that carry meaning plus the calm setup tone, and camera tokens that stay the same in both
-// modes. Display type is Alegreya Sans (SIL OFL 1.1, bundled); reading type is SF Pro at Dynamic Type sizes. Every
+// lea's design tokens (DESIGN.md §3-§6): blue actions on cool blue-grey by day and deep blue-black by night, four
+// status tones that carry meaning plus the calm setup tone, and camera tokens that stay the same in both modes. Display type is Alegreya Sans (SIL OFL 1.1, bundled); reading type is SF Pro at Dynamic Type sizes. Every
 // value here is a choice the screens share; screens never invent their own.
 
 // MARK: - Colour
+
+// DEVIATION FROM DESIGN.md §3 (the owner, 2026-10-25: "change the light purple color to like a light blue color and
+// reflect all the colors with same accent and hues"). DESIGN.md and UXHarness/palette.json still describe Jayden's
+// violet-on-lavender palette; this file is the source of truth now. The whole palette is re-derived around one blue:
+//   - accent #2F6BD8 by day (matching the app icon), sky #8EC5FF by night (and `next` over the camera and stage);
+//   - neutrals are cool blue-grey (hue ~215) instead of lavender, in both modes, the stage included;
+//   - cosmetic moves from dusty lavender to warm taupe and setup from teal to jade, so neither reads as the accent;
+//   - good, caution and danger are unchanged (danger stays red, for safety only).
+// Every reading pair keeps 4.5:1 (ThemeTests computes them from these tokens). Fixed values that CoreGraphics,
+// SceneKit and Metal need as numbers live in `FixedHex`; the Metal shaders copy `FixedHex.next` by value.
 
 extension Color {
     /// A colour that follows light and dark mode. `light`/`dark` are 0xRRGGBB; alpha applies to both.
@@ -42,67 +51,105 @@ extension UIColor {
     }
 }
 
+/// Raw sRGB values of the fixed camera and stage tokens, for CoreGraphics, SceneKit and RealityKit (which cannot take
+/// a SwiftUI `Color`). `Palette` builds its fixed colours from these, so there is one number per colour.
+enum FixedHex {
+    /// Lea's sky blue over the camera and the stage (the dark-mode accent).
+    static let next: UInt32 = 0x8EC5FF
+    /// The flat scan stage.
+    static let stage: UInt32 = 0x0E131B
+    /// The stage's soft studio backdrop behind the object.
+    static let stageGlow: UInt32 = 0x1C2738
+    /// A raised disc on the stage (markers, round controls): the dark surface.
+    static let stageRaised: UInt32 = 0x1A2230
+    static let chalk: UInt32 = 0xF4F2EC
+    static let keyline: UInt32 = 0x0E1214
+    /// The fixed status tones (the dark-mode values).
+    static let good: UInt32 = 0xB5D58A
+    static let caution: UInt32 = 0xE9B24F
+    static let danger: UInt32 = 0xF0785C
+    static let cosmetic: UInt32 = 0xCDBBA4
+    static let setup: UInt32 = 0x5FCFB8
+    /// The light-mode ink, for a dark label on a light fill whatever the mode.
+    static let inkLight: UInt32 = 0x17202E
+
+    static func rgb(_ hex: UInt32) -> SIMD3<Float> {
+        SIMD3(Float((hex >> 16) & 0xFF) / 255, Float((hex >> 8) & 0xFF) / 255, Float(hex & 0xFF) / 255)
+    }
+
+    static func cgColor(_ hex: UInt32, alpha: CGFloat = 1) -> CGColor {
+        CGColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+                blue: CGFloat(hex & 0xFF) / 255, alpha: alpha)
+    }
+}
+
 enum Palette {
-    // Lavender (light) and Violet night (dark).
+    // Cool blue-grey (light) and blue night (dark).
 
     /// Screen background.
-    static let canvas = Color(light: 0xF3F1FA, dark: 0x12101B)
+    static let canvas = Color(light: 0xF3F5FA, dark: 0x0E131B)
     /// Opaque reading and safety surfaces, grouped rows.
-    static let surface = Color(light: 0xFBFAFF, dark: 0x211D30)
+    static let surface = Color(light: 0xFAFBFE, dark: FixedHex.stageRaised)
     /// Inputs and thumbnail placeholders.
-    static let well = Color(light: 0xE9E4F5, dark: 0x2C263D)
+    static let well = Color(light: 0xE3E9F2, dark: 0x252F3F)
     /// 0.5 pt rules and subtle edges.
-    static let hairline = Color(light: 0x746293, lightAlpha: 0.18, dark: 0xC7B5F1, darkAlpha: 0.22)
+    static let hairline = Color(light: 0x5A6E8C, lightAlpha: 0.18, dark: 0xA9C3E6, darkAlpha: 0.22)
     /// Primary text.
-    static let ink = Color(light: 0x211C32, dark: 0xF5F1FF)
+    static let ink = Color(light: FixedHex.inkLight, dark: 0xEEF3FA)
     /// Secondary text and neutral labels.
-    static let secondary = Color(light: 0x625B73, dark: 0xBEB5D0)
+    static let secondary = Color(light: 0x535F71, dark: 0xAEB9C9)
     /// Disabled content only; never essential text.
     static let faint = Color(light: 0x8B9399, dark: 0x6E767D)
     /// The one action colour: primary actions, links, selection and Lea.
-    static let accent = Color(light: 0x6650CC, dark: 0xC2B1FF)
-    /// A label on an accent fill (dark on the lavender dark-mode accent: never a hard-coded white).
-    static let onAccent = Color(light: 0xFBFAFF, dark: 0x21143B)
+    static let accent = Color(light: 0x2F6BD8, dark: FixedHex.next)
+    /// A label on an accent fill (dark on the sky-blue dark-mode accent: never a hard-coded white).
+    static let onAccent = Color(light: 0xFAFBFE, dark: 0x0B1E36)
     /// Construction lines (the dome on Home, the orb, the stage ground in the app).
-    static let rule = Color(light: 0x211C32, dark: 0xBFB2D8)
+    static let rule = Color(light: FixedHex.inkLight, dark: 0xAFC0D8)
     /// Frosted glass: fill and restrained edge (DESIGN §3, `Material/Frosted glass`).
-    static let glassFill = Color(light: 0xFFFFFF, lightAlpha: 0.76, dark: 0x302844, darkAlpha: 0.82)
-    static let glassEdge = Color(light: 0xFFFFFF, lightAlpha: 0.92, dark: 0xDDD1FF, darkAlpha: 0.24)
+    static let glassFill = Color(light: 0xFFFFFF, lightAlpha: 0.76, dark: 0x1F2938, darkAlpha: 0.82)
+    static let glassEdge = Color(light: 0xFFFFFF, lightAlpha: 0.92, dark: 0xCFE3FF, darkAlpha: 0.24)
+    /// The soft shadow under glass cards (a cool navy, never black).
+    static let glassShadow = Color(fixed: 0x0B1A33)
 
     // Status tones.
 
     /// No visible issues in an inspected area; covered dome.
-    static let good = Color(light: 0x3A7536, dark: 0xB5D58A)
+    static let good = Color(light: 0x3A7536, dark: FixedHex.good)
     /// Functional issue or capture caution (passes 4.5:1 as text in both modes).
-    static let caution = Color(light: 0x8A5F00, dark: 0xE9B24F)
-    /// Safety risk, blocking cue or failure.
-    static let danger = Color(light: 0x8E2316, dark: 0xF0785C)
-    /// Cosmetic finding.
-    static let cosmetic = Color(light: 0x75638C, dark: 0xC2B3DB)
-    /// Setup to check (a battery missing, a cable unplugged): calm teal, apart from the fault tones. Not broken.
-    /// 4.54:1 on the light canvas, 9.72:1 on the dark one.
-    static let setup = Color(light: 0x0B7A84, dark: 0x5CCAD3)
+    static let caution = Color(light: 0x8A5F00, dark: FixedHex.caution)
+    /// Safety risk, blocking cue or failure. Red is for safety only (and the one destructive action: deleting).
+    static let danger = Color(light: 0x8E2316, dark: FixedHex.danger)
+    /// A label on a danger fill.
+    static let onDanger = Color(light: 0xFAFBFE, dark: 0x0E131B)
+    /// Cosmetic finding: a warm taupe, apart from the blue accent and the amber caution.
+    static let cosmetic = Color(light: 0x75644F, dark: FixedHex.cosmetic)
+    /// Setup to check (a battery missing, a cable unplugged): calm jade, apart from the blue accent and the fault
+    /// tones. Not broken. 5.45:1 on the light canvas, 9.85:1 on the dark one.
+    static let setup = Color(light: 0x08705F, dark: FixedHex.setup)
 
     // Camera and stage (the same in both modes: the camera is never "light").
 
     /// Lines and labels over the camera and the stage.
-    static let chalk = Color(fixed: 0xF4F2EC)
+    static let chalk = Color(fixed: FixedHex.chalk)
     /// The stroke 2 pt wider under chalk, so it survives a bright scene.
-    static let keyline = Color(fixed: 0x0E1214, alpha: 0.8)
+    static let keyline = Color(fixed: FixedHex.keyline, alpha: 0.8)
     /// Cue, chips, the dial and round controls over the camera or the stage.
-    static let smoke = Color(fixed: 0x0E1214, alpha: 0.72)
+    static let smoke = Color(fixed: FixedHex.keyline, alpha: 0.72)
     /// `smoke` under Reduce Transparency.
-    static let smokeSolid = Color(fixed: 0x0E1214)
+    static let smokeSolid = Color(fixed: FixedHex.keyline)
     /// The next coverage cell, locked brackets, Lea's circles and selection over the camera.
-    static let next = Color(fixed: 0xC2B1FF)
+    static let next = Color(fixed: FixedHex.next)
     /// The flat scan stage in the report, in both appearances.
-    static let stage = Color(fixed: 0x12101B)
+    static let stage = Color(fixed: FixedHex.stage)
+    /// A raised disc on the stage (round controls, marker discs).
+    static let stageRaised = Color(fixed: FixedHex.stageRaised)
     /// Status tones over the camera: the dark-mode values, which read on smoke whatever the phone's mode.
-    static let cameraGood = Color(fixed: 0xB5D58A)
-    static let cameraCaution = Color(fixed: 0xE9B24F)
-    static let cameraDanger = Color(fixed: 0xF0785C)
+    static let cameraGood = Color(fixed: FixedHex.good)
+    static let cameraCaution = Color(fixed: FixedHex.caution)
+    static let cameraDanger = Color(fixed: FixedHex.danger)
     /// The dark glyph inside a camera tone disc.
-    static let cameraGlyph = Color(fixed: 0x0E1214)
+    static let cameraGlyph = Color(fixed: FixedHex.keyline)
 }
 
 /// What a colour means. Severity, cue urgency and status all map onto these, never onto raw colours. `.accent` is

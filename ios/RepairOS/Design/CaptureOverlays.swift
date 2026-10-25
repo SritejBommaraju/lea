@@ -300,7 +300,7 @@ enum LockBoxSpec {
     static func lineWidth(_ phase: Phase) -> CGFloat { phase == .locked ? Line.locked : Line.drawing }
     /// Unlit colours for RealityKit's `UnlitMaterial(color:)`; never lit, never with a shadow.
     static func uiColor(_ phase: Phase) -> UIColor {
-        phase == .locked ? UIColor(hex: 0xC2B1FF) : UIColor(hex: 0xF4F2EC)
+        phase == .locked ? UIColor(hex: FixedHex.next) : UIColor(hex: FixedHex.chalk)
     }
     static func color(_ phase: Phase) -> Color { Color(uiColor: uiColor(phase)) }
     /// Scale the box starts at when it locks, before settling to 1.

@@ -77,7 +77,7 @@ final class LeaSight {
 
     // MARK: The conversation window
 
-    /// A turn is starting (Ink-2 heard speech, hold to talk, typing): the window opens and the camera now is taken
+    /// A turn is starting (Ink-2 heard speech, the talk button, typing): the window opens and the camera now is taken
     /// and uploaded while the person talks. Once per turn.
     func turnStarted(_ frame: ARFrame?) {
         openWindow(until: Date().addingTimeInterval(Self.windowForTurn))

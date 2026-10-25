@@ -37,7 +37,6 @@ struct ReportStageView: View {
     /// on the stage whatever the hero (a photo, a scan, or nothing usable in 3D). nil falls back to the report's own.
     var identity: String? = nil
 
-    @Environment(\.continueScan) private var continueScan
     @Environment(\.cropSource) private var cropSource
     @State private var bottomZoom: BottomZoom?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -56,12 +55,9 @@ struct ReportStageView: View {
     @State private var screenHeight: CGFloat = 800
     /// 0 nothing, 1 stage, 2 sheet (verdict), 3 rows.
     @State private var phase = 0
-    /// Circle to inspect: drawing mode, the circled spot waiting for a choice, and the session's circled targets.
-    @State private var circling = false
-    @State private var circled: InspectTarget?
-    @State private var circleMiss = false
-    @State private var targets: [InspectTarget] = []
     @State private var probe = StageProbe()
+    /// The caption strip's measured height (it grows with Dynamic Type and long sentences); the hero leaves that room.
+    @State private var captionHeight: CGFloat = ReportStageView.captionBand
     /// "Walk me through it": the guided tour of this report on the hero (Walkthrough, WalkthroughDeck).
     @State private var tour = WalkthroughPlayer()
     /// Rings Lea put on parts that are not numbered problems (a part with no issue, a spot read from the photos), for
@@ -82,9 +78,7 @@ struct ReportStageView: View {
     // MARK: Derived
 
     private var pins: [ModelPin] {
-        let all = StageMarks.pins(report) + targets.filter { !$0.checked }.compactMap { t in
-            t.simd.map { ModelPin(id: "target:" + t.id, number: nil, point: $0, tone: .accent, ringRadius: t.radius) }
-        } + leaPins
+        let all = StageMarks.pins(report) + leaPins
         // The part Lea is showing carries its name: the hero draws it as a label out along the surface.
         guard let leaLabel else { return all }
         return all.map { p in
@@ -94,7 +88,7 @@ struct ReportStageView: View {
         }
     }
 
-    /// The numbered findings and setup rows only (the circled rings are not problems).
+    /// The numbered findings and setup rows only (Lea's rings are not problems).
     private var findingPins: [ModelPin] { pins.filter { $0.ringRadius == nil } }
 
     private var numberedPhotos: [PhotoHero.Mark] { StageMarks.photoMarks(report) }
@@ -104,7 +98,6 @@ struct ReportStageView: View {
     private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
     private var isCustomHero: Bool { if case .custom = hero { true } else { false } }
-    private var canCircle: Bool { (isCustomHero || (!isPhotoHero && !model.isNone)) && sessionDir != nil }
     private var landingKey: String { "\(report.verdict)|\(report.mostLikely.map(\.id))" }
 
     // MARK: Body
@@ -155,6 +148,13 @@ struct ReportStageView: View {
         .onChange(of: voiceStarted) { heard += 1 }
         .onChange(of: walkthrough) { startTour(afterLea: true) }
         .onChange(of: leaCue) { _, cue in applyLea(cue) }
+        // The camera left the part Lea showed (a touch on the stage, the idle drift, a reset): her ring and label go
+        // with it, so nothing stale stays drawn after a tap elsewhere.
+        .onChange(of: probe.landed) { old, new in
+            guard old != nil, new == nil else { return }
+            leaPins = []
+            leaLabel = nil
+        }
         .sensoryFeedback(Haptic.leaShow, trigger: heroCue) { _, new in new != nil }
         .onChange(of: captions?.question) { captionPart = nil }
         .task(id: captions?.revision) {
@@ -184,26 +184,8 @@ struct ReportStageView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
-        .sheet(item: $circled) { target in
-            LookCloserSheet(canScan: continueScan != nil) {
-                keep(target)
-                circled = nil
-                continueScan?()
-            } keep: {
-                keep(target)
-                circled = nil
-            } cancel: { circled = nil }
-            .presentationDetents([.height(260)])
-        }
-        .task(id: sessionDir) { if let sessionDir { targets = InspectTargets.load(sessionDir) } }
-        .sensoryFeedback(Haptic.select, trigger: circled?.id) { _, new in new != nil }
-    }
-
-    /// Saves a circled spot next to the session; Continue scanning aims its "Move closer here" marker at it.
-    private func keep(_ target: InspectTarget) {
-        guard let sessionDir else { return }
-        InspectTargets.add(target, sessionDir)
-        withAnimation(Motion.pop) { targets = InspectTargets.load(sessionDir) }
+        // Leaving the report ends Lea's rings and labels with it: nothing stale is drawn when it opens again.
+        .onDisappear { leaPins = []; leaLabel = nil; heroCue = nil }
     }
 
     /// The numbered problems and setup rows, in marker order (the detail's previous / next).
@@ -272,41 +254,18 @@ struct ReportStageView: View {
                         .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 24)))
                 }
             }
-            .overlay {
-                if circling {
-                    CircleDrawLayer { center, radius in circle(center, radius) }
-                        .padding(.top, Self.topClear).padding(.bottom, Self.overlap)
-                }
-            }
-            .overlay(alignment: .top) {
-                if circling || circleMiss {
-                    Text(circleMiss ? "No part of the scan there. Try again." : "Circle the spot to look closer at")
-                        .cameraChip()
-                        .padding(.top, Self.topClear + Spacing.l)
-                        .transition(.opacity)
-                        .allowsHitTesting(false)
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if canCircle, !tour.active {
-                    // Circle to inspect, beside the recenter control (ModelView draws that one at the corner).
-                    Button { withAnimation(Motion.fade) { circling.toggle(); circleMiss = false } } label: {
-                        Image(systemName: circling ? Symbol.close : "lasso")
-                    }
-                    .buttonStyle(StageIconButtonStyle())
-                    .padding(.trailing, Spacing.m + 44 + Spacing.s)
-                    .padding(.bottom, Self.overlap + Spacing.m + band)
-                    .accessibilityLabel(circling ? "Stop circling" : "Circle a spot to look closer at")
-                }
-            }
         }
         .overlay(alignment: .bottom) {
             if showsCaptions, let c = captions {
                 LeaCaptionStrip(question: c.question, sentence: c.sentence, part: captionPart, thinking: c.thinking,
                                 failure: c.failure, tap: { showTranscript = true })
                     .padding(.horizontal, Spacing.l)
+                    // Its real height (Dynamic Type, a long sentence, the part line): the hero and the controls above
+                    // it move up by that much, so the strip never covers them or gets cut off.
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                        captionHeight = max(Self.captionBand, h + Spacing.s)
+                    }
                     .padding(.bottom, Self.overlap + Spacing.s)
-                    .frame(height: Self.captionBand + Self.overlap, alignment: .bottom)
                     .transition(.opacity)
             }
         }
@@ -384,8 +343,8 @@ struct ReportStageView: View {
         .padding(.bottom, Self.overlap + (touring ? Self.deckHeight : band))
     }
 
-    /// The bottom of the stage the caption strip takes while it shows.
-    private var band: CGFloat { showsCaptions ? Self.captionBand : 0 }
+    /// The bottom of the stage the caption strip takes while it shows (measured; at least `captionBand`).
+    private var band: CGFloat { showsCaptions ? captionHeight : 0 }
 
     /// The walkthrough's cards, header and controls (WalkthroughDeck), and the room the hero leaves for them.
     static let deckHeight: CGFloat = 44 + WalkthroughCard.height + 3 + 44 + 3 * Spacing.m + Spacing.m
@@ -401,8 +360,6 @@ struct ReportStageView: View {
         }
         let photo = isPhotoHero, threeD = isCustomHero || !model.isNone
         let steps = Walkthrough.steps(report) { p in photo ? p.cropStill != nil : threeD && p.point != nil }
-        circling = false
-        circleMiss = false
         sheet = nil
         showOthers = false
         focus = nil
@@ -417,7 +374,6 @@ struct ReportStageView: View {
         let plan = LeaStagePlan.make(cue.command, pins: pins, located: report.located)
         guard plan != .none else { return }
         if tour.active { tour.stop() }
-        circling = false
         if let pin = plan.pin {
             // One of Lea's rings at a time: the previous one fades as this move starts (the hero fades leaving rings).
             leaPins = [pin]
@@ -450,18 +406,6 @@ struct ReportStageView: View {
         case .view, .zoom: break
         }
         if let camera = plan.camera { heroCue = LeaStageCue(n: cue.n, command: camera) }
-    }
-
-    /// A circle drawn on the stage: find the spot on the scan, then ask what to do with it.
-    private func circle(_ center: CGPoint, _ radius: CGFloat) {
-        // The draw layer sits below `topClear`, the 3D view too, so the two share coordinates.
-        guard let hit = probe.resolve?(center, radius) else {
-            withAnimation(Motion.fade) { circleMiss = true }
-            return
-        }
-        circleMiss = false
-        circling = false
-        circled = InspectTarget(point: [hit.point.x, hit.point.y, hit.point.z], radius: hit.radius)
     }
 
     private var stageLabel: String {
@@ -500,7 +444,7 @@ struct ReportStageView: View {
                 if !report.setup.isEmpty { setupToCheck(proxy) }
                 Group {
                     // Not enough to call it: the next step is already the headline, so it isn't repeated. A request for
-                    // more photos never leads: it is one short line at the end.
+                    // more photos is not shown at all (the owner, 2026-10-25): Lea asks in conversation when she must.
                     if let next = report.nextStep, report.verdict != .insufficientEvidence, !ReportWords.isCaptureRequest(next) {
                         StageNextStep(step: next)
                     }
@@ -513,9 +457,6 @@ struct ReportStageView: View {
                     }
                     if !others.isEmpty { alsoWorthALook }
                     if !report.bottomPhotos.isEmpty { bottomPhotosSection }
-                    if let next = report.nextStep, report.verdict != .insufficientEvidence, ReportWords.isCaptureRequest(next) {
-                        StageCaptureLine(step: next)
-                    }
                     if let openFull {
                         GroupedList {
                             Button(action: openFull) {
@@ -718,24 +659,6 @@ struct StageNextStep: View {
                 Text(ReportWords.display(reason)).font(.subheadline).foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// A request for more capture, as one short line at the end of the report: its title and the instruction's first
-/// sentence, no reason (Continue scanning is in the pinned bar).
-struct StageCaptureLine: View {
-    let step: ReportModel.NextStep
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(step.title).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.ink)
-                Text(ReportWords.firstSentence(ReportWords.display(step.instruction))).font(.footnote)
-                    .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        } icon: {
-            Image(systemName: step.symbol.replacingOccurrences(of: ".fill", with: "")).foregroundStyle(Palette.secondary)
         }
         .accessibilityElement(children: .combine)
     }

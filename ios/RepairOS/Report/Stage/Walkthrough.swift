@@ -120,9 +120,11 @@ enum Walkthrough {
                     speech: said.joined(separator: " "), tone: .danger)
     }
 
-    /// The report's next step, and where to buy the part when the parts search found it.
+    /// The report's next step, and where to buy the part when the parts search found it. A request for more photos is
+    /// not a step of the tour (the owner, 2026-10-25: no "take a closer photo" prompts on the stage; Lea asks for a
+    /// photo in conversation when one is really needed).
     static func next(_ r: ReportModel) -> Step? {
-        guard let step = r.nextStep else { return nil }
+        guard let step = actionableNext(r) else { return nil }
         var said = ["Here's what to do next. \(ReportSpeech.firstSentence(ReportWords.sanitize(step.instruction)))"]
         if let fix = r.fix { said.append("I also found where to get a new \(ReportSpeech.lowerFirst(fix.part)). It's in the report.") }
         return Step(id: "next", kind: .next, eyebrow: "Next step", title: specificTitle(step) ?? first(step.instruction),
@@ -142,7 +144,7 @@ enum Walkthrough {
         case .other: said.append("To sum up: \(r.verdict.words.lowercased()).")
         }
         if !r.setup.isEmpty { said.append(r.setup.count == 1 ? "One thing needs setting up." : "\(words(r.setup.count).capitalizedFirst) things need setting up.") }
-        if let step = r.nextStep {
+        if let step = actionableNext(r) {
             said.append(specificTitle(step).map { "Start with the next step: \(ReportSpeech.lowerFirst($0))." } ?? "Start with the next step.")
         }
         said.append("That's the walkthrough.")
@@ -151,6 +153,11 @@ enum Walkthrough {
     }
 
     // MARK: Words
+
+    /// The next step when it is something to do, not a request for more capture.
+    static func actionableNext(_ r: ReportModel) -> ReportModel.NextStep? {
+        r.nextStep.flatMap { ReportWords.isCaptureRequest($0) ? nil : $0 }
+    }
 
     /// The next step's own title ("Take a closer photo"); nil for a kind with only the generic "Next step".
     static func specificTitle(_ step: ReportModel.NextStep) -> String? {
