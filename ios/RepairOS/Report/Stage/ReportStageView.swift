@@ -53,7 +53,7 @@ struct ReportStageView: View {
 
     private var pins: [ModelPin] {
         report.mostLikely.enumerated().compactMap { i, p in
-            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.severity.tone) }
+            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.severity.tone, ringRadius: p.extent) }
         } + targets.filter { !$0.checked }.compactMap { t in
             t.simd.map { ModelPin(id: "target:" + t.id, number: nil, point: $0, tone: .accent, ringRadius: t.radius) }
         }

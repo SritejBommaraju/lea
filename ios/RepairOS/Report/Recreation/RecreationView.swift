@@ -139,7 +139,7 @@ struct RecreationView: View {
         case .cosmetic: "cosmetic"
         default: "neutral"
         }
-        return RecreationMarker(id: p.id, number: p.number, point: p.point, rgb: RecreationMarker.rgb(tone: tone))
+        return RecreationMarker(id: p.id, number: p.number, point: p.point, rgb: RecreationMarker.rgb(tone: tone), ring: p.ringRadius)
     }
 }
 

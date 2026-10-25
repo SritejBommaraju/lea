@@ -120,3 +120,22 @@ struct MarkerLayoutTests {
         } }
     }
 }
+
+/// The problem area's size on the scan (ReportModel.extent) and the ring drawn round it.
+struct ProblemRingTests {
+    @Test func extentIsHalfTheRegionDiagonal() {
+        let loc: [String: Any] = ["status": "computed", "point_m": [0, 0, 0],
+                                  "region_min_m": [0, 0, 0], "region_max_m": [0.03, 0.04, 0]]
+        #expect(abs((ReportModel.extent(loc) ?? 0) - 0.025) < 1e-6)
+    }
+
+    @Test func noRingWithoutAComputedPoint() {
+        #expect(ReportModel.extent(["status": "failed", "region_min_m": [0, 0, 0], "region_max_m": [1, 1, 1]]) == nil)
+        #expect(ReportModel.extent(["status": "computed", "point_m": [0, 0, 0]]) == nil)
+    }
+
+    @MainActor @Test func ringTextureDraws() {
+        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2), dashed: false) != nil)
+        #expect(RecreationStage.ring(rgb: SIMD3(0.5, 0.5, 0.6), dashed: true) != nil)
+    }
+}
