@@ -27,6 +27,7 @@ from typing import Annotated, Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.requests import ClientDisconnect
 
 from repairos.voice.audio import TTSCache, line_key, wav
 from repairos.voice.cartesia import Cartesia, CartesiaError
@@ -169,6 +170,13 @@ def jframe(event: dict) -> bytes:
 
 def register_voice_routes(app: FastAPI, device_dep) -> None:
     """Adds the /v1/voice routes. `device_dep` is the gateway's device-token dependency (Annotated)."""
+
+    @app.exception_handler(ClientDisconnect)
+    async def _gone(req: Request, _e: ClientDisconnect):
+        # The phone dropped the request while its body was still coming (a barge-in cancels the turn's upload):
+        # nobody is waiting for an answer, so none is made and nothing is logged as an error. 499: client closed.
+        log.info("client went away before its request body arrived: %s %s", req.method, req.url.path)
+        return Response(status_code=499)
 
     @app.exception_handler(VoicePaused)
     async def _paused(_req, e: VoicePaused):

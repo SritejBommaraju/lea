@@ -382,10 +382,29 @@ def _in_view(still: Mapping, p: np.ndarray) -> float:
 
 
 def usable(still: Mapping) -> bool:
-    """A still Lea can look at and point in: posed, in the main scan's frame (a flipped bottom's photos are in their
-    own frame until registered), with an image."""
-    return bool(still.get("camera") and still.get("intrinsics") and still.get("image_file")) and \
-        int(still.get("segment") or 0) == 0 and still.get("pose_reliable") is not False
+    """A still Lea can look at and point in: posed, in the main scan's frame, with an image. `in_frame` (set by
+    voice.evidence from the scan's segments: segment 0, a continuation ARKit relocalised, a flipped bottom the server
+    registered) decides the frame when present; else only segment 0 is (a flipped bottom's photos are in their own
+    frame until registered)."""
+    in_frame = still["in_frame"] is True if "in_frame" in still else int(still.get("segment") or 0) == 0
+    return bool(still.get("camera") and still.get("intrinsics") and still.get("image_file")) and in_frame and \
+        still.get("pose_reliable") is not False
+
+
+def in_scan_frame(stills: Sequence[Mapping], same: set[int], moved: Mapping[int, Any]) -> list[dict]:
+    """The stills with `in_frame` marked: a segment in the scan's frame as recorded (`same`, pipeline.segments.
+    same_frame_segments), or a moved segment the server registered (`moved`: {segment: 4x4}), whose camera is then
+    restated in segment 0's frame (pipeline.segments.restate_still)."""
+    from repairos.pipeline.segments import restate_still
+
+    out = []
+    for s in stills:
+        k = int(s.get("segment") or 0)
+        if k in moved:
+            out.append({**restate_still(s, np.asarray(moved[k], float)), "in_frame": True})
+        else:
+            out.append({**s, "in_frame": k in same})
+    return out
 
 
 def pick_photos(stills: Sequence[Mapping], question: str, parts: Sequence[Mapping[str, Any]],

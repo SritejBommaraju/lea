@@ -1166,3 +1166,160 @@ def test_persona_never_clears_what_was_not_photographed():
     for words in ("can't be judged at all: never call it fine, clean, shiny or even", "Credit the scan only with what it checked",
                   "a part in a socket has no solder on that side to judge"):
         assert words in p, words
+
+
+# --- Greptile on PR #34: frames, index revisions and retries, refinement failures, pins, second-photo checks ----------
+
+def _plane_still(sid: str, eye=(0.0, 0.0, 0.0), look=(0.0, 0.0, -0.5)):
+    import io
+
+    from PIL import Image
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_voice_views import plane, still
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), (100, 100, 100)).save(buf, "JPEG")
+    return plane(), still(eye=eye, look=look, sid=sid), buf.getvalue()
+
+
+class _Recorded:
+    """A recorded-shape Messages client: each call's JSON text from `answer(content)`, or the exception it raises."""
+
+    def __init__(self, answer):
+        outer = self
+
+        class _M:
+            @staticmethod
+            async def create(**kw):
+                from types import SimpleNamespace as NS
+                text = outer.answer(kw["messages"][0]["content"])
+                return NS(stop_reason="end_turn", content=[NS(type="text", text=json.dumps(text))], usage=None, model="m")
+        self.answer = answer
+        self.beta = type("B", (), {"messages": _M})
+
+
+def test_stills_of_continuations_and_registered_flips_are_usable():
+    """Lea uses close-ups from a continuation ARKit relocalised (same frame) and from a flipped bottom the server
+    registered (restated into segment 0's frame); an unaligned segment's photos stay out."""
+    import numpy as np
+
+    from repairos.voice import views as V
+    base = {"camera": {"frame": "arkit_world", "position_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1]},
+            "intrinsics": {"fx": 1, "fy": 1, "cx": 0, "cy": 0}, "image_file": "blob://x"}
+    stills = [{**base, "still_id": f"s{k}", "segment": k} for k in range(4)]
+    stills[3]["pose_reliable"] = False   # a flipped bottom: its own frame as recorded
+    move = np.eye(4)
+    move[:3, 3] = [0.1, 0, 0]
+    marked = V.in_scan_frame(stills, {0, 1}, {3: move})
+    assert [V.usable(s) for s in marked] == [True, True, False, True]
+    assert marked[3]["camera"]["position_m"][0] == pytest.approx(0.1)
+    assert [V.usable(s) for s in stills] == [True, False, False, False]   # unmarked: segment 0 only, as before
+
+
+def test_part_index_is_rebuilt_for_new_photos_and_failures_are_retried(tmp_path):
+    from repairos.voice.evidence import INDEX_MAX_ATTEMPTS, INDEX_RETRY_S, Evidence
+
+    due = Evidence.index_due
+    assert due(None, "a", "k", 0)
+    assert not due({"status": "done", "inputs": "a"}, "a", "k2", 0)          # a new surface only re-places entries
+    assert due({"status": "done", "inputs": "a"}, "b", "k", 0)               # new close-ups: listed again
+    assert not due({"status": "done"}, "b", "k", 0)                          # written before inputs were kept
+    assert not due({"status": "skipped", "inputs": "a", "surface_key": "k"}, "a", "k", 0)
+    assert due({"status": "skipped", "inputs": "a", "surface_key": "k"}, "a", "k2", 0)
+    failed = {"status": "failed", "inputs": "a", "attempt": {"inputs": "a", "at": 1000.0, "n": 1}}
+    assert not due(failed, "a", "k", 1000 + INDEX_RETRY_S - 1) and due(failed, "a", "k", 1000 + INDEX_RETRY_S)
+    second = {**failed, "attempt": {"inputs": "a", "at": 1000.0, "n": 2}}
+    assert not due(second, "a", "k", 1000 + INDEX_RETRY_S) and due(second, "a", "k", 1000 + 2 * INDEX_RETRY_S)
+    spent = {**failed, "attempt": {"inputs": "a", "at": 0.0, "n": INDEX_MAX_ATTEMPTS}}
+    assert not due(spent, "a", "k", 1e9) and due(spent, "b", "k", 0)
+    ev = Evidence(None, tmp_path)
+    ev._record("scan_x", {"status": "done", "entries": [{"id": "ix_1"}], "surface_key": "k"}, "a")
+    ev._record("scan_x", {"status": "failed", "reason": "timeout", "entries": []}, "b")
+    kept = ev._read("scan_x")
+    assert kept["status"] == "done" and kept["entries"] == [{"id": "ix_1"}] and kept["inputs"] == "a"
+    assert kept["attempt"]["inputs"] == "b" and kept["attempt"]["n"] == 1
+    ev._record("scan_x", {"status": "failed", "reason": "timeout", "entries": []}, "b")
+    assert ev._read("scan_x")["attempt"]["n"] == 2 and ev.index("scan_x") == [{"id": "ix_1"}]
+
+
+def test_a_failed_refinement_keeps_the_coarse_part():
+    import asyncio as _a
+
+    from repairos.voice.evidence import COARSE_RADIUS_M, refine_points
+
+    s, st, img = _plane_still("scan_rf_s1")
+
+    def fail(_content):
+        raise TimeoutError("refine timed out")
+    stats: dict = {}
+    item = {"label": "A2", "point": [0.01, 0.0, -0.5], "still_id": st["still_id"], "x": 0.51, "y": 0.5}
+    out, calls = _a.run(refine_points(s, [st], lambda _s: img, [item], client=_Recorded(fail), model="m",
+                                      scan_id="rf", verify=False, stats=stats))
+    assert calls == 0 and stats["refine_errors"] == 2
+    assert out[0]["point"].tolist() == item["point"] and out[0]["radius"] == COARSE_RADIUS_M
+
+
+def test_a_crop_pixel_off_the_surface_keeps_the_coarse_ring():
+    """The close-up found the part where the model has no surface: the old guess keeps its coarse ring (never a
+    tight ring on a point the close-up did not place); the photo's pixel is the refined one."""
+    import asyncio as _a
+
+    from repairos.voice.evidence import COARSE_RADIUS_M, refine_points
+
+    s, st, img = _plane_still("scan_off_s1")
+
+    def corner(content):
+        n = sum(1 for b in content if b["type"] == "image")
+        return {"items": [{"crop": k + 1, "seen": True, "x": 0.0, "y": 0.0} for k in range(n)]}
+    item = {"label": "A2", "point": [0.0, 0.0, -0.5], "still_id": st["still_id"], "x": 0.5, "y": 0.5}
+    out, _ = _a.run(refine_points(s, [st], lambda _s: img, [item], client=_Recorded(corner), model="m",
+                                  scan_id="off", sides=(0.9,), verify=False))
+    assert out[0]["precision"] == "coarse" and out[0]["radius"] == COARSE_RADIUS_M
+    assert out[0]["point"].tolist() == item["point"] and out[0]["xy"][0] < 0.2
+
+
+def test_the_second_photo_is_checked_against_the_final_point(monkeypatch):
+    """The last pass moves the point; the second photo shows the part where the earlier point projects. Measured
+    against the final point, the two photos disagree: never a tight 'confirmed' ring."""
+    import asyncio as _a
+
+    from repairos.voice import evidence as E
+    from repairos.voice import views as V
+
+    s, a, img = _plane_still("scan_fp_s1")
+    b = {**_plane_still("scan_fp_s2", eye=(0.12, 0.0, 0.0), look=(0.0, 0.0, -0.5))[1], "sharpness": 50.0}
+    real = V.refine_crop
+
+    def tagged(st, image, x, y, side, *rest):   # the crop's photo and window, for the recorded answers
+        _, rect = real(st, image, x, y, side, *rest)
+        return f"{st['still_id']}|{side:.3f}".encode(), rect
+    monkeypatch.setattr(V, "refine_crop", tagged)
+
+    async def ask(_client, _model, _scan, crops, _name):
+        out = []
+        for _label, tag in crops:
+            sid, side = tag.decode().split("|")
+            last = float(side) < 0.3
+            out.append((0.8, 0.5) if sid == a["still_id"] and last else (0.5, 0.5))
+        return out
+    monkeypatch.setattr(E, "ask_crops", ask)
+    item = {"label": "A2", "point": [0.0, 0.0, -0.5], "still_id": a["still_id"], "x": 0.5, "y": 0.5}
+    out, _ = _a.run(E.refine_points(s, [a, b], lambda _s: img, [item], client=None, model="m", scan_id="fp"))
+    assert abs(out[0]["point"][0]) > E.AGREE_M                      # the last pass moved it
+    assert out[0]["precision"] == "second photo disagrees" and out[0]["radius"] > E.TIGHT_MIN_M
+
+
+def test_the_same_pin_label_on_two_headers_is_two_pins():
+    """Boards print GND on several headers: two readings are one pin only in the same place."""
+    import asyncio as _a
+
+    from repairos.voice.evidence import header_pins
+
+    s, st, img = _plane_still("scan_hp_s1")
+    gnd = _Recorded(lambda _c: {"pins": [{"label": "GND", "x": 0.5, "y": 0.5}]})
+    headers = [{"label": "power header", "kind": "header", "still_id": st["still_id"], "x": 0.4, "y": 0.5},
+               {"label": "digital header", "kind": "header", "still_id": st["still_id"], "x": 0.6, "y": 0.5}]
+    pins, calls = _a.run(header_pins(s, [st], lambda _s: img, headers, client=gnd, model="m", scan_id="hp"))
+    assert calls == 2 and [p["where"] for p in pins] == ["on the power header", "on the digital header"]
+    overlap = [headers[0], {**headers[1], "x": 0.402}]   # two crops of one place: one pin
+    pins, _ = _a.run(header_pins(s, [st], lambda _s: img, overlap, client=gnd, model="m", scan_id="hp"))
+    assert len(pins) == 1

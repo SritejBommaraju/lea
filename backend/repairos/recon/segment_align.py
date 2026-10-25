@@ -80,6 +80,10 @@ CARVE_VOTE = 0.5             # carved away (a mixed pixel at a silhouette; the t
 SUPPORT_WINDOW_M = 0.03      # a frame's table is fitted among depth points this close to the segment's table height
 SUPPORT_MAX_TILT_DEG = 8.0   # a frame's table may lean this far in the world (measured 0.1-3.8 deg on real captures)
 SUPPORT_MIN_MARGIN_M = 0.003  # never cut closer to a frame's table than this
+SUPPORT_RING_CLEAR = 0.05    # a frame's table is confirmed outside the box footprint grown by this share of each side
+SUPPORT_RING_GROW = 0.3      # ... and inside it grown by this share (a ring of table round the object, never its top)
+SUPPORT_RING_MIN = 200       # ring points needed to check (or fit) a frame's table; fewer: the fit in the box stands
+SUPPORT_TOP_M = 0.006        # a fit this far above the ring's table (median) is a low object's top, not the table
 PLANE_MARGIN_M = 0.015       # below the support plane by more than this is impossible (ARKit drifts up to ~1.5 cm)
 CONTACT_M = 0.015            # the moved object rested on segment 0's table: its lowest points (2nd percentile) must
                              # come this close to it (the same vertical drift); more is floating
@@ -284,6 +288,25 @@ def _fit_table(q: np.ndarray, rng: np.random.Generator, tol: float = 0.004, iter
     return n, -float(n @ c)
 
 
+def _confirmed_table(near: np.ndarray, ring: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, float] | None:
+    """A frame's table near the measured height (`near`: points in the box), checked against the ring of table round
+    the object (`ring`: points outside its footprint): seen from above, a low object's top (a remote, a phone, a
+    board) can outnumber the table inside the box, and a fit to it would cut the object away. When the frame sees
+    enough ring and the ring's own table lies SUPPORT_TOP_M or more below the fit, the fit was that top and the ring's
+    table is used instead; with too little ring to tell, the fit stands."""
+    fit = _fit_table(near, rng)
+    if fit is None or len(ring) < SUPPORT_RING_MIN:
+        return fit   # no fit: the measured table is cut, as before
+    around = _fit_table(ring, rng)
+    if around is None:
+        return fit
+    n0, d0 = around
+    table = ring[np.abs(ring @ n0 + d0) < 0.004]   # the ring's table points (not other things beside the object)
+    if not len(table) or float(np.median(table @ fit[0] + fit[1])) >= -SUPPORT_TOP_M:
+        return fit   # the ring's table is not below the fit (a cushion sags, a table leans a little: still the fit)
+    return around
+
+
 def segment_object_cloud(frames: Sequence[Any], box: Any, plane_y: float | None, *, voxel_m: float,
                          colours: bool = True) -> tuple[ObjectCloud, Support]:
     """The object alone from one segment's depth frames: in the box, above each frame's own table (fitted near
@@ -308,7 +331,8 @@ def segment_object_depths(frames: Sequence[Any], box: Any, plane_y: float | None
                           min_confidence: int = SURFACE_MIN_CONFIDENCE, edge_px: int = 0
                           ) -> tuple[list[np.ndarray], Support]:
     """Per frame, the depth kept for the object: `min_confidence` or better, in the box, above that frame's own
-    table (fitted near `plane_y`; cut at the table's noise below its plane, mirrored). `edge_px`: below-high-confidence
+    table (fitted near `plane_y` and checked against the table round the object, `_confirmed_table`; cut at the
+    table's noise below its plane, mirrored). `edge_px`: below-high-confidence
     pixels within this many pixels of a dropped one are dropped too (mixed pixels at the object's silhouette, where
     a pixel's depth blends the object and the table behind it). Returns the depths and the measured table."""
     from repairos.locate.camera import backproject
@@ -322,11 +346,15 @@ def segment_object_depths(frames: Sequence[Any], box: Any, plane_y: float | None
         conf = f.confidence
         surface = valid if conf is None else valid & (conf >= min_confidence)
         sure = valid if conf is None else valid & (conf >= FREE_SPACE_MIN_CONFIDENCE)
-        inbox = box.contains(pts, 0.02)
+        a = np.abs(box.local(pts))
+        inbox = np.all(a <= 0.52, axis=-1)
         keep = surface & inbox
         if plane_y is not None:
-            near = sure & inbox & (np.abs(pts[..., 1] - plane_y) < SUPPORT_WINDOW_M)
-            fit = _fit_table(pts[near], rng)
+            band = sure & (np.abs(pts[..., 1] - plane_y) < SUPPORT_WINDOW_M)
+            near = band & inbox
+            ring = band & ((a[..., 0] > 0.5 + SUPPORT_RING_CLEAR) | (a[..., 2] > 0.5 + SUPPORT_RING_CLEAR)) & \
+                (a[..., 0] <= 0.5 + SUPPORT_RING_GROW) & (a[..., 2] <= 0.5 + SUPPORT_RING_GROW)
+            fit = _confirmed_table(pts[near], pts[ring], rng)
             if fit is not None:
                 n, d = fit
                 h = pts @ n + d

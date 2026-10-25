@@ -15,6 +15,9 @@ BOARD = (np.array([-0.0345, -0.0267]), np.array([0.0345, 0.0267]))     # x, z ha
 THICK = 0.0016
 
 
+BUSY = {"on": False}   # a busy top: rows of parts the table's own colour cross the board (pins, a wooden-looking jack)
+
+
 def colour(xz: np.ndarray) -> np.ndarray:
     """Wood grain (orange-brown stripes) on the table, a dark board with light markings."""
     x, z = xz[:, 0], xz[:, 1]
@@ -23,6 +26,9 @@ def colour(xz: np.ndarray) -> np.ndarray:
     board = np.tile([30.0, 40.0, 50.0], (len(x), 1))
     mark = on & (np.abs(((x * 1000) % 6) - 3) < 0.6) & (z > 0.0)            # stripes of "text"
     board[mark] = [210, 210, 210]
+    if BUSY["on"]:   # 2.5 mm rows every 12 mm, in the table's colours: they cut the board into strips
+        rows = on & (np.abs(((x * 1000) % 12) - 6) < 1.25)
+        board[rows] = wood[rows]
     return np.where(on[:, None], board, wood)
 
 
@@ -82,7 +88,7 @@ def test_photos_that_disagree_are_refused(scene):
     stills, box, lidar = scene
     bad = dict(stills[1])
     cam = dict(bad["camera"])
-    cam["position_m"] = [cam["position_m"][0] + 0.01, cam["position_m"][1], cam["position_m"][2]]   # 1 cm off
+    cam["position_m"] = [cam["position_m"][0] + 0.025, cam["position_m"][1], cam["position_m"][2]]   # 2.5 cm off
     bad["camera"] = cam
     with pytest.raises(F.FlatUnavailable, match="apart"):
         F.flat_model({}, [stills[0], bad], box, TABLE_Y, lidar)
@@ -93,3 +99,95 @@ def test_thin_means_close_to_the_table():
     assert F.thin_object(pts, 0.0)[0]
     assert not F.thin_object(pts * [1, 5, 1], 0.0)[0]                 # 6 cm tall: the LiDAR mesh as usual
     assert F.thin_object(pts[:50], 0.0)[0]                            # almost nothing above the table
+    tall = np.c_[np.zeros(100), np.linspace(0.03, 0.035, 100), np.zeros(100)]   # a cable, a tall part: a fifth
+    assert F.thin_object(np.vstack([pts[:400] * [1, 0.5, 1], tall]), 0.0)[0]
+
+
+def _stills(tmp_path, eyes, offset=None):
+    out = []
+    for k, eye in enumerate(eyes):
+        s, img = still(f"s{k}", eye)
+        p = tmp_path / f"s{k}.jpg"
+        Image.fromarray(img).save(p, quality=95)
+        s = {**s, "image_file": str(p)}
+        if offset is not None and k == offset:   # this photo's recorded pose is 2.5 cm off
+            cam = dict(s["camera"])
+            cam["position_m"] = [cam["position_m"][0] + 0.025, *cam["position_m"][1:]]
+            s["camera"] = cam
+        out.append(s)
+    return out
+
+
+EYES = [(0.004, 0.25, 0.003), (-0.03, 0.24, 0.05), (0.03, 0.24, -0.04), (0.02, 0.25, 0.04), (-0.02, 0.25, -0.03)]
+
+
+def test_one_photo_with_a_bad_pose_does_not_sink_the_slab(scene, tmp_path):
+    """One photo's pose can be off on its own (a real board scan: one of five 6-9 mm off, the others within 2 mm).
+    Most photos agree: the slab is built, and the photo that disagrees fills none of its texture."""
+    _, box, lidar = scene
+    stills = _stills(tmp_path, EYES, offset=4)   # the second best photo: the one the old single check used
+    m = F.flat_model({}, stills, box, TABLE_Y, lidar)
+    shifts = m.stats["check_shifts_mm"]
+    assert shifts["s4"] > 10 and sum(x <= 2 for x in shifts.values()) >= 3
+    assert "s4" not in m.stats["texture_from"] and m.stats["second_still"] != "s4"
+
+
+def test_a_busy_board_is_found_whole(scene, tmp_path):
+    """Rows of parts in the table's own colours cross the board: the outline is the whole board, not its largest
+    strip (on a real board the largest piece was a third of it)."""
+    _, box, lidar = scene
+    BUSY["on"] = True
+    try:
+        stills = _stills(tmp_path, EYES[:2])
+    finally:
+        BUSY["on"] = False
+    m = F.flat_model({}, stills, box, TABLE_Y, lidar)
+    a, b = m.stats["measured_mm"]
+    assert abs(a - 53.4) < 3 and abs(b - 69.0) < 3
+
+
+def _model(outline: np.ndarray) -> F.FlatModel:
+    """A slab over `outline` with a texture whose colour encodes x (to check every top vertex's texture lookup)."""
+    k = len(outline)
+    lo, hi = outline.min(0), outline.max(0)
+    uv_top = (outline - lo) / (hi - lo)
+    atlas = np.zeros((108, 100, 3), np.uint8)
+    atlas[:100, :, 0] = np.linspace(0, 255, 100)[None, :].astype(np.uint8)
+    top = np.c_[outline[:, 0], np.full(k, 0.0016), outline[:, 1]]
+    bot = np.c_[outline[:, 0], np.zeros(k), outline[:, 1]]
+    verts = np.vstack([top, top, bot]).astype(np.float32)
+    uv = np.vstack([uv_top * [1, 100 / 108], np.tile([0.5, 104 / 108], (2 * k, 1))]).astype(np.float32)
+    faces = [[0, t, t + 1] for t in range(1, k - 1)]
+    faces += [[k + t, k + (t + 1) % k, 2 * k + (t + 1) % k] for t in range(k)]
+    return F.FlatModel(verts, uv, np.asarray(faces, np.int32), Image.fromarray(atlas), outline)
+
+
+@pytest.mark.parametrize("outline", [
+    np.array([[0.0, 0.0], [0.05, 0.0], [0.05, 0.03], [0.0, 0.03]]),                       # a rectangle
+    np.array([[0.0, 0.0], [0.06, 0.01], [0.02, 0.05]]),                                   # a triangle
+    np.array([[0.0, 0.0], [0.04, -0.01], [0.07, 0.02], [0.05, 0.05], [0.01, 0.04]]),     # a hull of five corners
+])
+def test_the_slab_top_covers_its_outline_exactly(outline):
+    """Any convex outline (a rectangle, or the hull branch's triangle or polygon): the top grid covers the outline,
+    nothing outside it, and every top vertex has its texture."""
+    m = _model(outline)
+    v, f, c = F.slab_mesh(m)
+    top = f[(v[f][:, :, 1] > 0.001).all(1) & (f < len(v) - 3 * len(outline)).all(1)]
+    xz = v[:, [0, 2]]
+    p0, p1, p2 = xz[top[:, 0]], xz[top[:, 1]], xz[top[:, 2]]
+    area = 0.5 * np.abs((p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1]) - (p1[:, 1] - p0[:, 1]) * (p2[:, 0] - p0[:, 0]))
+    poly = abs(F._polygon_area_signed(outline))
+    assert abs(area.sum() - poly) < 0.002 * poly
+    used = np.unique(top)
+    inside = F._inside(xz[used], outline)
+    on = np.linalg.norm(F._nearest_on_outline(xz[used], outline) - xz[used], axis=1) < 1e-7
+    assert (inside | on).all()
+    expect = (xz[used, 0] - outline[:, 0].min()) / np.ptp(outline[:, 0]) * 255
+    assert np.abs(c[used, 0].astype(float) - expect).max() < 6             # every vertex coloured from its texture
+
+
+def test_the_slab_mesh_keeps_to_the_triangle_limit():
+    """A 20 x 24 cm thin object at 0.5 mm would be ~384,000 top triangles: the grid coarsens to the limit."""
+    m = _model(np.array([[0.0, 0.0], [0.2, 0.0], [0.2, 0.24], [0.0, 0.24]]))
+    _, f, _ = F.slab_mesh(m, max_triangles=80_000)
+    assert 40_000 < len(f) <= 80_000

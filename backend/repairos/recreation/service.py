@@ -112,7 +112,8 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     from repairos.recreation.texture import scan_views, texture_mesh
     from repairos.recreation.usdz import usdz_bytes
 
-    if not segment_transforms:   # a thin object (a board, a remote, a phone): its photos on a slab (recreation.flat)
+    if stills_local:   # a thin object (a board, a remote, a phone): its photos on a slab from segment 0
+        # (recreation.flat); a flipped bottom, registered or not, stays photos
         from repairos.recreation.flat import scan_flat_model
 
         flat, why = scan_flat_model(pkg_local, stills_local)
@@ -130,7 +131,14 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     try:
         surf = scan_surface(pkg_local, segment_transforms=segment_transforms)
     except MeshUnavailable as e:
-        raise RecreationUnavailable(str(e)) from e
+        if not segment_transforms:
+            raise RecreationUnavailable(str(e)) from e
+        try:   # the merge left no surface: the top scan alone
+            surf = scan_surface(pkg_local)
+        except MeshUnavailable as e2:
+            raise RecreationUnavailable(str(e2)) from e2
+        note = (note + "; " if note else "") + f"built from the top scan alone (with the bottom: {e})"
+        segment_transforms = None
     _deadline(t0, cfg["timeout_s"], "texturing")
     views = scan_views(pkg_local, stills, box=box, max_keyframes=int(cfg["max_keyframes"]),
                        segment_transforms=segment_transforms)
@@ -185,7 +193,8 @@ async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
             raise RecreationUnavailable(f"no scan-package {scan_id}")
         scan, rev = row.data, row.rev
         stills = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
-        moved = segments.aligned_transforms(await _segment_record(ctx, scan_id, rev))   # the registered bottom
+        # the registered bottom, when its merge passed the gate (pipeline/segments.merge_gate)
+        moved = segments.merged_transforms(await _segment_record(ctx, scan_id, rev))
         key = input_key(rev, stills, list(moved))
         have = (await _run_row(ctx, scan_id) or {}).get("recreation") or {}
         if have.get("input_key") == key and have.get("status") in ("done", "unavailable"):

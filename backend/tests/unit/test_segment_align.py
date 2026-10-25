@@ -696,3 +696,24 @@ def test_mixed_pixels_at_the_silhouette_are_dropped_for_the_mesh():
         assert np.all(b[f.confidence == 2] == a[f.confidence == 2])          # high confidence untouched
         assert (b > 0).sum() < (a > 0).sum()                                  # some rim pixels gone
         assert ((b > 0) & (f.confidence == 1)).sum() > 0.3 * ((a > 0) & (f.confidence == 1)).sum()   # sides stay
+
+
+def test_a_low_objects_top_is_never_taken_for_the_table():
+    """Seen from above, a low object (a remote, a board) can fill most of the box: its top, 1.5 cm up, outnumbers the
+    table inside the box and a fit there would cut the object away. The table round the object (outside its
+    footprint) shows the fit is a top: the frame's table comes from the ring, and the object stays."""
+    from repairos.recon.segment_align import _confirmed_table
+
+    rng = np.random.default_rng(0)
+    top = np.c_[rng.uniform(-0.05, 0.05, 3000), np.full(3000, 0.015), rng.uniform(-0.04, 0.04, 3000)]
+    table_in = np.c_[rng.uniform(-0.06, 0.06, 400), np.zeros(400), rng.uniform(-0.05, 0.05, 400)]
+    ring = np.c_[rng.uniform(-0.1, 0.1, 2000), np.zeros(2000), rng.uniform(-0.09, 0.09, 2000)]
+    ring = ring[(np.abs(ring[:, 0]) > 0.065) | (np.abs(ring[:, 2]) > 0.055)]
+    near = np.vstack([top, table_in]) + rng.normal(0, 0.0005, (3400, 3))
+    n, d = _confirmed_table(near, ring, rng)
+    assert abs(d) < 0.002 and n[1] > 0.99                 # the table (y = 0), not the top (y = 0.015)
+    n, d = _confirmed_table(near, ring[:50], rng)          # too little ring to tell: the fit in the box stands
+    assert abs(-d - 0.015) < 0.002
+    sag = ring + [0, -0.004, 0]                            # the table round it 4 mm lower (a cushion): still the fit
+    n, d = _confirmed_table(np.vstack([table_in, table_in]), sag, rng)
+    assert abs(d) < 0.002

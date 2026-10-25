@@ -40,6 +40,8 @@ HERO_MIN_SIZE_M = 0.08       # an object smaller than this is below what the pho
 HERO_POINTS_MIN = 20_000      # the phone cloud is the 3D view when it has at least this many object points
 HERO_MESH_MIN = 2_000         # else the mesh, when it has at least this many triangles
 CLOUD_MAX_POINTS = 200_000    # the served cloud is thinned (voxel) to at most about this many points
+MERGED_BELOW_M = 0.008        # a merged bottom's surface this far under segment 0's table is not the object: dropped,
+MERGED_BELOW_SHARE = 0.10     # ... and when more than this share of it is, the merge failed: the top scan alone
 
 
 @dataclass
@@ -55,6 +57,7 @@ class ScanMesh:
     hero: str = "photos"             # mesh | points | photos: what the app should show as the 3D view
     hero_reason: str = ""
     size_m: float = 0.0
+    bottom_segments: list[int] = field(default_factory=list)   # registered flipped segments fused in
 
 
 def keyframes_in_frame(pkg: Mapping[str, Any]) -> list[dict]:
@@ -326,7 +329,7 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
         if t is None:
             continue
         frames = frames_of(pkg_local, {k})
-        box, _ = segment_box(pkg_local, seg, t)
+        box, _ = segment_box(pkg_local, seg, t, registered=True)
         if not frames or box is None:
             continue
         plane = None
@@ -344,10 +347,12 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
     return out
 
 
-def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]]) -> ScanMesh | None:
+def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]], *,
+                   max_triangles: int | None = None) -> ScanMesh | None:
     """A thin object's mesh and cloud from its photo slab (recreation.flat), the 3D view when it is found: LiDAR
     cannot resolve a board, the slab carries its photos at full resolution. None when the object is not thin or the
-    slab is not checked (then the LiDAR mesh is built as usual)."""
+    slab is not checked (then the LiDAR mesh is built as usual). The slab's top grid is coarsened to keep the mesh
+    within `max_triangles` (never decimated: a plane collapses to a few triangles and loses its colours)."""
     from repairos.importers.ply import mesh_ply_bytes
     from repairos.recreation.flat import scan_flat_model, slab_mesh, slab_points
 
@@ -356,7 +361,7 @@ def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[
     if m is None:
         log.info("no flat model: %s", why)
         return None
-    v, f, c = slab_mesh(m)
+    v, f, c = slab_mesh(m, max_triangles=max_triangles)
     p, pc = slab_points(m)
     p, pc = thin_cloud(p, pc, CLOUD_MAX_POINTS)
     ply = mesh_ply_bytes(v, f, c, comments=("repairos flat object slab, arkit_world metres",))
@@ -378,8 +383,35 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
     (the table is cut first, so medium confidence brings the sides, not the table back), a TSDF at a voxel scaled to
     the box, the pieces that reach the box's middle. A hand-held scan (object_tracked) keeps high confidence and no
     table cut. `segment_transforms` ({segment: 4x4}, pipeline/segments.py): object-moved
-    segments the server registered are fused in too, in segment 0's frame (the flipped bottom). Raises
-    MeshUnavailable."""
+    segments the server registered are fused in too, in segment 0's frame (the flipped bottom); when that leaves no
+    mesh or a few scraps, the top scan alone is used (the gate before it is pipeline/segments.merge_gate). A thin
+    object with photos is its photo slab (flat_scan_mesh). Raises MeshUnavailable."""
+    if stills_local:   # a thin object (a board, a remote): the photo slab from segment 0 (recreation.flat); its
+        # flipped bottom, registered or not, stays photos: LiDAR resolves neither side of a thin object
+        flat = flat_scan_mesh(pkg_local, stills_local, max_triangles=max_triangles)
+        if flat is not None:
+            return flat
+    if segment_transforms:   # a merge that breaks the mesh (nothing left, a few scraps): the top scan alone
+        try:
+            merged = _lidar_scan_mesh(pkg_local, max_triangles, segment_transforms)
+        except MeshUnavailable as e:
+            top = _lidar_scan_mesh(pkg_local, max_triangles, None)
+            top.hero_reason += f"; built from the top scan alone (with the bottom: {e})"
+            return top
+        if merged.triangles >= HERO_MESH_MIN:
+            return merged
+        top = _lidar_scan_mesh(pkg_local, max_triangles, None)
+        if top.triangles > 2 * merged.triangles:
+            top.hero_reason += (f"; built from the top scan alone (with the bottom only {merged.triangles} "
+                                f"triangles were left)")
+            return top
+        return merged
+    return _lidar_scan_mesh(pkg_local, max_triangles, None)
+
+
+def _lidar_scan_mesh(pkg_local: Mapping[str, Any], max_triangles: int,
+                     segment_transforms: Mapping[int, np.ndarray] | None) -> ScanMesh:
+    """build_scan_mesh's LiDAR path (the TSDF mesh and the phone cloud)."""
     from repairos.importers.fuse import make_fuser
     from repairos.importers.ply import mesh_ply_bytes
     from repairos.pipeline.segments import _object_only, frames_of
@@ -388,10 +420,6 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
 
     t = {}
     t0 = time.perf_counter()
-    if stills_local and not segment_transforms:   # a thin object (a board, a remote): the photo slab (recreation.flat)
-        flat = flat_scan_mesh(pkg_local, stills_local)
-        if flat is not None:
-            return flat
     pkg = {**pkg_local, "keyframes": keyframes_in_frame(pkg_local)}
     frames = frames_from_scan_package(pkg, Path("/"))
     if not frames:
@@ -426,6 +454,12 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
     t["fuse_s"] = time.perf_counter() - t1
     t2 = time.perf_counter()
     v, f, dropped = central_pieces(np.asarray(mesh["vertices"], float), np.asarray(mesh["faces"]), box)
+    if extra and plane is not None and len(f):   # a merged bottom: nothing of the object is under its table
+        under = v[:, 1] < plane - MERGED_BELOW_M
+        share = float(under[f].all(1).mean())
+        if share > MERGED_BELOW_SHARE:
+            raise MeshUnavailable(f"{share:.0%} of the merged surface lies under the table")
+        f = f[~under[f].all(1)]
     v, f, n = decimate(v, f, max_triangles)
     t["clean_s"] = time.perf_counter() - t2
     t3 = time.perf_counter()
@@ -459,4 +493,5 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
                     seconds={k: round(x, 3) for k, x in t.items()},
                     method=f"tsdf {spacing * 1000:.1f} mm, plane margin {info['plane_margin_mm']} mm, "
                            f"{dropped} off-object triangles dropped"
-                           + (f", {len(extra)} flipped segment(s) fused in" if extra else ""))
+                           + (f", {len(extra)} flipped segment(s) fused in" if extra else ""),
+                    bottom_segments=sorted(int(seg["segment"]) for *_, seg in extra))

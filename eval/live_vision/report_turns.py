@@ -7,7 +7,8 @@ the marker -> 3D point resolution and the ringed spot photo), Haiku answering.
     $PY eval/live_vision/report_turns.py                    # every item in report_questions.json
     $PY eval/live_vision/report_turns.py --only xbox_xb_here --out ...
 
-Item modes: `after` (the gateway now), `before` (the persona and words-only context at git HEAD), `heldout` (a
+Item modes: `after` (the gateway now), `before` (the pinned baseline persona, baseline_persona.txt: the one before
+the report-turn persona, git 4a319bf; `--baseline REV` reads it from a git revision; words-only context), `heldout` (a
 located finding is taken out of <parts>; Lea must point at it in a photo or view, and the point's distance to the
 finding's own located point is the accuracy), `sparse` (only `keep` stills are left: renders carry the rest).
 Data is read only (state DB mode=ro, blobs). Ringed spot photos go to --shots (the scratchpad), never the repo.
@@ -37,9 +38,16 @@ from run import Data, load_key  # noqa: E402
 MODEL = "claude-haiku-5-5"
 
 
+BASELINE_FILE = HERE / "baseline_persona.txt"   # PERSONA at 4a319bf, before the report-turn persona (d989a10)
+BASELINE_REV: str | None = None                  # --baseline: read PERSONA from this git revision instead
+
+
 def old_persona() -> str:
-    """The persona at git HEAD (before this change)."""
-    src = subprocess.run(["git", "-C", str(ROOT), "show", "HEAD:backend/repairos/voice/conversation.py"],
+    """The baseline persona `before` items compare against: pinned (BASELINE_FILE, so reruns repeat the saved
+    comparison whatever HEAD holds), or from git revision BASELINE_REV."""
+    if BASELINE_REV is None:
+        return BASELINE_FILE.read_text(encoding="utf-8")
+    src = subprocess.run(["git", "-C", str(ROOT), "show", f"{BASELINE_REV}:backend/repairos/voice/conversation.py"],
                          capture_output=True, text=True, check=True).stdout
     ns: dict = {}
     start = src.index('PERSONA = """')
@@ -204,7 +212,10 @@ async def main() -> None:
     ap.add_argument("--shots", type=Path, required=True, help="where ringed spot photos go (outside the repo)")
     ap.add_argument("--out", type=Path, default=HERE / "results" / "report-turns.json")
     ap.add_argument("--max-calls", type=int, default=30)
+    ap.add_argument("--baseline", help="git revision whose PERSONA `before` items use (default: baseline_persona.txt)")
     a = ap.parse_args()
+    global BASELINE_REV
+    BASELINE_REV = a.baseline
     load_key(a.env)
     key = os.environ.get("ANTHROPIC_API_KEY") or sys.exit("ANTHROPIC_API_KEY is not set")
     items = json.loads((HERE / "report_questions.json").read_text(encoding="utf-8"))["items"]

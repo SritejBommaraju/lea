@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -45,6 +46,8 @@ LIVE_REFINE_SIDE = 0.3
 INDEX_PHOTOS = 4
 INDEX_PX = 1280            # the index reads printed labels: larger photos than a turn's
 MAX_INDEX = 40
+INDEX_RETRY_S = 60.0       # a failed index is tried again after this, doubling per attempt
+INDEX_MAX_ATTEMPTS = 3     # ... at most this many times for the same photos
 KINDS = ["button", "port", "pin", "header", "connector", "label", "screw", "wire end", "switch", "light", "chip",
          "battery", "other"]
 
@@ -104,8 +107,21 @@ class Evidence:
             return None
 
     async def stills(self, scan_id: str) -> list[dict]:
-        rows = await self.app.state.store.list("still", scan_id=scan_id)
-        return [r.data for r in rows if r.data]
+        """The scan's stills, each marked `in_frame` (views.usable): segment 0, a continuation in its frame
+        (segments.same_frame_segments), or a flipped bottom the server registered for this package revision (its
+        camera restated in segment 0's frame)."""
+        from repairos.pipeline.segments import aligned_transforms, same_frame_segments
+
+        st = self.app.state.store
+        rows = await st.list("still", scan_id=scan_id)
+        stills = [r.data for r in rows if r.data]
+        pkg_row = await st.get("scan-package", scan_id)
+        if pkg_row is None:
+            return stills
+        run = await st.get("pipeline-run", f"run_{scan_id}")
+        rec = ((run.data if run else {}) or {}).get("segments") or {}
+        moved = aligned_transforms(rec) if rec.get("scan_rev") == pkg_row.rev else {}
+        return V.in_scan_frame(stills, same_frame_segments(pkg_row.data or {}), moved)
 
     async def surface_key(self, scan_id: str) -> str:
         """Which surface the scan has now (the recreation's ref and rev, the mesh rev, the cloud): a new one (a
@@ -251,26 +267,79 @@ class Evidence:
         jpeg = await asyncio.to_thread(V.photo_spot, st, img, x, y, ring_frac)
         return self.app.state.blobs.put(jpeg, "image/jpeg").split("sha256:")[-1]
 
+    async def index_inputs(self, scan_id: str) -> str:
+        """What the index reads: its usable photos (a continuation's new close-ups change it), as a short hash."""
+        ids = sorted(str(s.get("still_id")) for s in await self.stills(scan_id) if V.usable(s))
+        return hashlib.sha1("|".join(ids).encode()).hexdigest()[:16]
+
+    def _read(self, scan_id: str) -> dict | None:
+        try:
+            return json.loads(self._index_path(scan_id).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    @staticmethod
+    def index_due(data: dict | None, inputs: str, surface_key: str, now: float) -> bool:
+        """Whether the index should be (re)built: none yet; a finished one whose photos changed (one written before
+        inputs were recorded counts as unchanged: its entries are re-placed on a new surface by `entries`); a skipped
+        one whose photos or surface changed; a failed attempt once its backoff (INDEX_RETRY_S, doubling) has passed,
+        at most INDEX_MAX_ATTEMPTS times for the same photos."""
+        if data is None:
+            return True
+        status = data.get("status")
+        if status == "done" and data.get("inputs") in (None, inputs):
+            return False
+        if status == "skipped" and data.get("inputs") == inputs and data.get("surface_key") == surface_key:
+            return False
+        a = data.get("attempt") or {}
+        if a.get("inputs") == inputs:
+            n = int(a.get("n") or 0)
+            if n >= INDEX_MAX_ATTEMPTS or now - float(a.get("at") or 0) < INDEX_RETRY_S * 2 ** max(0, n - 1):
+                return False
+        return True
+
+    def _record(self, scan_id: str, out: dict, inputs: str) -> None:
+        """Writes an index result. A failed or skipped one is an attempt (retried later, `index_due`) and never
+        replaces an earlier finished index's entries."""
+        old = self._read(scan_id) or {}
+        if out.get("status") == "done":
+            self._write(scan_id, {**out, "inputs": inputs})
+            return
+        prev = old.get("attempt") or {}
+        n = int(prev.get("n") or 0) + 1 if prev.get("inputs") == inputs else 1
+        attempt = {"inputs": inputs, "at": time.time(), "n": n, "status": out.get("status"),
+                   "reason": str(out.get("reason") or "")[:300]}
+        if old.get("status") == "done":
+            self._write(scan_id, {**old, "attempt": attempt})
+        else:
+            self._write(scan_id, {**out, "inputs": inputs, "attempt": attempt})
+
     async def ensure_index(self, scan_id: str, talker_key: str | None, model: str, identity: dict | None, *,
                            http_client: Any = None) -> None:
-        """Starts the index once per scan (never twice at once, never again once written): its photos are read
-        here, then the vision call and the file write run on their own thread, so the answer never waits for it
-        and it outlives the request."""
-        if not talker_key or scan_id in self._building or self._index_path(scan_id).exists():
+        """Starts the index when it is due (`index_due`: once per set of photos, failures retried with backoff; never
+        twice at once): its photos are read here, then the vision call and the file write run on their own thread,
+        so the answer never waits for it and it outlives the request."""
+        if not talker_key or scan_id in self._building:
             return
         self._building.add(scan_id)
+        key, inputs = None, ""
         try:
+            key = await self.surface_key(scan_id)
+            inputs = await self.index_inputs(scan_id)
+            if not self.index_due(self._read(scan_id), inputs, key, time.time()):
+                self._building.discard(scan_id)
+                return
             views, why = await self._index_views(scan_id)
-        except Exception as e:  # noqa: BLE001
-            views, why = {}, f"{type(e).__name__}: {e}"
+            status = "skipped"
+        except Exception as e:  # noqa: BLE001 - reading the scan failed: an attempt, retried later
+            views, why, status = {}, f"{type(e).__name__}: {e}", "failed"
         if not views:
-            self._write(scan_id, {"status": "skipped", "reason": why, "entries": []})
+            self._record(scan_id, {"status": status, "reason": why, "entries": [], "surface_key": key}, inputs)
             self._building.discard(scan_id)
             return
         name = (identity or {}).get("name") or " ".join(
             str(x) for x in ((identity or {}).get("brand"), (identity or {}).get("model")) if x)
 
-        key = await self.surface_key(scan_id)
         surface, stills = V.SURFACES.get((scan_id, key)), await self.stills(scan_id)
 
         def run() -> None:
@@ -283,8 +352,10 @@ class Evidence:
                 out = {"status": "failed", "reason": f"{type(e).__name__}: {e}"[:300], "entries": []}
             out["seconds"] = round(time.perf_counter() - t0, 2)
             out["surface_key"] = key
-            self._write(scan_id, out)
-            self._building.discard(scan_id)
+            try:
+                self._record(scan_id, out, inputs)
+            finally:
+                self._building.discard(scan_id)
             log.info("voice index %s: %s, %d parts in %.1f s", scan_id, out.get("status"),
                      len(out.get("entries") or []), out["seconds"])
         threading.Thread(target=run, name=f"voice-index-{scan_id}", daemon=True).start()
@@ -337,23 +408,33 @@ class Evidence:
         text = next((b.text for b in r.content if getattr(b, "type", None) == "text"), "{}")
         listing = json.loads(text)
         entries = index_entries(listing.get("parts") or [], views)
-        calls = 1
+        calls, stats = 1, {"refine_errors": 0}
         if entries and surface is not None and stills and image_of is not None:
-            refined, n = await refine_points(surface, stills, image_of, entries, client=client, model=model,
-                                             scan_id=scan_id, name=name)
-            calls += n
-            for e, r_ in zip(entries, refined):
-                e["coarse_point"] = e["point"]
-                e.update(point=None if r_["point"] is None else [round(float(c), 5) for c in r_["point"]],
-                         radius=r_["radius"],
-                         precision=r_["precision"], still_id=r_["still_id"] or e.get("still_id"),
-                         x=r_.get("xy", (e.get("x"), e.get("y")))[0], y=r_.get("xy", (e.get("x"), e.get("y")))[1])
-            pins, n = await header_pins(surface, stills, image_of, entries, client=client, model=model,
-                                        scan_id=scan_id, name=name)
-            entries += pins
-            calls += n
+            # Refinement and pin reading are optional: whatever fails, the listed parts stay at their coarse points.
+            try:
+                refined, n = await refine_points(surface, stills, image_of, entries, client=client, model=model,
+                                                 scan_id=scan_id, name=name, stats=stats)
+                calls += n
+                for e, r_ in zip(entries, refined):
+                    e["coarse_point"] = e["point"]
+                    xy = r_.get("xy") or (e.get("x"), e.get("y"))
+                    e.update(point=None if r_["point"] is None else [round(float(c), 5) for c in r_["point"]],
+                             radius=r_["radius"], precision=r_["precision"],
+                             still_id=r_["still_id"] or e.get("still_id"), x=xy[0], y=xy[1])
+            except Exception as err:  # noqa: BLE001
+                log.warning("voice index %s: refining failed, coarse points kept: %s", scan_id, err)
+                stats["refine_errors"] += 1
+            try:
+                pins, n = await header_pins(surface, stills, image_of, entries, client=client, model=model,
+                                            scan_id=scan_id, name=name, stats=stats)
+                entries += pins
+                calls += n
+            except Exception as err:  # noqa: BLE001
+                log.warning("voice index %s: header pins failed: %s", scan_id, err)
+                stats["refine_errors"] += 1
         swapped = check_mirrors(entries, listing.get("mirror_pairs") or [])
         return {"status": "done", "model": model, "photos": list(views), "calls": calls, "entries": entries,
+                "refine_errors": stats["refine_errors"],
                 "orientation": str(listing.get("orientation") or "")[:400],
                 "mirror_pairs": (listing.get("mirror_pairs") or [])[:12], "swapped": swapped}
 
@@ -449,6 +530,8 @@ PINS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["pi
 PINS_SIDE = 0.22            # the header crop, as a fraction of the photo's shorter side
 PIN_RADIUS_M = 0.006        # a pin read on its own close-up: about one socket (2.54 mm pitch headers)
 MAX_PINS = 40
+SAME_PIN_M = 0.008          # two readings of one label closer than this are the same pin (overlapping crops)
+SAME_PIN_PX = 0.02          # ... or, without 3D points, this close in the same photo (fractions)
 
 
 async def list_pins(client: Any, model: str, scan_id: str, header: str, crop: bytes, name: str
@@ -491,11 +574,12 @@ def ring_for(own: Any, offset_m: float | None, refined: bool) -> tuple[Any, floa
 
 async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, items: list[dict], *, client: Any,
                         model: str, scan_id: str, name: str = "", sides: tuple[float, ...] = REFINE_SIDES,
-                        verify: bool = True) -> tuple[list[dict], int]:
+                        verify: bool = True, stats: dict | None = None) -> tuple[list[dict], int]:
     """Each item ({label, point, and optionally still_id + x, y: its pixel as upright fractions}) refined on
     full-resolution crops of its photo, one batched call per photo per pass (windows `sides`), and with `verify`
     found again in a second photo that sees it (in the last pass's call for that photo). Returns
-    ([{point, radius, precision}], calls made). Spots off the model or not seen keep their earlier point."""
+    ([{point, radius, precision}], calls made). Spots off the model or not seen keep their earlier point (and its
+    coarse ring); a call that fails leaves its parts as they were and is counted in `stats["refine_errors"]`."""
     usable = [s for s in stills if V.usable(s)]
     by_id = {s["still_id"]: s for s in usable}
     state = []
@@ -503,14 +587,14 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
         st = by_id.get(it.get("still_id"))
         xy = (it["x"], it["y"]) if st is not None and it.get("x") is not None else None
         if xy is None and it.get("point") is None:
-            state.append({"still": None, "xy": None, "point": None, "ok": 0, "check": None})
+            state.append({"still": None, "xy": None, "point": None, "ok": 0, "placed": 0, "check": None})
             continue
         if xy is None:
             cands = V.photo_candidates(usable, np.asarray(it["point"], float))
             st = cands[0][1] if cands else None
             xy = V.to_upright(st, cands[0][2], cands[0][3]) if st is not None else None
         state.append({"still": st, "xy": xy, "point": None if it.get("point") is None else np.asarray(it["point"], float),
-                      "ok": 0, "check": None})
+                      "ok": 0, "placed": 0, "check": None})
 
     def view_of(st: dict) -> V.View | None:
         key = (scan_id, "photo", st.get("still_id"))
@@ -522,7 +606,7 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
                 V.VIEWS.put(key, v)
         return v
 
-    calls = 0
+    calls, errors = 0, 0
     for n, side in enumerate(sides):
         last = n == len(sides) - 1
         jobs: dict[str, list[tuple[str, int, tuple[float, float]]]] = {}
@@ -531,7 +615,7 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
                 jobs.setdefault(s_["still"]["still_id"], []).append(("own", i, s_["xy"]))
         if last and verify:   # the refined point projected into another photo: is the part really there?
             for i, s_ in enumerate(state):
-                if not s_["ok"] or s_["still"] is None or s_["point"] is None:
+                if not s_["placed"] or s_["still"] is None or s_["point"] is None:
                     continue
                 for _, st2, u, v, d in V.photo_candidates(usable, s_["point"]):
                     if st2["still_id"] != s_["still"]["still_id"]:
@@ -541,7 +625,7 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
                         break
 
         async def one(sid: str, job: list) -> None:
-            nonlocal calls
+            nonlocal calls, errors
             st, img = by_id[sid], image_of(by_id[sid])
             if not img:
                 return
@@ -550,35 +634,69 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
                 jpeg, rect = await asyncio.to_thread(V.refine_crop, st, img, x, y, side * (1.6 if kind == "check" else 1))
                 crops.append((items[i]["label"], jpeg))
                 rects.append(rect)
-            answers = await ask_crops(client, model, scan_id, crops, name)
+            try:
+                answers = await ask_crops(client, model, scan_id, crops, name)
+            except Exception as e:  # noqa: BLE001 - a refinement is optional: its parts keep their earlier points
+                errors += 1
+                log.warning("voice refine %s on %s failed: %s", scan_id, sid, e)
+                return
             calls += 1
             view = await asyncio.to_thread(view_of, st)
             for (kind, i, _), rect, a in zip(job, rects, answers):
                 if a is None or view is None:
                     continue
                 x, y = V.from_crop(rect, *a)
-                if kind == "check":   # how far the part is from where the refined point projects, in mm there
-                    st2, x2, y2, depth = state[i]["check_at"]
-                    w2, h2 = float(st2.get("width_px") or 1), float(st2.get("height_px") or 1)
-                    if V.quarter_turns(st2) % 2:
-                        w2, h2 = h2, w2
-                    fx = float(st2["intrinsics"]["fx"])
-                    state[i]["check"] = float(np.hypot((x - x2) * w2, (y - y2) * h2)) * depth / fx
+                if kind == "check":   # where the second photo shows the part (measured against the final point)
+                    state[i]["check_xy"] = (x, y)
                     continue
                 pt = V.point_at(view, x, y)
-                # The refined pixel counts even where the surface is thin (a photo-only spot keeps no 3D point).
-                state[i].update(xy=(x, y), point=pt if pt is not None else state[i]["point"], ok=state[i]["ok"] + 1)
+                # The refined pixel counts for the photo even where the surface is thin (a photo-only spot keeps no
+                # 3D point); a 3D point is refined only when this pixel placed it, never an older guess kept.
+                state[i].update(xy=(x, y), point=pt if pt is not None else state[i]["point"], ok=state[i]["ok"] + 1,
+                                placed=state[i]["placed"] + (pt is not None))
         await asyncio.gather(*(one(sid, job) for sid, job in jobs.items()))
+    for s_ in state:   # the second photo against the final point (the last pass may have moved it)
+        if s_.get("check_xy") is not None and s_["point"] is not None and s_["placed"]:
+            s_["check"] = check_offset(s_["check_at"][0], s_["point"], *s_["check_xy"])
     out = []
     for s_ in state:
-        pt, radius, word = ring_for(s_["point"], s_["check"] if s_["ok"] else None, s_["ok"] > 0)
+        refined = s_["placed"] > 0 if s_["point"] is not None else s_["ok"] > 0
+        pt, radius, word = ring_for(s_["point"], s_["check"] if refined else None, refined)
         out.append({"point": pt, "radius": round(float(radius), 4), "precision": word,
                     "still_id": (s_["still"] or {}).get("still_id"), "xy": s_["xy"]})
+    if stats is not None:
+        stats["refine_errors"] = stats.get("refine_errors", 0) + errors
     return out, calls
 
 
+def check_offset(st2: dict, point: Any, x: float, y: float) -> float | None:
+    """How far (metres, at the part's depth) the part found at upright fractions (x, y) of still st2 is from where
+    `point` projects in st2; None when it does not project there."""
+    proj = V.project_upright(st2, point)
+    if proj is None:
+        return None
+    x2, y2, depth = proj
+    w2, h2 = float(st2.get("width_px") or 1), float(st2.get("height_px") or 1)
+    if V.quarter_turns(st2) % 2:
+        w2, h2 = h2, w2
+    fx = float(st2["intrinsics"]["fx"])
+    return float(np.hypot((x - x2) * w2, (y - y2) * h2)) * depth / fx
+
+
+def same_pin(a: dict, b: dict) -> bool:
+    """Two pin readings with the same printed label are one pin only when they are in the same place (overlapping
+    header crops read it twice): 3D points within SAME_PIN_M, or without 3D points the same photo and pixel.
+    Boards repeat GND or 5V on different headers: those are different pins."""
+    if a["label"].lower() != b["label"].lower():
+        return False
+    if a.get("point") is not None and b.get("point") is not None:
+        return float(np.linalg.norm(np.asarray(a["point"], float) - np.asarray(b["point"], float))) < SAME_PIN_M
+    return a.get("still_id") == b.get("still_id") and \
+        float(np.hypot(a["x"] - b["x"], a["y"] - b["y"])) < SAME_PIN_PX
+
+
 async def header_pins(surface: V.Surface, stills: list[dict], image_of: Any, entries: list[dict], *, client: Any,
-                      model: str, scan_id: str, name: str = "") -> tuple[list[dict], int]:
+                      model: str, scan_id: str, name: str = "", stats: dict | None = None) -> tuple[list[dict], int]:
     """For each header in the index (a row of pins), a full-resolution close-up and one call listing its printed
     pin labels, each placed on the model through the photo's point map: "where's A2" becomes a lookup. A pin's ring
     is tight (a model reading its own crop at full resolution), never the size of the whole header."""
@@ -589,7 +707,13 @@ async def header_pins(surface: V.Surface, stills: list[dict], image_of: Any, ent
         if st is None or e.get("x") is None or not (img := image_of(st)):
             continue
         crop, rect = await asyncio.to_thread(V.refine_crop, st, img, e["x"], e["y"], PINS_SIDE, 1024)
-        found = await list_pins(client, model, scan_id, e["label"], crop, name)
+        try:
+            found = await list_pins(client, model, scan_id, e["label"], crop, name)
+        except Exception as err:  # noqa: BLE001 - a header's pins are optional: the listed parts stay
+            log.warning("voice pins %s on %s failed: %s", scan_id, e["label"], err)
+            if stats is not None:
+                stats["refine_errors"] = stats.get("refine_errors", 0) + 1
+            continue
         calls += 1
         view = V.VIEWS.get((scan_id, "photo", st["still_id"]))
         if view is None:
@@ -599,16 +723,17 @@ async def header_pins(surface: V.Surface, stills: list[dict], image_of: Any, ent
         for label, cx, cy in found:
             x, y = V.from_crop(rect, cx, cy)
             text = V.text_likeness(st, img, x, y)
-            prev = next((o for o in out if o["label"].lower() == label.lower()), None)
+            pt = V.point_at(view, x, y) if view is not None else None
+            pin = {"label": label, "part": f"{label} pin", "kind": "pin", "note": f"on the {e['label']}",
+                   "point": None if pt is None else [round(float(c), 5) for c in pt], "radius": PIN_RADIUS_M,
+                   "precision": "pin read in a close-up", "still_id": st["still_id"], "x": round(x, 4),
+                   "y": round(y, 4), "where": f"on the {e['label']}", "_text": text}
+            prev = next((o for o in out if same_pin(o, pin)), None)
             if prev is not None:   # read in two close-ups (crops overlap): keep the one on the socket, not the text
                 if text >= prev["_text"]:
                     continue
                 out.remove(prev)
-            pt = V.point_at(view, x, y) if view is not None else None
-            out.append({"label": label, "part": f"{label} pin", "kind": "pin", "note": f"on the {e['label']}",
-                        "point": None if pt is None else [round(float(c), 5) for c in pt], "radius": PIN_RADIUS_M,
-                        "precision": "pin read in a close-up", "still_id": st["still_id"], "x": round(x, 4),
-                        "y": round(y, 4), "where": f"on the {e['label']}", "_text": text})
+            out.append(pin)
     for i, o in enumerate(out):
         o.pop("_text", None)
         o["id"] = f"ix_{len(entries) + i + 1}"

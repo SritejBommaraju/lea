@@ -15,10 +15,11 @@ the object pieces 57. The photos, though, see it sharply and their poses are goo
    fills it (most boards, phones, books), else its convex hull.
 3. The slab: that outline from the table up to the measured thickness (LiDAR heights inside the footprint), its top
    textured from that one still at full resolution (several photos blended would smear parts that stand up above the
-   board: parallax), gaps filled from the next best still; sides and bottom plain.
+   board: parallax), gaps filled from the next best stills that agree with it; sides and bottom plain.
 4. Checks before it is used: the outline is found and fits the crop box, its sides are measured (an identity's size
-   is only compared, never imposed), and a second still rectified onto the same plane lands on the first within
-   ALIGN_MM (poses and plane agree, so photo pixels map onto the slab).
+   is only compared, never imposed), and most of the next CHECK_STILLS stills rectified onto the same plane land on
+   the first within ALIGN_MM (poses and plane agree, so photo pixels map onto the slab; one photo with a bad pose
+   does not sink it).
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from typing import Any
 
 import numpy as np
 
-THIN_M = 0.02            # an object whose LiDAR points mostly lie this close to the table is thin (95th percentile)
+THIN_M = 0.02            # an object whose LiDAR points mostly lie this close to the table is thin (75th percentile)
 SEG_RES_M = 0.0005       # footprint found on a 0.5 mm top-view grid
 TEX_RES_M = 0.0001       # top texture at 0.1 mm per pixel (a still sees ~0.07 mm per pixel from 20 cm)
 TABLE_SIGMA = 4.0        # colour distance (Mahalanobis) beyond which a pixel is not table: chi2(3) at 99.9% = 16.3
@@ -40,7 +41,8 @@ OPEN_M = 0.003           # opening radius: wires (~2 mm) and specks leave the fo
 BODY_SHARE = 0.7         # rows of the main body span at least this share of its typical width (a connector, a
                          # glint on the table or a cable stub at the edge spans less)
 RECT_FILL = 0.85         # the piece fills its minimum-area rectangle this much: use the rectangle
-ALIGN_MM = 4.0           # a second still must land within this on the slab
+ALIGN_MM = 10.0          # another still must land within this on the slab (real UNO scans: still poses 3-9 mm apart)
+CHECK_STILLS = 4         # stills compared with the top one; most of them must agree
 MIN_TOP_COS = 0.6        # stills looking at least this much down (53 deg from vertical) texture the top
 
 
@@ -62,13 +64,16 @@ class FlatModel:
 
 
 def thin_object(points: np.ndarray, table_y: float | None) -> tuple[bool, float | None]:
-    """(thin, height): the object's LiDAR points (segment_align.segment_object_cloud) mostly within THIN_M of the
-    table, or too few to say otherwise."""
+    """(thin, height): three quarters of the object's LiDAR points (segment_align.segment_object_cloud) within THIN_M
+    of the table, or too few to say otherwise. The 75th percentile, not a higher one: a board's frames cut most of
+    its 2-3 mm top with the table, so its few tall parts, a cable and anything else in a generous box are a large
+    share of what is left (a real UNO board: 95th percentile 35 mm, 75th 9 mm; a mouse 34 mm and a controller 46 mm
+    at the 75th)."""
     if table_y is None:
         return False, None
     if len(points) < 200:
         return True, None
-    h = float(np.percentile(points[:, 1] - table_y, 95))
+    h = float(np.percentile(points[:, 1] - table_y, 75))
     return h <= THIN_M, h
 
 
@@ -298,7 +303,11 @@ def footprint(still: Still, grid: Grid, y: float, lidar_xz: np.ndarray | None) -
     if lidar.any():
         obj &= near
     r = max(1, int(round(OPEN_M / grid.res)))
-    obj = _dilate(_erode(obj, r), r)              # open: wires and specks go
+    # Close first: a busy top (a board's pins, black chips, silkscreen next to the table's colour) leaves the object
+    # full of small gaps, which the opening alone would widen until it falls apart into pieces (measured on a real
+    # board: its largest piece was a third of it). Then open: wires and specks go.
+    obj = _erode(_dilate(obj, r), r) & seen
+    obj = _dilate(_erode(obj, r), r)
     lab = _components(obj)
     if not lab.max():
         raise FlatUnavailable("no object found apart from the table in the top-down photo")
@@ -373,14 +382,24 @@ def flat_model(pkg_local: Mapping[str, Any], stills: Sequence[Mapping[str, Any]]
         if len(hs) >= 20:
             thick = float(np.clip(np.percentile(hs, 25), 0.0015, 0.01))
     top_y = table_y + thick
-    # A second still must put the object where the first does (poses and plane agree).
-    shift_mm = None
+    # Other stills must put the object where the first does (poses and plane agree). One photo's pose can be off on
+    # its own (measured on a real board: one of five 6-9 mm off, the rest within 1.5 mm), so up to CHECK_STILLS are
+    # compared and most of those that overlap must agree; the ones that disagree never fill the texture.
+    agree = []
     if len(views) > 1:
-        shift_mm = _agreement(views[0], views[1], outline, top_y)
-        info["second_still"] = views[1].name
-        info["second_still_shift_mm"] = None if shift_mm is None else round(shift_mm, 2)
-        if shift_mm is not None and shift_mm > ALIGN_MM:
-            raise FlatUnavailable(f"two photos put the object {shift_mm:.1f} mm apart on the table: the poses or the "
+        shifts = {v.name: _agreement(views[0], v, outline, top_y) for v in views[1:1 + CHECK_STILLS]}
+        known = {k: x for k, x in shifts.items() if x is not None}
+        agree = [v for v in views[1:1 + CHECK_STILLS] if shifts[v.name] is not None and shifts[v.name] <= ALIGN_MM]
+        info["check_shifts_mm"] = {k: round(x, 2) for k, x in known.items()}
+        if agree:
+            info["second_still"] = agree[0].name
+            info["second_still_shift_mm"] = round(shifts[agree[0].name], 2)
+        elif known:
+            k = min(known, key=known.get)
+            info["second_still"], info["second_still_shift_mm"] = k, round(known[k], 2)
+        if known and 2 * len(agree) < len(known):
+            worst = sorted(known.values())[len(known) // 2]
+            raise FlatUnavailable(f"the photos put the object {worst:.1f} mm apart on the table: the poses or the "
                                   f"table height disagree")
     # Top texture: the outline's rectangle frame at TEX_RES_M, from the best still, gaps from the next ones.
     rect, _ = _min_rect(_hull(np.round(outline / 1e-5).astype(np.int64)) * 1e-5)
@@ -390,7 +409,7 @@ def flat_model(pkg_local: Mapping[str, Any], stills: Sequence[Mapping[str, Any]]
     tex = Grid(rect[0], a / la, b / lb, TEX_RES_M, (int(np.ceil(lb / TEX_RES_M)), int(np.ceil(la / TEX_RES_M))))
     col, ok = rectify(best.image, best.pose, best.cam, tex, top_y)
     used = {best.name: int(ok.sum())}
-    for v in views[1:3]:
+    for v in agree[:2]:   # gaps from photos that agree with the top one
         if ok.all():
             break
         c2, ok2 = rectify(v.image, v.pose, v.cam, tex, top_y)
@@ -529,38 +548,79 @@ def slab_points(m: FlatModel, step: float = 0.0002) -> tuple[np.ndarray, np.ndar
     return np.vstack(pts), np.vstack(cols).astype(np.uint8)
 
 
-def slab_mesh(m: FlatModel, cell: float = 0.0005) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """The slab as a vertex-coloured mesh (the report's PLY): its top a `cell` grid inside the outline coloured from
-    the texture, plus the sides and bottom. Returns (vertices, faces, colours)."""
+def _nearest_on_outline(q: np.ndarray, poly: np.ndarray) -> np.ndarray:
+    """Each point's nearest point on the polygon's boundary."""
+    best = np.full(len(q), np.inf)
+    out = q.copy()
+    for k in range(len(poly)):
+        a, b = poly[k], poly[(k + 1) % len(poly)]
+        ab = b - a
+        t = np.clip(((q - a) @ ab) / max(float(ab @ ab), 1e-18), 0.0, 1.0)
+        c = a + t[:, None] * ab
+        d = np.einsum("ij,ij->i", q - c, q - c)
+        closer = d < best
+        best[closer], out[closer] = d[closer], c[closer]
+    return out
+
+
+def slab_mesh(m: FlatModel, cell: float = 0.0005, max_triangles: int | None = None
+              ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The slab as a vertex-coloured mesh (the report's PLY): its top a `cell` grid over the outline (any convex
+    polygon: a rectangle, or a hull with three or more corners), coloured from the texture, plus the sides and bottom.
+    Grid cells cut by the outline keep their inside corners and have the outside ones moved onto the outline, so the
+    top covers exactly the outline. `max_triangles`: the cell grows until the mesh fits (a plane is never decimated:
+    it would collapse to a few triangles and lose its colours). Returns (vertices, faces, colours)."""
     atlas = np.asarray(m.atlas)
     h, w = atlas.shape[:2]
     top_y = float(m.vertices[0, 1])
     k = len(m.outline)
-    o = m.outline
-    a, b = o[1] - o[0], o[k - 1] - o[0]
-    na, nb = max(2, int(np.linalg.norm(a) / cell) + 1), max(2, int(np.linalg.norm(b) / cell) + 1)
-    s, t = np.meshgrid(np.linspace(0, 1, na), np.linspace(0, 1, nb))
-    xz = o[0] + s.reshape(-1, 1) * a + t.reshape(-1, 1) * b
-    # texture coordinates of the grid by barycentric lookup in the top fan (the outline is convex)
-    uv = np.zeros((len(xz), 2))
-    for i in range(1, k - 1):
-        tri = np.array([o[0], o[i], o[i + 1]])
-        tuv = m.uv[[0, i, i + 1]].astype(float)
-        mtx = np.array([tri[1] - tri[0], tri[2] - tri[0]]).T
-        lam = np.linalg.solve(mtx, (xz - tri[0]).T).T
-        inside = (lam >= -1e-6).all(1) & (lam.sum(1) <= 1 + 1e-6)
-        uv[inside] = tuv[0] + lam[inside, 0:1] * (tuv[1] - tuv[0]) + lam[inside, 1:2] * (tuv[2] - tuv[0])
-    col = atlas[np.clip((uv[:, 1] * h).astype(int), 0, h - 1), np.clip((uv[:, 0] * w).astype(int), 0, w - 1)]
-    verts = np.stack([xz[:, 0], np.full(len(xz), top_y), xz[:, 1]], 1)
+    o = np.asarray(m.outline, float)
+    rest = np.array([f for f in m.faces if not (f < k).all()])
+    # The texture is an affine map of (x, z) on the top: fitted on the outline's corners (exact)
+    A = np.c_[o, np.ones(k)]
+    uv_map, *_ = np.linalg.lstsq(A, np.asarray(m.uv[:k], float), rcond=None)
+    # the grid along the outline's first edge, over the outline's extent in that frame
+    a = (o[1] - o[0]) / max(float(np.linalg.norm(o[1] - o[0])), 1e-12)
+    b = np.array([-a[1], a[0]])
+    sa, sb = (o - o[0]) @ a, (o - o[0]) @ b
+    la, lb = float(sa.max() - sa.min()), float(sb.max() - sb.min())
+    def nodes(c: float) -> tuple[int, int]:
+        return max(2, int(np.ceil(la / c)) + 1), max(2, int(np.ceil(lb / c)) + 1)
+    if max_triangles:
+        budget = max(1000, int(max_triangles) - len(rest))
+        cell = max(cell, float(np.sqrt(2.0 * la * lb / budget)))
+        while 2 * (nodes(cell)[0] - 1) * (nodes(cell)[1] - 1) > budget:
+            cell *= 1.01
+    na, nb = nodes(cell)
+    s_, t_ = np.meshgrid(np.linspace(sa.min(), sa.max(), na), np.linspace(sb.min(), sb.max(), nb))
+    xz = o[0] + s_.reshape(-1, 1) * a + t_.reshape(-1, 1) * b
+    inside = _inside(xz, o)
+    on_edge = np.linalg.norm(_nearest_on_outline(xz, o) - xz, axis=1) < 1e-9
+    inside |= on_edge
     idx = np.arange(na * nb).reshape(nb, na)
     q00, q01, q10, q11 = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
-    up = np.cross(np.r_[a[0], 0, a[1]], np.r_[b[0], 0, b[1]])[1] < 0     # (a, b) as seen from above
-    faces = np.vstack([np.stack([q00, q01, q11], 1), np.stack([q00, q11, q10], 1)]) if up else \
+    up = _cross2(a, b) < 0     # (a, b) as seen from above: faces wind to face +Y
+    tris = np.vstack([np.stack([q00, q01, q11], 1), np.stack([q00, q11, q10], 1)]) if up else \
         np.vstack([np.stack([q00, q11, q01], 1), np.stack([q00, q10, q11], 1)])
+    tris = tris[inside[tris].any(1)]                        # cells the outline reaches
+    moved = ~inside
+    xz[moved] = _nearest_on_outline(xz[moved], o)           # their outside corners onto the outline
+    # drop the slivers and folds this leaves (a corner of the outline cuts a cell)
+    p0, p1, p2 = xz[tris[:, 0]], xz[tris[:, 1]], xz[tris[:, 2]]
+    area = (p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1]) - (p1[:, 1] - p0[:, 1]) * (p2[:, 0] - p0[:, 0])
+    ref = area[inside[tris].all(1)]   # the grid's own winding, from cells wholly inside
+    sign = float(np.sign(np.median(ref if len(ref) else area))) or 1.0
+    tris = tris[area * sign > 1e-12]
+    used = np.unique(tris)
+    remap = np.full(len(xz), -1)
+    remap[used] = np.arange(len(used))
+    xz, tris = xz[used], remap[tris]
+    uv = np.c_[xz, np.ones(len(xz))] @ uv_map
+    col = atlas[np.clip((uv[:, 1] * h).astype(int), 0, h - 1), np.clip((uv[:, 0] * w).astype(int), 0, w - 1)]
+    verts = np.stack([xz[:, 0], np.full(len(xz), top_y), xz[:, 1]], 1)
     # sides and bottom from the slab's own faces past its top fan (all grey)
     n0 = len(verts)
-    rest = np.array([f for f in m.faces if not (f < k).all()])
     verts = np.vstack([verts, m.vertices.astype(float)])
-    faces = np.vstack([faces, rest + n0])
+    faces = np.vstack([tris, rest + n0])
     col = np.vstack([col, np.full((len(m.vertices), 3), 70, np.uint8)])
     return verts, faces.astype(np.int32), col.astype(np.uint8)

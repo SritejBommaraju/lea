@@ -24,6 +24,12 @@ import numpy as np
 MOVED_REASONS = ("flip", "flipped")
 TIME_BUDGET_S = 10.0          # all segments of one scan; a segment not started within it is left unaligned
 GROWN_BOX = (2.5, 1.5, 2.5)   # no box for a moved segment and no phone estimate: segment 0's box grown this much
+# The merge gate (merge_gate): a registered bottom joins the mesh and recreation only when the merged object still
+# makes sense; else the top scan alone is built and the bottom stays photos.
+MERGE_FLOAT_M = 0.015         # the merged bottom's lowest points (2nd percentile) within this of segment 0's table
+MERGE_MIN_IOU = 0.5           # its outline from above overlaps segment 0's this much (5 mm cells, one cell of slack)
+MERGE_MAX_EMPTY = 0.10        # at most this much more of either cloud in the other segment's empty space than its own
+MERGE_CELL_M = 0.005
 
 
 def is_moved(seg: Mapping[str, Any]) -> bool:
@@ -62,10 +68,85 @@ def aligned_transforms(rec: Mapping[str, Any] | None) -> dict[int, np.ndarray]:
     return out
 
 
+def merged_transforms(rec: Mapping[str, Any] | None) -> dict[int, np.ndarray]:
+    """The registered segments whose merge passed the gate (`merge_gate`): the ones the mesh and the recreation
+    fuse in. A record from before the gate (no `merge`) counts as passed."""
+    ok = {int(s["segment"]) for s in (rec or {}).get("segments") or [] if (s.get("merge") or {}).get("ok", True)}
+    return {k: t for k, t in aligned_transforms(rec).items() if k in ok}
+
+
+def merge_left_out(rec: Mapping[str, Any] | None) -> list[str]:
+    """Why each registered segment was left out of the model (the gate's words), for the mesh's hero_reason."""
+    return [str(s["merge"].get("why")) for s in (rec or {}).get("segments") or []
+            if s.get("aligned") and s.get("merge") and not s["merge"].get("ok", True)]
+
+
+def _outline(points: np.ndarray, lo: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    from repairos.recon.segment_align import _window_min
+
+    m = np.zeros(shape, bool)
+    ij = np.floor((points[:, [0, 2]] - lo) / MERGE_CELL_M).astype(int)
+    ok = (ij[:, 0] >= 0) & (ij[:, 0] < shape[0]) & (ij[:, 1] >= 0) & (ij[:, 1] < shape[1])
+    m[ij[ok, 0], ij[ok, 1]] = True
+    return _window_min((~m).astype(np.int8), 1) == 0   # one cell of slack
+
+
+def merge_gate(top: Any, bottom: Any, frames0: list[Any], frames_k: list[Any], to0: np.ndarray,
+               plane0: float | None) -> dict:
+    """Does the merged object make sense? `top`: segment 0's object cloud; `bottom`: the registered segment's object
+    cloud already in segment 0's frame (by `to0`); the frames are each segment's own. Fails ({ok: false, why}) when
+    the bottom floats over or sinks under segment 0's table, its outline from above does not match the top's, or
+    either cloud lies where the other segment's cameras saw empty space (the shells clip through each other). Cheap:
+    two occupancy grids and two free-space passes. Generic: measured shapes only."""
+    from dataclasses import replace
+
+    from repairos.recon.segment_align import FREE_SPACE_MARGIN_M, FreeSpace
+    from repairos.recon.tsdf import moved_pose
+
+    a, b = np.asarray(top.points), np.asarray(bottom.points)
+    out: dict[str, Any] = {"ok": True}
+    if len(a) < 50 or len(b) < 50:
+        return {"ok": True, "why": "too few points to judge"}
+    why = []
+    if plane0 is not None:
+        lo = float(np.percentile(b[:, 1], 2)) - plane0
+        out["bottom_to_table_mm"] = round(lo * 1000, 1)
+        if lo > MERGE_FLOAT_M:
+            why.append(f"the bottom floats {lo * 1000:.0f} mm over the table")
+        elif lo < -MERGE_FLOAT_M:
+            why.append(f"the bottom sinks {-lo * 1000:.0f} mm under the table")
+    both = np.vstack([a, b])
+    lo2 = both[:, [0, 2]].min(0) - 2 * MERGE_CELL_M
+    shape = tuple(int(x) for x in np.ceil((both[:, [0, 2]].max(0) + 2 * MERGE_CELL_M - lo2) / MERGE_CELL_M))
+    oa, ob = _outline(a, lo2, shape), _outline(b, lo2, shape)
+    iou = float((oa & ob).sum() / max(1, (oa | ob).sum()))
+    out["outline_iou"] = round(iou, 3)
+    if iou < MERGE_MIN_IOU:
+        why.append(f"its outline from above matches the top scan's by only {iou:.0%}")
+
+    def empty(frames: list[Any], pts: np.ndarray, own: np.ndarray) -> float | None:
+        if not frames:
+            return None
+        fs = FreeSpace(frames)
+        x, y = fs.violation(pts, margin_m=FREE_SPACE_MARGIN_M), fs.violation(own, margin_m=FREE_SPACE_MARGIN_M)
+        return None if x is None else x - (y or 0.0)
+
+    moved = [replace(f, pose=moved_pose(f.pose, to0)) for f in frames_k]
+    e0, ek = empty(frames0, b, a), empty(moved, a, b)
+    out["empty_share"] = [None if e is None else round(e, 3) for e in (e0, ek)]
+    if e0 is not None and e0 > MERGE_MAX_EMPTY:
+        why.append(f"{e0:.0%} of the bottom lies where the top scan saw empty space")
+    if ek is not None and ek > MERGE_MAX_EMPTY:
+        why.append(f"{ek:.0%} of the top lies where the bottom scan saw empty space")
+    if why:
+        out.update(ok=False, why="; ".join(why))
+    return out
+
+
 def unplaced_segments(pkg: Mapping[str, Any], rec: Mapping[str, Any] | None) -> set[int]:
     """Segments whose stills are not in segment 0's frame after the server's alignment: marked `aligned: false` by
     the phone (and not moved, so nothing re-registers them), or moved and not registered by the server."""
-    done = set(aligned_transforms(rec))
+    done = set(merged_transforms(rec))   # registered and through the merge gate
     out = set()
     for s in pkg.get("segments") or []:
         k = int(s["segment"])
@@ -77,12 +158,17 @@ def unplaced_segments(pkg: Mapping[str, Any], rec: Mapping[str, Any] | None) -> 
     return out
 
 
-def segment_box(pkg: Mapping[str, Any], seg: Mapping[str, Any], to0: np.ndarray | None):
+def segment_box(pkg: Mapping[str, Any], seg: Mapping[str, Any], to0: np.ndarray | None, *, registered: bool = False):
     """The object box in the segment's own world: its own crop_box; else segment 0's box carried by the inverse of
     a transform (the server's or the phone's); else segment 0's box grown (GROWN_BOX), which the object-piece filter
-    then narrows. None when segment 0 has no box."""
+    then narrows. None when segment 0 has no box. `registered` (`to0` is the server's verified registration):
+    segment 0's carried box comes first: the phone's own box round a flipped object is generous (40 x 57 cm round a
+    controller) and lets pieces of its table into the merged model."""
     from repairos.recon.tsdf import ObjectBox
 
+    if registered and to0 is not None and pkg.get("crop_box"):
+        return ObjectBox.from_contract(pkg["crop_box"]).transformed(np.linalg.inv(to0)), \
+            "segment 0's box carried by the registration"
     if seg.get("crop_box"):
         return ObjectBox.from_contract(seg["crop_box"]), "segment's own box"
     if not pkg.get("crop_box"):
@@ -219,10 +305,13 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
         d = res.to_dict()
         d.update(reason=seg.get("reason"), object_moved=True, box=box_how,
                  plane_height_m=None if plane_k is None else round(plane_k, 4), table=table_k, why_not=d.pop("reason"))
-        rec["segments"].append(d)
         if res.aligned:
             t = res.matrix
             clouds[k] = ObjectCloud(mov.points @ t[:3, :3].T + t[:3, 3], mov.colours)
+            d["merge"] = merge_gate(ref, clouds[k], frames0, frames_k, t, plane0)
+            if not d["merge"]["ok"]:   # a merge that makes no sense: not in the model, its photos stay photos
+                del clouds[k]
+        rec["segments"].append(d)
     rec["seconds"] = round(time.perf_counter() - t0, 3)
     return rec, clouds
 
@@ -269,8 +358,9 @@ def report_segments(pkg: Mapping[str, Any], rec: Mapping[str, Any] | None, unpla
     for seg in moved_segments(pkg):
         k = int(seg["segment"])
         r = by.get(k, {})
+        gate = r.get("merge") or {}
         e = {"segment": k, "reason": str(seg.get("reason") or "flipped"), "object_moved": True,
-             "aligned": bool(r.get("aligned"))}
+             "aligned": bool(r.get("aligned")) and gate.get("ok", True)}
         if r.get("fitness") is not None:
             e["fitness"] = float(r["fitness"])
         if r.get("rmse_mm") is not None:
@@ -278,7 +368,9 @@ def report_segments(pkg: Mapping[str, Any], rec: Mapping[str, Any] | None, unpla
         if r.get("method"):
             e["method"] = str(r["method"])
         if not e["aligned"]:
-            e["why_not"] = str(r.get("why_not") or "the segment was not registered to the main scan")
+            e["why_not"] = (f"its best fit does not make sense ({gate.get('why')}), so the model is the top scan alone"
+                            if r.get("aligned") else str(r.get("why_not") or "the segment was not registered to the "
+                                                                              "main scan"))
         e["findings_not_placed"] = sorted(unplaced_findings.get(k, []))
         out.append(e)
     return out
