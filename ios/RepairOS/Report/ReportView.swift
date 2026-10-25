@@ -42,10 +42,12 @@ struct ReportView: View {
     private var gateway: GatewayClient? { offline ? nil : app.gateway }
 
     /// The photo-real recreation (Report/Recreation) when this scan has one (the phone's shell, else the server's);
-    /// otherwise the stage picks the 3D view or the photo hero itself.
+    /// otherwise the stage picks the 3D view or the photo hero itself. Not when the pipeline chose photos: the object is
+    /// too small or flat for LiDAR (a 7 cm board is a blob; the owner's Arduino, 2026-10-25), and the sharp stills
+    /// with their numbered marks are the honest view.
     private var stageHero: StageHero {
         let dir = RecreationCenter.scanDir(sessionDir: app.storage.dir(record), scanID: record.scanID)
-        guard RecreationCenter.shared.available(dir) else { return .automatic }
+        guard pipelineHero != "photos", RecreationCenter.shared.available(dir) else { return .automatic }
         return .custom { ctx in
             AnyView(RecreationView(source: .scan(dir), markers: ctx.markers, focus: ctx.focus,
                                    onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe))

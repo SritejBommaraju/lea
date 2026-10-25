@@ -238,6 +238,10 @@ struct ScanView: View {
         .onAppear { scan.start(); WakeListener.shared.capture(true) }
         .onChange(of: scan.box != nil) { _, locked in if locked, turnWanted { scan.startHandheld() } }
         .onDisappear { scan.stop(); LeaVoice.shared.cueChanged(nil); WakeListener.shared.capture(false) }
+        .onChange(of: live?.identity) { old, new in   // what the backend thinks it is: said once, again only when sharper
+            guard live?.corrected == nil, let line = IdentitySpeech.line(new, after: old) else { return }
+            LeaVoice.shared.dynamicCue(line, diag: scan.diag)
+        }
         .onChange(of: live?.lead) { _, lead in   // what the person suspects, researched by the backend
             if let lead { LeaVoice.shared.dynamicCue(lead.spoken, diag: scan.diag) }
         }
@@ -391,3 +395,23 @@ struct PointCloudView: UIViewRepresentable {
 
     func updateUIView(_ view: MTKView, context: Context) {}
 }
+
+/// What Lea says when the backend identifies the object during the scan (the chip shows it too, but a person
+/// framing the shot rarely reads it): the first guess, then once more when it becomes a named product.
+enum IdentitySpeech {
+    static func line(_ new: LiveEvents.Identity?, after old: LiveEvents.Identity?) -> String? {
+        guard let new else { return nil }
+        let named = [new.brand, new.model].compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let wasNamed = old.map { [$0.brand, $0.model].contains { !($0 ?? "").isEmpty } } ?? false
+        if !named.isEmpty, new.confidence == "high", !wasNamed { return "It's \(article(named[0])) \(named.joined(separator: " "))." }
+        guard old == nil else { return nil }
+        let thing = new.category.lowercased()
+        return "This looks like \(article(thing)) \(thing)."
+    }
+
+    static func article(_ word: String) -> String {
+        guard let c = word.lowercased().first else { return "a" }
+        return "aeio".contains(c) ? "an" : "a"
+    }
+}
+

@@ -151,3 +151,17 @@ struct ProblemRingTests {
         #expect(RecreationStage.ring(rgb: SIMD3(0.5, 0.5, 0.6), dashed: true) != nil)
     }
 }
+
+/// What Lea says when the object is identified during the scan (Capture/CaptureView IdentitySpeech).
+struct IdentitySpeechTests {
+    typealias I = LiveEvents.Identity
+    @Test func firstGuessThenTheNamedProductOnce() {
+        let guess = I(category: "Microcontroller development board", brand: nil, model: nil, confidence: "medium")
+        let named = I(category: "Microcontroller development board", brand: "ELEGOO", model: "UNO R3", confidence: "high")
+        #expect(IdentitySpeech.line(guess, after: nil) == "This looks like a microcontroller development board.")
+        #expect(IdentitySpeech.line(named, after: guess) == "It's an ELEGOO UNO R3.")
+        #expect(IdentitySpeech.line(named, after: named) == nil)                       // never twice
+        #expect(IdentitySpeech.line(I(category: "air fryer", confidence: "low"), after: guess) == nil)   // no flip-flopping
+        #expect(IdentitySpeech.line(I(category: "air fryer", confidence: "medium"), after: nil) == "This looks like an air fryer.")
+    }
+}
