@@ -1,18 +1,24 @@
-"""The recreation's surface: the object AND the patch of table it stands on, from the keyframes' LiDAR depth.
+"""The recreation's surface: the object only, from the keyframes' LiDAR depth, closed underneath when the person
+scanned the bottom and the server registered that flipped segment.
 
-    s = scan_surface(pkg_local)      # Surface(vertices, faces, ground_y, region, ...)
-
-Why the table patch: the report's earlier mesh (pipeline.mesh) cuts everything below the support plane + its noise,
-which on the phone's LiDAR (about 1 cm of noise at arm's length) removes the lower centimetre of every object and
-leaves flat objects (a controller, a charger) as a few hundred triangles floating in the air. Keeping a disc of the
-table makes the object sit on its own real surface, textured from the same photos, and costs nothing on tall objects.
-The viewer fades the disc's rim into the background.
+    s = scan_surface(pkg_local, segment_transforms=T)   # Surface(vertices, faces, ground_y, region, ...)
 
 Method: a dense TSDF over the object box grown sideways by GROW (each keyframe's depth, high confidence weighted 1,
 medium 0.4), the zero level extracted with naive Surface Nets (one vertex per sign-changing cell at the mean of its
 edge crossings, one quad per sign-changing edge: more even triangles than a cube-table isosurface, which suits texturing),
-the piece under the box centre kept, Taubin-smoothed. The same steps run on the phone (Report/Recreation/
-ShellBuilder.swift), so the instant shell and the server's mesh agree.
+the table cut away, the piece under the box centre kept, Taubin-smoothed. The same steps run on the phone (Report/
+Recreation/ShellBuilder.swift), so the instant shell and the server's mesh agree.
+
+The table: the TSDF is fused from the whole depth, table included, so the object keeps its sides down to the table
+(cutting the depth at the table + its noise first removes the lower centimetre of a flat object and leaves it
+floating). The table sheet is then cut from the mesh: every triangle lower than the table's own measured spread
+(cut_table). Clutter beside the object is cleared before extraction (clear_neighbours), and the table under it goes
+with the cut, so the model shows the object alone, as the report needs.
+
+The bottom: a flipped segment the server registered (pipeline/segments.py, `segment_transforms`) joins the TSDF with
+its poses moved into segment 0's frame. Then every segment's depth is first cut to its own object box and above its
+own table (pipeline.mesh.object_depths), because the bottom segment's table lies across the object's top in segment
+0's frame, and segment 0's table would meet the bottom where it touches.
 """
 from __future__ import annotations
 
@@ -34,6 +40,10 @@ MIN_WEIGHT = 1.5            # a voxel takes part in the surface once its summed 
 VOXEL_LIMITS_M = (0.0025, 0.006)
 FOOTPRINT_MARGIN = 0.1     # share of the box's half side beyond it that still counts as the object
 TABLE_BAND_M = 0.012       # outside the footprint, geometry up to this far above the table is the table
+TABLE_CUT_MIN_M = 0.003    # the table cut is at least this far above the table's measured height
+TABLE_CUT_SPREAD = 3.0     # flat faces up to this many times the table sheet's measured spread above it are table
+TABLE_LOW_SPREAD = 1.5     # any face up to this many times the spread above it is table (the object's sides stay)
+TABLE_FLAT_COS = 0.87      # a face within 30 deg of level is flat (table-like); steeper ones are the object's sides
 MAX_VOXELS = 3_000_000
 
 
@@ -230,20 +240,63 @@ def surface_nets(tsdf: np.ndarray, weight: np.ndarray, min_weight: float = MIN_W
 
 
 def keep_central(v: np.ndarray, f: np.ndarray, region: Region) -> tuple[np.ndarray, np.ndarray]:
-    """The connected piece with the most triangles within the box footprint's middle (the object and its table)."""
+    """The object's pieces: the connected piece with the most triangles within the box footprint's middle, and the
+    pieces of at least MIN_PIECE_SHARE of the triangles within JOIN_GAP_M of it (cutting the table can part a thin
+    foot or a cable from the body); specks and neighbours are dropped."""
     import open3d as o3d
+
+    from repairos.pipeline.mesh import JOIN_GAP_M, MIN_PIECE_SHARE, _piece_distance
 
     m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f.astype(np.int32)))
     cl, counts, _ = m.cluster_connected_triangles()
-    cl = np.asarray(cl)
-    r = region.footprint_radius(v[f].mean(1))
+    cl, counts = np.asarray(cl), np.asarray(counts)
+    centre = v[f].mean(1)
+    r = region.footprint_radius(centre)
     central = np.bincount(cl[r < 0.5], minlength=len(counts))
     if not central.any():
         return v, f
-    keep = cl == int(central.argmax())
+    core = int(central.argmax())
+    core_pts = centre[cl == core]
+    keep_ids = [core] + [int(c) for c in np.nonzero(counts >= MIN_PIECE_SHARE * len(f))[0]
+                         if c != core and _piece_distance(centre[cl == c], core_pts) <= JOIN_GAP_M]
+    keep = np.isin(cl, keep_ids)
     m.remove_triangles_by_mask(~keep)
     m.remove_unreferenced_vertices()
     return np.asarray(m.vertices), np.asarray(m.triangles)
+
+
+def cut_table(v: np.ndarray, f: np.ndarray, ground_y: float | None) -> tuple[np.ndarray, float | None]:
+    """The faces of the mesh without its table: the table sheet is the mesh near the ground (within TABLE_BAND_M),
+    fitted as a plane y = a + b x + c z by least squares, points farther than 2.5 x the residual spread dropped each
+    round (the object's lowest rim is a minority there and leaves the fit). Table: every face less than
+    TABLE_LOW_SPREAD x that spread above the plane, and flat faces up to TABLE_CUT_SPREAD x (at least TABLE_CUT_MIN_M
+    each): the fused sheet is wavy by a few millimetres, while a low object rises from it in steep sides that stay. A tilt is kept because ARKit
+    drift and a not-quite-level table tilt the fused sheet by a few millimetres across the box. Returns (faces,
+    the cut's height above the plane at the box centre's foot) or the faces as they are when there is no ground."""
+    if ground_y is None or not len(f):
+        return f, None
+    near = v[np.abs(v[:, 1] - ground_y) <= TABLE_BAND_M]
+    if len(near) < 50:
+        return f, None
+    a = np.c_[np.ones(len(near)), near[:, 0], near[:, 2]]
+    keep = np.ones(len(near), bool)
+    coef, spread = np.array([ground_y, 0.0, 0.0]), 0.0
+    for _ in range(4):
+        if keep.sum() < 50:
+            break
+        coef = np.linalg.lstsq(a[keep], near[keep, 1], rcond=None)[0]
+        r = near[:, 1] - a @ coef
+        spread = float(1.4826 * np.median(np.abs(r[keep] - np.median(r[keep]))))
+        keep = np.abs(r) <= max(2.5 * spread, TABLE_CUT_MIN_M)
+    low = max(TABLE_LOW_SPREAD * spread, TABLE_CUT_MIN_M)
+    margin = max(TABLE_CUT_SPREAD * spread, TABLE_CUT_MIN_M)
+    tri = v[f]
+    c = tri.mean(axis=1)
+    above = c[:, 1] - (coef[0] + coef[1] * c[:, 0] + coef[2] * c[:, 2])
+    n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    up = np.abs(n[:, 1]) / np.maximum(np.linalg.norm(n, axis=1), 1e-12)
+    table = (above <= low) | ((above <= margin) & (up >= TABLE_FLAT_COS))
+    return f[~table], margin
 
 
 def object_focus(v: np.ndarray, ground_y: float | None, box: Any) -> tuple[np.ndarray, float]:
@@ -262,11 +315,14 @@ def object_focus(v: np.ndarray, ground_y: float | None, box: Any) -> tuple[np.nd
 
 
 def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, smooth_iters: int = 10,
-                 max_triangles: int = 200_000) -> Surface:
-    """The object and its table patch as a triangle mesh in the scan's ARKit world (see the module docstring)."""
+                 max_triangles: int = 200_000, segment_transforms: Mapping[int, np.ndarray] | None = None) -> Surface:
+    """The object as a triangle mesh in the scan's ARKit world (see the module docstring). `segment_transforms`
+    ({segment: 4x4}, pipeline/segments.py): object-moved segments the server registered close the bottom."""
+    from dataclasses import replace
+
     import open3d as o3d
 
-    from repairos.pipeline.mesh import MeshUnavailable, keyframes_in_frame
+    from repairos.pipeline.mesh import MeshUnavailable, keyframes_in_frame, moved_segment_frames, object_depths
     from repairos.recon.tsdf import ObjectBox, frames_from_scan_package
 
     t = {}
@@ -280,6 +336,12 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
     box = ObjectBox.from_contract(pkg["crop_box"])
     ground = ground_height(frames, box, GROW)
     region = make_region(box, ground, voxel_m)
+    bottom = moved_segment_frames(pkg_local, segment_transforms or {})
+    if bottom:   # every segment cut to its object first (see the module docstring)
+        depths, _ = object_depths(frames, box, ground)
+        frames = [replace(f, depth_m=d) for f, d in zip(frames, depths, strict=True)]
+        for moved, mdepths, _, _, _ in bottom:
+            frames += [replace(f, depth_m=d) for f, d in zip(moved, mdepths, strict=True)]
     t["load_s"] = time.perf_counter() - t0
     t1 = time.perf_counter()
     tsdf, wsum = fuse(frames, region)
@@ -290,8 +352,14 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
     if not len(f):
         raise MeshUnavailable("no surface in the object's region")
     v = region.world(vi)  # fractional voxel index -> world (voxel centres at index + 0.5 of lo)
+    cut = None
+    if not bottom:
+        f, cut = cut_table(v, f, ground)
+        if not len(f):
+            raise MeshUnavailable("no object surface above the table")
     v, f = keep_central(v, f, region)
     m = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(v), o3d.utility.Vector3iVector(f.astype(np.int32)))
+    m.remove_unreferenced_vertices()
     if smooth_iters:
         m = m.filter_smooth_taubin(number_of_iterations=smooth_iters)
     if len(m.triangles) > max_triangles:
@@ -302,4 +370,6 @@ def scan_surface(pkg_local: Mapping[str, Any], *, voxel_m: float | None = None, 
     return Surface(np.asarray(m.vertices), np.asarray(m.triangles), ground, region,
                    {k: round(x, 3) for k, x in t.items()},
                    {"voxel_mm": round(region.voxel * 1000, 2), "dims": list(region.dims), "frames": len(frames),
-                    "ground_found": ground is not None})
+                    "ground_found": ground is not None,
+                    "table_cut_mm": None if cut is None else round(cut * 1000, 1),
+                    "bottom_segments": sorted(int(seg["segment"]) for *_, seg in bottom)})

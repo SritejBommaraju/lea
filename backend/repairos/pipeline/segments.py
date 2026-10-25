@@ -84,20 +84,10 @@ def segment_box(pkg: Mapping[str, Any], seg: Mapping[str, Any], to0: np.ndarray 
 
 
 def own_plane_height(frames: list[Any], box: Any) -> float | None:
-    """The support plane's height in the segment's own world, from its in-box depth (repairos.recon.tsdf)."""
-    from repairos.locate.camera import backproject
-    from repairos.recon.tsdf import find_support_plane
+    """The support plane's height in the segment's own world, from its depth around the box (pipeline.mesh)."""
+    from repairos.pipeline.mesh import measured_plane_height
 
-    pts = []
-    for f in frames[:: max(1, len(frames) // 12)]:
-        p = f.pose.to_world(backproject(f.depth_m, f.depth_cam))
-        ok = np.isfinite(f.depth_m) & (f.depth_m > 0) & box.contains(p, 0.3)
-        if f.confidence is not None:
-            ok &= f.confidence >= 2
-        pts.append(p[ok])
-    pts = np.concatenate(pts) if pts else np.zeros((0, 3))
-    plane = find_support_plane(pts) if len(pts) >= 200 else None
-    return plane.height_m if plane else None
+    return measured_plane_height(frames, box)
 
 
 def _object_only(cloud: Any, box: Any, voxel: float) -> Any:
@@ -172,7 +162,7 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
     same = {0} | {int(k.get("segment") or 0) for k in keyframes_in_frame(pkg_local)}
     frames0 = frames_of(pkg_local, same)
     voxel = max(voxel_for(box0), 0.003)
-    plane0 = plane_height(pkg_local)
+    plane0 = plane_height(pkg_local, frames0, box0)
     if frames0:
         depths0, _ = object_depths(frames0, box0, plane0)
         ref = _object_only(cloud_from_frames(frames0, depths0, voxel_m=voxel / 2), box0, voxel / 2)
@@ -181,6 +171,7 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
         ref = cloud_from_points(pkg_local.get("points_file"), box0, plane0, voxel)
         rec["segment0_source"] = "points_file"
     rec["segment0_points"] = len(ref)
+    rec["segment0_plane_m"] = None if plane0 is None else round(plane0, 4)
     rec["voxel_mm"] = round(voxel * 1000, 2)
     for seg in moved:
         k = int(seg["segment"])

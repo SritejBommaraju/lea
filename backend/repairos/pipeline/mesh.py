@@ -114,20 +114,48 @@ def decimate(v: np.ndarray, f: np.ndarray, max_triangles: int) -> tuple[np.ndarr
 
 PLANE_SEARCH_M = 0.02       # depth points this close to the support plane are table, for measuring its noise
 PLANE_MIN_MARGIN_M = 0.002  # never cut closer to the plane than this
+PLANE_AGREE_M = 0.03        # the anchored plane is the object's support when the depth around the box finds a plane
+                            # this close to it (ARKit drifts 1-2 cm vertically; a floor under a stool is tens of cm)
+SUPPORT_GROW = 0.3          # the support is measured in the box grown by this share of each side (a ring of table)
 CENTRAL = 0.3               # a kept mesh piece reaches within this share of the box's half-width of its centre
 MIN_PIECE_SHARE = 0.02      # pieces smaller than this share of the triangles are dropped (specks)
 
 
-def plane_height(pkg: Mapping[str, Any]) -> float | None:
-    """The support plane's world height from the scan package (an ARKit horizontal plane anchor: Y up). None for a
-    hand-held scan (pose_source object_tracked): its points and poses are in the object frame, which includes the
-    underside the person flipped into view, so nothing may be cut at the table's height."""
+def plane_height(pkg: Mapping[str, Any], frames: list[Any] | None = None, box: Any = None) -> float | None:
+    """The support plane's world height (Y up): the scan package's anchored plane (an ARKit horizontal plane
+    anchor). None for a hand-held scan (pose_source object_tracked): its points and poses are in the object frame,
+    which includes the underside the person flipped into view, so nothing may be cut at the table's height.
+    With `frames` and `box`, the anchor is checked against the depth around the box: ARKit anchors the largest plane
+    it found, which under a small table, a stool or a cushion is the floor. When the depth's own support plane is
+    more than PLANE_AGREE_M away from the anchor (or there is no anchor), the measured height is used."""
     if pkg.get("pose_source") == "object_tracked":
         return None
     sp = pkg.get("support_plane")
-    if not sp or len(sp.get("transform") or []) != 16:
-        return None
-    return float(sp["transform"][7])   # row-major 4x4: the translation's y
+    anchor = float(sp["transform"][7]) if sp and len(sp.get("transform") or []) == 16 else None   # row-major: t_y
+    if not frames or box is None:
+        return anchor
+    measured = measured_plane_height(frames, box)
+    if measured is None or (anchor is not None and abs(measured - anchor) <= PLANE_AGREE_M):
+        return anchor
+    return measured
+
+
+def measured_plane_height(frames: list[Any], box: Any) -> float | None:
+    """The support plane's height measured from high-confidence depth in the box grown by SUPPORT_GROW (tsdf.
+    find_support_plane: the lowest well-supported horizontal layer). None when no layer is well supported."""
+    from repairos.locate.camera import backproject
+    from repairos.recon.tsdf import find_support_plane
+
+    pts = []
+    for f in frames[:: max(1, len(frames) // 12)]:
+        p = f.pose.to_world(backproject(f.depth_m, f.depth_cam))
+        ok = np.isfinite(f.depth_m) & (f.depth_m > 0) & box.contains(p, SUPPORT_GROW)
+        if f.confidence is not None:
+            ok &= f.confidence >= 2
+        pts.append(p[ok])
+    pts = np.concatenate(pts) if pts else np.zeros((0, 3))
+    plane = find_support_plane(pts) if len(pts) >= 200 else None
+    return plane.height_m if plane else None
 
 
 def voxel_for(box: Any) -> float:
@@ -306,7 +334,8 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
     if not pkg.get("crop_box"):
         raise MeshUnavailable("the scan has no object box")
     box = ObjectBox.from_contract(pkg["crop_box"])
-    depths, info = object_depths(frames, box, plane_height(pkg))
+    plane = plane_height(pkg, frames, box)
+    depths, info = object_depths(frames, box, plane)
     extra = moved_segment_frames(pkg_local, segment_transforms or {})
     for moved, mdepths, _, _, _ in extra:
         frames, depths = frames + moved, depths + mdepths
@@ -332,7 +361,7 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
     t4 = time.perf_counter()
     cloud, cloud_n, size = None, 0, float(np.ptp(v, axis=0).max()) if len(v) else 0.0
     if pkg.get("points_file"):
-        cp, cc = object_cloud(pkg["points_file"], box, plane_height(pkg))
+        cp, cc = object_cloud(pkg["points_file"], box, plane)
         for moved, _, mbox, mplane, seg in extra:   # the registered bottom's own in-box cloud, carried over
             if seg.get("points_file") and len(cp):
                 mp, mc = object_cloud(seg["points_file"], mbox, mplane)

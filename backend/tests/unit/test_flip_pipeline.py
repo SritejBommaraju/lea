@@ -169,3 +169,59 @@ def test_the_flipped_bottom_is_registered_located_and_fused(flipped_scan):
     assert mesh["status"] == "done" and "flipped segment(s) fused in" in mesh["method"]
     row = asyncio.run(state.get("pipeline-run", run_id_for("scan_flip"))).data
     assert row["segments"]["segments"][0]["aligned"] is True
+
+
+def _faces_down(v, f):
+    tri = v[f]
+    n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12)
+    return tri.mean(1), n
+
+
+def test_the_recreation_shows_the_object_alone_and_closes_with_the_registered_bottom(flipped_scan):
+    """The report's 3D model: no table (segment 0's is cut from the mesh), and once the server registered the flipped
+    segment, its depth (cut to its own box and above its own table) closes the underside, textured from its own
+    views in segment 0's frame. An unregistered segment stays out."""
+    from repairos.pipeline import segments
+    from repairos.pipeline.run import _local_scan
+    from repairos.recreation.service import ensure_recreation
+    from repairos.recreation.surface import scan_surface
+    from repairos.recreation.texture import scan_views
+
+    state, blobs, scan, _ = flipped_scan
+    ctx = Context(state=state, blobs=blobs)
+    rec = asyncio.run(ensure_segment_alignment(ctx, "scan_flip"))
+    moved = segments.aligned_transforms(rec)
+    assert set(moved) == {1}
+    local = _local_scan(ctx, scan)
+
+    def check_no_table(v):
+        assert (np.abs(v[:, 0]) <= 0.065).all() and (np.abs(v[:, 2]) <= 0.045).all()   # the L's footprint + 1.5 cm
+        assert (v[:, 1] >= -0.006).all()
+
+    top = scan_surface(local)
+    check_no_table(top.vertices)
+    c, n = _faces_down(top.vertices, top.faces)
+    assert ((n[:, 1] < -0.7) & (c[:, 1] < 0.01)).sum() < 20          # open underneath
+    assert top.params["bottom_segments"] == []
+
+    closed = scan_surface(local, segment_transforms=moved)
+    check_no_table(closed.vertices)
+    c, n = _faces_down(closed.vertices, closed.faces)
+    under = (n[:, 1] < -0.7) & (c[:, 1] < 0.012)
+    assert under.sum() > 200                                           # the bottom face is there now
+    assert np.ptp(c[under, 0]) > 0.07 and np.ptp(c[under, 2]) > 0.04   # across the whole underside
+    assert closed.params["bottom_segments"] == [1]
+
+    views0 = scan_views(local, [], max_keyframes=80)
+    views1 = scan_views(local, [], max_keyframes=80, segment_transforms=moved)
+    assert len(views1) == len(views0) + 10
+    v1 = [v for v in views1 if v.name.startswith("kf1_")]
+    assert v1 and all(v.pose.t[1] < -0.1 for v in v1)                # above the flipped L: under it in segment 0
+    t = moved[1]
+    raw = Pose.from_contract(scan["keyframes"][10]["camera"])
+    np.testing.assert_allclose(v1[0].pose.t, t[:3, :3] @ raw.t + t[:3, 3], atol=1e-9)
+
+    out = asyncio.run(ensure_recreation(ctx, "scan_flip"))
+    assert out["status"] == "done", out
+    assert out["bottom_segments"] == [1] and out["input_key"].endswith("|bottom:1")

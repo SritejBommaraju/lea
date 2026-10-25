@@ -678,7 +678,8 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         """The photo-real recreation of the scanned object (repairos.recreation): a USDZ textured mesh
         (`X-Recreation-Kind: textured_mesh`) or a `.splat` Gaussian splat (`splat`), in the scan's ARKit world frame
         (metres, Y up: the frame of every finding's location). `X-Recreation-Rev` = its revision (up when the scan
-        gains photos); `X-Recreation-Focus` = the object's centre x,y,z and radius. 404 while there is none (`reason`).
+        gains photos); `X-Recreation-Focus` = the object's centre x,y,z and radius; `X-Recreation-Bottom` = how many
+        registered flipped segments close the model underneath (0: open below). 404 while there is none (`reason`).
         The live event `recreation_ready` announces each revision. `rev` is a cache key only."""
         await _get(request, "scan-package", scan_id)
         rec = ((await _run(request, scan_id)) or {}).get("recreation") or {}
@@ -696,7 +697,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         return StreamingResponse(chunks(), media_type=media, headers={
             "Content-Length": str(b.size(rec["ref"])), "X-Recreation-Rev": str(rec["rev"]),
             "X-Recreation-Kind": str(rec.get("kind")), "X-Recreation-Format": str(rec.get("format")),
-            "X-Recreation-Focus": focus,
+            "X-Recreation-Focus": focus, "X-Recreation-Bottom": str(len(rec.get("bottom_segments") or [])),
             "Content-Disposition": f'inline; filename="{scan_id}_recreation_rev{rec["rev"]}.{rec.get("format")}"',
             "Cache-Control": "private, max-age=31536000" if rev == rec["rev"] else "no-cache"})
 

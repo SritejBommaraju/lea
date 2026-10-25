@@ -129,13 +129,23 @@ def _depth(path: Path | None) -> np.ndarray | None:
 
 
 def scan_views(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], *, box: Any | None = None,
-               max_keyframes: int = MAX_KEYFRAMES, use_keyframes: bool = True) -> list[View]:
+               max_keyframes: int = MAX_KEYFRAMES, use_keyframes: bool = True,
+               segment_transforms: Mapping[int, np.ndarray] | None = None) -> list[View]:
     """Posed views of a scan whose file fields are local paths: its stills (same frame, reliable pose) and its
-    keyframes (evenly thinned to `max_keyframes`), with a relative sharpness per kind."""
-    segs = _same_frame_segments(pkg)
+    keyframes (evenly thinned to `max_keyframes`), with a relative sharpness per kind. `segment_transforms`
+    ({segment: 4x4}, pipeline/segments.py): the stills and keyframes of a flipped segment the server registered join
+    with their poses moved into segment 0's frame, so the bottom is textured from its own photos."""
+    from repairos.pipeline.segments import restate_still
+    from repairos.recon.tsdf import moved_pose
+
+    moved = {int(k): np.asarray(t, float) for k, t in (segment_transforms or {}).items()}
+    segs = _same_frame_segments(pkg) | set(moved)
     views: list[View] = []
     for s in stills:
-        if int(s.get("segment") or 0) not in segs or s.get("pose_reliable") is False or not s.get("camera"):
+        k = int(s.get("segment") or 0)
+        if k in moved:
+            s = restate_still(s, moved[k])
+        if k not in segs or s.get("pose_reliable") is False or not s.get("camera"):
             continue
         p = Path(s["image_file"])
         if not p.exists():
@@ -159,7 +169,10 @@ def scan_views(pkg: Mapping[str, Any], stills: Sequence[Mapping[str, Any]], *, b
                 w, h = _image_size(p)
                 cam = Pinhole(cam.fx, cam.fy, cam.cx, cam.cy, w, h)
             d = _depth(Path(k["depth_file"])) if k.get("depth_file") else None
-            views.append(View(k["keyframe_id"], "keyframe", p, Pose.from_contract(k["camera"]), cam, d,
+            pose = Pose.from_contract(k["camera"])
+            if int(k.get("segment") or 0) in moved:
+                pose = moved_pose(pose, moved[int(k.get("segment") or 0)])
+            views.append(View(k["keyframe_id"], "keyframe", p, pose, cam, d,
                               cam.scaled(d.shape[1], d.shape[0]) if d is not None else None,
                               weight=KEYFRAME_PENALTY))
     for kind in ("still", "keyframe"):
@@ -201,7 +214,7 @@ def object_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int = 120_000, v
     if not pkg.get("crop_box"):
         raise MeshUnavailable("the scan has no object box")
     box = ObjectBox.from_contract(pkg["crop_box"])
-    depths, _info = object_depths(frames, box, plane_height(pkg))
+    depths, _info = object_depths(frames, box, plane_height(pkg, frames, box))
     spacing = voxel_m or voxel_for(box)
     fuser = make_fuser(spacing, prefer="open3d", min_confidence=2, min_depth_m=0.05, max_depth_m=1.5)
     for f, d in zip(frames, depths, strict=True):
