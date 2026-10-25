@@ -1,7 +1,7 @@
 # LEA design: Figma snapshots
 
 Exports of the [Figma file](https://www.figma.com/design/acZpRbLDyuavWtoJIqyj1u/LEA-%E2%80%94-Inspector-s-Codex-%C2%B7-Product-design-framework?m=auto&t=fFachNvR1GBg0FTj-1) on 2026-10-25, for review of
-[DESIGN.md](../RepairOS/Design/DESIGN.md) (draft 3.1, after the impeccable critique and polish). The Figma file is the source of truth; these go stale when it
+[DESIGN.md](../RepairOS/Design/DESIGN.md) (draft 3.2, after review 5: every word checked against `main`). The Figma file is the source of truth; these go stale when it
 changes. Alegreya Sans is the real display face. SF Pro renders blank in exports, so Inter stands in for it, and drawn
 icons stand in for SF Symbols. Photo and 3D slots are empty on purpose: real evidence keeps its true colour.
 

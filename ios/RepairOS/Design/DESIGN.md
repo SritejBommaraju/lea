@@ -1,6 +1,6 @@
 # LEA design: the inspector's codex
 
-Draft 3.1, 2026-10-25, after review 4: an impeccable critique and polish (§13). The direction for the iOS app, drawn from the moodboard and written so the
+Draft 3.2, 2026-10-25, after review 5: every screen's words checked against `main` (§13). The direction for the iOS app, drawn from the moodboard and written so the
 Figma prototypes and the next `Theme.swift` change can be built from it without guessing. Reference numbers (No. 01-30)
 point at the [moodboard](https://claude.ai/artifact/NeND4dq9nJpS9FyS1QkpzL) (private until shared). Product truth:
 [PRODUCT.md](PRODUCT.md). Tokens in code: [Theme.swift](Theme.swift); capture wiring: [INTEGRATION.md](INTEGRATION.md).
@@ -38,7 +38,8 @@ The look comes from line, type and annotation. It never comes from texture.
    Nothing else is that green: never a status, never decoration.
 8. **Colour is never the only cue.** Every tone comes with an icon and a word; over the camera, a shape.
 9. **Lea is there.** Her mark appears wherever she listens or speaks, her words are captions rather than chat
-   bubbles, and the report keeps what she said when it landed.
+   bubbles, and on the report she is one hold away (Ask Lea). Only words she says go beside her mark: the report's
+   written summary is "In plain words", not a caption.
 
 ## 3. Colour
 
@@ -66,7 +67,7 @@ on Machado-simulated colours).
 
 | Tone | Light | Dark | Means | Contrast light / dark | On its own tint |
 |---|---|---|---|---|---|
-| `good` leaf | `#3A7536` | `#B5D58A` | Verdict "No visible problems", dome done | 5.0 / 10.1 | 4.9 / 7.0 |
+| `good` leaf | `#3A7536` | `#B5D58A` | Verdict "No problems seen", dome done | 5.0 / 10.1 | 4.9 / 7.0 |
 | `caution` ochre | `#8A5F00` | `#E9B24F` | Severity `functional`, fixable cues | 5.0 / 8.6 | 4.9 / 6.2 |
 | `danger` oxblood / vermilion | `#8E2316` | `#F0785C` | Severity `safety`, blocking cues, failures | 7.8 / 6.0 | 7.4 / 4.7 |
 | `cosmetic` iris | `#4F4697` | `#B2A7EA` | Severity `cosmetic` | 7.1 / 7.6 | 6.8 / 5.6 |
@@ -206,12 +207,16 @@ What the Figma prototypes show. Each screen in light and dark; capture over a ca
 - First run: "Find what's broken", the line from `main` ("Walk around it with your phone. Lea shows you what looks
   wrong, and where.") and the four steps from `main` as a numbered list (lock on, walk around it, a few close-ups, read
   the report). The numbers are real: it is a sequence.
-- Each past scan is one row: crop thumbnail (48 pt, radius 6), object words in SF Pro semibold, date and photo count
-  in `secondary`, and a verdict tag. Rows are separated by hairlines, not boxed one by one.
+- Each past scan is one row: crop thumbnail (48 pt, radius 6), the person's own words as the title in SF Pro
+  semibold ("Scan" when they gave none, as `ScansView` does), date and photo count in `secondary`, and a verdict tag
+  in `main`'s words ("Likely problems found", "No problems seen", "Not enough to call it yet"). A scan with a safety
+  problem among its most likely problems shows "Safety problem" in oxblood instead (a change for the Theme PR). Rows
+  are separated by hairlines, not boxed one by one.
 - Bottom: the talk bar. "What happened? (optional)" with the dictation mic in `secondary`; then "Talk to Lea" (a quiet
   capsule with her mark and her name, which opens the conversation, 7.7) beside Start scan in verdigris. Start scan is
   the wider of the two.
-- Not paired yet: "Not connected · Set up" in ochre under the bar, as on `main`.
+- Not paired yet: no Talk to Lea (she lives on the server, so `main` shows her only once paired), Start scan full
+  width, and "Not connected · Set up" in ochre under it, as on `main`.
 
 ### 7.2 Consent, pairing, settings (No. 08, 29, 30)
 
@@ -220,7 +225,7 @@ Alegreya Sans screen title, grouped rows on `surface`. At most one drawing per s
 - **Consent** says what `main` does, row for row: first, to the lea server; then analysed by Claude and Jev
   (Anthropic and TypeSafe); location and photo details removed; only what you scan. "Agree and continue" in
   verdigris; "Not now" is a text button, not a second capsule.
-- **Pairing**: "Connect to the lea server", the server address and the pairing code (digits in `metric`), Pair in
+- **Pairing**: "Connect to the lea server", the server address and the pairing code (masked as you type: a `SecureField` on `main`), Pair in
   verdigris, Skip in the navigation row. The developer note is labelled "For developers".
 
 ### 7.3 Capture (No. 12-17)
@@ -247,37 +252,47 @@ stage; the Theme PR keeps that and draws the stage's ground as below (7.6).
 
 The object leads: the report opens on the stage, as on `main`, and the sheet rises over it.
 
-- **Stage** (400 pt, `stage`, the same in both modes): Back and the voice toggle in chalk, the scan in true colour on
-  a construction-circle ground, and a `Marker` on each problem. Tapping a marker scrolls to its card.
+- **Stage** (400 pt, `stage`, the same in both modes): Back and the voice toggle in chalk, the scan in true colour
+  filling the stage on a construction-circle ground, and a `Marker` on each of the most likely problems, where it was
+  found (as `StageMarks.pins` on `main`; "Also worth a look" gets no marker). Tapping a marker scrolls to its card.
 - **Sheet** (canvas, 16 pt top corners, overlapping the stage by 16 pt), sections 32 pt apart, in this order:
 
-1. **Verdict.** The verdict in `heroTitle`, the reason in SF Pro (it says how many parts Lea couldn't check), then
-   one meta line: your own words in quotes, the object, the date. No eyebrow above it and no rule under it.
-2. **Safety card.** Oxblood hairline frame, 10 % oxblood wash, oxblood title with the triangle. No side bar.
-3. **What Lea said.** Her mark (speaking) and the plain-words summary she spoke when the report landed, unboxed.
-4. **Most likely problems.** The count is the number of cards shown. Problem cards are specimen labels: the
+1. **Verdict.** The top finding in `heroTitle`, in the backend's words ("Power cable: jacket split near the plug",
+   as `ReportWords.headline` builds it). Then one sentence with the counts `main` puts in its eyebrow ("Two likely
+   problems, one of them a safety problem. Lea couldn't check three spots.") and one meta line: your own words in
+   quotes, the photo count, the date. No eyebrow above it and no rule under it.
+2. **Safety card.** "Before you touch it": oxblood hairline frame, 10 % oxblood wash, oxblood title with the
+   triangle, then every safety note in the backend's own words (`report/safety.py`). No side bar.
+3. **Most likely problems.** The count is the number of cards shown. Problem cards are specimen labels: the
    `Marker` and the outlined severity tag; part name in `cardTitle`; issue in the tone colour; crop on the right
    (radius 6, hairline, true colour); ruled rows for where and evidence; confidence as a plain word at the right.
+4. **The next step.** The step itself is the section title ("Take a closer photo"), then the instruction in SF Pro
+   and the reason in `secondary`. No "Next step" above it (that is an eyebrow, §12) and no button: its action is in
+   the pinned bar.
 5. **What you suspected.** Your words in quotes, then a ruled row: "What Lea found" with its badge (photos agree,
    not seen in the photos, could not check) and the backend's note. Your guess only steered where she looked.
-6. **Next step.** Title in `cardTitle`, instruction in SF Pro, the reason in `secondary`, then the report's one
-   verdigris action: Continue scanning, aimed at the spot.
-7. **Fix it.** The part in `cardTitle`, then one grouped list: offers (title, seller, price as the backend gives it)
-   and the replacement guide. Every word comes from the backend; nothing is invented.
-8. **Cosmetic.** One grouped row per cosmetic finding.
-9. **What Lea couldn't check.** A one-sentence summary, then one grouped list of the dashed rows with their reasons
-   and "Show all".
-10. **What photos can't tell.** No frame; a quiet title and the lines at `.subheadline` in `secondary`.
+6. **In plain words.** The report's summary, unboxed, as on `main`. Not beside Lea's mark: she doesn't say it.
+7. **Fix it.** The part in `cardTitle`, named as in the problem card, then one grouped list: offers (title,
+   seller, price as the backend gives it) and the replacement guide. Every word comes from the backend.
+8. **Also worth a look.** `main`'s name for the other issues and cosmetic findings: one grouped row each, part and
+   issue.
+9. **What Lea couldn't check.** `main`'s summary ("One spot wasn't clear enough and two weren't looked at. They aren't
+   counted as fine."), then one grouped list of the dashed rows with `main`'s short reasons ("Too dark in photo 4",
+   "Not looked at yet") and "Show all".
+10. **What photos can't tell.** The backend's limits as one footnote in `secondary` with an info icon, as on `main`.
 11. **Full report with photos.** A grouped link row.
 
-**Ask Lea** is pinned at the bottom in a canvas toolbar with a hairline: hold to ask about this scan. The answer is
-spoken and captioned.
+**The pinned bar** sits at the bottom in a canvas toolbar with a hairline, and holds the report's one next thing:
+"Ask Lea" (her mark in a quiet capsule; hold to ask about this scan, as on `main`, and it reads "Listening… let go to
+ask" while held) beside Continue scanning in verdigris, aimed at the spot in the next step. It is the same pair as
+Home's Talk to Lea and Start scan. When a report has no next step, the bar holds Ask Lea alone.
 
 ### 7.6 Problem detail and 3D model (No. 02, 21, 22, 26)
 
-- A sheet: the grabber, then a 44 pt row with previous and next problem and Done (verdigris).
-- Header in museum-label order: "Problem 1 of 3", part (`screenTitle`), issue in its tone, then where, confidence
-  ("Medium") and likelihood ("Likely") as words.
+- A sheet: the grabber, then a 44 pt row with previous and next problem, where you are ("1 of 2", counting the most
+  likely problems), and Done (verdigris).
+- Header in museum-label order: part (`screenTitle`), issue in its tone, the outlined severity tag, then where,
+  confidence ("Medium") and likelihood ("Likely") as words. Nothing sits above the part name.
 - The photo crop carries a 1 pt leader line from the defect box to its `Marker` (No. 22). The box itself is a
   1.5 pt tone-coloured corner set, the same shape as the lock brackets. The photo's caption is chalk on a smoke pill,
   as over the camera, because it sits on real evidence.
@@ -289,12 +304,16 @@ spoken and captioned.
 ### 7.7 Talk to Lea (new)
 
 The conversation before a scan (`HomeConversationSheet` on `main`). Title "Lea" and Done. One line: "Tell Lea what it
-is and what's wrong. She'll work out the exact product before you scan." The product brief as a card with ruled rows
-(what it looks like, known issue, sources). Before the label photo is sent, a quiet "Show me the label" button;
-after, a quiet line ("Label photo sent"), because a status is never a button. Start scan in verdigris. Then the
-captions, both sides in ink, the names telling them apart (Lea's in verdigris). When you mention heat, smoke or a
-smell, Lea's first words are the safety step ("If it gets hot, unplug it before you pick it up."). At the bottom, Lea's
-mark at 88 pt with her state in words ("Listening…", `.headline`) and one line of help.
+is and what's wrong. She'll work out the exact product before you scan." The product brief as a card: the product as
+its title (no "This looks like" above it), then ruled rows for the known issue ("Area: why", as `ProductBrief` reads
+it) and the sources by name. Before the label photo is sent, a quiet "Show me the label" button; after, a quiet line
+("Label photo sent"), because a status is never a button. Start scan in verdigris. Then the captions, both sides in
+ink, the names telling them apart (Lea's in verdigris). The frame shows one moment: once the brief is on screen,
+Lea's latest words are the brief as `ProductBrief.spoken` says it, never "Let me look that up". When you mention heat,
+smoke or a smell, Lea's first words are the safety step ("If it gets hot, unplug it before you pick it up."); this
+needs a rule in her voice persona and is not on `main` yet (§10). At the bottom, Lea's mark at 88 pt with her state in
+words ("Listening…", `.headline`) and one line that says what happens next ("Lea answers when you pause.": a tap on
+`main` turns on hands-free, it does not end a turn).
 
 ## 8. Accessibility
 
@@ -328,6 +347,10 @@ tokens, `cautionText` and the report motion from PR #13.
 - New views: `LeaMark` (four states), `Marker` (replaces `StageNumber`), the dashed badge for unknown, a keyline
   stroke helper for camera lines, the draw-on modifier. `NextStepCard`, `UserLeadCard`, `FixItCard` and
   `CouldNotCheckCard` become sections (§5 Boxes).
+- Report: `StageVerdictHeader` drops its eyebrow and says the counts in the sentence (7.5); `StagePlainWords` loses
+  its card; the "Also worth a look" rows and the limits footnote stay as they are; Continue scanning moves from
+  `CouldNotCheckCard` into the pinned bar beside Ask Lea.
+- `ScansView`: the oxblood "Safety problem" tag for a scan whose most likely problems include a safety one.
 - `DesignGallery.swift` previews updated so every token shows in light, dark and over a camera frame.
 
 ## 10. Open questions
@@ -340,6 +363,7 @@ tokens, `cautionText` and the report motion from PR #13.
 | The report stage from PR #13 against 7.5 and 7.6: one pass in the Theme PR | App |
 | Failure screens: pairing failed, upload failed, report failed, Lea unreachable | Design |
 | Capture: an empty dial before lock-on, and Lea's mark over the camera while she talks | Design |
+| Before a scan, Lea leads with "unplug it" when someone mentions heat, smoke or a smell (7.7). Her persona in `backend/repairos/voice/conversation.py` only leads with safety once a report has a safety note: add one rule | Backend |
 | ~~Website: same codex direction, or its own?~~ The same direction: §11 | Decided 2026-10-24 |
 
 ## 11. Website
@@ -517,3 +541,25 @@ apart), then a polish pass. Score 27/40 before the polish (Acceptable).
    the gear redrawn; draft-2 backdrops on the Components page made neutral.
 7. Not done: failure screens (pairing, upload, report), the empty dial before lock-on on 04, and Lea's mark over the
    camera. They are §10 follow-ups.
+
+Review 5, 2026-10-25, the same five priorities again, with every word on screen read against `main`'s code rather
+than against the critique's wording. Review 4 had fixed the headline of each one; this pass fixed what was left.
+
+1. P0, copy that `main` doesn't say. Scan rows were titled with object names ("Kettle base"); `main` titles them
+   with your own words, or "Scan". Verdict tags said "Possible problems" and "No visible problems"; `main` says
+   "Likely problems found" and "No problems seen". Home showed Talk to Lea while not connected; `main` hides it until
+   paired. The pairing code showed as digits; it is a masked field. The safety card, the limits and the couldn't-check
+   rows were our own sentences; they are now the backend's. "Lea said" showed the written summary, which Lea never
+   says; it is "In plain words" again. On 09, Lea was "looking it up" while the brief was already on screen, and the
+   help line said a tap ends your turn; it turns on hands-free.
+2. P1, the report's one next thing. Continue scanning sat at y ≈ 1,860 inside the scroll; it is now in the pinned
+   bar beside Ask Lea, the same pair as on Home. The headline is the top finding, as on `main`, and the scan fills
+   the stage with markers on the two likely problems only.
+3. P1, heading voices and eyebrows. "Next step" above "Take a closer photo" was the example §12 bans: the step is the
+   title now. "This looks like" above the product and "Problem 1 of 3" above the part are gone (the position is in
+   08's navigation row). "What photos can't tell" lost its third heading voice and is a footnote. Fix it shows one
+   offer, not two identical ones. The report is 2,955 pt, down from 3,143.
+4. P1, talk first. Covered by 2 and 3: Lea is the left half of the report's bar, and 09 shows one coherent moment.
+   The unplug line stays, flagged in §10 as a backend rule.
+5. P2, numbers. "Seen twice" against "only one photo", "Power cable" against "Power cord", "Problem 1 of 3" against
+   two likely problems, and a marker on a cosmetic finding `main` doesn't mark: all made to agree.
