@@ -23,6 +23,17 @@ struct CueLimiterTests {
         #expect(l.decide("Keep it in frame.", now: 5, busy: false) == .speak)
     }
 
+    /// Greptile PR #31: a scan instruction waits behind a line that must be heard (what the object is) instead of
+    /// taking its turn, even once the gap is over and nothing is playing.
+    @Test func instructionsWaitBehindAHeldLine() {
+        var l = CueLimiter()
+        l.spoke("Move closer here.", at: 0)
+        #expect(l.decide("Keep it in frame.", now: 2, busy: false, held: true) == .wait(until: 4))
+        #expect(l.decide("Keep it in frame.", now: 5, busy: false, held: true) == .wait(until: 5.5))
+        #expect(l.decide("Keep it in frame.", now: 5, busy: false, held: false) == .speak)
+        #expect(l.decide("Move closer here.", now: 5, busy: false, held: true) == .drop)
+    }
+
     @Test func neverTheSameLineTwiceInTenSeconds() {
         var l = CueLimiter()
         l.spoke("Move closer here.", at: 0)

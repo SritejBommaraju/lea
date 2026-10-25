@@ -150,6 +150,7 @@ struct ScanView: View {
     @State private var correction = ""
     /// "Turn it" chosen before Scan (Capture/Handheld): starts once the object is locked.
     @State private var turnWanted = false
+    @State private var identitySaid = IdentitySpeech.Said()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(scan: ScanSession, live: LiveEvents? = nil, close: @escaping () -> Void, finished: @escaping (SessionRecord) -> Void) {
@@ -237,10 +238,15 @@ struct ScanView: View {
         .task { await VoiceProbe.run(scan: scan) }   // `--voice-frame-probe` only
         .onAppear { scan.start(); WakeListener.shared.capture(true) }
         .onChange(of: scan.box != nil) { _, locked in if locked, turnWanted { scan.startHandheld() } }
-        .onDisappear { scan.stop(); LeaVoice.shared.cueChanged(nil); WakeListener.shared.capture(false) }
-        .onChange(of: live?.identity) { old, new in   // what the backend thinks it is: said once, again only when sharper
-            guard live?.corrected == nil, let line = IdentitySpeech.line(new, after: old) else { return }
-            LeaVoice.shared.dynamicCue(line, diag: scan.diag)
+        .onDisappear {
+            scan.stop(); LeaVoice.shared.cueChanged(nil); LeaVoice.shared.dropPriorityCue(); WakeListener.shared.capture(false)
+        }
+        .onChange(of: live?.identity) { _, _ in   // what the backend thinks it is: said once, again only when sharper
+            // Worked out again when Lea can say it: the newest guess, nothing once the person has corrected it.
+            let live = live, said = identitySaid
+            LeaVoice.shared.priorityCue(diag: scan.diag,
+                                        next: { said.next(live?.identity, corrected: live?.corrected) },
+                                        said: { said.spoke() })
         }
         .onChange(of: live?.lead) { _, lead in   // what the person suspects, researched by the backend
             if let lead { LeaVoice.shared.dynamicCue(lead.spoken, diag: scan.diag) }
@@ -397,21 +403,47 @@ struct PointCloudView: UIViewRepresentable {
 }
 
 /// What Lea says when the backend identifies the object during the scan (the chip shows it too, but a person
-/// framing the shot rarely reads it): the first guess, then once more when it becomes a named product.
+/// framing the shot rarely reads it): the category first, then once more when it becomes a named product.
 enum IdentitySpeech {
-    static func line(_ new: LiveEvents.Identity?, after old: LiveEvents.Identity?) -> String? {
-        guard let new else { return nil }
-        let named = [new.brand, new.model].compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        let wasNamed = old.map { [$0.brand, $0.model].contains { !($0 ?? "").isEmpty } } ?? false
-        if !named.isEmpty, new.confidence == "high", !wasNamed { return "It's \(article(named[0])) \(named.joined(separator: " "))." }
-        guard old == nil else { return nil }
-        let thing = new.category.lowercased()
-        return "This looks like \(article(thing)) \(thing)."
+    /// How far Lea has got.
+    enum Level: Int, Comparable {
+        case nothing, category, product
+        static func < (a: Level, b: Level) -> Bool { a.rawValue < b.rawValue }
+    }
+
+    /// What to say given what was already SAID (a guess that carried a brand at medium confidence was said as its
+    /// category only): nothing once the person has named the object.
+    static func line(_ identity: LiveEvents.Identity?, said: Level, corrected: String?) -> (words: String, level: Level)? {
+        guard corrected == nil, let identity else { return nil }
+        let named = [identity.brand, identity.model].compactMap { $0?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if !named.isEmpty, identity.confidence == "high", said < .product {
+            return ("It's \(article(named[0])) \(named.joined(separator: " ")).", .product)
+        }
+        guard said == .nothing else { return nil }   // no flip-flopping between categories
+        let thing = identity.category.lowercased()
+        return ("This looks like \(article(thing)) \(thing).", .category)
     }
 
     static func article(_ word: String) -> String {
         guard let c = word.lowercased().first else { return "a" }
         return "aeio".contains(c) ? "an" : "a"
     }
-}
 
+    /// What this scan has said so far: `next` offers the words (LeaVoice asks when it can play them), `spoke` records
+    /// them once they start.
+    @MainActor final class Said {
+        private(set) var level = Level.nothing
+        private var offered: Level?
+
+        func next(_ identity: LiveEvents.Identity?, corrected: String?) -> String? {
+            let l = IdentitySpeech.line(identity, said: level, corrected: corrected)
+            offered = l?.level
+            return l?.words
+        }
+
+        func spoke() {
+            if let offered { level = max(level, offered) }
+            offered = nil
+        }
+    }
+}
