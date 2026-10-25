@@ -59,6 +59,7 @@ class FlatModel:
     atlas: Any                  # PIL.Image
     outline: np.ndarray         # K x 2 (x, z) world, the footprint polygon
     stats: dict = field(default_factory=dict)
+    relief: Any = None          # recreation.relief.Relief: raised parts as blocks after the slab's own faces
 
 
 def thin_object(points: np.ndarray, table_y: float | None) -> tuple[bool, float | None]:
@@ -298,7 +299,11 @@ def footprint(still: Still, grid: Grid, y: float, lidar_xz: np.ndarray | None) -
     if lidar.any():
         obj &= near
     r = max(1, int(round(OPEN_M / grid.res)))
-    obj = _dilate(_erode(obj, r), r)              # open: wires and specks go
+    # Close first: a busy top (a board's pins, black chips, silkscreen next to the table's colour) leaves the object
+    # full of small gaps, which the opening alone would widen until it falls apart into pieces (measured on a real
+    # board: its largest piece was a third of it). Then open: wires and specks go.
+    obj = _erode(_dilate(obj, r), r) & seen
+    obj = _dilate(_erode(obj, r), r)
     lab = _components(obj)
     if not lab.max():
         raise FlatUnavailable("no object found apart from the table in the top-down photo")
@@ -428,8 +433,10 @@ def flat_model(pkg_local: Mapping[str, Any], stills: Sequence[Mapping[str, Any]]
         prior = sorted(float(x) for x in size_prior_mm)[:2]
         stats["size_prior_mm"] = prior
         stats["size_vs_prior_mm"] = [round(s * 1000 - p, 1) for s, p in zip(sides, prior, strict=True)]
-    return FlatModel(verts.astype(np.float32), uv.astype(np.float32), np.asarray(faces, np.int32),
-                     Image.fromarray(atlas), outline, stats)
+    model = FlatModel(verts.astype(np.float32), uv.astype(np.float32), np.asarray(faces, np.int32),
+                      Image.fromarray(atlas), outline, stats)
+    from repairos.recreation.relief import add_relief   # raised parts from the photos (stereo), as blocks on the top
+    return add_relief(model, views, tex, table_y, lidar)
 
 
 def _polygon_area_signed(p: np.ndarray) -> float:
@@ -562,5 +569,6 @@ def slab_mesh(m: FlatModel, cell: float = 0.0005) -> tuple[np.ndarray, np.ndarra
     rest = np.array([f for f in m.faces if not (f < k).all()])
     verts = np.vstack([verts, m.vertices.astype(float)])
     faces = np.vstack([faces, rest + n0])
-    col = np.vstack([col, np.full((len(m.vertices), 3), 70, np.uint8)])
+    col = np.vstack([col, atlas[np.clip((m.uv[:, 1] * h).astype(int), 0, h - 1),     # sides grey, raised parts
+                                np.clip((m.uv[:, 0] * w).astype(int), 0, w - 1)]])   # (relief) from the photo
     return verts, faces.astype(np.int32), col.astype(np.uint8)
