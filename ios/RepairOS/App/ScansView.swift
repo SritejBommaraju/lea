@@ -62,7 +62,9 @@ struct ScanRowButton: View {
             .listRowSeparatorTint(Palette.hairline)
             .alignmentGuide(.listRowSeparatorLeading) { _ in 0 }
             .listRowBackground(Color.clear)
-            .swipeActions { if deletable { Button("Delete", systemImage: "trash", role: .destructive, action: delete) } }
+            // Not `role: .destructive`: that removes the row optimistically while the confirmation is still open, and
+            // the real delete then leaves the list's item count out of step (UICollectionView invalid-update crash).
+            .swipeActions { if deletable { Button("Delete", systemImage: "trash", action: delete).tint(Palette.danger) } }
             .contextMenu { Button("Delete scan", systemImage: "trash", role: .destructive, action: delete).disabled(!deletable) }
     }
 }
@@ -83,10 +85,13 @@ private struct ConfirmDeleteScan: ViewModifier {
         content.confirmationDialog("Delete this scan?", isPresented: Binding(get: { record != nil }, set: { if !$0 { record = nil } }),
                                    titleVisibility: .visible, presenting: record) { r in
             Button("Delete scan", role: .destructive) {
-                guard ScanLibrary.canDelete(r, app: app) else { record = nil; return }
-                ScanLibrary.delete(r, app: app)
                 record = nil
-                deleted()
+                guard ScanLibrary.canDelete(r, app: app) else { return }
+                // After the dialog has gone, so the list applies one update, not one mid-dismissal.
+                Task { @MainActor in
+                    withAnimation { ScanLibrary.delete(r, app: app) }
+                    deleted()
+                }
             }
             Button("Cancel", role: .cancel) { record = nil }
         } message: { r in

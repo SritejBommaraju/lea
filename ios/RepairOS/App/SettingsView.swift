@@ -185,8 +185,11 @@ struct SettingsView: View {
             .sheet(isPresented: $showConsent) { ConsentView() }
             .confirmationDialog(deleteAllTitle, isPresented: $confirmDeleteAll, titleVisibility: .visible) {
                 Button("Delete \(ScanLibrary.deletableCount(app: app)) scans", role: .destructive) {
-                    ScanLibrary.deleteAll(app: app)
-                    Task { used = await ScanLibrary.usedBytes(app.storage) }
+                    // After the dialog has gone, like a single delete: one list update, not one mid-dismissal.
+                    Task { @MainActor in
+                        withAnimation { ScanLibrary.deleteAll(app: app) }
+                        used = await ScanLibrary.usedBytes(app.storage)
+                    }
                 }
             } message: {
                 Text("Removes every scan, photo and report from this phone\(used.map { " and frees \(ScanLibrary.size($0))" } ?? ""). Copies on the server stay.")
