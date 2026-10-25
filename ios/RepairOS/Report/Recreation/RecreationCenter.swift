@@ -99,7 +99,8 @@ final class RecreationCenter {
         let ext = got.format.isEmpty ? "bin" : got.format
         let manifest = RecreationManifest(kind: got.kind, origin: "gateway", rev: got.rev, file: "model.\(ext)", texture: nil,
                                           focusCenter: got.focusCenter, focusRadius: got.focusRadius,
-                                          stats: ["bytes": Double(got.data.count), "fetch_s": Date().timeIntervalSince(started)])
+                                          stats: ["bytes": Double(got.data.count), "fetch_s": Date().timeIntervalSince(started),
+                                                  RecreationManifest.bottomKey: Double(got.bottomSegments)])
         do {
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try got.data.write(to: folder.appending(path: manifest.file), options: .atomic)

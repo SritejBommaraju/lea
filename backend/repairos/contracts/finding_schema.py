@@ -12,7 +12,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 class State(StrEnum):
     """
-    Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).
+    Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).
     """
 
     ok = 'ok'
@@ -25,6 +25,7 @@ class State(StrEnum):
     dirty = 'dirty'
     loose = 'loose'
     unseated = 'unseated'
+    reversed = 'reversed'
     wrong_pin = 'wrong_pin'
     colour_mismatch = 'colour_mismatch'
     open = 'open'
@@ -135,6 +136,15 @@ class Severity(StrEnum):
     safety = 'safety'
 
 
+class Category(StrEnum):
+    """
+    defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or assembly state, not a broken part: a battery missing or in backwards, a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse missing (repairos.vision.assembly). Code decides it from the state, never a model word.
+    """
+
+    defect = 'defect'
+    setup = 'setup'
+
+
 class DesignTrust(StrEnum):
     high = 'high'
     low = 'low'
@@ -215,7 +225,7 @@ class Finding(BaseModel):
     subject: Subject
     state: State = Field(
         ...,
-        description='Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).',
+        description='Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).',
     )
     source: Source = Field(
         ...,
@@ -251,6 +261,16 @@ class Finding(BaseModel):
         None,
         description='A few plain words a person can use to find the part in the photo (colour, what it connects to, where it sits), from the vision model. Shown to the user; never sent to Jev as an instruction.',
         max_length=200,
+        min_length=1,
+    )
+    category: Category | None = Field(
+        None,
+        description='defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or assembly state, not a broken part: a battery missing or in backwards, a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse missing (repairos.vision.assembly). Code decides it from the state, never a model word.',
+    )
+    fix: str | None = Field(
+        None,
+        description="For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the batteries in, then test again.'). Shown to the user.",
+        max_length=300,
         min_length=1,
     )
     design_trust: DesignTrust | None = None

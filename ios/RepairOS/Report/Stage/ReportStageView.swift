@@ -52,25 +52,19 @@ struct ReportStageView: View {
     // MARK: Derived
 
     private var pins: [ModelPin] {
-        report.mostLikely.enumerated().compactMap { i, p in
-            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.severity.tone, area: p.extent) }
-        } + targets.filter { !$0.checked }.compactMap { t in
+        StageMarks.pins(report) + targets.filter { !$0.checked }.compactMap { t in
             t.simd.map { ModelPin(id: "target:" + t.id, number: nil, point: $0, tone: .accent, ringRadius: t.radius) }
         }
     }
 
-    /// The numbered findings only (the circled rings are not problems).
+    /// The numbered findings and setup rows only (the circled rings are not problems).
     private var findingPins: [ModelPin] { pins.filter { $0.ringRadius == nil } }
 
-    private var numberedPhotos: [PhotoHero.Mark] {
-        report.mostLikely.enumerated().compactMap { i, p in
-            guard let still = p.cropStill else { return nil }
-            return PhotoHero.Mark(id: p.id, number: i + 1, still: still, box: p.cropBox, tone: p.severity.tone)
-        }
-    }
+    private var numberedPhotos: [PhotoHero.Mark] { StageMarks.photoMarks(report) }
 
+    /// Lower-ranked and cosmetic findings; setup rows have their own section ("Setup to check").
     private var others: [ReportModel.Problem] { report.otherIssues + report.cosmetic }
-    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.cosmetic }
+    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
     private var canShowOnObject: Bool { space != nil && !findingPins.isEmpty }
     private var isCustomHero: Bool { if case .custom = hero { true } else { false } }
@@ -259,7 +253,9 @@ struct ReportStageView: View {
 
     private var stageLabel: String {
         let list = report.mostLikely.enumerated().map { "\($0.offset + 1), \($0.element.part), \($0.element.issue)" }
+        let setup = report.setup.enumerated().map { "\(StageMarks.setupNumber(report, $0.offset)), \($0.element.part), \($0.element.issue)" }
         return (isPhotoHero ? "Photo of the object" : "The scan in 3D") + (list.isEmpty ? "" : " with numbered problems: " + list.joined(separator: ". "))
+            + (setup.isEmpty ? "" : ". Setup to check, not broken: " + setup.joined(separator: ". "))
     }
 
     // MARK: Sheet
@@ -296,6 +292,9 @@ struct ReportStageView: View {
                             .animation(reduceMotion ? Motion.fade : Motion.standard.delay(Double(min(i, 2)) * 0.04), value: phase)
                     }
                 }
+            }
+            if !report.setup.isEmpty {
+                setupToCheck(proxy).opacity(phase >= 3 ? 1 : 0)
             }
             Group {
                 if fix != nil || fixSearching || fixUnavailable {
@@ -340,6 +339,33 @@ struct ReportStageView: View {
             NavigationLink(value: p.id) { StageProblemRow(problem: p, number: number, located: false) }
                 .buttonStyle(PressableCardStyle())
         }
+    }
+
+    /// "Setup to check": every setup row with its fix, numbered like its marker, in the calm setup tone (not broken).
+    private func setupToCheck(_ proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            VStack(alignment: .leading, spacing: Spacing.xs) {
+                SectionHeader("Setup to check", count: report.setup.count)
+                Text(ReportWords.setupNote).font(.footnote).foregroundStyle(.secondary)
+            }
+            ForEach(Array(report.setup.enumerated()), id: \.element.id) { i, p in
+                let number = StageMarks.setupNumber(report, i)
+                let located = isPhotoHero ? p.cropStill != nil : p.point != nil
+                if located {
+                    Button {
+                        withAnimation(Motion.standard) { proxy.scrollTo("stage", anchor: .top) }
+                        focus = p.id
+                    } label: {
+                        StageSetupRow(problem: p, number: number, located: true, selected: focus == p.id)
+                    }
+                    .buttonStyle(PressableCardStyle())
+                } else {
+                    NavigationLink(value: p.id) { StageSetupRow(problem: p, number: number, located: false) }
+                        .buttonStyle(PressableCardStyle())
+                }
+            }
+        }
+        .id("setup")
     }
 
     private var alsoWorthALook: some View {
@@ -410,6 +436,30 @@ struct ReportStageView: View {
     private func announce() {
         guard voiceOver, LeaVoice.shared.muted else { return }
         AccessibilityNotification.Announcement("\(ReportWords.eyebrow(report)). \(ReportWords.headline(report))").post()
+    }
+}
+
+// MARK: - Marks on the stage
+
+/// What the stage marks, numbered like the sheet's rows: the most likely problems (1…3, their severity tone), then the
+/// setup rows (report `setup`: a battery missing, a cable unplugged) numbered after them in the calm setup tone. Setup
+/// rows get a marker and "Show on object" like a problem, but are never counted as problems (ReportWords counts
+/// `mostLikely` only).
+enum StageMarks {
+    /// The number on a setup row and on its marker: after the most likely problems.
+    static func setupNumber(_ r: ReportModel, _ index: Int) -> Int { r.mostLikely.count + index + 1 }
+
+    static func pins(_ r: ReportModel) -> [ModelPin] {
+        (r.mostLikely + r.setup).enumerated().compactMap { i, p in
+            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.tone, area: p.extent) }
+        }
+    }
+
+    static func photoMarks(_ r: ReportModel) -> [PhotoHero.Mark] {
+        (r.mostLikely + r.setup).enumerated().compactMap { i, p in
+            guard let still = p.cropStill else { return nil }
+            return PhotoHero.Mark(id: p.id, number: i + 1, still: still, box: p.cropBox, tone: p.tone)
+        }
     }
 }
 

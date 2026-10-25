@@ -59,6 +59,7 @@ FINDING_STATE = {
     "dirty": "dirty or contaminated",
     "loose": "loose",
     "unseated": "connector not fully seated",
+    "reversed": "fitted the wrong way round",
     "wrong_pin": "wire on the wrong pin",
     "colour_mismatch": "wire colour differs from the expected colour",
     "open": "open circuit",

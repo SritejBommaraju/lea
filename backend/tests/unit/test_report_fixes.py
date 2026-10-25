@@ -94,7 +94,7 @@ def test_same_photo_duplicates_collapse_neighbours_do_not():
 
 
 def test_different_issues_never_collapse():
-    a = crop_finding("s1", 0, (100, 100, 300, 300), state="loose")
+    a = crop_finding("s1", 0, (100, 100, 300, 300), state="cracked")
     b = crop_finding("s1", 1, (100, 100, 300, 300), state="burnt")
     assert len(report([a, b])["findings"]) == 2
 

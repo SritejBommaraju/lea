@@ -32,6 +32,11 @@ import Foundation
 /// row in `grain`.
 // MARK: - Finding
 public struct Finding: Codable, Sendable {
+    /// defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or
+    /// assembly state, not a broken part: a battery missing or in backwards, a cable or
+    /// connector unplugged or not fully in, a cover not clipped, a screw or fuse missing
+    /// (repairos.vision.assembly). Code decides it from the state, never a model word.
+    public let category: Category?
     /// Source's own confidence. Not calibrated; fusion recalibrates.
     public let confidence: Double
     public let createdAt: Date
@@ -40,6 +45,9 @@ public struct Finding: Codable, Sendable {
     public let evidence: [String]
     public let evidenceRefs: EvidenceRefs?
     public let findingID: String
+    /// For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the
+    /// batteries in, then test again.'). Shown to the user.
+    public let fix: String?
     /// For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.
     public let grain: FindingGrain?
     /// True only when source is repairos.meter. Enforced in code.
@@ -62,9 +70,11 @@ public struct Finding: Codable, Sendable {
     public let source: FindingSource
     /// Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing
     /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
-    /// open short), meter state out_of_range, discovery states (unexpected_*), and honesty
-    /// states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose
-    /// verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
+    /// open short), the assembly state reversed (a part with a polarity or orientation fitted
+    /// the wrong way round, from marks visible in a photo, never from wire colour, S1), meter
+    /// state out_of_range, discovery states (unexpected_*), and honesty states
+    /// (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict
+    /// ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
     /// not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok,
     /// off->out_of_range, open->open,
     /// pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem,
@@ -75,12 +85,14 @@ public struct Finding: Codable, Sendable {
     public let vlmAnswer: VlmAnswer?
 
     public enum CodingKeys: String, CodingKey {
+        case category = "category"
         case confidence = "confidence"
         case createdAt = "created_at"
         case designTrust = "design_trust"
         case evidence = "evidence"
         case evidenceRefs = "evidence_refs"
         case findingID = "finding_id"
+        case fix = "fix"
         case grain = "grain"
         case isProof = "is_proof"
         case measurements = "measurements"
@@ -94,13 +106,15 @@ public struct Finding: Codable, Sendable {
         case vlmAnswer = "vlm_answer"
     }
 
-    public init(confidence: Double, createdAt: Date, designTrust: FindingDesignTrust?, evidence: [String], evidenceRefs: EvidenceRefs?, findingID: String, grain: FindingGrain?, isProof: Bool, measurements: Measurements?, onSymptomPowerPath: Bool?, partWords: String?, scanID: String, severity: FindingSeverity?, source: FindingSource, state: FindingState, subject: FindingSubject, vlmAnswer: VlmAnswer?) {
+    public init(category: Category?, confidence: Double, createdAt: Date, designTrust: FindingDesignTrust?, evidence: [String], evidenceRefs: EvidenceRefs?, findingID: String, fix: String?, grain: FindingGrain?, isProof: Bool, measurements: Measurements?, onSymptomPowerPath: Bool?, partWords: String?, scanID: String, severity: FindingSeverity?, source: FindingSource, state: FindingState, subject: FindingSubject, vlmAnswer: VlmAnswer?) {
+        self.category = category
         self.confidence = confidence
         self.createdAt = createdAt
         self.designTrust = designTrust
         self.evidence = evidence
         self.evidenceRefs = evidenceRefs
         self.findingID = findingID
+        self.fix = fix
         self.grain = grain
         self.isProof = isProof
         self.measurements = measurements
@@ -113,6 +127,20 @@ public struct Finding: Codable, Sendable {
         self.subject = subject
         self.vlmAnswer = vlmAnswer
     }
+}
+
+/// defect (also when absent) = something looks broken, damaged or faulty; setup = a setup or
+/// assembly state, not a broken part: a battery missing or in backwards, a cable or
+/// connector unplugged or not fully in, a cover not clipped, a screw or fuse missing
+/// (repairos.vision.assembly). Code decides it from the state, never a model word.
+///
+/// Finding.category: defect (also when absent) = something looks broken, damaged or faulty;
+/// setup = a setup or assembly state, not a broken part: a battery missing or in backwards,
+/// a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse
+/// missing (repairos.vision.assembly). Code decides it from the state, never a model word.
+public enum Category: String, Codable, Sendable {
+    case defect = "defect"
+    case setup = "setup"
 }
 
 /// Target T4: low = the reference is a reconstruction; fixes are advisory.
@@ -307,9 +335,11 @@ public enum FindingSource: String, Codable, Sendable {
 
 /// Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing
 /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
-/// open short), meter state out_of_range, discovery states (unexpected_*), and honesty
-/// states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose
-/// verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
+/// open short), the assembly state reversed (a part with a polarity or orientation fitted
+/// the wrong way round, from marks visible in a photo, never from wire colour, S1), meter
+/// state out_of_range, discovery states (unexpected_*), and honesty states
+/// (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict
+/// ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing,
 /// not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok,
 /// off->out_of_range, open->open,
 /// pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem,
@@ -327,6 +357,7 @@ public enum FindingState: String, Codable, Sendable {
     case ok = "ok"
     case outOfRange = "out_of_range"
     case partly = "partly"
+    case reversed = "reversed"
     case shifted = "shifted"
     case short = "short"
     case stateOpen = "open"
@@ -3562,6 +3593,11 @@ public struct Report: Codable, Sendable {
     public let safety: [Safety]?
     public let scanID: String
     public let sessionID: String
+    /// Setup and assembly states (category setup: a battery missing, a cable unplugged, a cover
+    /// not clipped), each with its plain fix. Not a broken part: listed apart and they never
+    /// make the verdict potential_issues on their own. A setup state that is a hazard (severity
+    /// safety: a battery in backwards, a loose mains wire) stays in `findings`.
+    public let setup: [CosmeticElement]?
     public let summary: Summary
     /// Optional: what the person said they suspected and what the photos showed about it
     /// (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only
@@ -3595,13 +3631,14 @@ public struct Report: Codable, Sendable {
         case safety = "safety"
         case scanID = "scan_id"
         case sessionID = "session_id"
+        case setup = "setup"
         case summary = "summary"
         case userLead = "user_lead"
         case verdict = "verdict"
         case verdictReason = "verdict_reason"
     }
 
-    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, grain: GrainEnum, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.bottomNotPlaced = bottomNotPlaced
         self.capture = capture
         self.cosmetic = cosmetic
@@ -3622,6 +3659,7 @@ public struct Report: Codable, Sendable {
         self.safety = safety
         self.scanID = scanID
         self.sessionID = sessionID
+        self.setup = setup
         self.summary = summary
         self.userLead = userLead
         self.verdict = verdict
@@ -3837,6 +3875,11 @@ public struct Views: Codable, Sendable {
 
 // MARK: - CosmeticElement
 public struct CosmeticElement: Codable, Sendable {
+    /// Finding.category: defect (also when absent) = something looks broken, damaged or faulty;
+    /// setup = a setup or assembly state, not a broken part: a battery missing or in backwards,
+    /// a cable or connector unplugged or not fully in, a cover not clipped, a screw or fuse
+    /// missing (repairos.vision.assembly). Code decides it from the state, never a model word.
+    public let category: Category?
     public let confidenceWord: ConfidenceWordEnum
     public let crop: CosmeticCrop
     /// The crops of the other findings in a collapsed row (`crop` is the first).
@@ -3847,6 +3890,9 @@ public struct CosmeticElement: Codable, Sendable {
     /// the same place on the scan across stills) with the same issue, finding_id first. Each
     /// finding appears in no other row (MS1).
     public let findingIDS: [String]?
+    /// For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the
+    /// batteries in, then test again.'). Shown to the user.
+    public let fix: String?
     /// Stages that looked at this region. A judged region always includes a state judge (vlm,
     /// classifier or meter).
     public let inspectedBy: [InspectedBy]
@@ -3873,12 +3919,14 @@ public struct CosmeticElement: Codable, Sendable {
     public let supersededIDS: [String]?
 
     public enum CodingKeys: String, CodingKey {
+        case category = "category"
         case confidenceWord = "confidence_word"
         case crop = "crop"
         case crops = "crops"
         case evidence = "evidence"
         case findingID = "finding_id"
         case findingIDS = "finding_ids"
+        case fix = "fix"
         case inspectedBy = "inspected_by"
         case issue = "issue"
         case judgment = "judgment"
@@ -3893,13 +3941,15 @@ public struct CosmeticElement: Codable, Sendable {
         case supersededIDS = "superseded_ids"
     }
 
-    public init(confidenceWord: ConfidenceWordEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
+    public init(category: Category?, confidenceWord: ConfidenceWordEnum, crop: CosmeticCrop, crops: [CosmeticCrop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: FindingSeverity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
+        self.category = category
         self.confidenceWord = confidenceWord
         self.crop = crop
         self.crops = crops
         self.evidence = evidence
         self.findingID = findingID
         self.findingIDS = findingIDS
+        self.fix = fix
         self.inspectedBy = inspectedBy
         self.issue = issue
         self.judgment = judgment
@@ -3955,6 +4005,7 @@ public enum Issue: String, Codable, Sendable {
     case none = "none"
     case outOfRange = "out_of_range"
     case partly = "partly"
+    case reversed = "reversed"
     case shifted = "shifted"
     case short = "short"
     case unexpectedPart = "unexpected_part"

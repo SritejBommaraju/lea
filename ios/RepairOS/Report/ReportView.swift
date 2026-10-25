@@ -523,13 +523,13 @@ struct ReportContent: View {
         }
     }
 
-    /// Findings beyond the top three (lower-ranked and cosmetic).
-    private var others: [ReportModel.Problem] { report.otherIssues + report.cosmetic }
+    /// Findings beyond the top three (lower-ranked, setup and cosmetic).
+    private var others: [ReportModel.Problem] { report.otherIssues + report.setup + report.cosmetic }
 
     private var showsModel: Bool { !model.isNone || !pins.isEmpty }
     private var isPhotoHero: Bool { if case .photos = model { true } else { false } }
     private var canShowOnObject: Bool { space != nil && !pins.isEmpty }
-    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.cosmetic }
+    private var all: [ReportModel.Problem] { report.mostLikely + report.otherIssues + report.setup + report.cosmetic }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -611,6 +611,10 @@ struct ReportContent: View {
                 }
                 if !report.otherIssues.isEmpty {
                     ProblemList(title: "Other possible problems", problems: report.otherIssues).id("other")
+                }
+                if !report.setup.isEmpty {
+                    ProblemList(title: "Setup to check", problems: report.setup,
+                                note: ReportWords.setupNote).id("setup")
                 }
                 if !report.cosmetic.isEmpty {
                     ProblemList(title: "Cosmetic", problems: report.cosmetic,
@@ -740,6 +744,11 @@ extension ReportModel.Severity? {
         case .functional, .none: .caution
         }
     }
+}
+
+extension ReportModel.Problem {
+    /// Its colour: a setup state (not broken) is the calm setup tone, unless it is a hazard; else by severity.
+    var tone: Tone { isSetup && severity != .safety ? .setup : severity.tone }
 }
 
 private struct VerdictHeader: View {
@@ -979,6 +988,9 @@ private struct ProblemList: View {
                             Text(p.part).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
                             Text([p.issue, p.confidence].compactMap { $0 }.joined(separator: " · "))
                                 .font(.footnote).foregroundStyle(.secondary)
+                            if let fix = p.fix {
+                                Text(fix).font(.footnote).foregroundStyle(.primary)
+                            }
                         }
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -1088,8 +1100,20 @@ struct ProblemDetailView: View {
                 crops
                 VStack(alignment: .leading, spacing: Spacing.s) {
                     Text(problem.part).font(.screenTitle)
-                    Text(problem.issue).font(.title3.weight(.semibold)).foregroundStyle(problem.severity.tone.color)
+                    Text(problem.issue).font(.title3.weight(.semibold)).foregroundStyle(problem.tone.text)
                     ProblemChips(problem: problem, all: true).padding(.top, Spacing.xs)
+                }
+                if let fix = problem.fix {
+                    VStack(alignment: .leading, spacing: Spacing.s) {
+                        Label(problem.isSetup ? "How to set it right" : "What to do", systemImage: "wrench.and.screwdriver")
+                            .font(.headline).foregroundStyle(problem.tone.text)
+                        Text(ReportWords.sanitize(fix)).font(.body).fixedSize(horizontal: false, vertical: true)
+                        if problem.isSetup && problem.severity != .safety {
+                            Text(ReportWords.setupNote).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .card(tone: problem.tone)
+                    .accessibilityElement(children: .combine)
                 }
                 if let observation = problem.observation {
                     VStack(alignment: .leading, spacing: Spacing.s) {

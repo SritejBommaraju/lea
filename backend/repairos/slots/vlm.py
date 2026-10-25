@@ -1,8 +1,11 @@
 """VLM slot interface (task M3). Implementations live in repairos.slots.vlm_<impl>.
 
-Two questions, both product-agnostic:
+Questions, all product-agnostic:
 - `inspect_crop(crop, context=None, part_hint=None, family=None) -> CropState`: what part is this and what state is it
   in, one of CROP_STATES (vision/generic_classes.py), with a short evidence sentence. Phase 1 (no reference).
+- `assembly_check(images, object_words) -> AssemblyCheck` and `inspect_state(crop, ...) -> CropState` (optional): is
+  the object complete and correctly assembled, over a few photos, then one place's state on a full-resolution crop
+  (vision/assembly.py).
 - `judge_crop(crop, render_crop, expectation, options) -> Judgement`: pick exactly one of `options` (Phase 2 crop pair,
   Phase 2 with a render; `render_crop` may be None). `cannot_tell` is always added (I4).
 
@@ -45,6 +48,8 @@ class CropState:
                                    # wiring exposed), with nothing broken: the normal state of an inspected device
     where: str = ""          # plain words: where in the crop the fault is ("" for ok, cannot_tell or older answers)
     too_small: bool = False  # cannot_tell only because the detail is too small for this view: a closer photo settles it
+    fix: str = ""            # inspect_state only: the plain fix for a setup state ("Put the batteries in, then test
+                             # again."); "" otherwise
 
 
 @dataclass(frozen=True)
@@ -62,6 +67,39 @@ class Comparison:
     attempts: tuple[dict, ...] = field(default_factory=tuple)
     escalated: bool = False
     open_for_access: bool = False
+
+
+ASSEMBLY_STATUS = ("as_expected", "problem", "not_visible")
+
+
+@dataclass(frozen=True)
+class AssemblyItem:
+    """One thing a complete, correctly assembled unit of this kind has (the overview's own checklist), and what the
+    photos show of it. A `problem` is a claim to confirm on a full-resolution crop (vision/assembly.py), never a
+    finding by itself; `not_visible` is a gap (a photo is needed), never a finding."""
+    part: str                # generic name of the part or place, without its state ("battery bay", "display ribbon")
+    kind: str                # part | wire
+    expect: str              # how it is on a complete, correctly assembled unit, in a few words
+    status: str              # one of ASSEMBLY_STATUS
+    problem: str = "none"    # one of generic_classes.ASSEMBLY_PROBLEMS when status is problem, else none
+    photo: int | None = None  # 0-based index of the image that shows it (problem / as_expected), None when not shown
+    box: tuple[float, float, float, float] | None = None  # where, in that image's pixels (as given to the call)
+    evidence: str = ""       # what in the photo supports the status
+    visibility: str = ""     # one of VISIBILITY
+    photo_needed: str = ""   # not_visible: what one more photo should show, in plain words
+
+
+@dataclass(frozen=True)
+class AssemblyCheck:
+    """`assembly_check`: what the object is and whether it looks complete and correctly assembled, over a few
+    photos of it."""
+    object_words: str        # short generic kind of product, as the model sees it
+    opened: bool             # the device is opened for inspection in the photos (cover off, panel open)
+    items: tuple[AssemblyItem, ...]
+    model: str
+    latency_ms: int
+    attempts: tuple[dict, ...] = field(default_factory=tuple)
+    refused: bool = False    # the model declined: no answer at all (never "nothing is wrong"); the check is redone
 
 
 @dataclass(frozen=True)
@@ -97,6 +135,19 @@ class VisionJudge(Protocol):
         ...
 
     def judge_crop(self, crop: Any, render_crop: Any | None, expectation: str, options: Sequence[str]) -> Judgement:
+        ...
+
+    # Optional (vision/assembly.py checks hasattr): the whole-object assembly check.
+    def assembly_check(self, images: Sequence[Any], object_words: str | None = None) -> AssemblyCheck:
+        """`images`: a few photos of one object (PIL, any size). Lists what a complete, correctly assembled unit of
+        this kind has and what the photos show of each; boxes are in the pixels of the image as given."""
+        ...
+
+    def inspect_state(self, crop: Any, context: Any | None, part: str | None,
+                      px_per_mm: float | None = None) -> CropState:
+        """One full-resolution crop of a place where something should be fitted or connected: is it there, fully
+        seated, connected and the right way round (generic_classes.ASSEMBLY_STATES), or damaged. `part` is the
+        overview's name for the place (quoted data, never its claim)."""
         ...
 
 

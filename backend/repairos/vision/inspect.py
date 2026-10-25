@@ -83,7 +83,8 @@ SMALL_REGIONS, MORE_REGIONS = "small_regions", "more_regions"   # refs of the pe
 
 STATE_TO_FINDING = {
     "ok": "ok", "damaged": "damaged", "burnt": "damaged", "cracked": "broken", "corroded": "damaged",
-    "loose": "loose", "unplugged": "unseated", "missing": "missing", "cannot_tell": "insufficient_evidence",
+    "loose": "loose", "unplugged": "unseated", "missing": "missing", "reversed": "reversed",
+    "cannot_tell": "insufficient_evidence",
 }
 CONFIDENCE = {"low": 0.35, "medium": 0.6, "high": 0.8}
 
@@ -191,6 +192,9 @@ def finding_from_crop(*, scan_id: str, still_id: str, index: int, det, crop, cro
         out["severity"] = sev
     if (pw := " ".join((getattr(crop_state, "part_words", "") or "").split())[:200]):
         out["part_words"] = pw
+    from repairos.vision.assembly import setup_fields   # unplugged / loose: a setup state with its plain fix
+
+    out.update(setup_fields(state, part if part != UNKNOWN_PART else "part", from_crop_check=True))
     return out
 
 

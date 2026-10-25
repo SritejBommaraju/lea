@@ -27,6 +27,15 @@ continuation_timeout_s: 600
 # A region seen in two stills is judged once when their 3D centres are this close (metres) or within half the
 # smaller region's size, whichever is larger, and the regions are of similar size.
 same_region_m: 0.02
+# The whole-object assembly check (backend/repairos/vision/assembly.py): is everything there, plugged in, seated and
+# the right way round. One overview call over `max_stills` photos, then a close look at each claimed problem (at most
+# `max_confirm` calls); at most `max_gaps` "could not see it, take a photo" rows. About 4 Claude calls per scan; it runs
+# beside the inspection, so it adds little to the time to the report. enabled: false turns it off.
+assembly:
+  enabled: true
+  max_stills: 4
+  max_confirm: 3
+  max_gaps: 2
 # The 3D view: the scan's LiDAR mesh is decimated to at most this many triangles (GET /v1/scans/{id}/mesh).
 mesh_max_triangles: 80000
 # The photo-real recreation (backend/repairos/recreation, GET /v1/scans/{id}/recreation, live `recreation_ready`):

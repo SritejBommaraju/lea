@@ -154,14 +154,19 @@ def test_too_little_overlap_is_rejected_with_the_reason():
     assert not res.aligned and res.reason and res.transform is None
 
 
-def _render(pose: Pose, cam: Pinhole, boxes) -> np.ndarray:
-    """Analytic depth along the view axis of axis-aligned boxes on the plane y = 0 (the support)."""
+def _render(pose: Pose, cam: Pinhole, boxes, table_half=None) -> np.ndarray:
+    """Analytic depth along the view axis of axis-aligned boxes on the plane y = 0 (the support; with `table_half`
+    (x, z) only |x|, |z| up to it: a small stand)."""
     u, v = np.meshgrid(np.arange(cam.width) + 0.5, np.arange(cam.height) + 0.5)
     o, d = pixel_rays(np.stack([u.ravel(), v.ravel()], 1), pose, cam)
     t = np.full(len(d), np.inf)
     with np.errstate(divide="ignore", invalid="ignore"):
         tp = -o[1] / d[:, 1]
-        t = np.where(tp > 0, tp, t)
+        on = tp > 0
+        if table_half is not None:
+            hit = o + tp[:, None] * d
+            on &= (np.abs(hit[:, 0]) <= table_half[0]) & (np.abs(hit[:, 2]) <= table_half[1])
+        t = np.where(on, tp, t)
         for lo, hi in boxes:
             t0, t1 = (lo - o) / d, (hi - o) / d
             tn, tf = np.minimum(t0, t1).max(1), np.maximum(t0, t1).min(1)
@@ -331,3 +336,143 @@ def test_bottom_not_placed_lists_unaligned_findings_with_their_crops():
     assert out[0]["reason"] == "the bottom could not be lined up" and out[0]["issue"] == "damaged"
     assert "issue" not in out[1] and out[1]["segment"] == 1
     assert bottom_not_placed(report, [{"segment": 1, "aligned": True, "findings_not_placed": []}], locs) == []
+
+
+# --- what the first real flip taught (a controller on a padded stool, 2026-10-24) ------------------------------------
+
+def _boxes_in(t, boxes=L_BOXES):
+    out = []
+    for lo, hi in boxes:
+        c = np.array([[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        w = c @ t[:3, :3].T + t[:3, 3]
+        out.append((w.min(0), w.max(0)))
+    return out
+
+
+def _frames(t, *, drift_m=0.0, n=8):
+    """Depth frames around the object placed by `t` (axis-aligned boxes on y = 0). `drift_m`: each frame's recorded
+    pose is off vertically by up to this much (ARKit drift: the depth is right, the pose is not)."""
+    cam = Pinhole(120.0, 120.0, 64.0, 48.0, 128, 96)
+    centre = t[:3, :3] @ np.array([0.0, 0.03, 0.0]) + t[:3, 3]
+    out = []
+    for k in range(n):
+        a = 2 * np.pi * k / n
+        pose = look_at(centre + [0.3 * np.cos(a), 0.3, 0.3 * np.sin(a)], centre)
+        depth = _render(pose, cam, _boxes_in(t))
+        off = drift_m * (2 * (k % 2) - 1)
+        out.append(DepthFrame(f"f{k}", Pose(pose.r, pose.t + [0.0, off, 0.0]), cam, depth,
+                              np.full((96, 128), 2, np.uint8)))
+    return out
+
+
+def test_a_drifting_segment_does_not_hide_an_underside_laid_on_the_top_face():
+    """Segment 0's cameras drift (its own cloud sits in their free space a lot), segment 1's do not. A pose that lays
+    the underside on the top face must still be dropped: each segment's free space is judged against that segment's
+    own baseline, never against the worse of the two (which let the drift excuse anything)."""
+    flip = m4(rot("x", 180), [0.4, 0.06, -0.2])           # object -> segment 1's world, the L upside down on y = 0
+    truth = np.linalg.inv(flip)
+    p, col = surface_points(L_BOXES)
+    vr = visible_from_above(p, None)
+    mw = p @ flip[:3, :3].T + flip[:3, 3]
+    vm = visible_from_above(mw, None)
+    ref, mov = ObjectCloud(p[vr], col[vr]), ObjectCloud(mw[vm], col[vm])
+    frames0, frames1 = _frames(np.eye(4), drift_m=0.04), _frames(flip)
+    wrong = m4(np.eye(3), [0.0, 0.03, 0.0]) @ truth       # the underside lifted onto the slab's top face
+    kw = {"voxel_m": 0.003, "ref_frames": frames0, "mov_frames": frames1, "gravity_sweep": False, "seeds": (),
+          "ref_plane_y": 0.0, "mov_plane_y": 0.0, "expect_flip": True}
+    res = align_clouds(ref, mov, init=wrong, init_quality=0.9, **kw)
+    assert free_space_violation(ref.points, frames0, margin_m=0.025) > 0.2   # the drift is real in this scene
+    if res.aligned:   # only the true pose (found from a flip of the wrong one) may come out
+        assert rotation_deg(res.matrix[:3, :3] @ truth[:3, :3].T) < 3
+        assert np.linalg.norm(res.matrix[:3, 3] - truth[:3, 3]) < 0.01
+    else:
+        assert "segment 0" in res.reason
+    right = align_clouds(ref, mov, init=truth, init_quality=0.9, **kw)
+    assert right.aligned, right.reason
+
+
+def test_gravity_starts_put_a_flipped_segment_back_on_the_table():
+    """Both segments rest on their tables: an upside-down start puts the segment's table contact at the object's top,
+    so a flat object's underside starts under its top face rather than on it."""
+    from repairos.recon.segment_align import _gravity_starts
+
+    flip = m4(rot("x", 180), [0.4, 0.06 + 0.5, -0.2])     # segment 1's table is 0.5 m higher in its own world
+    p, _ = surface_points(L_BOXES)
+    mov = p @ flip[:3, :3].T + flip[:3, 3]
+    starts = dict(_gravity_starts(mov, p, src_plane_y=0.5, tgt_plane_y=0.0))
+    for name, m in starts.items():
+        if "_side_" in name:   # a side start is centre on centre: the table alone cannot give its height
+            continue
+        y = (mov @ m[:3, :3].T + m[:3, 3])[:, 1]
+        assert abs(y.min()) < 0.004 and abs(y.max() - 0.06) < 0.004, name
+    assert sum("_side_" in n for n in starts) == 24
+
+
+def test_an_anchored_floor_under_a_stool_is_replaced_by_the_measured_support():
+    """ARKit anchors the largest plane it finds; under a stool or a small table that is the floor. The depth around
+    the box finds the real support, and an anchor that agrees with it (within ARKit's drift) is kept."""
+    from repairos.pipeline.mesh import plane_height
+    from repairos.recon.tsdf import ObjectBox
+
+    frames = _frames(np.eye(4))
+    box = ObjectBox.from_contract({"center_m": [0, 0.03, 0], "extent_m": [0.14, 0.07, 0.1],
+                                   "quaternion_xyzw": [0, 0, 0, 1]})
+    floor = {"support_plane": {"transform": [1, 0, 0, 0, 0, 1, 0, -0.62, 0, 0, 1, 0, 0, 0, 0, 1]}}
+    assert plane_height(floor) == -0.62                       # without depth: the anchor as before
+    assert abs(plane_height(floor, frames, box)) < 0.003
+    near = {"support_plane": {"transform": [1, 0, 0, 0, 0, 1, 0, 0.012, 0, 0, 1, 0, 0, 0, 0, 1]}}
+    assert plane_height(near, frames, box) == 0.012
+    assert abs(plane_height({}, frames, box)) < 0.003         # no anchor: the measured one
+    assert plane_height({**floor, "pose_source": "object_tracked"}, frames, box) is None
+
+
+def test_a_flat_top_seen_from_above_never_replaces_a_right_anchor():
+    """Seen mostly from above, a flat enclosure's top gives more depth than the strip of table around it, so the
+    lowest well-supported layer over the whole box is the top. A measured layer must be confirmed outside the
+    object's footprint: the strip of table confirms the anchor instead, and with no table seen around the object the
+    anchor stays."""
+    from repairos.locate.camera import backproject
+    from repairos.pipeline.mesh import plane_height
+    from repairos.recon.tsdf import ObjectBox, find_support_plane
+
+    cam = Pinhole(120.0, 120.0, 64.0, 48.0, 128, 96)
+    lid = [(np.array([-0.08, 0.0, -0.06]), np.array([0.08, 0.04, 0.06]))]      # 16 x 4 x 12 cm, top at 4 cm
+    box = ObjectBox.from_contract({"center_m": [0, 0.02, 0], "extent_m": [0.16, 0.04, 0.12],
+                                   "quaternion_xyzw": [0, 0, 0, 1]})
+    anchor = {"support_plane": {"transform": list(np.eye(4).reshape(-1)), "extent_m": [1.0, 1.0]}}
+
+    def frames(table_half):
+        out = []
+        for k in range(8):
+            a = 2 * np.pi * k / 8
+            pose = look_at([0.08 * np.cos(a), 0.35, 0.08 * np.sin(a)], [0.0, 0.02, 0.0])
+            out.append(DepthFrame(f"f{k}", pose, cam, _render(pose, cam, lid, table_half),
+                                  np.full((96, 128), 2, np.uint8)))
+        return out
+
+    strip = frames((0.095, 0.075))                  # a 1.5 cm strip of stand around the lid
+    pts = np.concatenate([f.pose.to_world(backproject(f.depth_m, f.depth_cam))[f.depth_m > 0] for f in strip])
+    whole = find_support_plane(pts[box.contains(pts, 0.3)])
+    assert whole is not None and abs(whole.height_m - 0.04) < 0.003   # over the whole box the top wins
+    assert plane_height(anchor, strip, box) == 0.0
+    assert plane_height(anchor, frames((0.08, 0.06)), box) == 0.0     # nothing around it: the anchor stays
+    floor = {"support_plane": {"transform": [1, 0, 0, 0, 0, 1, 0, -0.62, 0, 0, 1, 0, 0, 0, 0, 1]}}
+    assert abs(plane_height(floor, strip, box)) < 0.003               # a floor anchor is still replaced by the stand
+
+
+def test_an_object_laid_on_its_side_is_registered():
+    """Many things cannot rest upside down (a mouse rocks, a controller stands on its triggers): the person lays them on
+    a side. The gravity sweep's side starts find that pose, which ICP then refines like the others."""
+    rng = np.random.default_rng(3)
+    r = rot("y", 70) @ rot("z", 90)
+    p, _ = surface_points(L_BOXES)
+    lift = -float((p @ r.T)[:, 1].min())   # resting on y = 0 in its own world
+    side_world = m4(r, [-0.3, lift, 0.25])
+    ref = segment_world(np.eye(4), L_BOXES)
+    mov = segment_world(side_world, L_BOXES)
+    mov.points = mov.points + rng.normal(0, 0.001, mov.points.shape)
+    res = align_clouds(ref, mov, voxel_m=0.003, **ON_TABLE)
+    truth = np.linalg.inv(side_world)
+    assert res.aligned, res.reason
+    assert rotation_deg(res.matrix[:3, :3] @ truth[:3, :3].T) < 3.0
+    assert res.seconds["total_s"] < 10

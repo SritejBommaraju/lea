@@ -49,6 +49,8 @@ enum Palette {
     static let caution = Color(light: 0xC76B00, dark: 0xFFB340)
     static let danger = Color(light: 0xD92D3A, dark: 0xFF5C66)
     static let cosmetic = Color(light: 0x5E6B80, dark: 0xA4B0C4)
+    /// Setup to check (a battery missing, a cable unplugged): calm teal, apart from the fault tones. Not broken.
+    static let setup = Color(light: 0x0B7A84, dark: 0x5CCAD3)
     /// Caution as text: `caution` is 3.8:1 on white, too light for small words; this is ≈5.2:1 (dark mode unchanged).
     static let cautionText = Color(light: 0xA35A00, dark: 0xFFB340)
 
@@ -63,7 +65,7 @@ enum Palette {
 
 /// What a colour means. Severity, cue urgency and status all map onto these, never onto raw colours.
 enum Tone: Sendable, Hashable {
-    case accent, good, caution, danger, cosmetic, neutral
+    case accent, good, caution, danger, cosmetic, setup, neutral
 
     var color: Color {
         switch self {
@@ -72,6 +74,7 @@ enum Tone: Sendable, Hashable {
         case .caution: Palette.caution
         case .danger: Palette.danger
         case .cosmetic: Palette.cosmetic
+        case .setup: Palette.setup
         case .neutral: Color.secondary
         }
     }
