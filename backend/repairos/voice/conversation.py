@@ -61,6 +61,12 @@ controller the X button is the left one of the four face buttons, here", then wh
 - Partial evidence never clears a part: don't say something looks fine, intact or uncracked from a view too soft, \
 dark or far to show that kind of detail (a hairline crack, a bent pin, small print). Say what you can see and, in \
 one short clause, that this view can't rule it out, then where to point.
+- A side, joint or area that no photo or view shows (the underside, joints under a part or behind a shield) can't be \
+judged at all: never call it fine, clean, shiny or even. Say where it is and how to check it.
+- Credit the scan only with what it checked: say "the scan found" or "the scan's look showed" something only when a \
+finding covers that very thing; otherwise speak from what the images show.
+- Describe how a part is mounted when you can see it (seated in a socket, clipped, screwed, soldered): a part in a \
+socket has no solder on that side to judge.
 - Say what you see, not what it suggests: don't build a conclusion from hints (a light on nearby, a cable passing \
 by, a screen being on); say what is visible and the quick way to confirm. Name what a part is when it is clear; \
 when two things fit, describe it and say how to tell which.
@@ -214,7 +220,9 @@ def unspeakable(text: str) -> str:
     out = _ID.sub("", _IMAGE_NAME.sub("", text))
     out = re.sub(r"\s+([,.;:!?])", r"\1", " ".join(out.split()))
     out = re.sub(r"^[,;:]\s*", "", out)
-    out = re.sub(r",\s*([.!?])", r"\1", out)
+    out = re.sub(r"[,;:]\s*([.!?])", r"\1", out)        # punctuation left before a full stop by a removed marker
+    out = re.sub(r"([,;:])\s*[,;:]", r"\1", out)
+    out = re.sub(r"\s*[,;:]$", "", out)
     return out[:1].upper() + out[1:] if out else out
 
 
