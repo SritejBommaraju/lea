@@ -127,6 +127,33 @@ struct GatewayClient: Sendable {
                 focus.flatMap { $0.count == 4 ? $0[3] : nil }, Int(http.value(forHTTPHeaderField: "X-Recreation-Bottom") ?? "") ?? 0)
     }
 
+    /// GET /v1/scans/{id}/grain: the scan's design in Grain (stage, Grain's question, revisions); nil before one.
+    func grainDesign(scanID: String) async throws -> [String: Any]? {
+        do {
+            let (data, _) = try await send("GET", "v1/scans/\(scanID)/grain", expect: [200])
+            return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        } catch GatewayError.http(404, _) {
+            return nil
+        }
+    }
+
+    /// POST /v1/scans/{id}/grain: design a part for this objective in Grain (the backend holds the Grain key).
+    func startGrainDesign(scanID: String, objective: String) async throws -> [String: Any] {
+        let (data, _) = try await send("POST", "v1/scans/\(scanID)/grain", json: ["objective": objective], expect: [202])
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    /// POST /v1/scans/{id}/grain/answer: the person's answer to Grain's question.
+    func answerGrain(scanID: String, text: String) async throws -> [String: Any] {
+        let (data, _) = try await send("POST", "v1/scans/\(scanID)/grain/answer", json: ["text": text], expect: [202])
+        return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    /// GET /v1/scans/{id}/grain/revisions/{n}/{name}: model.step, model.glb or report.json of design revision n.
+    func grainFile(scanID: String, revision: Int, name: String) async throws -> Data {
+        try await send("GET", "v1/scans/\(scanID)/grain/revisions/\(revision)/\(name)", expect: [200]).0
+    }
+
     /// GET /v1/sessions/{id}/events (server-sent events), resuming after `lastEventID`.
     func eventsRequest(sessionID: String, lastEventID: String?) -> URLRequest {
         var req = request("GET", "v1/sessions/\(sessionID)/events", auth: true)

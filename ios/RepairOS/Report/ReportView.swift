@@ -25,6 +25,7 @@ struct ReportView: View {
     @State private var progress = PipelineProgress()
     @State private var error: String?
     @State private var showFull = false
+    @State private var showGrain = false
     @State private var pendingDelete: SessionRecord?
     @State private var model: ModelSource = .none
     /// The gateway mesh revision cached beside the scan (nil: none fetched in this view yet).
@@ -132,6 +133,7 @@ struct ReportView: View {
                         }
                         if report != nil, gateway != nil {
                             Button("Full report with photos", systemImage: "doc.richtext") { showFull = true }
+                            Button("Design a fix in Grain", systemImage: "cube.transparent") { showGrain = true }
                         }
                         Button("Delete scan", systemImage: "trash", role: .destructive) { pendingDelete = record }
                             .disabled(offline || !ScanLibrary.canDelete(record, app: app))
@@ -149,6 +151,9 @@ struct ReportView: View {
                             .toolbar { Button("Close") { showFull = false }.fontWeight(.semibold) }
                     }
                 }
+            }
+            .sheet(isPresented: $showGrain) {
+                if let gateway { GrainSheet(scanID: record.scanID, gateway: gateway) }
             }
             .task { await run() }
             // A shell for older scans that have none (built off the main actor, once), and the server's better

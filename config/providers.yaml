@@ -22,5 +22,14 @@ profiles:
     STATE: sqlite    # one SQLite file under data/ (built)
     BLOB: local      # content-addressed files under data/blobs/ (built)
     HOST: local_mac  # the dev laptop; dev only, a release build refuses it
-
-# Phase 2 adds the GRAIN slot (Grain API client); see PLAN.md §9.
+  phase2:            # phase1 plus Grain: REPAIROS_PROFILE=phase2 (PLAN.md §9, backend/repairos/handoff)
+    DET: owlv2
+    VLM: anthropic
+    LLM: anthropic
+    FUSION: jev
+    CLS: none
+    OCRB: none
+    STATE: sqlite
+    BLOB: local
+    HOST: local_mac
+    GRAIN: http      # Grain's REST API (slots/grain_http): GRAIN_URL and GRAIN_KEY in backend/.env

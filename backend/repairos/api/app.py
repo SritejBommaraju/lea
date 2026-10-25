@@ -99,6 +99,9 @@ def _named_event(ev) -> tuple[str, dict] | None:
         p = brief_payload(ev.row["session_id"], ev.row)
         if p:
             return "product_brief", p
+    if ev.kind == "grain-handoff" and ev.row.get("announce") == "grain":
+        from repairos.handoff.service import payload as handoff_payload
+        return "grain", handoff_payload(ev.row)
     if ev.kind == REPORT_KIND:
         return "report_ready", {"scan_id": ev.row["scan_id"], "report_id": ev.row["report_id"],
                                 "verdict": ev.row["verdict"], "rev": ev.rev}
@@ -161,6 +164,29 @@ class Story(BaseModel):
 class IdentifyPhoto(BaseModel):
     model_config = ConfigDict(extra="forbid")
     image: str = Field(pattern=r"^blob://sha256:[0-9a-f]{64}$")
+
+
+class Measure(BaseModel):
+    """A measuring request (repairos.measure.run): named points marked on stills, the dimensions between them, and
+    optionally a known reference length and a holdout length."""
+    model_config = ConfigDict(extra="forbid")
+    points: dict[str, list[dict[str, Any]]] = Field(min_length=1, max_length=64)
+    dimensions: list[dict[str, Any]] = Field(min_length=1, max_length=64)
+    reference: dict[str, Any] | None = None
+    holdout: dict[str, Any] | None = None
+    tolerance_mm: float = Field(0.5, gt=0, le=10)
+
+
+class GrainDesign(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    objective: str = Field(min_length=3, max_length=500)
+    measure: Measure | None = None
+    unknowns: list[str] = Field(default_factory=list, max_length=20)
+
+
+class GrainAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(min_length=1, max_length=4000)
 
 
 class Pair(BaseModel):
@@ -671,6 +697,85 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         added). 404 while there is none (not built yet, or the scan has no usable depth: `reason`). `rev` is a
         cache key only: the latest mesh is always served."""
         return await _ply(request, scan_id, rev, "ref", "mesh")
+
+    @app.post("/v1/scans/{scan_id}/measure")
+    async def scan_measure(scan_id: str, body: Measure, request: Request, _d: Device):
+        """Millimetres from the scan's stills (repairos.measure): the marked points in 3D, the dimensions between
+        them with a 1-sigma uncertainty and how each was measured, and with a reference and a holdout length the
+        corrected values and whether they are verified. Runs now (tens of seconds for a scan's stills); nothing is
+        stored. The same request on POST .../grain is measured again and sent to Grain."""
+        from repairos.handoff.service import measure_stills
+
+        await _get(request, "scan-package", scan_id)
+        stills = [r.data for r in await store(request).list("still", scan_id=scan_id)]
+        try:
+            return await asyncio.to_thread(measure_stills, blob_store(request), stills, body.model_dump())
+        except ValueError as e:
+            raise HTTPException(422, {"error": "unmeasurable", "reason": str(e)}) from e
+
+    @app.post("/v1/scans/{scan_id}/grain", status_code=202)
+    async def scan_grain(scan_id: str, body: GrainDesign, request: Request, _d: Device):
+        """Design the repair part in Grain: measures the request's marks (if any), opens one linked Grain project for
+        this objective, sends the scan, the chosen photos and src/LEA_CAPTURE.json, and starts one design turn. 202:
+        queued; the live event `grain` and GET .../grain follow it (stage, Grain's question, revisions). The same
+        objective again returns the same design (and wakes it if its job stopped); a new objective opens a new one."""
+        from repairos.handoff import service
+
+        scan = await _get(request, "scan-package", scan_id)
+        row = await service.create(store(request), scan, body.objective,
+                                   body.measure.model_dump() if body.measure else None, body.unknowns)
+        return {**service.payload(row), "job": await _grain_job(request, row)}
+
+    @app.get("/v1/scans/{scan_id}/grain")
+    async def scan_grain_state(scan_id: str, request: Request, _d: Device):
+        """The latest Grain design of the scan: stage (queued, measured, project, uploaded, capture, designing,
+        asking, done, stopped, failed), Grain's open question, the measurement and every revision (its build, fit
+        check and files)."""
+        from repairos.handoff import service
+
+        await _get(request, "scan-package", scan_id)
+        r = await service.latest(store(request), scan_id)
+        if r is None:
+            raise HTTPException(404, {"error": "no_grain_design", "reason": "POST .../grain first"})
+        return service.payload(r.data)
+
+    @app.post("/v1/scans/{scan_id}/grain/answer", status_code=202)
+    async def scan_grain_answer(scan_id: str, body: GrainAnswer, request: Request, _d: Device):
+        """The person's answer to Grain's question (spoken or typed); it becomes the next design turn. 409 when
+        Grain is not asking."""
+        from repairos.handoff import service
+
+        r = await service.latest(store(request), scan_id)
+        if r is None:
+            raise HTTPException(404, {"error": "no_grain_design"})
+        try:
+            row = await service.add_answer(store(request), r.data["handoff_id"], body.text)
+        except ValueError as e:
+            raise HTTPException(409, {"error": "not_asking", "reason": str(e)}) from e
+        return {**service.payload(row), "job": await _grain_job(request, row)}
+
+    @app.get("/v1/scans/{scan_id}/grain/revisions/{n}/{name}")
+    async def scan_grain_file(scan_id: str, n: int, name: Literal["model.step", "model.glb", "report.json"],
+                              request: Request, _d: Device):
+        """One file of design revision n as Grain built it (STEP for CAD, GLB to view, the build report)."""
+        from repairos.handoff import service
+
+        r = await service.latest(store(request), scan_id)
+        rev = next((v for v in (r.data.get("revisions") or []) if v["n"] == n), None) if r else None
+        ref = ((rev or {}).get("files") or {}).get(f"out/{name}")
+        if not ref:
+            raise HTTPException(404, {"error": "no_file", "reason": f"revision {n} has no {name}"})
+        data = await asyncio.to_thread(blob_store(request).get, ref)
+        media = {"model.step": "model/step", "model.glb": "model/gltf-binary", "report.json": "application/json"}[name]
+        return Response(data, media_type=media, headers={
+            "Content-Disposition": f'attachment; filename="{scan_id}_rev{n}_{name}"'})
+
+    async def _grain_job(request: Request, row: dict) -> dict:
+        """Queue the handoff's next advance; idempotent per stage and answer count."""
+        key = f"{row['handoff_id']}:{row['stage']}:{len(row.get('answers') or [])}:{len(row.get('turns') or [])}"
+        job_id = f"job_grain_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
+        return await store(request).enqueue(Job(kind="grain", job_id=job_id, session_id=row.get("session_id"),
+                                                scan_id=row["scan_id"], inputs={"kind": "grain", "id": row["handoff_id"]}))
 
     @app.get("/v1/scans/{scan_id}/recreation", responses={200: {"content": {"model/vnd.usdz+zip": {},
                                                                           "application/octet-stream": {}}}})

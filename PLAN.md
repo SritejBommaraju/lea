@@ -204,6 +204,15 @@ Grain is the team's proprietary design engine; Phase 2 sends it our scans and fi
 - **Replacement parts**: is the part on hand a fit; what to buy (selection and budget in code, A5).
 - **Simulation checks**: a rebuild with a substitute is a "simulation check", never "verified" (I5).
 - **The API**: upload, diagnose, electrical check, call. A product Grain did not design has `design_trust: low` (I7).
+- **Repair parts (built, profile `phase2`)**: `POST /v1/scans/{id}/grain {objective, measure?}` measures the marked
+  points (`backend/repairos/measure`: tracks across stills, bundle adjustment with LiDAR as a loose prior, a known
+  length and a holdout decide `verified`), then `backend/repairos/handoff` opens one Grain project per objective,
+  sends the scan (mesh, else cloud, else photo-only), up to eight photos and `src/LEA_CAPTURE.json`, starts one design
+  turn, relays Grain's questions (`.../grain/answer`) and keeps every built version (STEP, GLB, report, src) as an
+  immutable revision with Grain's fit check. Only verified hole spacings are fit requirements; the rest are unknowns.
+  Grain must let its design agent see the capture's photos and scan before a design exists, and check the capture's
+  spacings on every build (needs met on the team's Grain fork; see its notes). Lens distortion must come from the
+  phone's calibration: on a one-surface scan it cannot be fitted and bends the scan (tests/unit/test_measure.py).
 
 Contracts already in the repo for Phase 2: `grain-scan-record`, `grain-diagnose-response`, `grain-look-response`,
 `grain-electrical-reference`, `grain-electrical-check-request`, `grain-electrical-check-response`,

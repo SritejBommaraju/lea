@@ -9,6 +9,8 @@ Jobs (queued by the gateway, repairos.api.app):
   pipeline on `POST /v1/scans/{scan_id}/complete` (the upload is complete): the whole run, then the report
   story    on `POST /v1/sessions/{id}/story`: the person's guess -> a hypothesis and live `lead` events
            (pipeline/story.py; a lead orders the inspection, never makes a finding)
+  grain    on `POST /v1/scans/{id}/grain` and `.../grain/answer`: the Lea -> Grain design handoff (handoff/service.py),
+           advanced until Grain asks a question or the turn ends
 Every SWEEP_S the worker also closes continuations nobody finished (run.close_abandoned).
 Shutdown (SIGTERM from the pod, SIGINT): no new job is claimed and no new model call starts; running jobs get GRACE_S
 to end; what is still running is cancelled, its still claims are released to pending (their stills queued again) and
@@ -37,7 +39,7 @@ from repairos.pipeline.run import (Context, PipelineFailed, close_abandoned, ins
 from repairos.pipeline.stopping import is_stopping
 from repairos.slots.state import Job
 
-KINDS = ["detect", "ocr", "pipeline", "story"]
+KINDS = ["detect", "ocr", "pipeline", "story", "grain"]
 HEARTBEAT_S = 30.0
 SWEEP_S = 30.0
 GRACE_S = 20.0   # on SIGTERM / SIGINT: how long running jobs may finish before their claims are released   # how often an idle or busy worker closes continuations nobody finished (close_abandoned)
@@ -57,6 +59,9 @@ def transient(e: BaseException) -> bool:
     cause = e.__cause__ or e
     if isinstance(cause, (FusionUnavailable, TimeoutError, ConnectionError)):
         return True
+    from repairos.slots.grain import GrainError
+    if isinstance(e, GrainError) and e.transient:
+        return True
     try:
         import anthropic
     except ImportError:
@@ -74,6 +79,9 @@ async def handle(ctx: Context, job: Job) -> dict[str, Any]:
     if kind == "story":
         from repairos.pipeline.story import run_story
         return await run_story(ctx, inputs.get("id") or job.session_id)
+    if kind == "grain":
+        from repairos.handoff.service import run_handoff
+        return await run_handoff(ctx, inputs["id"])
     if kind == "pipeline":
         report = await run_scan(ctx, inputs.get("scan_id") or job.scan_id)
         return {"stage": "report", "report_id": report["report_id"], "verdict": report["verdict"]}
