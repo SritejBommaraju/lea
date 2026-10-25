@@ -250,8 +250,44 @@ def render_view(s: Surface, eye: Sequence[float], look: Sequence[float], key: st
 
 
 def upright(still: Mapping) -> bool:
-    """Stills are stored in the sensor's landscape orientation; the phone shows (and sends) them portrait."""
-    return int(still.get("width_px") or 0) > int(still.get("height_px") or 0)
+    """Whether the still is turned at all to show it upright (quarter_turns)."""
+    return quarter_turns(still) != 0
+
+
+def quarter_turns(still: Mapping) -> int:
+    """Clockwise quarter turns that show a still upright: the camera's roll from its ARKit pose, so gravity points
+    down in the image (stills are stored in the sensor's own orientation, however the phone was held). Shot from
+    almost straight above, gravity says nothing about up: the phone's usual portrait hold (one turn for a landscape
+    sensor image)."""
+    landscape = int(still.get("width_px") or 0) > int(still.get("height_px") or 0)
+    try:
+        r = Pose.from_contract(still["camera"]).r
+    except (KeyError, ValueError, TypeError):
+        return 1 if landscape else 0
+    d = r.T @ np.array([0.0, -1.0, 0.0])        # world down in camera axes (x right, y up)
+    g = np.array([d[0], -d[1]])                 # in image axes (u right, v down)
+    if float(np.linalg.norm(g)) < 0.2:
+        return 1 if landscape else 0
+    best, turns = -2.0, 0
+    for k in range(4):
+        if g[1] > best:
+            best, turns = float(g[1]), k
+        g = np.array([-g[1], g[0]])             # one clockwise turn of the image
+    return turns
+
+
+def turn_fraction(k: int, x: float, y: float) -> tuple[float, float]:
+    """A spot (fractions of the stored image) after k clockwise quarter turns."""
+    for _ in range(k % 4):
+        x, y = 1 - y, x
+    return x, y
+
+
+def unturn_fraction(k: int, x: float, y: float) -> tuple[float, float]:
+    """The inverse of turn_fraction: fractions of the shown image -> of the stored image."""
+    for _ in range(k % 4):
+        x, y = y, 1 - x
+    return x, y
 
 
 def photo_view(s: Surface, still: Mapping, image: bytes, key: str, size: int = IMAGE_PX) -> View | None:
@@ -274,8 +310,9 @@ def photo_view(s: Surface, still: Mapping, image: bytes, key: str, size: int = I
     pts = np.full(index.shape + (3,), np.nan, np.float32)
     pts[index >= 0] = s.points[index[index >= 0]]
     rgb = np.asarray(im.resize((w, h), Image.Resampling.LANCZOS))
-    if upright(still):
-        rgb, pts = np.rot90(rgb, k=-1), np.rot90(pts, k=-1)   # clockwise, as PIL rotate(-90) on the phone side
+    k = quarter_turns(still)
+    if k:
+        rgb, pts = np.rot90(rgb, k=-k), np.rot90(pts, k=-k)   # k clockwise turns: gravity down
     return View(key, "photo", _jpeg(np.ascontiguousarray(rgb), 65, grid=True), np.ascontiguousarray(pts),
                 f"Photo {key}: a real photo of the object taken during the scan.", str(still.get("still_id")))
 
@@ -541,7 +578,7 @@ def spot_photo(surface: Surface, stills: Sequence[Mapping], image_of, p: Sequenc
         if view is None:
             continue
         w0, h0 = int(st.get("width_px") or 0), int(st.get("height_px") or 0)
-        x, y = (1 - v / h0, u / w0) if upright(st) else (u / w0, v / h0)
+        x, y = turn_fraction(quarter_turns(st), u / w0, v / h0)
         seen = point_at(view, x, y)
         cam_t = np.asarray(st["camera"]["position_m"], float)
         if seen is not None and np.linalg.norm(seen - cam_t) < depth - 0.03:
@@ -561,9 +598,9 @@ def spot_photo(surface: Surface, stills: Sequence[Mapping], image_of, p: Sequenc
                            Image.Resampling.LANCZOS)
         rx, ry, rr = (u - x0) * scale, (v - y0) * scale, max(22.0, fx * radius_m / depth * scale)
         rgb = np.asarray(crop)
-        if upright(st):     # clockwise, as the phone shows stills: (x, y) -> (h - 1 - y, x)
+        for _ in range(quarter_turns(st)):     # turned upright like every view of it: (x, y) -> (h - y, x)
+            rx, ry = rgb.shape[0] - ry, rx
             rgb = np.rot90(rgb, k=-1)
-            rx, ry = crop.size[1] - ry, rx
         return _jpeg(_draw_ring(rgb, rx, ry, rr), 82), str(st.get("still_id"))
     out_dir = p - surface.center
     out_dir[1] = max(out_dir[1], 0) + 0.5 * float(np.linalg.norm(out_dir[[0, 2]]))
@@ -590,8 +627,10 @@ def upright_image(still: Mapping, image: bytes):
     if hit is not None:
         return hit
     im = Image.open(io.BytesIO(image)).convert("RGB")
-    if upright(still):
-        im = im.transpose(Image.Transpose.ROTATE_270)     # clockwise, as np.rot90(k=-1)
+    k = quarter_turns(still)
+    if k:   # k clockwise turns (PIL's ROTATE_270 is one clockwise turn)
+        im = im.transpose({1: Image.Transpose.ROTATE_270, 2: Image.Transpose.ROTATE_180,
+                           3: Image.Transpose.ROTATE_90}[k])
     UPRIGHT.put(key, im)
     return im
 
@@ -599,7 +638,7 @@ def upright_image(still: Mapping, image: bytes):
 def to_upright(still: Mapping, u: float, v: float) -> tuple[float, float]:
     """Full-resolution sensor pixel -> fractions of the upright image."""
     w0, h0 = float(still.get("width_px") or 1), float(still.get("height_px") or 1)
-    return (1 - v / h0, u / w0) if upright(still) else (u / w0, v / h0)
+    return turn_fraction(quarter_turns(still), u / w0, v / h0)
 
 
 def project_upright(still: Mapping, p: Sequence[float]) -> tuple[float, float, float] | None:

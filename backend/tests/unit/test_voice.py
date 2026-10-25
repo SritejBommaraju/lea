@@ -1069,9 +1069,10 @@ def test_a_repeated_sentence_is_not_spoken_but_its_move_happens(gw):
 
 def test_ring_size_follows_how_sure_the_spot_is():
     from repairos.voice.evidence import ring_for
-    p, r, word = ring_for([0, 0, 0], [0.004, 0, 0], True)
-    assert word == "two photos agree" and r == 0.012 and abs(p[0] - 0.002) < 1e-9
-    assert ring_for([0, 0, 0], [0.03, 0, 0], True)[1:] == (0.03, "photos disagree")
+    p, r, word = ring_for([0, 0, 0], 0.004, True)
+    assert word == "confirmed in a second photo" and r == 0.012
+    assert ring_for([0, 0, 0], 0.03, True)[1:] == (0.03, "second photo disagrees")
+    assert ring_for([0, 0, 0], 0.2, True)[1] == 0.04
     assert ring_for([0, 0, 0], None, True)[1:] == (0.014, "refined in one photo")
     assert ring_for([0, 0, 0], None, False)[1:] == (0.03, "coarse")
 
@@ -1112,3 +1113,15 @@ def test_refine_maps_a_crop_answer_back_to_the_model():
                                       client=Fake(), model="claude-sonnet-5-5", scan_id="t", verify=False))
     assert calls == 2 and out[0]["precision"] == "refined in one photo"
     assert np.linalg.norm(np.asarray(out[0]["point"]) - target) < 0.004
+
+
+def test_image_names_and_ids_are_never_spoken():
+    from repairos.voice.conversation import unspeakable
+    assert unspeakable("In photo s2 it's the red button on the left.") == "It's the red button on the left."
+    assert unspeakable("The B button is the red one, as shown in view v1.") == "The B button is the red one."
+    assert unspeakable("That's ix_3, the X button, see f_25c6159f83e6 too.") == "That's, the X button, see too."
+    assert unspeakable("It's from still scan_75033ad7_s4.") == "It's from still."
+    assert unspeakable("The Galaxy S2 and a V8 engine stay.") == "The Galaxy S2 and a V8 engine stay."
+    sp = SentenceSplitter()
+    out = sp.feed("In photo s2 the X button is the blue one. ") + sp.flush()
+    assert out == ["The X button is the blue one."]

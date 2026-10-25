@@ -57,18 +57,39 @@ def test_zbuffer_keeps_the_nearest_surface():
     assert (index[160:240, 160:240] >= 0).mean() > 0.97   # points cover their pixels: the surface reads as solid
 
 
+def rolled(st: dict, quarter: int) -> dict:
+    """The same still with the camera rolled `quarter` quarter turns about its viewing axis."""
+    r = Pose.from_contract(st["camera"]).r
+    c, s_ = np.cos(quarter * np.pi / 2), np.sin(quarter * np.pi / 2)
+    rz = np.array([[c, -s_, 0], [s_, c, 0], [0, 0, 1]])
+    return {**st, "camera": {**st["camera"], "quaternion_xyzw": matrix_to_quat(r @ rz)}}
+
+
+def test_stills_are_turned_so_gravity_points_down():
+    level = still()
+    assert V.quarter_turns(level) == 0                      # held level: shown as stored
+    turns = {V.quarter_turns(rolled(level, q)) for q in (1, 2, 3)}
+    assert turns == {1, 2, 3}                               # every roll gets its own turn back
+    top_down = still(eye=(0, 0.5, -0.5), look=(0, 0, -0.5))
+    assert V.quarter_turns(top_down) == 1                    # from straight above: the phone's portrait hold
+    for k in range(4):
+        x, y = V.turn_fraction(k, 0.2, 0.7)
+        assert np.allclose(V.unturn_fraction(k, x, y), (0.2, 0.7))
+
+
 def test_photo_view_point_map_matches_the_turned_photo():
     s = plane()
-    st = still()
-    v = V.photo_view(s, st, jpeg(800, 600), "s3")
-    im = Image.open(io.BytesIO(v.jpeg))
-    assert im.size == (576, 768)                       # upright: the landscape still turned clockwise, 768 long
     target = np.array([0.05, -0.03, -0.5])
-    (u, vv), _ = (a[0] for a in project(target[None], Pose.from_contract(st["camera"]),
-                                        Pinhole.from_contract(st["intrinsics"], 800, 600)))
-    x, y = 1 - vv / 600, u / 800                       # the same pixel once turned clockwise
-    got = V.point_at(v, x, y)
-    assert got is not None and np.linalg.norm(got - target) < 0.004
+    for st in (still(), rolled(still(), 1), rolled(still(), 2)):
+        k = V.quarter_turns(st)
+        v = V.photo_view(s, st, jpeg(800, 600), "s3")
+        im = Image.open(io.BytesIO(v.jpeg))
+        assert im.size == ((768, 576) if k % 2 == 0 else (576, 768))
+        (u, vv), _ = (a[0] for a in project(target[None], Pose.from_contract(st["camera"]),
+                                            Pinhole.from_contract(st["intrinsics"], 800, 600)))
+        x, y = V.turn_fraction(k, u / 800, vv / 600)          # the same pixel once turned
+        got = V.point_at(v, x, y)
+        assert got is not None and np.linalg.norm(got - target) < 0.004, k
 
 
 def test_point_at_snaps_to_the_nearest_surface_and_refuses_empty_space():

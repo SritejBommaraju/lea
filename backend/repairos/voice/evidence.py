@@ -52,7 +52,8 @@ INDEX_PROMPT = """These are photos of one real object from a scan{name}. List th
 about that you can actually see: buttons, ports and jacks, pins and pin headers, connectors, switches, lights, \
 screws, chips, batteries, printed labels, and each visible wire end (with its colour and what it is plugged into). \
 For each give: label (its printed text when legible, e.g. "A2", "5V", "GND", "RESET", else a short name like "X \
-button" or "red wire end"), kind, the photo it is clearest in (its name, like s4), x and y (fractions of that photo, \
+button" or "red wire end"; left and right mean the object's own sides as its user holds or faces it, never the \
+photo's, and the object may lie turned round in a photo), kind, the photo it is clearest in (its name, like s4), x and y (fractions of that photo, \
 0,0 top left, on the component itself; read them from the faint grid, whose ticks mark every tenth), and a short \
 note (what it is for, or for a wire what it connects to as far \
 as you can see). Only list what you can see; read printed text only when it is legible. At most 40, the most useful \
@@ -272,7 +273,12 @@ class Evidence:
             for e, r_ in zip(entries, refined):
                 e["coarse_point"] = e["point"]
                 e.update(point=[round(float(c), 5) for c in r_["point"]], radius=r_["radius"],
-                         precision=r_["precision"], still_id=r_["still_id"] or e.get("still_id"))
+                         precision=r_["precision"], still_id=r_["still_id"] or e.get("still_id"),
+                         x=r_.get("xy", (e.get("x"), e.get("y")))[0], y=r_.get("xy", (e.get("x"), e.get("y")))[1])
+            pins, n = await header_pins(surface, stills, image_of, entries, client=client, model=model,
+                                        scan_id=scan_id, name=name)
+            entries += pins
+            calls += n
         return {"status": "done", "model": model, "photos": list(views), "calls": calls, "entries": entries}
 
 
@@ -325,13 +331,52 @@ async def ask_crops(client: Any, model: str, scan_id: str, crops: list[tuple[str
     return out
 
 
-def ring_for(own: Any, check: Any, refined: bool) -> tuple[Any, float, str]:
-    """(point, ring radius, precision word) from a refined point and an independent one from a second photo."""
-    if own is not None and check is not None:
-        d = float(np.linalg.norm(np.asarray(own) - np.asarray(check)))
-        if d < AGREE_M:
-            return (np.asarray(own) + np.asarray(check)) / 2, max(TIGHT_MIN_M, d), "two photos agree"
-        return own, float(np.clip(d, REFINED_RADIUS_M, 0.04)), "photos disagree"
+PINS_PROMPT = """This is a full-resolution close-up of the {header} on one real object{name}. List every pin or \
+contact whose printed label you can read (e.g. "A2", "5V", "GND", "~3"), each with x and y: the centre of that pin \
+or contact itself (not the printed text), as fractions of the crop (0,0 top left), read from the faint grid. Only \
+labels you can actually read; none when you can read none."""
+
+PINS_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["pins"], "properties": {
+    "pins": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["label", "x", "y"],
+        "properties": {"label": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"}}}}}}
+PINS_SIDE = 0.22            # the header crop, as a fraction of the photo's shorter side
+MAX_PINS = 40
+
+
+async def list_pins(client: Any, model: str, scan_id: str, header: str, crop: bytes, name: str
+                    ) -> list[tuple[str, float, float]]:
+    """One call: the printed pin labels readable in a header's close-up and where each pin is (crop fractions)."""
+    content = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                            "data": base64.b64encode(crop).decode()}},
+               {"type": "text", "text": PINS_PROMPT.format(header=header, name=f" (a {name})" if name else "")}]
+    est = charge("anthropic", key=key_of("voice_pins", scan_id, header))
+    extra = {} if "haiku" in model else {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+    r = await client.beta.messages.create(
+        model=model, max_tokens=4000, messages=[{"role": "user", "content": content}],
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": PINS_SCHEMA}}, **extra)
+    record_claude((getattr(r, "model", None), model), getattr(r, "usage", None), est)
+    if r.stop_reason == "refusal":
+        return []
+    text = next((b.text for b in r.content if getattr(b, "type", None) == "text"), "{}")
+    out = []
+    for p_ in (json.loads(text).get("pins") or [])[:MAX_PINS]:
+        try:
+            x, y, label = float(p_["x"]), float(p_["y"]), " ".join(str(p_["label"]).split())[:12]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if label and 0 <= x <= 1 and 0 <= y <= 1:
+            out.append((label, x, y))
+    return out
+
+
+def ring_for(own: Any, offset_m: float | None, refined: bool) -> tuple[Any, float, str]:
+    """(point, ring radius, precision word) from a refined point and how far from it (metres) a second photo shows
+    the part, when one was checked. Tight only when the second photo confirms it."""
+    if own is not None and offset_m is not None:
+        if offset_m < AGREE_M:
+            return own, max(TIGHT_MIN_M, offset_m), "confirmed in a second photo"
+        return own, float(np.clip(offset_m, REFINED_RADIUS_M, 0.04)), "second photo disagrees"
     if refined:
         return own, REFINED_RADIUS_M, "refined in one photo"
     return own, COARSE_RADIUS_M, "coarse"
@@ -373,13 +418,15 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
         for i, s_ in enumerate(state):
             if s_["still"] is not None and s_["xy"] is not None:
                 jobs.setdefault(s_["still"]["still_id"], []).append(("own", i, s_["xy"]))
-        if last and verify:   # the same spot in another photo, found independently in that photo's call
+        if last and verify:   # the refined point projected into another photo: is the part really there?
             for i, s_ in enumerate(state):
                 if not s_["ok"] or s_["still"] is None:
                     continue
-                for _, st2, u, v, _d in V.photo_candidates(usable, s_["point"]):
+                for _, st2, u, v, d in V.photo_candidates(usable, s_["point"]):
                     if st2["still_id"] != s_["still"]["still_id"]:
-                        jobs.setdefault(st2["still_id"], []).append(("check", i, V.to_upright(st2, u, v)))
+                        x2, y2 = V.to_upright(st2, u, v)
+                        s_["check_at"] = (st2, x2, y2, d)
+                        jobs.setdefault(st2["still_id"], []).append(("check", i, (x2, y2)))
                         break
 
         async def one(sid: str, job: list) -> None:
@@ -399,17 +446,55 @@ async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, i
                 if a is None or view is None:
                     continue
                 x, y = V.from_crop(rect, *a)
+                if kind == "check":   # how far the part is from where the refined point projects, in mm there
+                    st2, x2, y2, depth = state[i]["check_at"]
+                    w2, h2 = float(st2.get("width_px") or 1), float(st2.get("height_px") or 1)
+                    if V.quarter_turns(st2) % 2:
+                        w2, h2 = h2, w2
+                    fx = float(st2["intrinsics"]["fx"])
+                    state[i]["check"] = float(np.hypot((x - x2) * w2, (y - y2) * h2)) * depth / fx
+                    continue
                 pt = V.point_at(view, x, y)
                 if pt is None:
                     continue
-                if kind == "own":
-                    state[i].update(xy=(x, y), point=pt, ok=state[i]["ok"] + 1)
-                else:
-                    state[i]["check"] = pt
+                state[i].update(xy=(x, y), point=pt, ok=state[i]["ok"] + 1)
         await asyncio.gather(*(one(sid, job) for sid, job in jobs.items()))
     out = []
     for s_ in state:
         pt, radius, word = ring_for(s_["point"], s_["check"] if s_["ok"] else None, s_["ok"] > 0)
         out.append({"point": pt, "radius": round(float(radius), 4), "precision": word,
-                    "still_id": (s_["still"] or {}).get("still_id")})
+                    "still_id": (s_["still"] or {}).get("still_id"), "xy": s_["xy"]})
+    return out, calls
+
+
+async def header_pins(surface: V.Surface, stills: list[dict], image_of: Any, entries: list[dict], *, client: Any,
+                      model: str, scan_id: str, name: str = "") -> tuple[list[dict], int]:
+    """For each header in the index (a row of pins), a full-resolution close-up and one call listing its printed
+    pin labels, each placed on the model through the photo's point map: "where's A2" becomes a lookup. A pin's ring
+    is tight (a model reading its own crop at full resolution), never the size of the whole header."""
+    by_id = {s["still_id"]: s for s in stills if V.usable(s)}
+    out, calls = [], 0
+    for e in [x for x in entries if x.get("kind") == "header"][:4]:
+        st = by_id.get(e.get("still_id"))
+        if st is None or e.get("x") is None or not (img := image_of(st)):
+            continue
+        crop, rect = await asyncio.to_thread(V.refine_crop, st, img, e["x"], e["y"], PINS_SIDE, 1024)
+        found = await list_pins(client, model, scan_id, e["label"], crop, name)
+        calls += 1
+        view = V.VIEWS.get((scan_id, "photo", st["still_id"]))
+        if view is None:
+            view = await asyncio.to_thread(V.photo_view, surface, st, img, V.short_key(st["still_id"]))
+            if view is not None:
+                V.VIEWS.put((scan_id, "photo", st["still_id"]), view)
+        for label, cx, cy in found:
+            if any(o["label"].lower() == label.lower() for o in out):
+                continue   # read already from another header's close-up (crops can overlap): the first reading stays
+            x, y = V.from_crop(rect, cx, cy)
+            pt = V.point_at(view, x, y) if view is not None else None
+            if pt is None:
+                continue
+            out.append({"id": f"ix_{len(entries) + len(out) + 1}", "label": label, "part": f"{label} pin",
+                        "kind": "pin", "note": f"on the {e['label']}", "point": [round(float(c), 5) for c in pt],
+                        "radius": REFINED_RADIUS_M, "precision": "pin read in a close-up", "still_id": st["still_id"],
+                        "x": round(x, 4), "y": round(y, 4), "where": f"on the {e['label']}"})
     return out, calls

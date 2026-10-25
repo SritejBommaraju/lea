@@ -203,6 +203,19 @@ def _mark(attrs: str) -> dict | None:
         return None
     return {"x": round(x, 4), "y": round(y, 4), "label": " ".join((a.get("label") or "").split())[:40]}
 _SENTENCE_END = re.compile(r"([.!?])(\s+|$)")
+# Never spoken: an image's name ("in photo s2", "view v1"), a part or scan id (f_3a9c..., ix_3, pt_1, scan_ab12_s4).
+_IMAGE_NAME = re.compile(r"(?i)(?:,\s*)?\b(?:(?:as\s+)?(?:shown\s+)?(?:in|on|from|at)\s+)?(?:the\s+)?"
+                         r"(?:photo|view|image|picture|still|render)\s+[sv]\d{1,3}\b(?:\s*,)?")
+_ID = re.compile(r"\b(?:(?:f|ix|pt)_[a-z0-9]{1,16}|scan_[a-z0-9]{4,}(?:_s\d+)?|rep_scan_[a-z0-9]+)\b")
+
+
+def unspeakable(text: str) -> str:
+    """The sentence without image names or ids, tidied (spacing, a comma left alone, the first capital)."""
+    out = _ID.sub("", _IMAGE_NAME.sub("", text))
+    out = re.sub(r"\s+([,.;:!?])", r"\1", " ".join(out.split()))
+    out = re.sub(r"^[,;:]\s*", "", out)
+    out = re.sub(r",\s*([.!?])", r"\1", out)
+    return out[:1].upper() + out[1:] if out else out
 
 
 def _marker_spans(text: str) -> list[tuple[int, int]]:
@@ -241,7 +254,7 @@ class SentenceSplitter:
             if (mv := _stage(m.group(1), m.group(2))) and len(self.stage) < MAX_STAGE and mv not in self.stage:
                 self.stage.append(mv)
                 self.stage_at.append(self.spoken)
-        return " ".join(_STAGE.sub("", _MEASURE.sub("", _MARK.sub("", _MARKER.sub("", text)))).split())
+        return unspeakable(" ".join(_STAGE.sub("", _MEASURE.sub("", _MARK.sub("", _MARKER.sub("", text)))).split()))
 
     def feed(self, delta: str) -> list[str]:
         self.buf += delta
