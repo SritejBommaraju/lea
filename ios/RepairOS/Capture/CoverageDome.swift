@@ -246,8 +246,9 @@ enum FramingGate {
 /// Enough at 100 %, or at `goodEnough` with every required face in.
 ///
 /// Bottom (flip) segment: `flipSectors` underside sectors photographed, `flipMeshSectors` keyframe sectors, and the
-/// line-up with the first scan: 0.6 · views + 0.2 · mesh + 0.2 · lined up. Enough when views and mesh are complete
-/// and it lined up, or when it could not line up within `flipAlignWait` (the backend lines it up then).
+/// line-up with the first scan: 0.6 · views + 0.2 · mesh + 0.2 · lined up. Enough when views and mesh are complete,
+/// at least `flipMinKeyframes` depth keyframes are in (the server lines the bottom up by the sides both scans saw; a
+/// 6-keyframe bottom only just registered), and it lined up or could not within `flipAlignWait`.
 struct ScanProgress: Equatable, Sendable {
     static let sideSectors = 8
     static let topSectors = 2
@@ -256,6 +257,7 @@ struct ScanProgress: Equatable, Sendable {
     static let flipMeshSectors = 6
     static let goodEnough = 0.85
     static let flipAlignWait: TimeInterval = 25
+    static let flipMinKeyframes = 15
 
     var views: Double
     var faces: Double?
@@ -275,11 +277,13 @@ struct ScanProgress: Equatable, Sendable {
         return ScanProgress(views: views, faces: faces, mesh: mesh, linedUp: nil, value: value, enough: enough)
     }
 
-    static func flip(dome: CoverageDome, keyframeSectors: Int, linedUp: Bool, elapsed: TimeInterval) -> ScanProgress {
+    static func flip(dome: CoverageDome, keyframeSectors: Int, linedUp: Bool, elapsed: TimeInterval,
+                     keyframes: Int = flipMinKeyframes) -> ScanProgress {
         let views = Double(min(dome.sideSectors + dome.topSectors, flipSectors)) / Double(flipSectors)
         let mesh = Double(min(keyframeSectors, flipMeshSectors)) / Double(flipMeshSectors)
+            * min(1, Double(keyframes) / Double(flipMinKeyframes))
         let value = 0.6 * views + 0.2 * mesh + 0.2 * (linedUp ? 1 : 0)
-        let covered = views >= 1 && mesh >= 1
+        let covered = views >= 1 && mesh >= 1 - 1e-9
         return ScanProgress(views: views, faces: nil, mesh: mesh, linedUp: linedUp, value: value,
                             enough: covered && (linedUp || elapsed >= flipAlignWait))
     }

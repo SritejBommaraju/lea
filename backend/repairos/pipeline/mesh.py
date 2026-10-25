@@ -10,16 +10,22 @@ rebuilds a fuller mesh.
 
 Output: binary little-endian PLY (float x y z, uchar red green blue per vertex, int triangle lists), which Model I/O
 (MDLAsset) loads directly. Open3D (MIT) does the TSDF and the quadric decimation.
+
+A thin object (a board, a remote, a phone) lies inside the band where each depth frame's table is cut: given the
+scan's stills, its mesh and cloud are the photo-textured slab of recreation.flat instead (flat_scan_mesh).
 """
 from __future__ import annotations
 
+import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 GREY = 128
 DEPTH_AGREE_M = 0.02      # a vertex takes a keyframe's colour only where that keyframe's depth sees it (not occluded)
@@ -205,6 +211,7 @@ def object_depths(frames: list[Any], box: Any, plane_y: float | None) -> tuple[l
     return out, info
 
 
+MIXED_EDGE_PX = 2          # medium-confidence depth this close to the object's silhouette in a frame is mixed pixels
 JOIN_GAP_M = 0.015         # pieces this close to the object piece are part of it (a mesh split by a thin gap)
 
 
@@ -309,6 +316,7 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
     from dataclasses import replace
 
     from repairos.pipeline.segments import frames_of, moved_segments, own_plane_height, segment_box
+    from repairos.recon.segment_align import SURFACE_MIN_CONFIDENCE, segment_object_depths, table_height_from_depth
     from repairos.recon.tsdf import moved_pose
 
     out = []
@@ -321,27 +329,69 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
         box, _ = segment_box(pkg_local, seg, t)
         if not frames or box is None:
             continue
-        plane = None if (seg.get("pose_source") or pkg_local.get("pose_source")) == "object_tracked" \
-            else own_plane_height(frames, box)
-        depths, _ = object_depths(frames, box, plane)
+        plane = None
+        if (seg.get("pose_source") or pkg_local.get("pose_source")) != "object_tracked":
+            plane = own_plane_height(frames, box)
+            if plane is None:   # no table seen around the box (a stool smaller than it): the lowest layer inside
+                plane = table_height_from_depth(frames, box)
+        # each frame's own (slightly leaning) table cut, as the registration did (segment_align); medium confidence
+        # too, now the table is gone: the sides are what joins the bottom to the top
+        depths, sup = segment_object_depths(frames, box, plane, min_confidence=SURFACE_MIN_CONFIDENCE,
+                                            edge_px=MIXED_EDGE_PX)
+        plane = sup.height_m
         moved = [replace(f, pose=moved_pose(f.pose, t)) for f in frames]
         out.append((moved, depths, box, plane, seg))
     return out
 
 
+def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]]) -> ScanMesh | None:
+    """A thin object's mesh and cloud from its photo slab (recreation.flat), the 3D view when it is found: LiDAR
+    cannot resolve a board, the slab carries its photos at full resolution. None when the object is not thin or the
+    slab is not checked (then the LiDAR mesh is built as usual)."""
+    from repairos.importers.ply import mesh_ply_bytes
+    from repairos.recreation.flat import scan_flat_model, slab_mesh, slab_points
+
+    t0 = time.perf_counter()
+    m, why = scan_flat_model(pkg_local, stills_local)
+    if m is None:
+        log.info("no flat model: %s", why)
+        return None
+    v, f, c = slab_mesh(m)
+    p, pc = slab_points(m)
+    p, pc = thin_cloud(p, pc, CLOUD_MAX_POINTS)
+    ply = mesh_ply_bytes(v, f, c, comments=("repairos flat object slab, arkit_world metres",))
+    st = m.stats
+    return ScanMesh(ply=ply, vertices=len(v), triangles=len(f), keyframes=len(pkg_local.get("keyframes") or []),
+                    cloud_ply=points_ply(p, pc), cloud_points=len(p), hero="points",
+                    hero_reason="a thin object: its photos on a slab of its measured outline show it best",
+                    size_m=round(float(max(st["measured_mm"])) / 1000, 4),
+                    seconds={"total_s": round(time.perf_counter() - t0, 3)},
+                    method=f"flat slab {st['measured_mm'][0]} x {st['measured_mm'][1]} x {st['thickness_mm']} mm from "
+                           f"{st['top_still']} (second photo {st.get('second_still_shift_mm')} mm off)")
+
+
 def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
-                    segment_transforms: Mapping[int, np.ndarray] | None = None) -> ScanMesh:
-    """The object's coloured, decimated mesh from a scan package whose file fields are local paths: high-confidence
-    LiDAR depth inside the object box and above the support plane, a TSDF at a voxel scaled to the box, the pieces
-    that reach the box's middle. `segment_transforms` ({segment: 4x4}, pipeline/segments.py): object-moved
+                    segment_transforms: Mapping[int, np.ndarray] | None = None,
+                    stills_local: Sequence[Mapping[str, Any]] | None = None) -> ScanMesh:
+    """The object's coloured, decimated mesh from a scan package whose file fields are local paths: LiDAR depth inside
+    the object box and above each frame's own table (segment_align.segment_object_depths), high and medium confidence
+    (the table is cut first, so medium confidence brings the sides, not the table back), a TSDF at a voxel scaled to
+    the box, the pieces that reach the box's middle. A hand-held scan (object_tracked) keeps high confidence and no
+    table cut. `segment_transforms` ({segment: 4x4}, pipeline/segments.py): object-moved
     segments the server registered are fused in too, in segment 0's frame (the flipped bottom). Raises
     MeshUnavailable."""
     from repairos.importers.fuse import make_fuser
     from repairos.importers.ply import mesh_ply_bytes
+    from repairos.pipeline.segments import _object_only, frames_of
+    from repairos.recon.segment_align import SURFACE_MIN_CONFIDENCE, segment_object_cloud, segment_object_depths
     from repairos.recon.tsdf import ObjectBox, frames_from_scan_package
 
     t = {}
     t0 = time.perf_counter()
+    if stills_local and not segment_transforms:   # a thin object (a board, a remote): the photo slab (recreation.flat)
+        flat = flat_scan_mesh(pkg_local, stills_local)
+        if flat is not None:
+            return flat
     pkg = {**pkg_local, "keyframes": keyframes_in_frame(pkg_local)}
     frames = frames_from_scan_package(pkg, Path("/"))
     if not frames:
@@ -350,14 +400,23 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
         raise MeshUnavailable("the scan has no object box")
     box = ObjectBox.from_contract(pkg["crop_box"])
     plane = plane_height(pkg, frames, box)
-    depths, info = object_depths(frames, box, plane)
+    tracked = pkg.get("pose_source") == "object_tracked"
+    if tracked:
+        depths, info = object_depths(frames, box, plane)
+        min_conf = 2
+    else:
+        depths, sup = segment_object_depths(frames, box, plane, min_confidence=SURFACE_MIN_CONFIDENCE,
+                                            edge_px=MIXED_EDGE_PX)
+        plane = sup.height_m
+        info = {"plane_margin_mm": None if sup.cut_mm is None else round(sup.cut_mm, 2)}
+        min_conf = SURFACE_MIN_CONFIDENCE
     extra = moved_segment_frames(pkg_local, segment_transforms or {})
     for moved, mdepths, _, _, _ in extra:
         frames, depths = frames + moved, depths + mdepths
     t["load_s"] = time.perf_counter() - t0
     t1 = time.perf_counter()
     spacing = voxel_for(box)
-    fuser = make_fuser(spacing, prefer="open3d", min_confidence=2, min_depth_m=0.05, max_depth_m=1.5)
+    fuser = make_fuser(spacing, prefer="open3d", min_confidence=min_conf, min_depth_m=0.05, max_depth_m=1.5)
     for f, d in zip(frames, depths, strict=True):
         if (d > 0).any():
             fuser.add_depth(d, f.confidence, None, f.pose, f.depth_cam)
@@ -377,11 +436,16 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
     cloud, cloud_n, size = None, 0, float(np.ptp(v, axis=0).max()) if len(v) else 0.0
     if pkg.get("points_file"):
         cp, cc = object_cloud(pkg["points_file"], box, plane)
-        for moved, _, mbox, mplane, seg in extra:   # the registered bottom's own in-box cloud, carried over
-            if seg.get("points_file") and len(cp):
-                mp, mc = object_cloud(seg["points_file"], mbox, mplane)
-                tr = (segment_transforms or {})[int(seg["segment"])]
-                cp, cc = np.vstack([cp, mp @ tr[:3, :3].T + tr[:3, 3]]), np.vstack([cc, mc])
+        for _, _, mbox, mplane, seg in extra:   # the registered bottom, cut per frame like the registration's cloud
+            if not len(cp):
+                break
+            k = int(seg["segment"])
+            mcloud, _ = segment_object_cloud(frames_of(pkg_local, {k}), mbox, mplane, voxel_m=0.0025)
+            mcloud = _object_only(mcloud, mbox, 0.0025)
+            if len(mcloud):
+                tr = (segment_transforms or {})[k]
+                mc = mcloud.colours if mcloud.colours is not None else np.full((len(mcloud), 3), GREY, np.uint8)
+                cp, cc = np.vstack([cp, mcloud.points @ tr[:3, :3].T + tr[:3, 3]]), np.vstack([cc, mc])
         if len(cp):
             size = float(np.ptp(cp, axis=0).max())
             cloud_n = len(cp)

@@ -231,6 +231,72 @@ class Alignment(BaseModel):
     )
 
 
+class BoxExtentMItem(RootModel[float]):
+    root: float = Field(..., ge=0.0)
+
+
+class FlipCut(BaseModel):
+    """
+    How the phone cut one cloud to the object before aligning it (FlipIsolation): the table it fitted and the tight box round the object.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    input_points: int | None = Field(None, ge=0)
+    object_points: int | None = Field(None, ge=0)
+    table_y_m: float | None = Field(
+        None,
+        description="The fitted table's height under the object, in this cloud's ARKit world.",
+    )
+    table_tilt_deg: float | None = Field(None, ge=0.0)
+    cut_mm: float | None = Field(
+        None,
+        description='Cut above the table: its noise below its plane, mirrored.',
+        ge=0.0,
+    )
+    floor_to_table_mm: float | None = Field(
+        None, description="How far the locked box's floor sat below the fitted table."
+    )
+    box_extent_m: list[BoxExtentMItem] | None = Field(None, max_length=3, min_length=3)
+
+
+class FlipAttempt(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attempt: int = Field(..., ge=1)
+    refused: str | None = Field(
+        None,
+        description='The check that refused it (inliers, rms, overlap, ambiguous, isolation); absent when accepted.',
+    )
+    points: int | None = Field(None, description='Mini-scan points used.', ge=0)
+    inliers: int | None = Field(None, ge=0)
+    overlap: float | None = Field(None, ge=0.0)
+    rms_mm: float | None = Field(None, ge=0.0)
+    margin: float | None = None
+    quality: float | None = Field(None, ge=0.0, le=1.0)
+    flip_deg: float | None = None
+    agrees: bool | None = Field(
+        None, description='Agreed with the attempt before (two in a row line it up).'
+    )
+    ms: int | None = Field(None, ge=0)
+
+
+class FlipAlign(BaseModel):
+    """
+    The phone's live alignment of this flipped segment (FlipAligner), for diagnosis only and numbers only: how each cloud was cut to the object and the last few attempts. The backend never places anything with it.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    attempts: int | None = Field(None, ge=0)
+    main: FlipCut | None = None
+    bottom: FlipCut | None = None
+    last: list[FlipAttempt] | None = Field(None, max_length=6)
+
+
 class Segment(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
@@ -269,6 +335,11 @@ class Segment(BaseModel):
         description="Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world).",
     )
     point_count: int | None = Field(None, ge=0)
+    flip_align: FlipAlign | None = Field(
+        None,
+        description="The phone's live alignment of this flipped segment (FlipAligner), for diagnosis only and numbers only: how each cloud was cut to the object and the last few attempts. The backend never places anything with it.",
+        title='FlipAlign',
+    )
 
 
 class ScanPackage(BaseModel):

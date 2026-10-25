@@ -103,5 +103,7 @@ enum HandheldCues {
         FlipSegmentController.linedUp: ("checkmark", .good),
         "Keep going around the bottom": ("figure.walk", .guide),
         FlipSegmentController.sidesCue: ("cube.transparent", .guide),
+        FlipSegmentController.lowerCue: ("arrow.down.to.line", .guide),
+        FlipSegmentController.flatCue: ("rectangle.portrait.rotate", .guide),
     ]
 }

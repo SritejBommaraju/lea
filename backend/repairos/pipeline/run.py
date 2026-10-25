@@ -814,8 +814,11 @@ async def ensure_mesh(ctx: Context, scan_id: str) -> dict:
     try:
         local = await asyncio.to_thread(_local_scan, ctx, scan)
         seg_rec = await _segment_record(ctx, scan_id, rev)
+        still_rows = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
+        local_stills = await asyncio.to_thread(   # a thin object's 3D view is built from its photos (recreation.flat)
+            lambda: [map_files("still", s, lambda v, _b: str(ctx.local_file(scan_id, v))) for s in still_rows])
         m = await asyncio.to_thread(build_scan_mesh, local, max_triangles=ctx.config["mesh_max_triangles"],
-                                    segment_transforms=segments.aligned_transforms(seg_rec))
+                                    segment_transforms=segments.aligned_transforms(seg_rec), stills_local=local_stills)
     except Exception as e:  # noqa: BLE001 - the 3D view never fails the capture or the report; the row says why
         unavailable = isinstance(e, MeshUnavailable)
         if not unavailable:

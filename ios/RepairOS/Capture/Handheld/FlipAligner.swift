@@ -63,15 +63,21 @@ enum FlipAligner {
         let tColour = voxelColours(tracker.model.fine, target), sColour = voxelColours(srcModel.fine, source)
         let few = ObjectTracker.thin(src, max: 300), many = ObjectTracker.thin(src, max: 1500)
         let c0 = target.box.center, ck = source.box.center
+        let outline = FlipOutline(target)
         // W maps target → source (the tracker's object → world); toSegment0 = W⁻¹.
         var hyps: [(simd_float4x4, Float)] = []
+        // The outline from above, per resting pose (a flip shares little surface but the same outline), on the table.
+        for (T, _) in outline.starts(source, tableY: target.box.planeY) {
+            let out = tracker.icp(few, start: Rigid.inverse(T), matches: [], schedule: [(true, 0.03), (true, 0.02), (true, 0.015)])
+            hyps.append((out.pose, rank(out, start: out.pose, target: target, source: few, outline: outline)))
+        }
         for yawStep in 0..<8 {
             let yaw = simd_float3x3(simd_quatf(angle: Float(yawStep) * .pi / 4, axis: SIMD3(0, 1, 0)))
             for c in ObjectTracker.cubeRotations {
                 let r = yaw * c
                 let start = Rigid.make(r, ck - r * c0)
                 let out = tracker.icp(few, start: start, matches: [], schedule: [(true, 0.04), (true, 0.03), (true, 0.02), (true, 0.015)])
-                hyps.append((out.pose, rank(out, start: out.pose, target: target, source: few)))
+                hyps.append((out.pose, rank(out, start: out.pose, target: target, source: few, outline: outline)))
             }
         }
         hyps.sort { $0.1 > $1.1 }
@@ -84,7 +90,7 @@ enum FlipAligner {
                                   schedule: [(true, 0.02), (true, 0.015), (false, 0.012), (false, 0.009), (false, 0.007),
                                              (false, 0.006), (false, 0.005), (false, 0.005)])
             let col = colourDistance(tracker.model.fine, tColour, srcModel.fine, sColour, worldToObject: Rigid.inverse(out.pose))
-            refined.append((out.pose, rank(out, start: out.pose, target: target, source: many), out, col))
+            refined.append((out.pose, rank(out, start: out.pose, target: target, source: many, outline: outline), out, col))
         }
         refined.sort { $0.rank > $1.rank }
         guard var best = refined.first else { return nil }
@@ -130,7 +136,8 @@ enum FlipAligner {
 
     /// Fit, overlap and physical sense. `start` is target → source (W). What faced up in the mini-scan faced down
     /// before (it was flipped): a pose that keeps it up is not considered.
-    static func rank(_ out: ObjectTracker.ICPOut, start W: simd_float4x4, target: FlipCloud, source: ObjectTracker.Source) -> Float {
+    static func rank(_ out: ObjectTracker.ICPOut, start W: simd_float4x4, target: FlipCloud, source: ObjectTracker.Source,
+                     outline: FlipOutline? = nil) -> Float {
         let toTarget = Rigid.inverse(W)
         let share = Float(out.inliers) / Float(max(1, source.world.count))
         // (Turned onto a side counts: at least ~70°.)
@@ -140,13 +147,18 @@ enum FlipAligner {
         // mini-scan points that land on the table plane, facing down. This is what a flat object's flip turns on
         // (its two big faces never overlap; only its rim does).
         var below = 0, onPlane = 0
+        var mapped: [SIMD3<Float>] = []
+        mapped.reserveCapacity(source.world.count)
         for (i, p) in source.world.enumerated() {
             let q = Rigid.apply(toTarget, p)
+            mapped.append(q)
             if q.y < target.box.planeY - 0.008 { below += 1 }
             if abs(q.y - target.box.planeY) < 0.005, (R * source.normal[i]).y < -0.7 { onPlane += 1 }
         }
         let n = Float(max(1, source.world.count))
-        return share - 20 * out.rms - 2 * Float(below) / n + 0.5 * Float(onPlane) / n
+        // The main scan saw the whole outline from above: the mini-scan matches it and does not stick out of it.
+        let o = outline?.score(mapped) ?? (iou: 0, outside: 0)
+        return share - 20 * out.rms - 2 * Float(below) / n + 0.5 * Float(onPlane) / n + 0.5 * o.iou - 2 * o.outside
     }
 
     /// Mean colour per voxel of a model (nearest voxel of each raw point).

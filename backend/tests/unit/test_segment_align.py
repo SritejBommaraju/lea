@@ -476,3 +476,223 @@ def test_an_object_laid_on_its_side_is_registered():
     assert res.aligned, res.reason
     assert rotation_deg(res.matrix[:3, :3] @ truth[:3, :3].T) < 3.0
     assert res.seconds["total_s"] < 10
+
+
+# --- what four real flips taught (controller, board, mouse, controller on a stool; 2026-10-25) ------------------------
+
+def _tilted(pose: Pose, deg: float, about: np.ndarray, axis: str = "x") -> Pose:
+    """`pose` turned by `deg` about a horizontal axis through `about`: the recorded pose of a frame whose cloud leans
+    (LiDAR and pose error tilt a frame's table 1-4 deg in the world on real captures)."""
+    r = rot(axis, deg)
+    return Pose(r @ pose.r, r @ (pose.t - about) + about)
+
+
+def _faces(frame: DepthFrame) -> tuple[np.ndarray, np.ndarray]:
+    """World points of a frame's depth (its true pose) and whether each lies on a vertical face (not the table, not a
+    top)."""
+    from repairos.locate.camera import backproject
+
+    p = frame.pose.to_world(backproject(frame.depth_m, frame.depth_cam))
+    tops = {round(hi[1], 4) for _, hi in L_BOXES}
+    flat = (np.abs(p[..., 1]) < 1e-3) | np.any([np.abs(p[..., 1] - y) < 1e-3 for y in tops], axis=0)
+    return p, (frame.depth_m > 0) & ~flat
+
+
+def _dist_to_l(points: np.ndarray) -> np.ndarray:
+    from repairos.recon.segment_align import _Nearest
+
+    surf, _ = surface_points(L_BOXES, step=0.001)
+    return _Nearest(surf)(points)[1]
+
+
+BIG_BOX = {"center_m": [0, 0.04, 0], "extent_m": [0.3, 0.08, 0.3], "quaternion_xyzw": [0, 0, 0, 1]}  # 3x the object
+
+
+def test_each_frame_cuts_its_own_leaning_table():
+    """A frame's table is flat to a millimetre but leans a few degrees in the world, a different way per frame, and
+    LiDAR noise has long tails. One horizontal cut at twice the noise leaves a layer of table in the object (each
+    frame's tail above the cut, frame after frame); the cut along each frame's own table, at its tail mirrored from
+    below, leaves the object alone, and the table height it reports is the one under the object."""
+    from repairos.pipeline.mesh import object_depths
+    from repairos.recon.segment_align import cloud_from_frames, segment_object_cloud
+    from repairos.recon.tsdf import ObjectBox
+
+    rng = np.random.default_rng(2)
+    box = ObjectBox.from_contract(BIG_BOX)
+    centre = np.array([0.0, 0.0, 0.0])
+    frames = []
+    for k, f in enumerate(_frames(np.eye(4), n=12)):
+        d = f.depth_m.copy()
+        on = d > 0
+        d[on] += rng.normal(0, 0.0008, on.sum()) + np.where(rng.random(on.sum()) < 0.03,
+                                                             rng.normal(0, 0.006, on.sum()), 0.0)
+        frames.append(DepthFrame(f.name, _tilted(f.pose, 1.5 * (1 if k % 2 else -1), centre, "xz"[(k // 2) % 2]),
+                                 f.depth_cam, d, f.confidence))
+    cloud, table = segment_object_cloud(frames, box, 0.0, voxel_m=0.0015)
+    assert table.frames == len(frames) and abs(table.tilt_deg - 1.5) < 0.5 and abs(table.height_m) < 0.002
+    assert np.mean(_dist_to_l(cloud.points) > 0.008) < 0.005           # the object alone
+    depths, _ = object_depths(frames, box, 0.0)                          # the one horizontal cut, as before
+    old = cloud_from_frames(frames, depths, voxel_m=0.0015)
+    assert np.mean(_dist_to_l(old.points) > 0.008) > 0.03                # table came along
+
+
+def test_medium_confidence_sides_are_the_surface_a_flip_shares():
+    """Dark plastic seen obliquely is never high confidence: the sides are confidence 1. They are kept, since a flipped
+    object shares nothing with its first scan but its sides."""
+    from repairos.recon.segment_align import cloud_from_frames, segment_object_cloud, segment_object_depths
+    from repairos.recon.tsdf import ObjectBox
+
+    box = ObjectBox.from_contract(BIG_BOX)
+    frames = []
+    for f in _frames(np.eye(4)):
+        _, side = _faces(f)
+        frames.append(DepthFrame(f.name, f.pose, f.depth_cam, f.depth_m, np.where(side, 1, 2).astype(np.uint8)))
+    cloud, _ = segment_object_cloud(frames, box, 0.0, voxel_m=0.0015)
+    on_side = (np.abs(np.abs(cloud.points[:, 0]) - 0.05) < 0.002) & (cloud.points[:, 1] > 0.008) & \
+        (cloud.points[:, 1] < 0.025)
+    assert on_side.sum() > 50
+    high, _ = segment_object_depths(frames, box, 0.0, min_confidence=2)
+    only_high = cloud_from_frames(frames, high, voxel_m=0.0015)
+    assert ((np.abs(np.abs(only_high.points[:, 0]) - 0.05) < 0.002) & (only_high.points[:, 1] > 0.008)
+            & (only_high.points[:, 1] < 0.025)).sum() == 0
+
+
+def test_one_frames_noise_does_not_survive():
+    """Pixels thrown a few centimetres off in one frame (mixed pixels, multipath) do not repeat in the others: a voxel
+    needs several frames, and what most views see through is carved."""
+    from repairos.recon.segment_align import cloud_from_frames, segment_object_cloud, segment_object_depths
+    from repairos.recon.tsdf import ObjectBox
+
+    rng = np.random.default_rng(5)
+    box = ObjectBox.from_contract(BIG_BOX)
+    frames = []
+    for f in _frames(np.eye(4), n=12):
+        d = f.depth_m.copy()
+        hit = (rng.random(d.shape) < 0.01) & (d > 0)
+        d[hit] -= rng.uniform(0.02, 0.05, hit.sum())
+        frames.append(DepthFrame(f.name, f.pose, f.depth_cam, d, f.confidence))
+    cloud, _ = segment_object_cloud(frames, box, 0.0, voxel_m=0.0015)
+    assert np.mean(_dist_to_l(cloud.points) > 0.006) < 0.005
+    raw, _ = segment_object_depths(frames, box, 0.0)
+    assert np.mean(_dist_to_l(cloud_from_frames(frames, raw, voxel_m=0.0015).points) > 0.006) > 0.02
+
+
+def test_free_space_ignores_drifted_silhouettes_but_not_a_floating_surface():
+    """ARKit drift shifts each frame's silhouette by about a centimetre: judged by any one frame, a cloud's own points
+    sit in empty space a lot (42% on a real controller). Judged against the nearest surface within the drift and by
+    most of the views that can see a point, its own cloud is clean, and a surface floating over the object is not."""
+    frames = []
+    for k, f in enumerate(_frames(np.eye(4))):
+        shift = np.array([0.01 * (1 if k % 2 else -1), 0.0, 0.006 * (1 if k % 4 < 2 else -1)])
+        frames.append(DepthFrame(f.name, Pose(f.pose.r, f.pose.t + shift), f.depth_cam, f.depth_m, f.confidence))
+    on, _ = surface_points(L_BOXES)
+    raw = free_space_violation(on, frames, margin_m=0.005, drift_m=0.0, vote=0.0)
+    robust = free_space_violation(on, frames, margin_m=0.005)
+    assert raw > 0.05 and robust < 0.01
+    assert free_space_violation(on + [0.0, 0.05, 0.0], frames, margin_m=0.005) > 0.4
+
+
+# An L-shaped part (its outline from above tells every heading apart), 4 cm tall like a mouse.
+FLAT_L = [(np.array([-0.05, 0.0, -0.03]), np.array([0.05, 0.04, 0.03])),
+          (np.array([0.02, 0.0, 0.03]), np.array([0.05, 0.04, 0.06]))]
+
+
+def _dark_sided_segment(t: np.ndarray, boxes, *, unseen_below=0.014, n=10):
+    """Frames of `boxes` placed by `t` (on y = 0), whose lower sides return no confident depth (dark plastic near the
+    table, as on the real flips): each segment sees its top and the upper part of its sides only."""
+    from repairos.locate.camera import backproject
+
+    cam = Pinhole(160.0, 160.0, 80.0, 60.0, 160, 120)
+    placed = _boxes_in(t, boxes)
+    centre = t[:3, :3] @ np.array([0.0, 0.02, 0.0]) + t[:3, 3]
+    tops = {round(hi[1], 4) for _, hi in placed}
+    frames = []
+    for k in range(n):
+        a = 2 * np.pi * k / n
+        pose = look_at(centre + [0.28 * np.cos(a), 0.25, 0.28 * np.sin(a)], centre)
+        depth = _render(pose, cam, placed)
+        p = pose.to_world(backproject(depth, cam))
+        flat = (np.abs(p[..., 1]) < 1e-3) | np.any([np.abs(p[..., 1] - y) < 1e-3 for y in tops], axis=0)
+        conf = np.where(~flat & (p[..., 1] < unseen_below), 0, 2).astype(np.uint8)
+        frames.append(DepthFrame(f"f{k}", pose, cam, depth, conf))
+    return frames
+
+
+def _flat_l_flip():
+    from repairos.recon.segment_align import segment_object_cloud
+    from repairos.recon.tsdf import ObjectBox
+
+    flip = m4(rot("y", 90) @ rot("x", 180), [0.35, 0.04, -0.2])    # a quarter turn keeps the boxes axis-aligned
+    out = {}
+    for name, t in (("ref", np.eye(4)), ("mov", flip)):
+        frames = _dark_sided_segment(t, FLAT_L)
+        c = t[:3, :3] @ np.array([0.0, 0.02, 0.015]) + t[:3, 3]
+        box = ObjectBox.from_contract({"center_m": list(c), "extent_m": [0.24, 0.07, 0.24],
+                                       "quaternion_xyzw": [0, 0, 0, 1]})
+        cloud, table = segment_object_cloud(frames, box, 0.0, voxel_m=0.0015)
+        out[name] = (cloud, frames, table.height_m)
+    return out, np.linalg.inv(flip)
+
+
+def test_a_flip_sharing_only_a_band_of_side_is_registered_on_its_tables():
+    """Each segment sees its top and the upper sides, so the two share only a band of side: too little overlap for the
+    old 30% fitness. Footprint starts (the outline from above) kept on both tables find the pose, and it is accepted
+    because it touches both tables and both segments' cameras find nothing of it in empty space."""
+    seg, truth = _flat_l_flip()
+    (ref, f0, p0), (mov, f1, p1) = seg["ref"], seg["mov"]
+    res = align_clouds(ref, mov, voxel_m=0.003, ref_frames=f0, mov_frames=f1, ref_plane_y=p0, mov_plane_y=p1,
+                       expect_flip=True)
+    assert res.aligned, res.reason
+    assert rotation_deg(res.matrix[:3, :3] @ truth[:3, :3].T) < 4
+    c = mov.points.mean(0)
+    assert np.linalg.norm(res.matrix[:3, :3] @ c + res.matrix[:3, 3] - (truth[:3, :3] @ c + truth[:3, 3])) < 0.006
+    assert res.seconds["total_s"] < 10
+
+
+def test_wrong_poses_of_a_low_overlap_flip_are_refused():
+    """The poses a low-overlap flip invites: kept upright, the underside laid on the top face (floating over the
+    table it rested on), and turned to the wrong heading. Each, offered as the phone's estimate with no other start,
+    is refused, or only the true pose comes out of it."""
+    seg, truth = _flat_l_flip()
+    (ref, f0, p0), (mov, f1, p1) = seg["ref"], seg["mov"]
+    c = ref.points.mean(0)
+    upright = m4(rot("x", 180), c - rot("x", 180) @ c) @ truth
+    lifted = m4(np.eye(3), [0, 0.04, 0]) @ truth
+    turned = {deg: m4(rot("y", deg), c - rot("y", deg) @ c) @ truth for deg in (30, 90, 180)}
+    kw = {"voxel_m": 0.003, "ref_frames": f0, "mov_frames": f1, "ref_plane_y": p0, "mov_plane_y": p1,
+          "expect_flip": True, "gravity_sweep": False, "seeds": ()}
+    wrongs = {"upright": upright, "on the top face": lifted, **{f"turned {d}": w for d, w in turned.items()}}
+    for name, wrong in wrongs.items():
+        res = align_clouds(ref, mov, init=wrong, init_quality=0.9, **kw)
+        if res.aligned:
+            assert rotation_deg(res.matrix[:3, :3] @ truth[:3, :3].T) < 4, name
+        else:
+            assert res.reason, name
+
+
+def test_without_depth_frames_a_small_overlap_is_never_enough():
+    """Without the segments' depth frames nothing judges free space: a turned-about pose fits a low-overlap flip's
+    shape and both tables as well as the true one (it did on a real mouse). Only the 30% overlap may then accept."""
+    seg, _ = _flat_l_flip()
+    (ref, _, p0), (mov, _, p1) = seg["ref"], seg["mov"]
+    res = align_clouds(ref, mov, voxel_m=0.003, ref_plane_y=p0, mov_plane_y=p1, expect_flip=True)
+    assert not res.aligned or res.fitness >= 0.30
+
+
+def test_mixed_pixels_at_the_silhouette_are_dropped_for_the_mesh():
+    """For the mesh, medium-confidence depth within a couple of pixels of the object's silhouette is dropped (its depth
+    blends the object and the table behind it: an orange skirt round the rim); high confidence and the rest stay."""
+    from repairos.recon.segment_align import segment_object_depths
+    from repairos.recon.tsdf import ObjectBox
+
+    box = ObjectBox.from_contract(BIG_BOX)
+    frames = []
+    for f in _frames(np.eye(4)):
+        _, side = _faces(f)
+        frames.append(DepthFrame(f.name, f.pose, f.depth_cam, f.depth_m, np.where(side, 1, 2).astype(np.uint8)))
+    plain, _ = segment_object_depths(frames, box, 0.0)
+    edged, _ = segment_object_depths(frames, box, 0.0, edge_px=2)
+    for f, a, b in zip(frames, plain, edged, strict=True):
+        assert np.all(b[f.confidence == 2] == a[f.confidence == 2])          # high confidence untouched
+        assert (b > 0).sum() < (a > 0).sum()                                  # some rim pixels gone
+        assert ((b > 0) & (f.confidence == 1)).sum() > 0.3 * ((a > 0) & (f.confidence == 1)).sum()   # sides stay

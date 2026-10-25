@@ -237,6 +237,9 @@ struct ScanProgressTests {
         #expect(ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: true, elapsed: 10).enough)
         #expect(ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: false, elapsed: ScanProgress.flipAlignWait).enough)
         #expect(!ScanProgress.flip(dome: dome(side: 3, top: 0), keyframeSectors: 6, linedUp: true, elapsed: 60).enough)
+        // At least 15 bottom keyframes (a 6-keyframe bottom only just registered on the server).
+        #expect(!ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: true, elapsed: 60, keyframes: 6).enough)
+        #expect(ScanProgress.flip(dome: d, keyframeSectors: 6, linedUp: true, elapsed: 60, keyframes: 15).enough)
     }
 
     @Test func nextNeededIsASideSectorThenTheTop() {
