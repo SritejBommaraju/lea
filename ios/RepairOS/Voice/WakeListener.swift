@@ -36,7 +36,7 @@ final class WakeListener {
     var continuous: Bool = UserDefaults.standard.bool(forKey: WakeListener.continuousKey) {
         didSet {
             UserDefaults.standard.set(continuous, forKey: Self.continuousKey)
-            if continuous { listenForFollowUp() } else if mode == .followUp, heardAfterWake == nil { mode = .wake }
+            if continuous { listenForFollowUp() } else { endFollowUp() }
         }
     }
 
@@ -203,7 +203,7 @@ final class WakeListener {
             let words = Self.dropWake(t)
             closeStream()
             heardAfterWake = nil
-            mode = continuous ? .followUp : .wake
+            mode = continuous && LeaConversation.active != nil ? .followUp : .wake
             speechStart = nil
             mic.restart()
             Self.diag.log("wake_turn", ["from": from, "engine": "ink2", "words": words.split(separator: " ").count,
@@ -227,6 +227,20 @@ final class WakeListener {
             return words[k...].joined(separator: " ")
         }
         return after
+    }
+
+    /// Follow-up listening ends: hands-free turned off, or its conversation left the screen. The Ink-2 stream closes
+    /// and a half-heard turn is dropped, so nothing more is sent without "Hey Lea".
+    func endFollowUp() {
+        guard mode == .followUp else { return }
+        followUpTimer?.cancel()
+        silenceTimer?.cancel()
+        closeStream()
+        heardAfterWake = nil
+        speechStart = nil
+        LeaConversation.active?.cancelSpeculation()
+        mode = .wake
+        mic.restart()
     }
 
     func refresh() {
@@ -344,7 +358,7 @@ final class WakeListener {
         // yes or no: that answers Lea's question ("Want to scan it?" "Yes.").
         let tooShort = from == "follow_up" && words.split(separator: " ").count < 2 && !Self.isShortAnswer(words)
         heardAfterWake = nil
-        mode = continuous ? .followUp : .wake
+        mode = continuous && LeaConversation.active != nil ? .followUp : .wake
         speechStart = nil
         mic.restart()
         Self.diag.log("wake_turn", ["from": from, "words": words.split(separator: " ").count,

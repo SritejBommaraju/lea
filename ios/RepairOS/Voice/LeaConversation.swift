@@ -33,7 +33,11 @@ final class LeaConversation {
         Self.registry.append(Weak(value: self))
     }
 
-    func disappeared() { visible = max(0, visible - 1) }
+    func disappeared() {
+        visible = max(0, visible - 1)
+        // The last conversation left the screen: hands-free follow-up ends with it ("Hey Lea" opens one again).
+        if visible == 0, Self.active == nil { WakeListener.shared.endFollowUp() }
+    }
 
     let scanID: String?
     let gateway: GatewayClient
@@ -64,6 +68,9 @@ final class LeaConversation {
     @ObservationIgnored private var holding = false
     @ObservationIgnored private var heldEvents: [ConverseEvent] = []
     @ObservationIgnored private var speculativeText: String?
+    /// The offer on screen when an early (Ink-2 eager) answer started: kept until the final words decide, so a
+    /// final "yes" can still take it, and put back if the early answer is dropped.
+    @ObservationIgnored private var heldOffer: (kind: String, label: String)?
     @ObservationIgnored private var speculativeTurn: UUID?
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?) {
@@ -114,6 +121,7 @@ final class LeaConversation {
             Task {
                 let words = await recorder.transcribeOnDevice()
                 guard !words.isEmpty else { phase = .idle; return }
+                if accept(words) { return }   // held to say yes to the offer on screen
                 send(audio: nil, text: words, since: released)
             }
         }
@@ -126,7 +134,7 @@ final class LeaConversation {
     func heard(_ text: String, engine: String = "apple") {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         liveCaption = ""
-        if speculativeText != nil, action != nil, acceptOffer != nil, Self.isYes(words) { cancelSpeculation() }
+        if speculativeText != nil, (action ?? heldOffer) != nil, acceptOffer != nil, Self.isYes(words) { cancelSpeculation() }
         if let spec = speculativeText {
             if Self.same(spec, words) {
                 confirmSpeculation(final: words)
@@ -169,6 +177,8 @@ final class LeaConversation {
     func cancelSpeculation() {
         guard speculativeText != nil else { return }
         speculativeText = nil
+        if let offer = heldOffer { action = offer }
+        heldOffer = nil
         holding = false
         heldEvents = []
         task?.cancel()
@@ -180,6 +190,7 @@ final class LeaConversation {
 
     private func confirmSpeculation(final words: String) {
         speculativeText = nil
+        heldOffer = nil
         if let id = speculativeTurn, let i = turns.firstIndex(where: { $0.id == id }) { turns[i].text = words }
         speculativeTurn = nil
         postStory(words)
@@ -245,6 +256,7 @@ final class LeaConversation {
     private func send(audio: Data?, text: String?, since start: Date, input: String = "apple", hold: Bool = false) {
         task?.cancel()
         let offered = action?.kind
+        if hold { heldOffer = action }
         action = nil
         phase = .thinking
         holding = hold

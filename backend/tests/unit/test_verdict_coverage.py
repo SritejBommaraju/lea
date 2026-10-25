@@ -89,8 +89,14 @@ def test_coverage_counts_only_poses_in_the_original_frame():
     assert view_coverage({**base, "segments": segments}, [])["sectors"] == 12
     stills = [{"segment": 1, "camera": {"position_m": [0.01, 0.5, 0.0]}}]
     assert view_coverage({**base, "segments": segments[:2]}, stills)["cells"] == 6
-    # hand-held: every pose is relative to the object
-    assert view_coverage({**base, "segments": segments[:2], "pose_source": "object_tracked"}, [])["sectors"] == 12
+    # hand-held: a flip the app tracked relative to the object counts; an unaligned continuation never does
+    tracked = [{**k, "pose_source": "object_tracked"} if k.get("segment") == 2 else k for k in half + other]
+    handheld = {**base, "keyframes": tracked, "pose_source": "object_tracked", "segments": segments[:2]}
+    assert view_coverage(handheld, [])["sectors"] == 12
+    # --turn-it: hand-held first capture, then a continuation with fresh ARKit poses (aligned false, no world map)
+    turn_it = {**base, "keyframes": half + [k for k in other if k["segment"] == 1], "pose_source": "object_tracked",
+               "segments": [{"segment": 1, "reason": "continued", "aligned": False}]}
+    assert view_coverage(turn_it, [])["sectors"] == 6
 
 
 def test_the_caveat_counts_every_region_a_grouped_row_stands_for():

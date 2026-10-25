@@ -556,7 +556,10 @@ struct ScanTalkBar: View {
         .contentShape(Capsule())
         .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkHandsFree() } })
         .environment(\.colorScheme, .dark)
-        .onAppear { convo.appeared() }
+        .onAppear {
+            convo.appeared()
+            if wake.continuous { wake.listenForFollowUp() }   // hands-free carries on into the scan
+        }
         .task { await convo.loadHistory() }
         .onDisappear {
             convo.disappeared()

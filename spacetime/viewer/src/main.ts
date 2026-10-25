@@ -386,7 +386,8 @@ function render3d(id: string): void {
   }
   if (m.hero === 'photos') {
     // The backend chose photos: the object is too small or too little surface was captured for a useful 3D view.
-    if (viewport.dataset.mode === '3d') scene?.clear();
+    // clear() also invalidates a 3D download still in flight, so its completion cannot switch the page back.
+    scene?.clear();
     viewport.dataset.mode = 'photos';
     note.textContent = '';
     return;
@@ -394,7 +395,8 @@ function render3d(id: string): void {
   const points = m.hero === 'points' && !!m.cloudUrl;
   const url = points ? m.cloudUrl : m.url || m.cloudUrl;
   void getScene().then((s) => s.load(url, points || !m.url)).then((ok) => {
-    if (!ok || shownScan !== id) return;
+    // The scan may have changed to photos (or another scan is shown) while the model downloaded.
+    if (!ok || shownScan !== id || conn.db.mesh.scanId.find(id)?.hero === 'photos') return;
     viewport.dataset.mode = '3d';
     note.textContent = points ? 'LiDAR scan' : '3D mesh';
     // One pin per computed point: rows the backend located at the very same point are one place.
