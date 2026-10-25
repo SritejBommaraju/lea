@@ -244,7 +244,7 @@ struct ConversationPanel: View {
     var body: some View {
         VStack(spacing: Spacing.s) {
             if !convo.turns.isEmpty || !convo.liveCaption.isEmpty || isFailed { captions }
-            if let action = convo.action {
+            if let action = convo.action, action.kind != "walkthrough" {
                 Button { onAction(action.kind) } label: {
                     Label(action.label, systemImage: action.kind == "start_scan" ? Symbol.scan : Symbol.closeup)
                 }
@@ -263,6 +263,8 @@ struct ConversationPanel: View {
         .animation(Motion.standard, value: convo.phase)
         .animation(Motion.standard, value: convo.turns.count)
         .onAppear { convo.appeared() }
+        // The person asked for it in so many words: the tour starts on its own (after Lea's "I'll walk you through it").
+        .onChange(of: convo.actionKind) { _, kind in if kind == "walkthrough" { onAction("walkthrough") } }
         .task {
             WakeListener.shared.capture(false)   // back from a scan: listening resumes here for sure
             await convo.loadHistory()

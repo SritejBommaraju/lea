@@ -35,6 +35,8 @@ struct ReportView: View {
     @State private var fixSearching = false
     /// The parts search hit the spend cap (pipeline `fix_status` or live `fix_ready`): "not available right now".
     @State private var fixLimited = false
+    /// Bumped by Lea's `walkthrough` action ("Lea, walk me through it"): the stage plays its tour.
+    @State private var walkthrough = 0
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -50,7 +52,7 @@ struct ReportView: View {
         guard Self.showsRecreation(hero: heroChoice, available: RecreationCenter.shared.available(dir)) else { return .automatic }
         return .custom { ctx in
             AnyView(RecreationView(source: .scan(dir), markers: ctx.markers, focus: ctx.focus,
-                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe))
+                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour))
         }
     }
 
@@ -64,7 +66,7 @@ struct ReportView: View {
                                     fix: live?.fix ?? report.fix,
                                     fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
                                     fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil,
-                                    fresh: landedFresh, voiceStarted: voiceStarted, hero: stageHero)
+                                    fresh: landedFresh, voiceStarted: voiceStarted, walkthrough: walkthrough, hero: stageHero)
                         .transition(.opacity)
                         .overlay(alignment: .top) {
                             if updating {
@@ -110,6 +112,7 @@ struct ReportView: View {
                     ConversationPanel(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
                                       sessionID: { [upload] in upload?.state.gatewaySessionID }) { kind in
                         if kind == "continue_scan" { continueScan?() }
+                        if kind == "walkthrough" { walkthrough += 1 }
                     }
                 }
             }

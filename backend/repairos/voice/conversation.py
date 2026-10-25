@@ -51,10 +51,15 @@ Actions:
 - If a closer or another photo of a spot would help and the person agrees or asks how, offer to guide them to it \
 and end your turn with the marker <continue_scan/>.
 - With no scan yet, when the person has said what is wrong, offer to start a scan and end with <start_scan/>.
+- With a scan, when the person asks you to walk them through it, for a breakdown or for the full analysis, say one \
+short line that you will walk them through it now and end with <walkthrough/>. The phone then plays the tour of the \
+report on the 3D model in your voice, so do not go through the findings yourself.
 The marker is not spoken; put nothing after it."""
 
-ACTIONS = {"continue_scan": "Take a closer photo", "start_scan": "Start a scan"}
-_MARKER = re.compile(r"<\s*(continue_scan|start_scan)\s*/?\s*>")
+ACTIONS = {"continue_scan": "Take a closer photo", "start_scan": "Start a scan", "walkthrough": "Walk me through it"}
+#: Actions that need a report on the gateway (the walkthrough tours it): dropped while there is none.
+NEEDS_REPORT = {"walkthrough"}
+_MARKER = re.compile(r"<\s*(continue_scan|start_scan|walkthrough)\s*/?\s*>")
 _SENTENCE_END = re.compile(r"([.!?])(\s+|$)")
 
 

@@ -172,10 +172,12 @@ enum ReportWords {
 
     // MARK: Cleaning backend text
 
-    /// Removes internals from backend text: still ids ("still scan_ab12_s3", "s11") become "photo 3", snake_case
+    /// Removes internals from backend text: still ids ("still scan_ab12_s3", "s11") become "photo 3", a detector
+    /// region ("the part s1/det0") becomes "the part", snake_case
     /// identifiers become words, and detector-limit jargon becomes plain words.
     static func sanitize(_ text: String) -> String {
         var t = text
+        t = t.replacing(/\b(?:the part )?(?:scan_[0-9a-f]+_)?s\d+\/det\d+\b/) { _ in "the part" }
         t = t.replacing(/\bin (?:the )?still (?:scan_[0-9a-f]+_)?s(\d+)\b/) { "in photo \($0.1)" }
         t = t.replacing(/\bstill (?:scan_[0-9a-f]+_)?s(\d+)\b/) { "photo \($0.1)" }
         t = t.replacing(/\bscan_[0-9a-f]+_s(\d+)\b/) { "photo \($0.1)" }

@@ -272,8 +272,15 @@ final class WakeListener {
     }
 
     private func heard(_ text: String, final: Bool) {
+        // "Stop" ends a walkthrough at once; while Lea speaks only with her name ("Lea, stop"), as the mic hears her too.
+        let echo = leaTalking || Date().timeIntervalSince(leaStoppedAt) <= Self.echoGuard
+        if let tour = WalkthroughPlayer.current, tour.heard(text, leaSpeaking: echo) {
+            Self.diag.log("walkthrough_stop", ["lea_speaking": echo])
+            dropTurn()
+            return
+        }
         // Not while Lea speaks, nor in the echo of her last words.
-        guard !leaTalking, Date().timeIntervalSince(leaStoppedAt) > Self.echoGuard else { return }
+        guard !echo else { return }
         let words = Self.normalize(text)
         if speechStart == nil, !words.isEmpty { speechStart = Date() }
         if heardAfterWake == nil, mode == .wake, Self.looksLikeAnAttempt(words) {
@@ -307,6 +314,19 @@ final class WakeListener {
         caption(after)
         armSilence(longer: after.isEmpty)
         openStream(backfill: 2.0)   // the words after "Hey Lea" go to Ink-2 (with the audio said so far)
+    }
+
+    /// What was heard was not a turn (it ended the walkthrough): forget it and listen for "Hey Lea" again.
+    private func dropTurn() {
+        silenceTimer?.cancel()
+        followUpTimer?.cancel()
+        closeStream()
+        heardAfterWake = nil
+        speechStart = nil
+        wokeAt = nil
+        mode = .wake
+        mic.restart()
+        LeaConversation.active?.turnDropped()
     }
 
     private func caption(_ text: String) {

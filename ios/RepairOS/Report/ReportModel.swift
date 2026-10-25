@@ -72,7 +72,10 @@ struct ReportModel: Sendable {
         var point: SIMD3<Float>?
         /// Half the diagonal of the region the locator found (metres): how big the problem area is on the scan.
         var extent: Float? = nil
+        /// A meter reading confirmed the fault (`confirmed_by_meter`).
         var proved: Bool
+        /// A meter reading ruled the fault out (`ruled_out_by_meter`): cleared, so never a problem in any list.
+        var ruledOut: Bool = false
         /// The main crop's photo and its box there (pixels of the full still, sensor orientation).
         var cropStill: String? = nil
         var cropBox: [Double]? = nil
@@ -177,14 +180,16 @@ struct ReportModel: Sendable {
             (s["text"] as? String).map { SafetyNote(code: s["code"] as? String ?? "", text: $0) }
         }
         let findings = Self.current(r["findings"]).map(Self.problem)
-        let issues = findings.filter { $0.issue != Self.noIssue }
+        // As the backend counts issues: a fault a meter reading ruled out is cleared, not a problem (when every
+        // finding is ruled out `most_likely` is empty, and the fallback must not bring them back as problems).
+        let issues = findings.filter { $0.issue != Self.noIssue && !$0.ruledOut }
         let topIDs: [String] = (r["most_likely"] as? [Any] ?? []).compactMap {
             ($0 as? String) ?? (($0 as? [String: Any])?["finding_id"] as? String)
         }
         if topIDs.isEmpty {
             mostLikely = Array(issues.prefix(3))
         } else {
-            mostLikely = topIDs.prefix(3).compactMap { id in findings.first { $0.id == id } }
+            mostLikely = topIDs.prefix(3).compactMap { id in findings.first { $0.id == id && !$0.ruledOut } }
         }
         let shown = Set(mostLikely.map(\.id))
         otherIssues = issues.filter { !shown.contains($0.id) }
@@ -262,6 +267,7 @@ struct ReportModel: Sendable {
         }
         let judgment = f["judgment"] as? [String: Any]
         let location = f["location"] as? [String: Any]
+        let proof = (f["proof"] as? [String: Any])?["status"] as? String
         return Problem(
             id: f["finding_id"] as? String ?? UUID().uuidString,
             part: (f["part_class"] as? String ?? "Part").replacingOccurrences(of: "_", with: " ").capitalizedFirst,
@@ -278,7 +284,8 @@ struct ReportModel: Sendable {
             locationNote: location?["status"] as? String == "computed" ? nil : location?["reason"] as? String,
             point: Self.point(location),
             extent: Self.extent(location),
-            proved: ((f["proof"] as? [String: Any])?["status"] as? String).map { $0 != "not_measured" } ?? false,
+            proved: proof == "confirmed_by_meter",
+            ruledOut: proof == "ruled_out_by_meter",
             cropStill: (f["crop"] as? [String: Any])?["still_id"] as? String,
             cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue),
             isSetup: f["category"] as? String == "setup",

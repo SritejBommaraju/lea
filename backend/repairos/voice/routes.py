@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from repairos.voice.audio import TTSCache, line_key, wav
 from repairos.voice.cartesia import Cartesia, CartesiaError
-from repairos.voice.conversation import (ACTIONS, ConversationStore, SentenceSplitter, Talker, context_block,
+from repairos.voice.conversation import (ACTIONS, NEEDS_REPORT, ConversationStore, SentenceSplitter, Talker, context_block,
                                          history_view, limit_reached, messages_for)
 from repairos.voice.settings import SAMPLE_RATE, VoiceSettings, get_voice_settings
 from repairos.voice.spend_guard import VoicePaused
@@ -479,7 +479,7 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             finally:
                 if producer is not None and not producer.done():
                     producer.cancel()
-            action = splitter.actions[0] if splitter.actions else None
+            action = next((a for a in splitter.actions if report or a not in NEEDS_REPORT), None)
             if action and action in ACTIONS:
                 yield jframe({"type": "action", "action": action, "label": ACTIONS[action]})
             answer = " ".join(spoken)

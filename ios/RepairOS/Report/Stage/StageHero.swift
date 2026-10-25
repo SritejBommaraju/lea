@@ -4,7 +4,8 @@ import SwiftUI
 /// `.custom` hosts any other hero (the photo-real recreation, Report/Recreation) with the same markers and focus:
 ///
 ///     ReportStageView(..., hero: .custom { ctx in AnyView(RecreationView(source: src, markers: ctx.markers, focus: ctx.focus,
-///                                                                      onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe)) })
+///                                                                      onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe,
+///                                                                      tour: ctx.tour)) })
 enum StageHero {
     case automatic
     case custom((StageHeroContext) -> AnyView)
@@ -20,6 +21,8 @@ struct StageHeroContext {
     let ready: () -> Void
     /// Pass to the hero so circle to inspect can find the spot on it.
     let probe: StageProbe
+    /// The walkthrough while it plays (nil otherwise): pass it on, so its pager drives the hero's camera.
+    var tour: WalkthroughPlayer? = nil
 }
 
 /// After a circle on the stage: look closer now (Continue scanning aims at it), keep it marked, or drop it.

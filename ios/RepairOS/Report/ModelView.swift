@@ -290,8 +290,12 @@ struct ModelView: View {
     var probe: StageProbe? = nil
     /// The recenter control (off where the view is only to look at, like the waiting stage).
     var controls = true
+    /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the spin stops.
+    var tour: WalkthroughPlayer? = nil
     let onPinTap: (String) -> Void
 
+    /// Reduce Motion: the walkthrough card the view shows (it cuts there while faded out).
+    @State private var cutShown = 0
     @State private var loaded: Loaded?
     @State private var failed = false
     @State private var recenter = 0
@@ -301,12 +305,15 @@ struct ModelView: View {
     enum Loaded { case cloud(ScanCloud), mesh(URL), triangles(ScanMesh), nothing }
 
     var body: some View {
+        let frame = tour.flatMap { $0.active ? $0.frame : nil }
         ZStack {
             if !stage { Palette.well }
             if let loaded {
                 SceneHost(content: loaded, pins: pins, focus: focus, recenter: recenter, animate: !reduceMotion,
-                          spin: spin && !reduceMotion, active: visible, stage: stage, probe: probe, onPinTap: onPinTap)
+                          spin: spin && !reduceMotion, active: visible, stage: stage, probe: probe,
+                          tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), onPinTap: onPinTap)
                     .id(Self.loadedID(loaded))
+                    .modifier(TourCutFade(nearest: frame?.nearest, on: reduceMotion, shown: $cutShown))
                     .transition(.opacity)
             } else if !failed {
                 ProgressView().tint(stage ? .white : nil)
@@ -424,6 +431,8 @@ private struct SceneHost: UIViewRepresentable {
     let active: Bool
     var stage = false
     var probe: StageProbe?
+    /// The walkthrough's frame: the camera follows its pager instead of `focus`.
+    var tour: TourFrame?
     let onPinTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -462,6 +471,17 @@ private struct SceneHost: UIViewRepresentable {
         if c.pins != pins {
             c.pins = pins
             c.placePins(traits: view.traitCollection)
+        }
+        if let tour {
+            c.setActive(active)
+            c.tour(tour, animate: animate)
+            return
+        }
+        if c.touring {
+            // The tour ended: the markers as they were, and the whole object (or the focus) in view again.
+            c.endTour()
+            if let focus { c.fly(to: focus, animate: animate) } else { c.frameAll(animate: animate) }
+            c.focus = focus
         }
         if c.focus != focus {
             c.focus = focus
@@ -662,6 +682,89 @@ private struct SceneHost: UIViewRepresentable {
                     guard let self, !self.spinning else { return }
                     self.view?.isPlaying = false
                 }
+            }
+        }
+
+        // MARK: Walkthrough
+
+        private(set) var touring = false
+        /// One pose per step, worked out when the tour starts (the spin is stopped, so they hold).
+        private var tourPoses: [TourPose] = []
+        private var tourFocuses: [String?]?
+        private var tourCut: Int?
+        /// The eased move onto the first card's view: frames that change nothing meanwhile do not cut it short.
+        private var glide: (progress: Double, until: Date)?
+
+        /// One frame of the tour: the camera on the pager's path between two steps' views, the markers lit by weight.
+        func tour(_ f: TourFrame, animate: Bool) {
+            guard let view else { return }
+            var glideIn = false
+            if !touring {
+                touring = true
+                stopSpin()
+                view.allowsCameraControl = false
+                glideIn = animate
+            }
+            if tourFocuses != f.focuses {
+                tourFocuses = f.focuses
+                tourPoses = f.focuses.map(tourPose)
+            }
+            guard let pose = TourCamera.pose(tourPoses, at: f.progress, around: center, cut: f.cut) else { return }
+            if f.cut {
+                if tourCut != f.nearest { tourCut = f.nearest; place(pose, animate: false) }
+            } else if glideIn {
+                place(pose, animate: true)
+                glide = (f.progress, Date().addingTimeInterval(0.75))
+            } else if let g = glide, g.until > Date(), g.progress == f.progress {
+                // still easing in to the first card
+            } else {
+                glide = nil
+                place(pose, animate: false)
+            }
+            emphasize(TourCamera.weights(f.focuses, at: f.progress, cut: f.cut))
+            view.isPlaying = active
+        }
+
+        func endTour() {
+            touring = false
+            tourFocuses = nil
+            tourCut = nil
+            view?.allowsCameraControl = true
+            view?.isPlaying = false
+            highlight()
+        }
+
+        /// The view `fly(to:)` lands on for a marker, `frameAll` for nil.
+        private func tourPose(_ id: String?) -> TourPose {
+            if let id, let node = pinRoot.childNodes.first(where: { $0.name == "marker:\(id)" }) {
+                let target = node.presentation.simdWorldPosition
+                var dir = target - center
+                dir.y = max(dir.y, 0) + 0.5 * simd_length(SIMD2(dir.x, dir.z))
+                let from = simd_length(dir) > 1e-4 ? simd_normalize(dir) : simd_normalize(cameraNode.simdWorldPosition - target)
+                return TourPose(eye: target + from * radius * (stage ? 2.2 : 1.5), look: target)
+            }
+            return TourPose(eye: center + simd_normalize(SIMD3<Float>(0.35, 0.55, 1)) * radius * 3.5, look: center)
+        }
+
+        private func place(_ pose: TourPose, animate: Bool) {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animate ? 0.7 : 0
+            SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
+            cameraNode.simdWorldPosition = pose.eye
+            cameraNode.simdLook(at: pose.look, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))
+            SCNTransaction.commit()
+            view?.defaultCameraController.target = SCNVector3(pose.look)
+        }
+
+        /// The markers lit by weight (TourCamera.weights): 1 is the selected look, the rest dim as one lights up.
+        private func emphasize(_ weights: [String: Float]) {
+            let lit = weights.values.max() ?? 0
+            for node in pinRoot.childNodes {
+                guard let id = node.name.map({ String($0.dropFirst("marker:".count)) }) else { continue }
+                let on = weights[id] ?? 0
+                let rest: Float = node.renderingOrder == 10 ? 0.75 : 1
+                node.opacity = CGFloat(rest * (0.45 + 0.55 * max(on, 1 - lit)))
+                node.simdScale = SIMD3(repeating: 1 + 0.35 * on)
             }
         }
 
