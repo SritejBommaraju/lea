@@ -75,6 +75,42 @@ def test_view_coverage_places_cameras_on_the_dome():
     assert view_coverage({"crop_box": {"center_m": centre}}, [{"camera": {}}]) is None   # no pose
 
 
+def test_coverage_counts_only_poses_in_the_original_frame():
+    centre = [0.0, 0.0, 0.0]
+    half = [{"camera": {"position_m": [0.4 * math.cos(math.radians(a)), 0.1, 0.4 * math.sin(math.radians(a))]}}
+            for a in range(15, 180, 30)]
+    other = [{"segment": s, "camera": {"position_m": [0.4 * math.cos(math.radians(a)), 0.1, 0.4 * math.sin(math.radians(a))]}}
+             for s in (1, 2, 3) for a in range(195, 360, 30)]
+    base = {"crop_box": {"center_m": centre}, "gravity_arkit_world": [0, -1, 0], "keyframes": half + other}
+    segments = [{"segment": 1, "reason": "continued", "aligned": False}, {"segment": 2, "reason": "flipped"},
+                {"segment": 3, "reason": "continued"}]
+    # 1 (other world origin) and 2 (object moved) add nothing; 3 (relocalised continuation) adds its views
+    assert view_coverage({**base, "segments": segments[:2]}, [])["sectors"] == 6
+    assert view_coverage({**base, "segments": segments}, [])["sectors"] == 12
+    stills = [{"segment": 1, "camera": {"position_m": [0.01, 0.5, 0.0]}}]
+    assert view_coverage({**base, "segments": segments[:2]}, stills)["cells"] == 6
+    # hand-held: a flip the app tracked relative to the object counts; an unaligned continuation never does
+    tracked = [{**k, "pose_source": "object_tracked"} if k.get("segment") == 2 else k for k in half + other]
+    handheld = {**base, "keyframes": tracked, "pose_source": "object_tracked", "segments": segments[:2]}
+    assert view_coverage(handheld, [])["sectors"] == 12
+    # --turn-it: hand-held first capture, then a continuation with fresh ARKit poses (aligned false, no world map)
+    turn_it = {**base, "keyframes": half + [k for k in other if k["segment"] == 1], "pose_source": "object_tracked",
+               "segments": [{"segment": 1, "reason": "continued", "aligned": False}]}
+    assert view_coverage(turn_it, [])["sectors"] == 6
+
+
+def test_the_caveat_counts_every_region_a_grouped_row_stands_for():
+    from repairos.live.spacetime_bridge import verdict_line
+    from repairos.report.verdict import caveat
+
+    rep = {"findings": [], "insufficient_evidence": [{}], "not_inspected": [
+        {"part_class": "connector", "regions": 11}, {"part_class": "switch"}, {"part_class": "whole photo", "regions": 4}]}
+    assert caveat(rep) == "13 areas need a closer photo."   # 1 + 11 + 1; a left-out whole photo is not an area
+    line = verdict_line({"verdict_reason": {"text": "Nothing looks wrong.", "caveat": caveat(rep)}})
+    assert line == "Nothing looks wrong. 13 areas need a closer photo."
+    assert verdict_line({"verdict_reason": {"text": "Nothing looks wrong."}}) == "Nothing looks wrong."
+
+
 def test_the_new_verdict_has_words_everywhere_and_validates():
     assert export.TITLE["no_problems_seen"] == "No problems seen"
     assert "no_problems_seen" in summary.VERDICT_WORDS

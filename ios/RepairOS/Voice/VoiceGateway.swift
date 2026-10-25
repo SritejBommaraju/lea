@@ -115,9 +115,17 @@ enum ConverseEvent: Sendable {
 }
 
 extension GatewayClient {
-    func converseRequest(scanID: String?, audio: Data?, text: String?, speech: Bool) -> URLRequest {
+    func converseRequest(scanID: String?, audio: Data?, text: String?, speech: Bool, live: [String: String] = [:],
+                         sessionID: String? = nil) -> URLRequest {
         var q = "audio=\(speech ? "stream" : "none")"
         if let scanID { q += "&scan_id=\(scanID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? scanID)" }
+        // Before the scan exists, the session tells the gateway what the label photo identified (the brief).
+        if let sessionID { q += "&session_id=\(sessionID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionID)" }
+        // What the screen shows now (a scan's stage, cue, progress): for this turn only.
+        if !live.isEmpty, let json = try? JSONSerialization.data(withJSONObject: live, options: .sortedKeys),
+           let encoded = String(decoding: json, as: UTF8.self).addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
+            q += "&live=\(encoded)"
+        }
         var req = voiceRequest("POST", "v1/voice/converse", query: q)
         req.timeoutInterval = 25
         if let audio {
@@ -131,8 +139,9 @@ extension GatewayClient {
     }
 
     /// The turn's frames as they arrive (1 byte kind, 4 bytes big-endian length, payload).
-    func converse(scanID: String?, audio: Data?, text: String?, speech: Bool) -> AsyncThrowingStream<ConverseEvent, Error> {
-        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech)
+    func converse(scanID: String?, audio: Data?, text: String?, speech: Bool, live: [String: String] = [:],
+                  sessionID: String? = nil) -> AsyncThrowingStream<ConverseEvent, Error> {
+        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, live: live, sessionID: sessionID)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {

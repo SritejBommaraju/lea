@@ -143,6 +143,27 @@ struct WakePhraseTests {
     }
 }
 
+/// Answers to Lea's own question: a plain yes takes the offer on screen, and a one-word yes or no is a turn even in
+/// the follow-up window (where a single stray word is not).
+@MainActor
+struct ShortAnswerTests {
+    @Test func aPlainYesTakesTheOffer() {
+        for yes in ["Yes.", "yeah", "Yeah, let's do it", "okay go ahead", "sure please", "yes Lea"] {
+            #expect(LeaConversation.isYes(yes), "\(yes)")
+        }
+        for not in ["yes but it smells burnt", "no", "what would the scan show?", "maybe later"] {
+            #expect(!LeaConversation.isYes(not), "\(not)")
+        }
+    }
+
+    @Test func oneWordAnswersAreTurns() {
+        #expect(WakeListener.isShortAnswer("Yes."))
+        #expect(WakeListener.isShortAnswer("nope"))
+        #expect(!WakeListener.isShortAnswer("um"))
+        #expect(!WakeListener.isShortAnswer("television"))
+    }
+}
+
 @MainActor
 struct RealtimeTests {
     @Test func wakePhraseIsDroppedFromInk2Transcripts() {

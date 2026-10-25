@@ -64,6 +64,14 @@ struct SessionFlowView: View {
             }
         }
         .background(Color.black.ignoresSafeArea())
+        .safeAreaInset(edge: .top) {
+            // Voice/ScanTalkBar: talk with Lea while scanning; the conversation carries on at the report.
+            if capturing, let gateway = app.gateway, app.isPaired {
+                ScanTalkBar(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
+                            sessionID: { [upload] in upload?.state.gatewaySessionID }, live: { liveScan })
+                    .padding(.horizontal, Spacing.m)
+            }
+        }
         .onDisappear { live?.stop() }
         .onAppear {
             guard upload == nil, flow == nil, scan == nil else { return }
@@ -82,6 +90,49 @@ struct SessionFlowView: View {
                 scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
             }
         }
+    }
+
+    /// A capture is on screen (not the report).
+    private var capturing: Bool {
+        if let scan, scan.continuing { return true }
+        return finished == nil && record.status == .capturing && (flow != nil || scan != nil)
+    }
+
+    /// What Lea is told at each turn while scanning: the stage, the on-screen cue, progress and close-ups.
+    private var liveScan: [String: String] {
+        var live = ["screen": "scan"]
+        if let scan {
+            live["stage"] = switch scan.stage {
+            case .ready: "ready: they point at the object and tap it to lock on"
+            case .locking: "locking on"
+            case .scanning: "scanning: walking around it; photos and close-ups take themselves"
+            case .finishing: "saving"
+            case .failed(let why): "stopped: \(why)"
+            }
+            live["progress"] = "\(Int(scan.progress * 100))%"
+            live["close-ups taken"] = "\(scan.stills.count)"
+            if let cue = scan.cue { live["on-screen cue"] = cue }
+            if scan.relocalizing { live["tracking"] = "lost; finding its place again" }
+            if scan.flip != nil { live["part"] = "the bottom: the object is turned over for its underside" }
+            if scan.enough { live["enough"] = "yes: they can tap Done" }
+        } else if let flow {
+            live["stage"] = switch flow.step {
+            case .starting: "starting the camera"
+            case .ready, .detecting: "framing the object"
+            case .capturing: "capturing: walking around it"
+            case .closeups: "close-ups: they tap anything that looks damaged or important"
+            case .finishing: "saving"
+            case .photosOnly: "photos only"
+            case .reconstructing(let s): "building the model: \(s)"
+            case .done: "done"
+            case .failed(let why): "stopped: \(why)"
+            }
+            live["photos"] = "\(flow.shots)"
+            live["close-ups taken"] = "\(flow.closeupShots)"
+            if let cue = flow.cue { live["on-screen cue"] = cue }
+            if flow.lightBlocked { live["light"] = "too dark to continue" }
+        }
+        return live
     }
 
     /// Our scanner, a finished scan, and its package on the phone.

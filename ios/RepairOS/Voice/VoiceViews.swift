@@ -236,6 +236,7 @@ struct ConversationPanel: View {
         let c = LeaConversation(scanID: scanID, gateway: gateway, diag: diag)
         c.sessionID = sessionID
         c.afterTurn = afterTurn
+        c.acceptOffer = onAction   // "yes" to the offer on screen is the same as tapping it
         _convo = State(initialValue: c)
         self.compact = compact
         self.onAction = onAction
@@ -492,5 +493,95 @@ struct HomeConversationSheet: View {
         let said = LeaConversation.active?.turns.filter(\.mine).map(\.text).joined(separator: " ") ?? ""
         dismiss()
         startScan(said)
+    }
+}
+
+// MARK: - Talking with Lea while scanning
+
+/// Lea over the camera while scanning: the same conversation as this scan's report (it carries on there), one line
+/// of captions, an ear that turns continuous hands-free on and off, and the mic (hold to ask, tap to talk
+/// hands-free). Swipe up on it to start talking hands-free. Each turn tells Lea what the scan screen shows now
+/// (`live`), so she can coach while you scan. Small, so the camera stays clear.
+struct ScanTalkBar: View {
+    @State private var convo: LeaConversation
+    @State private var wake = WakeListener.shared
+    @State private var pressedAt: Date?
+
+    init(scanID: String, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String?,
+         live: @escaping () -> [String: String]) {
+        let c = LeaConversation(scanID: scanID, gateway: gateway, diag: diag)
+        c.sessionID = sessionID
+        c.live = live
+        _convo = State(initialValue: c)
+    }
+
+    var body: some View {
+        HStack(spacing: Spacing.s) {
+            Button { wake.continuous.toggle() } label: {
+                Image(systemName: wake.continuous ? "ear.badge.waveform" : "ear")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(wake.continuous ? Palette.cameraAccent : .white)
+                    .frame(width: 36, height: 36)
+                    .symbolEffect(.pulse, isActive: wake.mode == .followUp)
+            }
+            .accessibilityLabel(wake.continuous ? "Hands-free on" : "Hands-free off")
+            Text(caption)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(isFailed ? Palette.caution : .white)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(Motion.fade, value: caption)
+            Image(systemName: listening ? "waveform.circle.fill" : (convo.phase == .speaking ? "speaker.wave.2.circle.fill" : "mic.circle.fill"))
+                .font(.system(size: 34))
+                .foregroundStyle(pressedAt != nil ? Palette.danger : .white)
+                .symbolEffect(.variableColor.iterative, isActive: listening || convo.phase == .speaking)
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard pressedAt == nil else { return }
+                        pressedAt = Date()
+                        convo.pressToTalk()
+                    }
+                    .onEnded { _ in
+                        let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
+                        pressedAt = nil
+                        if held < 0.35 { convo.cancelHold(); talkHandsFree() } else { convo.releaseToTalk() }
+                    })
+                .accessibilityLabel("Talk to Lea")
+                .accessibilityHint("Hold to ask, or tap once to talk hands-free")
+                .accessibilityAddTraits(.isButton)
+        }
+        .padding(.horizontal, Spacing.m)
+        .padding(.vertical, Spacing.xs)
+        .background(.black.opacity(0.55), in: Capsule())
+        .contentShape(Capsule())
+        .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkHandsFree() } })
+        .environment(\.colorScheme, .dark)
+        .onAppear {
+            convo.appeared()
+            if wake.continuous { wake.listenForFollowUp() }   // hands-free carries on into the scan
+        }
+        .task { await convo.loadHistory() }
+        .onDisappear {
+            convo.disappeared()
+            if convo.visible == 0 { convo.stopLea() }
+        }
+    }
+
+    private var listening: Bool { convo.phase == .listening || wake.mode == .followUp }
+    private var isFailed: Bool { if case .failed = convo.phase { true } else { false } }
+
+    private var caption: String {
+        if case .failed(let m) = convo.phase { return m }
+        if !convo.liveCaption.isEmpty { return convo.liveCaption }
+        if convo.phase == .thinking { return "Thinking…" }
+        if let last = convo.turns.last(where: { !$0.mine }), convo.phase == .speaking || !listening { return last.text }
+        return listening ? "Lea is listening. Ask anything while you scan." : "Swipe up and talk, or hold the mic."
+    }
+
+    /// Swipe up or tap: Lea listens hands-free and keeps listening after each answer.
+    private func talkHandsFree() {
+        convo.handsFree = true
+        wake.continuous = true
+        wake.listenForFollowUp()
     }
 }

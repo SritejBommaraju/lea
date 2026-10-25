@@ -112,6 +112,11 @@ struct RootView: View {
 
     private var startBar: some View {
         VStack(spacing: Spacing.m) {
+            if app.isPaired, app.gateway != nil {
+                Label("Swipe up to talk to Lea", systemImage: "chevron.up")
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            }
             FieldWell(symbol: "text.bubble") {
                 TextField("What happened? (optional)", text: $symptom)
                     .focused($symptomFocused)
@@ -157,6 +162,18 @@ struct RootView: View {
             .ignoresSafeArea(edges: .bottom)
             .allowsHitTesting(false)
         }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkToLea() } })
+        .accessibilityAction(named: "Talk to Lea") { talkToLea() }
+    }
+
+    /// Swipe up on the start bar: Lea's conversation opens already listening, hands-free, and keeps listening after
+    /// each answer (no "Hey Lea" needed; the ear button turns that off).
+    private func talkToLea() {
+        guard app.isPaired, app.gateway != nil, active == nil else { return }
+        WakeListener.shared.continuous = true
+        WakeListener.shared.listenForFollowUp()
+        talking = true
     }
 
     private func scanFromIntent() {

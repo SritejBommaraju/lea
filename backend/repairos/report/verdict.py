@@ -120,8 +120,8 @@ def caveat(report: dict) -> str | None:
     "Nothing looked wrong in the 2 areas Lea could see clearly. 11 areas need a closer photo." Photos left out because
     another photo already covers the same view are not areas."""
     seen = judged_regions(report)
-    closer = len(report.get("insufficient_evidence") or []) + sum(
-        1 for e in report.get("not_inspected") or [] if e.get("part_class") != "whole photo")
+    closer = len(report.get("insufficient_evidence") or []) + sum(   # a grouped row stands for `regions` areas
+        int(e.get("regions", 1)) for e in report.get("not_inspected") or [] if e.get("part_class") != "whole photo")
     if not closer:
         return None
     first = (f"Nothing looked wrong in the {seen} area{'s' if seen != 1 else ''} Lea could see clearly."

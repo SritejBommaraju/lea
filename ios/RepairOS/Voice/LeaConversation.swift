@@ -33,13 +33,21 @@ final class LeaConversation {
         Self.registry.append(Weak(value: self))
     }
 
-    func disappeared() { visible = max(0, visible - 1) }
+    func disappeared() {
+        visible = max(0, visible - 1)
+        // The last conversation left the screen: hands-free follow-up ends with it ("Hey Lea" opens one again).
+        if visible == 0, Self.active == nil { WakeListener.shared.endFollowUp() }
+    }
 
     let scanID: String?
     let gateway: GatewayClient
     let diag: Diag?
     /// The gateway session, for sending what the person suspects (`POST /v1/sessions/{id}/story`).
     var sessionID: () -> String? = { nil }
+    /// What the screen shows now, sent with each turn (a scan's stage, cue and progress); empty off the scanner.
+    @ObservationIgnored var live: () -> [String: String] = { [:] }
+    /// Lea offered an action ("Start a scan") and the person said yes out loud: the same as tapping it.
+    @ObservationIgnored var acceptOffer: ((String) -> Void)?
 
     private(set) var turns: [Turn] = []
     private(set) var phase: Phase = .idle
@@ -60,6 +68,9 @@ final class LeaConversation {
     @ObservationIgnored private var holding = false
     @ObservationIgnored private var heldEvents: [ConverseEvent] = []
     @ObservationIgnored private var speculativeText: String?
+    /// The offer on screen when an early (Ink-2 eager) answer started: kept until the final words decide, so a
+    /// final "yes" can still take it, and put back if the early answer is dropped.
+    @ObservationIgnored private var heldOffer: (kind: String, label: String)?
     @ObservationIgnored private var speculativeTurn: UUID?
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?) {
@@ -110,6 +121,7 @@ final class LeaConversation {
             Task {
                 let words = await recorder.transcribeOnDevice()
                 guard !words.isEmpty else { phase = .idle; return }
+                if accept(words) { return }   // held to say yes to the offer on screen
                 send(audio: nil, text: words, since: released)
             }
         }
@@ -122,6 +134,7 @@ final class LeaConversation {
     func heard(_ text: String, engine: String = "apple") {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         liveCaption = ""
+        if speculativeText != nil, (action ?? heldOffer) != nil, acceptOffer != nil, Self.isYes(words) { cancelSpeculation() }
         if let spec = speculativeText {
             if Self.same(spec, words) {
                 confirmSpeculation(final: words)
@@ -130,7 +143,25 @@ final class LeaConversation {
             cancelSpeculation()
         }
         guard !words.isEmpty else { return }
+        if accept(words) { return }
         send(audio: nil, text: words, since: Date(), input: engine)
+    }
+
+    /// "Yes" to an offer on screen takes it, without another round trip. True when it did.
+    private func accept(_ words: String, offered: String? = nil) -> Bool {
+        guard let kind = offered ?? action?.kind, let acceptOffer, Self.isYes(words) else { return false }
+        turns.append(Turn(mine: true, text: words))
+        action = nil
+        phase = .idle
+        acceptOffer(kind)
+        return true
+    }
+
+    /// A plain yes ("yes", "yeah, let's do it", "okay go ahead"), not a question or more detail.
+    static func isYes(_ words: String) -> Bool {
+        let w = WakeListener.normalize(words)
+        let yes = "(yes|yeah|yep|yup|sure|ok|okay|alright|all right|please|go ahead|do it|let's do it|lets do it|let's go|lets go|sounds good|start it|scan it|start the scan)"
+        return w.range(of: "^\(yes)( \(yes))*( please| lea| leah| thanks)?$", options: .regularExpression) != nil
     }
 
     /// Ink-2 thinks the person may be done: start the answer now, but hold it (nothing is shown or played) until
@@ -138,6 +169,7 @@ final class LeaConversation {
     func speculate(_ text: String) {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !words.isEmpty, speculativeText == nil, phase != .speaking else { return }
+        if action != nil, acceptOffer != nil, Self.isYes(words) { return }   // heard() takes the offer
         speculativeText = words
         send(audio: nil, text: words, since: Date(), input: "ink2_eager", hold: true)
     }
@@ -145,6 +177,8 @@ final class LeaConversation {
     func cancelSpeculation() {
         guard speculativeText != nil else { return }
         speculativeText = nil
+        if let offer = heldOffer { action = offer }
+        heldOffer = nil
         holding = false
         heldEvents = []
         task?.cancel()
@@ -156,6 +190,7 @@ final class LeaConversation {
 
     private func confirmSpeculation(final words: String) {
         speculativeText = nil
+        heldOffer = nil
         if let id = speculativeTurn, let i = turns.firstIndex(where: { $0.id == id }) { turns[i].text = words }
         speculativeTurn = nil
         postStory(words)
@@ -210,6 +245,8 @@ final class LeaConversation {
         var answerText = ""
         var firstSentence: Int?
         var confirmedEarly = false
+        /// The offer on screen when the turn began ("Start a scan"): a recorded yes takes it.
+        var offered: String?
         /// Sonic's socket for this answer (nil: the gateway streams the audio, or the phone's voice).
         var sonic: SonicSocket?
         var sonicFailed = false
@@ -223,6 +260,8 @@ final class LeaConversation {
 
     private func send(audio: Data?, text: String?, since start: Date, input: String = "apple", hold: Bool = false) {
         task?.cancel()
+        let offered = action?.kind
+        if hold { heldOffer = action }
         action = nil
         phase = .thinking
         holding = hold
@@ -236,11 +275,13 @@ final class LeaConversation {
         // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
         // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil)
+        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil,
+                                      live: live(), sessionID: sessionID())
         let voice = LeaVoice.shared
         let st = TurnState(start: start, id: voice.beginStream(held: hold), input: audio == nil ? input : "recording",
                            recorded: audio != nil)
         current = st
+        st.offered = offered
         firstAudioMs = nil
         if let grant { openSonic(grant, st) }
         task = Task {
@@ -279,6 +320,12 @@ final class LeaConversation {
         let voice = LeaVoice.shared
         switch event {
         case .transcript(let t):
+            // Held to talk and said yes to the offer: take it, and drop the gateway's answer.
+            if st.recorded, st.offered != nil, accept(t, offered: st.offered) {
+                task?.cancel()
+                voice.endStreamNow(st.id)
+                return
+            }
             if st.recorded, !t.isEmpty { turns.append(Turn(mine: true, text: t)); postStory(t) }
         case .sentence(let s, let withAudio):
             st.firstSentence = st.firstSentence ?? Self.ms(since: st.start)

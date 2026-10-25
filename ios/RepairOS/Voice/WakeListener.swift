@@ -17,6 +17,7 @@ import UIKit
 final class WakeListener {
     static let shared = WakeListener()
     nonisolated static let enabledKey = "leaWakeWordEnabled"
+    nonisolated static let continuousKey = "leaHandsFreeContinuous"
 
     enum Mode: Equatable { case off, wake, followUp }
     private(set) var mode: Mode = .off
@@ -28,6 +29,15 @@ final class WakeListener {
     var enabled: Bool {
         get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Self.enabledKey); refresh() }
+    }
+
+    /// Hands-free that stays on: after each answer Lea keeps listening for the next turn, with no window and no
+    /// "Hey Lea", until it is turned off (swipe up turns it on; the ear button toggles it). Remembered.
+    var continuous: Bool = UserDefaults.standard.bool(forKey: WakeListener.continuousKey) {
+        didSet {
+            UserDefaults.standard.set(continuous, forKey: Self.continuousKey)
+            if continuous { listenForFollowUp() } else { endFollowUp() }
+        }
     }
 
     @ObservationIgnored private let mic = MicTap()
@@ -96,22 +106,26 @@ final class WakeListener {
         }
     }
     func suspend(_ on: Bool) { holdToTalk = on; refresh() }
-    /// ScanView: an active capture (ARKit + camera) pauses listening unless `--wake-during-scan` is set (to measure).
+    /// ScanView: Lea keeps listening during a capture, so the person can talk to her while scanning (the scan bar).
+    /// `--no-wake-during-scan` pauses it instead, to measure the scan's frame time without the recognizer.
     func capture(_ on: Bool) {
-        capturing = on && !CommandLine.arguments.contains("--wake-during-scan")
+        capturing = on && CommandLine.arguments.contains("--no-wake-during-scan")
         refresh()
     }
 
-    /// After Lea answers: listen for the next turn without the phrase, for a few seconds.
+    /// After Lea answers: listen for the next turn without the phrase, for a few seconds (or until turned off, when
+    /// hands-free is continuous).
     func listenForFollowUp() {
         guard enabled else { return }
         mode = .followUp
         followUpTimer?.cancel()
-        followUpTimer = Task {
-            try? await Task.sleep(for: .seconds(Self.followUpWindow))
-            guard !Task.isCancelled, mode == .followUp, heardAfterWake == nil, !streamHeard else { return }
-            closeStream()
-            mode = .wake
+        if !continuous {   // continuous hands-free has no window
+            followUpTimer = Task {
+                try? await Task.sleep(for: .seconds(Self.followUpWindow))
+                guard !Task.isCancelled, mode == .followUp, heardAfterWake == nil, !streamHeard else { return }
+                closeStream()
+                mode = .wake
+            }
         }
         refresh()
         openStream(backfill: 0.3)
@@ -189,7 +203,7 @@ final class WakeListener {
             let words = Self.dropWake(t)
             closeStream()
             heardAfterWake = nil
-            mode = .wake
+            mode = continuous && LeaConversation.active != nil ? .followUp : .wake
             speechStart = nil
             mic.restart()
             Self.diag.log("wake_turn", ["from": from, "engine": "ink2", "words": words.split(separator: " ").count,
@@ -213,6 +227,20 @@ final class WakeListener {
             return words[k...].joined(separator: " ")
         }
         return after
+    }
+
+    /// Follow-up listening ends: hands-free turned off, or its conversation left the screen. The Ink-2 stream closes
+    /// and a half-heard turn is dropped, so nothing more is sent without "Hey Lea".
+    func endFollowUp() {
+        guard mode == .followUp else { return }
+        followUpTimer?.cancel()
+        silenceTimer?.cancel()
+        closeStream()
+        heardAfterWake = nil
+        speechStart = nil
+        LeaConversation.active?.cancelSpeculation()
+        mode = .wake
+        mic.restart()
     }
 
     func refresh() {
@@ -326,10 +354,11 @@ final class WakeListener {
         silenceTimer?.cancel()
         let words = (heardAfterWake ?? "").trimmingCharacters(in: .whitespaces)
         let from = mode == .followUp ? "follow_up" : "wake"
-        // A single stray word in the follow-up window is not a turn (someone nearby, a cough).
-        let tooShort = from == "follow_up" && words.split(separator: " ").count < 2
+        // A single stray word in the follow-up window is not a turn (someone nearby, a cough), except a plain
+        // yes or no: that answers Lea's question ("Want to scan it?" "Yes.").
+        let tooShort = from == "follow_up" && words.split(separator: " ").count < 2 && !Self.isShortAnswer(words)
         heardAfterWake = nil
-        mode = .wake
+        mode = continuous && LeaConversation.active != nil ? .followUp : .wake
         speechStart = nil
         mic.restart()
         Self.diag.log("wake_turn", ["from": from, "words": words.split(separator: " ").count,
@@ -340,6 +369,11 @@ final class WakeListener {
     }
 
     // MARK: Matching
+
+    /// One-word answers that are a turn on their own.
+    static func isShortAnswer(_ words: String) -> Bool {
+        ["yes", "yeah", "yep", "yup", "no", "nope", "sure", "okay", "ok", "alright", "please"].contains(normalize(words))
+    }
 
     /// Lower-case letters and spaces only.
     static func normalize(_ s: String) -> String {

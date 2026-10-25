@@ -20,6 +20,23 @@ def _unit(v: Sequence[float]) -> list[float] | None:
     return [x / n for x in v] if n > 1e-9 else None
 
 
+def _comparable(item: Mapping[str, Any], scan: Mapping[str, Any]) -> bool:
+    """Is this keyframe's or still's camera pose in segment 0's frame (comparable with its box)? Decided per segment
+    and per pose, never for the whole package: segment 0; a continued segment ARKit relocalised (aligned not false,
+    object not moved); or, in a hand-held scan, a pose the app tracked relative to the object (pose_source
+    object_tracked) in a segment not marked unaligned. A hand-held scan's continuation records fresh ARKit poses with
+    aligned false (no world map to relocalise against): those are not comparable, nor is a flip ARKit tracked."""
+    seg = item.get("segment") or 0
+    if seg == 0:
+        return True
+    info = next((g for g in scan.get("segments") or [] if g.get("segment") == seg), {})
+    if info.get("aligned") is False:
+        return False
+    if item.get("pose_source") == "object_tracked" and scan.get("pose_source") == "object_tracked":
+        return True
+    return info.get("reason") == "continued" and not info.get("object_moved")
+
+
 def view_coverage(scan: Mapping[str, Any] | None, stills: Sequence[Mapping[str, Any]]) -> dict | None:
     """{cells, cells_total, sectors, sectors_total, share} or None when the object box or camera poses are unknown
     (a loose photo, a no-LiDAR capture without a box)."""
@@ -36,7 +53,8 @@ def view_coverage(scan: Mapping[str, Any] | None, stills: Sequence[Mapping[str, 
     e1 = _unit([ref[i] - up[i] * sum(ref[j] * up[j] for j in range(3)) for i in range(3)])
     e2 = [up[1] * e1[2] - up[2] * e1[1], up[2] * e1[0] - up[0] * e1[2], up[0] * e1[1] - up[1] * e1[0]]
     cells, sectors = set(), set()
-    poses = [k.get("camera") for k in (scan or {}).get("keyframes") or []] + [s.get("camera") for s in stills]
+    pkg = scan or {}
+    poses = [x.get("camera") for x in list(pkg.get("keyframes") or []) + list(stills) if _comparable(x, pkg)]
     for cam in poses:
         p = (cam or {}).get("position_m")
         if not p or len(p) != 3:

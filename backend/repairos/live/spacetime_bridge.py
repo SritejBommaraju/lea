@@ -80,6 +80,13 @@ def _s(v) -> str:
 
 
 # ------------------------------------------------------------------ SpacetimeDB writes
+
+def verdict_line(rep: dict) -> str:
+    """The verdict's words with its caveat (how many areas still need a closer photo): the viewer shows one line, and
+    `no_problems_seen` without its caveat would read as more certain than the report is."""
+    reason = rep.get("verdict_reason") or {}
+    return " ".join(x for x in (_s(reason.get("text")), _s(reason.get("caveat"))) if x)
+
 class Spacetime:
     """Calls reducers over HTTP (POST /v1/database/<db>/call/<reducer>, a JSON array of arguments)."""
 
@@ -609,7 +616,7 @@ class Mirror:
         s["places"], s["members"] = {}, {}
         self._put(f"rep:{scan_id}", "set_report", [
             scan_id, s["session"], _s(rep.get("report_id")), rev, _s(rep.get("verdict")),
-            _s((rep.get("verdict_reason") or {}).get("text")), _s((rep.get("summary") or {}).get("text")),
+            verdict_line(rep), _s((rep.get("summary") or {}).get("text")),
             [_s(x.get("text")) for x in rep.get("safety") or [] if x.get("text")], len(rows),
             len(rep.get("cosmetic") or []), len(rep.get("not_inspected") or []),
             len(rep.get("insufficient_evidence") or []), rows, at])
