@@ -138,8 +138,9 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
                         ) -> tuple[dict, dict[int, Any]]:
     """Register every moved segment of a scan package (file fields are absolute local paths) to segment 0.
     Returns (the run row record, {segment: its object cloud in segment 0's frame} for the aligned ones)."""
-    from repairos.pipeline.mesh import keyframes_in_frame, object_depths, plane_height, voxel_for
-    from repairos.recon.segment_align import ObjectCloud, align_clouds, cloud_from_frames
+    from repairos.pipeline.mesh import keyframes_in_frame, plane_height, voxel_for
+    from repairos.recon.segment_align import (ObjectCloud, align_clouds, segment_object_cloud,
+                                              table_height_from_depth)
     from repairos.recon.tsdf import ObjectBox
 
     t0 = time.perf_counter()
@@ -164,9 +165,11 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
     voxel = max(voxel_for(box0), 0.003)
     plane0 = plane_height(pkg_local, frames0, box0)
     if frames0:
-        depths0, _ = object_depths(frames0, box0, plane0)
-        ref = _object_only(cloud_from_frames(frames0, depths0, voxel_m=voxel / 2), box0, voxel / 2)
+        cloud0, sup0 = segment_object_cloud(frames0, box0, plane0, voxel_m=voxel / 2)
+        ref = _object_only(cloud0, box0, voxel / 2)
+        plane0 = sup0.height_m          # the table as the frames measured it under the object
         rec["segment0_source"] = "keyframe depth"
+        rec["segment0_table"] = sup0.to_dict()
     else:   # no depth keyframes: the phone's in-box cloud
         ref = cloud_from_points(pkg_local.get("points_file"), box0, plane0, voxel)
         rec["segment0_source"] = "points_file"
@@ -182,10 +185,16 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
         frames_k = frames_of(pkg_local, {k})
         box_k, box_how = segment_box(pkg_local, seg, est)
         tracked = (seg.get("pose_source") or pkg_local.get("pose_source")) == "object_tracked"
+        table_k = None
         if frames_k:
-            plane_k = None if tracked else own_plane_height(frames_k, box_k)
-            depths_k, _ = object_depths(frames_k, box_k, plane_k)
-            mov = _object_only(cloud_from_frames(frames_k, depths_k, voxel_m=voxel / 2), box_k, voxel / 2)
+            plane_k = None
+            if not tracked:   # no table seen around the box (a stool smaller than the box): the lowest layer in it
+                plane_k = own_plane_height(frames_k, box_k)
+                if plane_k is None:
+                    plane_k = table_height_from_depth(frames_k, box_k)
+            cloud_k, sup_k = segment_object_cloud(frames_k, box_k, plane_k, voxel_m=voxel / 2)
+            mov = _object_only(cloud_k, box_k, voxel / 2)
+            plane_k, table_k = sup_k.height_m, sup_k.to_dict()
         elif seg.get("points_file"):   # no depth keyframes: the segment's own in-box cloud
             plane_k = None if tracked else cloud_plane_height(seg["points_file"], box_k)
             mov = cloud_from_points(seg["points_file"], box_k, plane_k, voxel)
@@ -197,7 +206,7 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
                            mov_plane_y=plane_k, expect_flip=seg.get("reason") in MOVED_REASONS)
         d = res.to_dict()
         d.update(reason=seg.get("reason"), object_moved=True, box=box_how,
-                 plane_height_m=None if plane_k is None else round(plane_k, 4), why_not=d.pop("reason"))
+                 plane_height_m=None if plane_k is None else round(plane_k, 4), table=table_k, why_not=d.pop("reason"))
         rec["segments"].append(d)
         if res.aligned:
             t = res.matrix

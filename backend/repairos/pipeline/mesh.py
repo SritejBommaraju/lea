@@ -308,6 +308,7 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
     from dataclasses import replace
 
     from repairos.pipeline.segments import frames_of, moved_segments, own_plane_height, segment_box
+    from repairos.recon.segment_align import segment_object_depths, table_height_from_depth
     from repairos.recon.tsdf import moved_pose
 
     out = []
@@ -320,9 +321,14 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
         box, _ = segment_box(pkg_local, seg, t)
         if not frames or box is None:
             continue
-        plane = None if (seg.get("pose_source") or pkg_local.get("pose_source")) == "object_tracked" \
-            else own_plane_height(frames, box)
-        depths, _ = object_depths(frames, box, plane)
+        plane = None
+        if (seg.get("pose_source") or pkg_local.get("pose_source")) != "object_tracked":
+            plane = own_plane_height(frames, box)
+            if plane is None:   # no table seen around the box (a stool smaller than it): the lowest layer inside
+                plane = table_height_from_depth(frames, box)
+        # each frame's own (slightly leaning) table cut, as the registration did (segment_align)
+        depths, sup = segment_object_depths(frames, box, plane, min_confidence=2)
+        plane = sup.height_m
         moved = [replace(f, pose=moved_pose(f.pose, t)) for f in frames]
         out.append((moved, depths, box, plane, seg))
     return out

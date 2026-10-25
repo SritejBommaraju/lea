@@ -137,7 +137,8 @@ def test_the_flipped_bottom_is_registered_located_and_fused(flipped_scan):
     rec = asyncio.run(ensure_segment_alignment(ctx, "scan_flip"))
     seg = rec["segments"][0]
     assert seg["aligned"], seg["why_not"]
-    assert seg["fitness"] >= 0.3 and rec.get("cloud_ref")
+    # the shared sides alone (normals agreeing), or both table contacts with free space judged (segment_align)
+    assert (seg["fitness"] >= 0.3 or "both tables" in seg["method"]) and rec.get("cloud_ref")
     truth = np.linalg.inv(FLIP)
     t = np.asarray(seg["transform"]).reshape(4, 4)
     assert np.linalg.norm(t[:3, 3] - truth[:3, 3]) < 0.01
