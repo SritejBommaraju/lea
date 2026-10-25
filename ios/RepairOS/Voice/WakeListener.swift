@@ -199,7 +199,7 @@ final class WakeListener {
                 LeaConversation.active?.cancelSpeculation()
                 // Only "Hey Lea" so far (a pause before the request, 2026-10-24): keep listening for it, no phrase
                 // needed, like Apple's longer wait after the phrase alone.
-                if from == "wake" { listenForFollowUp() }
+                if from == "wake" { silenceTimer?.cancel(); listenForFollowUp() }
                 return
             }
             if let convo = LeaConversation.active { convo.heard(words, engine: "ink2") } else { pendingUtterance = words }

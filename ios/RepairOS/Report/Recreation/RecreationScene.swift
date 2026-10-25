@@ -192,15 +192,15 @@ final class RecreationStage {
             node.simdScale = SIMD3(repeating: on ? 1.3 : 1)
             node.opacity = focus == nil || on ? (m.number == nil ? 0.8 : 1) : 0.45
             if let r = ringRadius(m) {
-                // The problem area circled on the object, its badge moved to the ring's edge so the spot stays visible.
+                // The problem area circled on the object (it stays on the spot); the badge, still its own node for the
+                // separator, is drawn at the ring's upper right (a pivot in its billboard plane) so the spot stays visible.
                 let ring = ringNode(m, radius: r, on: on)
                 ring.simdPosition = at
                 ring.opacity = focus == nil || on ? 1 : 0.4
                 markerRoot.addChildNode(ring)
-                node.constraints = nil
-                node.simdPosition = SIMD3(r * 0.72, r * 0.72, 0.0005)
-                ring.addChildNode(node)
-                node.opacity = 1
+                var pivot = matrix_identity_float4x4
+                pivot.columns.3 = SIMD4(-r * 0.72, -r * 0.72, 0, 1)
+                node.simdPivot = pivot
             }
             // A small dot on the surface itself, hidden where the object is in front of it.
             let dot = SCNSphere(radius: CGFloat(focusRadius) * 0.012)
@@ -211,7 +211,7 @@ final class RecreationStage {
             let dotNode = SCNNode(geometry: dot)
             dotNode.simdPosition = at
             markerRoot.addChildNode(dotNode)
-            if node.parent == nil { markerRoot.addChildNode(node) }
+            markerRoot.addChildNode(node)
         }
     }
 
@@ -222,7 +222,7 @@ final class RecreationStage {
     }
 
     /// A billboard circle round the problem area: a soft glow and a stroke in the marker's colour (dashed for a spot the
-    /// person circled), breathing while it is the selected one. Named like its marker, so a tap on it selects it.
+    /// person circled), a little larger while it is the selected one. A tap on it selects its marker (`markerID`).
     private func ringNode(_ m: RecreationMarker, radius r: Float, on: Bool) -> SCNNode {
         let side = CGFloat(r) * 2 * 1.3
         let plane = SCNPlane(width: side, height: side)
@@ -234,16 +234,11 @@ final class RecreationStage {
         mat.writesToDepthBuffer = false
         plane.materials = [mat]
         let node = SCNNode(geometry: plane)
-        node.name = "marker:\(m.id)"
+        node.name = "ring:\(m.id)"
         node.renderingOrder = 5
         node.constraints = [SCNBillboardConstraint()]
-        if on {
-            let up = SCNAction.scale(to: 1.12, duration: 0.7)
-            up.timingMode = .easeInEaseOut
-            let down = SCNAction.scale(to: 1, duration: 0.7)
-            down.timingMode = .easeInEaseOut
-            node.runAction(.repeatForever(.sequence([up, down])))
-        }
+        // Static, not an animation: the view draws on demand once the turntable stops, which would freeze it.
+        node.simdScale = SIMD3(repeating: on ? 1.12 : 1)
         return node
     }
 
@@ -281,7 +276,9 @@ final class RecreationStage {
     }
 
     func markerID(atHit nodes: [SCNNode]) -> String? {
-        nodes.lazy.compactMap(\.name).first { $0.hasPrefix("marker:") }.map { String($0.dropFirst("marker:".count)) }
+        nodes.lazy.compactMap(\.name).compactMap { name in
+            ["marker:", "ring:"].first(where: name.hasPrefix).map { String(name.dropFirst($0.count)) }
+        }.first
     }
 
     // MARK: Building blocks
