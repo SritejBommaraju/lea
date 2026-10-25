@@ -367,14 +367,16 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
     async def voice_converse(request: Request, d: device_dep,
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
                              audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
-                             held: bool = False):
+                             held: bool = False,
+                             commit: Annotated[str | None, Query(max_length=64)] = None):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
         after its `sentence` event (`audio: true`). A sentence with `audio: false` (no Cartesia, the spend guard
         paused it, or `audio=none`) is for the phone to say in its own voice. `held=1`: an answer started before the
         person finished (Ink-2's eager end); it stays out of the conversation (later answers, the caps) until the
-        phone commits the `held_id` its `done` event carries."""
+        phone commits the `held_id` its `done` event carries. `commit=<held_id>`: that confirmed early answer joins
+        before this one is answered (the phone's commit request failed)."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
@@ -395,6 +397,11 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             stt_ms = round((time.perf_counter() - t0) * 1000)
         report, story, identity = await _grounding(request, scan_id)
         convo = rt.conversations.load(scope)
+        if commit and (convo.get("held") or {}).get("id") == commit:
+            # An early answer the phone confirmed but could not commit (its request failed): it joins first, so this
+            # answer has it in context (Greptile P1 on #26). A stale or repeated id is ignored.
+            _remember(convo, convo["held"].get("turns") or [], rt.settings, time.time())
+            rt.conversations.save(scope, convo)
         talker = rt.talker()
         if paused_line is None and question:
             paused_line = limit_reached(convo, rt.settings, time.time())

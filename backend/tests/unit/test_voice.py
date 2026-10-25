@@ -476,6 +476,21 @@ def test_a_commit_while_another_answer_streams_is_kept(gw):
     assert hist == ["is it the fuse", "what should I check first"]
 
 
+def test_the_next_turn_carries_a_commit_that_failed(gw):
+    """The phone's commit request failed (Greptile P1 on #26): the next turn carries the id (`commit=`), the confirmed
+    exchange joins before that answer, so it is in the answer's context and kept; a repeated id does nothing."""
+    c = gw()
+    scan_id = publish_report(c)
+    r = c.post(f"/v1/voice/converse?audio=none&held=1&scan_id={scan_id}", json={"text": "is it the fuse"})
+    held_id = [p for k, p in frames(r.content) if k == "J"][-1]["held_id"]
+    r = c.post(f"/v1/voice/converse?audio=none&commit={held_id}&scan_id={scan_id}", json={"text": "what should I check first"})
+    assert r.status_code == 200, r.text
+    assert [m["role"] for m in c.claude.bodies[-1]["messages"]] == ["user", "assistant", "user"]
+    r = c.post(f"/v1/voice/converse?audio=none&commit={held_id}&scan_id={scan_id}", json={"text": "and then"})
+    hist = [t["text"] for t in c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"] if t["role"] == "user"]
+    assert hist == ["is it the fuse", "what should I check first", "and then"]
+
+
 def test_sentence_splitter():
     sp = SentenceSplitter()
     assert sp.feed("Hi. It looks") == []          # "Hi." is too short to stand alone

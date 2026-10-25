@@ -118,9 +118,11 @@ enum ConverseEvent: Sendable {
 extension GatewayClient {
     /// `held`: an answer started before the person finished (Ink-2's eager end); the gateway keeps it out of the
     /// conversation until `commitHeld`.
-    func converseRequest(scanID: String?, audio: Data?, text: String?, speech: Bool, held: Bool = false) -> URLRequest {
+    func converseRequest(scanID: String?, audio: Data?, text: String?, speech: Bool, held: Bool = false,
+                         commit: String? = nil) -> URLRequest {
         var q = "audio=\(speech ? "stream" : "none")"
         if held { q += "&held=1" }
+        if let commit { q += "&commit=\(commit)" }
         if let scanID { q += "&scan_id=\(scanID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? scanID)" }
         var req = voiceRequest("POST", "v1/voice/converse", query: q)
         req.timeoutInterval = 25
@@ -135,8 +137,9 @@ extension GatewayClient {
     }
 
     /// The turn's frames as they arrive (1 byte kind, 4 bytes big-endian length, payload).
-    func converse(scanID: String?, audio: Data?, text: String?, speech: Bool, held: Bool = false) -> AsyncThrowingStream<ConverseEvent, Error> {
-        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, held: held)
+    func converse(scanID: String?, audio: Data?, text: String?, speech: Bool, held: Bool = false,
+                  commit: String? = nil) -> AsyncThrowingStream<ConverseEvent, Error> {
+        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, held: held, commit: commit)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
