@@ -482,15 +482,21 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                 now = time.time()
                 exchange = [{"role": "user", "text": question, "at": now},
                             {"role": "assistant", "text": answer, "at": now, **({"action": action} if action else {})}]
+                # Onto the conversation as stored NOW, not the copy loaded when this answer started: a held answer
+                # committed while this one streamed must not be written over (Greptile P1 on #21).
+                latest = rt.conversations.load(scope)
                 if held:   # kept aside until the phone commits it (POST /v1/voice/conversation/commit)
                     held_id = uuid.uuid4().hex
-                    convo["held"] = {"id": held_id, "turns": exchange}
+                    latest["held"] = {"id": held_id, "turns": exchange}
                 else:
-                    _remember(convo, exchange, rt.settings, now)
-                rt.conversations.save(scope, convo)
+                    _remember(latest, exchange, rt.settings, now)
+                rt.conversations.save(scope, latest)
+                turns = _user_turns(latest)
+            else:
+                turns = _user_turns(convo)
             log.info("voice converse %s timings %s", scope, timings)
             yield jframe({"type": "done", "answer_text": answer, "action": action, "timings_ms": timings,
-                          "turns": _user_turns(convo), **({"held_id": held_id} if held_id else {})})
+                          "turns": turns, **({"held_id": held_id} if held_id else {})})
 
         return StreamingResponse(stream(), media_type="application/x-lea-voice",
                                  headers={"Cache-Control": "no-cache", "X-Sample-Rate": str(SAMPLE_RATE)})

@@ -198,6 +198,7 @@ extension GatewayClient {
         var req = voiceRequest("POST", "v1/voice/conversation/commit", query: q)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["held_id": heldID])
+        req.timeoutInterval = 3   // the next turn waits for it: never long
         _ = try await voiceSend(req)
     }
 

@@ -59,6 +59,8 @@ final class LeaConversation {
     /// An answer started early on Ink-2's eager end: held until confirmed.
     @ObservationIgnored private var holding = false
     @ObservationIgnored private var heldEvents: [ConverseEvent] = []
+    /// A confirmed early answer's commit still in flight: the next turn waits for it, so its answer sees that exchange.
+    @ObservationIgnored private var pendingCommit: Task<Void, Never>?
     @ObservationIgnored private var speculativeText: String?
     @ObservationIgnored private var speculativeTurn: UUID?
 
@@ -236,7 +238,8 @@ final class LeaConversation {
         // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
         // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil, held: hold)
+        let gateway = self.gateway, scan = scanID, commit = pendingCommit
+        pendingCommit = nil
         let voice = LeaVoice.shared
         let st = TurnState(start: start, id: voice.beginStream(held: hold), input: audio == nil ? input : "recording",
                            recorded: audio != nil)
@@ -245,6 +248,8 @@ final class LeaConversation {
         if let grant { openSonic(grant, st) }
         task = Task {
             defer { st.sonic?.cancel() }
+            await commit?.value   // the confirmed exchange first (Greptile P1 on #21); commitHeld gives up after 3 s
+            let stream = gateway.converse(scanID: scan, audio: audio, text: text, speech: voiceOn && grant == nil, held: hold)
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
@@ -305,7 +310,7 @@ final class LeaConversation {
             // conversation on the gateway too, so later answers and the turn caps see it.
             if let heldID {
                 let gateway = self.gateway, scan = scanID
-                Task.detached { try? await gateway.commitHeld(scanID: scan, heldID: heldID) }
+                pendingCommit = Task { try? await gateway.commitHeld(scanID: scan, heldID: heldID) }
             }
             diag?.log("voice_turn", ["input": st.input, "eager_start": st.confirmedEarly,
                                      "voice": st.sonic == nil ? "gateway" : (st.sonicFailed ? "sonic_failed" : "sonic_ws"),

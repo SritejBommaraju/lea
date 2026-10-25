@@ -69,6 +69,8 @@ class Claude:
                                               "display_name": "test", "created_at": "2026-01-01T00:00:00Z"})
         self.bodies.append(json.loads(req.content))
         if self.bodies[-1].get("stream"):
+            if getattr(self, "on_stream", None):   # something that happens while an answer streams
+                self.on_stream()
             return httpx2.Response(200, content=sse(self.bodies[-1]["model"], self.deltas),
                                    headers={"Content-Type": "text/event-stream"})
         return httpx2.Response(200, json={
@@ -455,6 +457,23 @@ def test_converse_held_answer_is_remembered_only_once_committed(gw):
     assert commit(confirmed) == {"committed": True, "turns": 2}
     assert history() == ["what should I check first", "is it the fuse"]
     assert commit(confirmed) == {"committed": False, "turns": 2}   # once
+
+
+def test_a_commit_while_another_answer_streams_is_kept(gw):
+    """The phone commits a confirmed early answer while the person's next question is already streaming (Greptile
+    P1 on #21): the streaming answer is saved onto the conversation as it is then, so the committed exchange stays."""
+    c = gw()
+    scan_id = publish_report(c)
+    r = c.post(f"/v1/voice/converse?audio=none&held=1&scan_id={scan_id}", json={"text": "is it the fuse"})
+    held_id = [p for k, p in frames(r.content) if k == "J"][-1]["held_id"]
+
+    def commit_now():   # the commit lands between this answer's start and its save
+        c.claude.on_stream = None
+        assert c.post(f"/v1/voice/conversation/commit?scan_id={scan_id}", json={"held_id": held_id}).json()["committed"]
+    c.claude.on_stream = commit_now
+    converse(c, scan_id, audio=False, mode="none")
+    hist = [t["text"] for t in c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"] if t["role"] == "user"]
+    assert hist == ["is it the fuse", "what should I check first"]
 
 
 def test_sentence_splitter():
