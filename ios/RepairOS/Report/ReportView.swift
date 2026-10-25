@@ -1084,6 +1084,8 @@ struct OtherFindingsSheet: View {
 
 struct ProblemDetailView: View {
     let problem: ReportModel.Problem
+    @State private var page = 0
+    @State private var zoomed: ZoomTarget?
 
     var body: some View {
         ScrollView {
@@ -1141,19 +1143,42 @@ struct ProblemDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    /// The evidence photos; a tap opens the sharp photo full screen (CropZoomView).
     @ViewBuilder private var crops: some View {
-        if problem.crops.count > 1 {
-            TabView {
-                ForEach(problem.crops, id: \.self) { sha in
-                    CropThumb(sha: sha, cornerRadius: Radius.card).padding(.horizontal, 2)
+        Group {
+            if problem.crops.count > 1 {
+                TabView(selection: $page) {
+                    ForEach(Array(problem.crops.enumerated()), id: \.offset) { i, sha in
+                        zoomable(sha, at: i).padding(.horizontal, 2).tag(i)
+                    }
                 }
+                .tabViewStyle(.page(indexDisplayMode: .always))
+                .aspectRatio(1, contentMode: .fit)
+            } else if let sha = problem.crops.first {
+                zoomable(sha, at: 0).aspectRatio(1, contentMode: .fit)
             }
-            .tabViewStyle(.page(indexDisplayMode: .always))
-            .aspectRatio(1, contentMode: .fit)
-        } else if let sha = problem.crops.first {
-            CropThumb(sha: sha, cornerRadius: Radius.card).aspectRatio(1, contentMode: .fit)
         }
+        .fullScreenCover(item: $zoomed) { z in CropZoomView(shas: problem.crops, index: z.index) }
     }
+
+    private func zoomable(_ sha: String, at i: Int) -> some View {
+        CropThumb(sha: sha, cornerRadius: Radius.card)
+            .overlay(alignment: .bottomTrailing) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right").font(.footnote.weight(.semibold))
+                    .foregroundStyle(.white).padding(8).background(.ultraThinMaterial, in: Circle()).padding(Spacing.m)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { zoomed = ZoomTarget(index: i) }
+            .accessibilityElement()
+            .accessibilityLabel("Evidence photo \(i + 1)")
+            .accessibilityHint("Opens the photo full screen")
+            .accessibilityAddTraits(.isButton)
+    }
+}
+
+private struct ZoomTarget: Identifiable {
+    let index: Int
+    var id: Int { index }
 }
 
 // MARK: - Plumbing

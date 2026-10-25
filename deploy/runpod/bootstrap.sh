@@ -67,6 +67,9 @@ URL="https://github.com/$LEA_REPO.git"
 if [ -d "$LEA_CHECKOUT/.git" ]; then
   git -C "$LEA_CHECKOUT" remote set-url origin "$URL"   # a plain URL, whatever was there before
   if [ "$LEA_UPDATE" = 1 ]; then
+    # Nothing else runs git at boot: a lock left by a fetch the last stop interrupted is stale (it blocked the
+    # update and kept an old checkout running, 2026-10-24).
+    find "$LEA_CHECKOUT/.git" -maxdepth 1 -name '*.lock' -print -delete 2>/dev/null | sed 's/^/[bootstrap] removed stale /'
     git_auth_on
     if git -C "$LEA_CHECKOUT" fetch --quiet --depth 1 origin "$LEA_REF" 2>"$LEA_HOME/.git-fetch.err"; then
       git -C "$LEA_CHECKOUT" checkout --quiet --force --detach FETCH_HEAD
@@ -188,18 +191,10 @@ else
   echo "$WANT" > "$LEA_VENV/.lea-lock-sha256"   # written last: an interrupted install is redone on the next boot
 fi
 took "venv" "$T"
-# open3d's native modules: name any shared library the loader still cannot find (the mesh would fail on it)
-O3D_MISSING="$("$LEA_VENV/bin/python" -c '
-import glob, importlib.util, os, subprocess
-spec = importlib.util.find_spec("open3d")
-libs = set()
-if spec and spec.origin:
-    for so in glob.glob(os.path.join(os.path.dirname(spec.origin), "**", "*.so*"), recursive=True):
-        out = subprocess.run(["ldd", so], capture_output=True, text=True).stdout
-        libs |= {line.split()[0] for line in out.splitlines() if "not found" in line}
-print(" ".join(sorted(libs)))
-' 2>/dev/null || true)"
-[ -z "$O3D_MISSING" ] || log "WARNING: open3d cannot find $O3D_MISSING; the 3D scan mesh and the textured recreation will fail (add its package to step 2)"
+# open3d's mesh module must import (a missing system library fails here, by name); its optional ML ops are not needed
+if ! O3D_OUT="$("$LEA_VENV/bin/python" -c 'import open3d; open3d.geometry.TriangleMesh()' 2>&1)"; then
+  log "WARNING: open3d does not load ($(tail -n 1 <<<"$O3D_OUT")); the 3D scan mesh and the textured recreation will fail (add its package to step 2)"
+fi
 
 export PATH="$LEA_VENV/bin:$PATH" PYTHONPATH="$LEA_CHECKOUT/backend" PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1
 
