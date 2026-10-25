@@ -449,3 +449,110 @@ def test_decide_breaks_a_disagreement_with_the_lidar_clouds():
     close = {id(t): 0.60, id(a): 0.65}
     r = decide(_fm(t), None, chk, np.zeros(3), cloud_fit=lambda x: close[id(x)])
     assert not r.merged and "do not pick one clearly" in r.reasons[-1]
+
+
+# --- Greptile review of PR #8 ------------------------------------------------------------------------------------
+def test_apple_cross_check_keeps_the_matched_centre_when_it_drops_the_scale():
+    """The two camera fits disagree on scale by 2% with the object 0.5 m from the moving world's origin: dropping
+    the scale must not keep the translation computed with it (that shifts the object by 10 mm)."""
+    s_a = Sim3(1.0, rot("y", 20), np.array([0.0, -0.2, 0.1]))
+    s_b = Sim3(1.02, rot("y", -50) @ rot("x", 180), np.array([0.3, -0.25, -0.1]))
+    ja, jb = dome(15, seed=1), dome(12, seed=2)
+    ref = [cli.ApplePose(i, f"a{i}", _m4(np.eye(3), ja[i]), None) for i in range(15)]
+    mov = [cli.ApplePose(i, f"b{i}", _m4(np.eye(3), jb[i]), None) for i in range(12)]
+    mov_centres = {f"b{i}": s_b.apply(jb[i:i + 1])[0] + np.array([0.5, 0.0, 0.0]) for i in range(12)}
+    chk = apple_cross_check(ref, mov, {f"a{i}": s_a.apply(ja[i:i + 1])[0] for i in range(15)}, mov_centres)
+    s_b_off = Sim3(1.02, s_b.r, s_b.t + np.array([0.5, 0.0, 0.0]))
+    want = s_a @ s_b_off.inverse()                      # moving world -> Apple -> reference, with the scale
+    centre = np.mean(list(mov_centres.values()), axis=0)
+    assert chk.transform.scale == 1.0 and chk.per_segment["scale_moving_to_reference"] == pytest.approx(1 / 1.02)
+    shift = np.linalg.norm(chk.transform.apply(centre[None])[0] - want.apply(centre[None])[0])
+    assert shift < 0.001                                 # was (1 - scale) * |centre| = 10 mm
+
+
+def test_the_heic_cache_tells_same_named_images_of_two_captures_apart(tmp_path):
+    from repairos.recon.merge import gray_cache_path
+
+    a, b = tmp_path / "top" / "IMG_0001.HEIC", tmp_path / "bottom" / "IMG_0001.HEIC"
+    for p, data in ((a, b"top"), (b, b"bottom")):
+        p.parent.mkdir()
+        p.write_bytes(data)
+    cache = tmp_path / "cache"
+    assert gray_cache_path(a, 1600, cache) != gray_cache_path(b, 1600, cache)
+    assert gray_cache_path(a, 1600, cache) == gray_cache_path(a, 1600, cache)
+    before = gray_cache_path(a, 1600, cache)
+    a.write_bytes(b"top, captured again")
+    assert gray_cache_path(a, 1600, cache) != before     # a replaced file is decoded again
+
+
+def test_the_apple_mesh_is_read_without_open3d(tmp_path, monkeypatch):
+    import sys
+
+    from repairos.importers.ply import mesh_ply_bytes
+    from repairos.recon.build import read_mesh_ply
+
+    v = np.array([[0, 0, 0], [0.1, 0, 0], [0, 0.1, 0], [0, 0, 0.1]], float)
+    f = np.array([[0, 1, 2], [0, 1, 3], [1, 2, 3]])
+    p = tmp_path / "mesh.ply"
+    p.write_bytes(mesh_ply_bytes(v, f))                  # the layout recon-cli writes (writeMeshPLY)
+    monkeypatch.setitem(sys.modules, "open3d", None)     # the optional geometry extra is not installed
+    rv, rf = read_mesh_ply(p)
+    np.testing.assert_allclose(rv, v, atol=1e-6)
+    np.testing.assert_array_equal(rf, f)
+
+
+def test_a_mesh_left_by_an_earlier_run_is_not_the_current_one(tmp_path):
+    from repairos.recon.build import apple_mesh_of
+
+    (tmp_path / "mesh.ply").write_bytes(b"ply\n")       # an earlier run's output in a reused out dir
+    poses_only = cli.CliResult({"ok": True, "poses": 3}, [], 0, 1.0, 10.0)   # --detail none, or the model failed
+    assert apple_mesh_of(poses_only) is None
+    now = cli.CliResult({"ok": True, "poses": 3, "mesh_file": str(tmp_path / "mesh.ply")}, [], 0, 1.0, 10.0)
+    assert apple_mesh_of(now) == tmp_path / "mesh.ply"
+    failed = cli.CliResult({"ok": False, "mesh_file": str(tmp_path / "mesh.ply")}, [], 1, 1.0, 10.0)
+    assert apple_mesh_of(failed) is None
+
+
+def test_the_apple_mesh_is_used_only_where_every_segment_sits_where_apple_put_it():
+    from repairos.recon.build import apple_placed_every_segment
+
+    agreed = {"merged": True, "source": "features+icp", "agreement": {"displacement_mm": 2.0, "rotation_deg": 0.5}}
+    apple = {"merged": True, "source": "apple_joint", "agreement": {}}
+    refused = {"merged": False, "source": None, "agreement": {"displacement_mm": 40.0, "rotation_deg": 9.0}}
+    overruled = {"merged": True, "source": "features",
+                 "agreement": {"displacement_mm": 30.0, "rotation_deg": 6.0, "cloud_fit_3mm": {"features": 0.8}}}
+    unchecked = {"merged": True, "source": "features", "agreement": {}}
+    assert apple_placed_every_segment([]) and apple_placed_every_segment([agreed, apple])
+    for bad in (refused, overruled, unchecked):
+        assert not apple_placed_every_segment([agreed, bad])
+
+
+def test_posed_photos_without_depth_stay_stills(tmp_path):
+    from repairos.recon.build import SegmentInput, posed_samples, stills_of
+
+    cam = Pinhole(1400.0, 1400.0, 960.0, 720.0, 1920, 1440)
+    pose = look_at([0.2, 0.2, 0.2], [0, 0, 0])
+    with_depth = cli.SampleInfo("IMG_1.HEIC", 1920, 1440, pose, cam, None, None, None, None,
+                                tmp_path / "d.bin", None, (192, 256))
+    no_depth = cli.SampleInfo("IMG_2.HEIC", 1920, 1440, pose, cam, None, None, None, None, None, None, None)
+    no_pose = cli.SampleInfo("IMG_3.HEIC", 1920, 1440, None, cam, None, None, None, None, None, None, None)
+    posed = posed_samples([with_depth, no_depth, no_pose])
+    assert [s.file for s in posed] == ["IMG_1.HEIC", "IMG_2.HEIC"]
+    stills = stills_of([SegmentInput(tmp_path, "top")], [posed], [Sim3.identity()], [], "scan_t")
+    assert [s["still_id"] for s in stills] == ["IMG_1", "IMG_2"]
+    assert stills[1]["camera"]["position_m"] == pytest.approx([0.2, 0.2, 0.2])
+    assert stills[1]["image_file"] == str(tmp_path / "IMG_2.HEIC") and stills[1]["width_px"] == 1920
+
+
+def test_a_python_step_over_the_memory_limit_is_stopped_while_it_runs(monkeypatch):
+    import time
+
+    from repairos.recon import build as B
+
+    monkeypatch.setattr(B, "self_rss_gb", lambda: 9.0)  # the step's resident memory, over a 6 GB limit
+    t0 = time.monotonic()
+    with pytest.raises(cli.MemoryGuardError, match="fusion"):
+        with B.memory_watch(6.0, "fusion", poll_s=0.02):
+            while time.monotonic() - t0 < 5:             # a long step that never checks memory itself
+                time.sleep(0.01)
+    assert time.monotonic() - t0 < 2                      # stopped during the step, not after it

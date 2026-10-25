@@ -57,15 +57,21 @@ enum UIGallery {
             case "stage", "stage-landing":
                 NavigationStack {
                     if let dir = session {
-                        ReportStageView(report: sessionReport(dir), symptom: "Stopped heating", model: sessionModel(dir),
-                                        sessionDir: dir, openFull: {}, fresh: screen == "stage-landing",
-                                        focus: focusFirst ? sessionReport(dir).mostLikely.first?.id : nil)
+                        let report = sessionReport(dir)
+                        ReportStageView(report: report, symptom: CommandLine.arguments.contains("--ui-no-story") ? nil : "Stopped heating",
+                                        model: sessionModel(dir), sessionDir: dir, openFull: {}, fresh: screen == "stage-landing",
+                                        hero: sessionHero(dir), focus: focusFirst ? report.mostLikely.first?.id : nil)
                             .navigationTitle("").navigationBarTitleDisplayMode(.inline)
                             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") {}.fontWeight(.semibold) } }
+                            // `--ui-build-shell`: build the phone's recreation shell for this session (next launch shows it).
+                            .task {
+                                guard CommandLine.arguments.contains("--ui-build-shell"), let id = sessionScanID(dir) else { return }
+                                RecreationCenter.shared.buildShell(sessionDir: dir, scanID: id)
+                            }
                     }
                 }
                 .tint(Palette.accent)
-                .environment(\.cropSource, session.map { CropSource.saved(in: CropSource.dir($0), fallback: nil) } ?? crops)
+                .environment(\.cropSource, session.map { CropSource.saved(in: CropSource.dir($0), fallback: blobs.map(CropSource.folder)) } ?? crops)
             case "stage-old":
                 // The same real session in the previous report layout, for before/after.
                 NavigationStack {
@@ -108,6 +114,26 @@ enum UIGallery {
         let json = (try? Data(contentsOf: dir.appending(path: "report.json")))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         return ReportModel(json: json ?? [:])
+    }
+
+    /// `--ui-blobs <dir>`: a gateway blob store (`<aa>/<sha>`) to fill the session's crops from.
+    static var blobs: URL? { value("--ui-blobs").map { URL(fileURLWithPath: $0, isDirectory: true) } }
+
+    static func sessionScanID(_ dir: URL) -> String? {
+        let json = (try? Data(contentsOf: dir.appending(path: "report.json")))
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        return json?["scan_id"] as? String
+    }
+
+    /// The recreation hero when the session's scan has one (same rule as ReportView.stageHero).
+    @MainActor static func sessionHero(_ dir: URL) -> StageHero {
+        guard let id = sessionScanID(dir) else { return .automatic }
+        let scanDir = RecreationCenter.scanDir(sessionDir: dir, scanID: id)
+        guard RecreationCenter.shared.available(scanDir) else { return .automatic }
+        return .custom { ctx in
+            AnyView(RecreationView(source: .scan(scanDir), markers: ctx.markers, focus: ctx.focus,
+                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe))
+        }
     }
 
     /// The session's own 3D: the first scan folder holding a model.

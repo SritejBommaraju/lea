@@ -24,8 +24,30 @@ struct CoverageDome: Sendable, Equatable {
     var count: Int { covered.count }
     var fraction: Double { Double(covered.count) / Double(Self.cellCount) }
     var facesDone: Bool { closeFaces.count >= requiredFaces }
-    /// Complete: enough sides photographed, and every required face seen up close.
-    var isDone: Bool { covered.count >= Self.doneCells && facesDone }
+    /// Set by the scan when `ScanProgress` says it has enough (the dial shows done).
+    var enough = false
+    /// Complete: the scan has enough (`ScanProgress`), or the old full dome with every required face.
+    var isDone: Bool { enough || (covered.count >= Self.doneCells && facesDone) }
+
+    /// Azimuth sectors with a photo from the side (the two lower rings, 0–55° up) and from above (top ring).
+    var sideSectors: Int { Set(covered.filter { $0 / Self.sectors < Self.rings - 1 }.map { $0 % Self.sectors }).count }
+    var topSectors: Int { Set(covered.filter { $0 / Self.sectors == Self.rings - 1 }.map { $0 % Self.sectors }).count }
+
+    /// The nearest cell that would still raise `ScanProgress`: a side sector not yet photographed (either lower
+    /// ring), else a top sector, while those are short; nil when the views are complete.
+    func nearestNeeded(camera: SIMD3<Float>, box: ObjectBox, side: Int = ScanProgress.sideSectors,
+                       top: Int = ScanProgress.topSectors) -> Int? {
+        let d = simd_normalize(camera - box.center)
+        let sideHave = Set(covered.filter { $0 / Self.sectors < Self.rings - 1 }.map { $0 % Self.sectors })
+        let topHave = Set(covered.filter { $0 / Self.sectors == Self.rings - 1 }.map { $0 % Self.sectors })
+        var candidates: [Int] = []
+        if sideHave.count < side {
+            candidates = (0..<(Self.sectors * (Self.rings - 1))).filter { !sideHave.contains($0 % Self.sectors) }
+        } else if topHave.count < top {
+            candidates = (0..<Self.sectors).map { (Self.rings - 1) * Self.sectors + $0 }.filter { !topHave.contains($0 % Self.sectors) }
+        }
+        return candidates.max { simd_dot(Self.direction($0), d) < simd_dot(Self.direction($1), d) }
+    }
 
     mutating func cover(_ cell: Int) { covered.insert(cell) }
     func isCovered(_ cell: Int) -> Bool { covered.contains(cell) }
@@ -210,5 +232,105 @@ enum FramingGate {
         }
         let framed = centerCentral || share >= minCentralShare
         return Result(orbit: framed && (hit ?? true), close: hit ?? false, centerHitsBox: hit, centralShare: share)
+    }
+}
+
+
+/// One number for "how much of what the backend needs is in", 0…1, and whether that is enough to stop.
+///
+/// Main scan: photo views (side sectors at the orbit resolution target, `sideSectors` of 12 across the two lower
+/// rings, plus `topSectors` from above), close-ups of every required face (small objects), and LiDAR keyframes from
+/// enough directions for the mesh (`meshSectors` of 12 azimuth sectors).
+///   with faces:    0.50 · views + 0.25 · faces + 0.25 · mesh
+///   without faces: 0.65 · views + 0.35 · mesh
+/// Enough at 100 %, or at `goodEnough` with every required face in.
+///
+/// Bottom (flip) segment: `flipSectors` underside sectors photographed, `flipMeshSectors` keyframe sectors, and the
+/// line-up with the first scan: 0.6 · views + 0.2 · mesh + 0.2 · lined up. Enough when views and mesh are complete
+/// and it lined up, or when it could not line up within `flipAlignWait` (the backend lines it up then).
+struct ScanProgress: Equatable, Sendable {
+    static let sideSectors = 8
+    static let topSectors = 2
+    static let meshSectors = 9
+    static let flipSectors = 6
+    static let flipMeshSectors = 6
+    static let goodEnough = 0.85
+    static let flipAlignWait: TimeInterval = 25
+
+    var views: Double
+    var faces: Double?
+    var mesh: Double
+    var linedUp: Bool?
+    var value: Double
+    var enough: Bool
+
+    var percent: Int { Int((value * 100).rounded(.down)) }
+
+    static func main(dome: CoverageDome, keyframeSectors: Int) -> ScanProgress {
+        let views = Double(min(dome.sideSectors, sideSectors) + min(dome.topSectors, topSectors)) / Double(sideSectors + topSectors)
+        let mesh = Double(min(keyframeSectors, meshSectors)) / Double(meshSectors)
+        let faces: Double? = dome.requiredFaces > 0 ? Double(min(dome.closeFaces.count, dome.requiredFaces)) / Double(dome.requiredFaces) : nil
+        let value = faces.map { 0.5 * views + 0.25 * $0 + 0.25 * mesh } ?? (0.65 * views + 0.35 * mesh)
+        let enough = value >= 1 - 1e-9 || (value >= goodEnough && dome.facesDone)
+        return ScanProgress(views: views, faces: faces, mesh: mesh, linedUp: nil, value: value, enough: enough)
+    }
+
+    static func flip(dome: CoverageDome, keyframeSectors: Int, linedUp: Bool, elapsed: TimeInterval) -> ScanProgress {
+        let views = Double(min(dome.sideSectors + dome.topSectors, flipSectors)) / Double(flipSectors)
+        let mesh = Double(min(keyframeSectors, flipMeshSectors)) / Double(flipMeshSectors)
+        let value = 0.6 * views + 0.2 * mesh + 0.2 * (linedUp ? 1 : 0)
+        let covered = views >= 1 && mesh >= 1
+        return ScanProgress(views: views, faces: nil, mesh: mesh, linedUp: linedUp, value: value,
+                            enough: covered && (linedUp || elapsed >= flipAlignWait))
+    }
+}
+
+/// Which captures add information (pure, unit-tested): a still is worth taking for a new view cell, or when it is
+/// clearly better than the best one there; a depth keyframe when no kept keyframe is near its viewpoint.
+enum CaptureSelection {
+    /// Stills per segment, at most.
+    static let maxStills = 24
+    /// Keyframes per segment, at most; past `keyframeSoftCap` only a keyframe from a new direction cell is kept.
+    static let maxKeyframes = 60
+    static let keyframeSoftCap = 45
+    /// A kept keyframe within this distance and view angle makes a new one redundant.
+    static let keyframeSpacing: Float = 0.05
+    static let keyframeTurn: Float = 8 * .pi / 180
+    /// "Clearly better": this much more resolution, or as much resolution and this much sharper.
+    static let betterPx: Float = 1.25
+    static let betterSharp = 1.3
+
+    struct Best: Equatable, Sendable {
+        var id: String
+        var pxPerMm: Float
+        var sharpness: Double
+    }
+
+    /// Before shooting: a new cell, or a clearly closer view of a covered one (predicted resolution).
+    static func worthShooting(cell: Int?, predictedPx: Float?, best: [Int: Best]) -> Bool {
+        guard let cell, let b = best[cell] else { return true }
+        return (predictedPx ?? 0) >= b.pxPerMm * betterPx
+    }
+
+    /// After shooting: does this still beat the best one already in its cell?
+    static func better(pxPerMm: Float, sharpness: Double, than b: Best) -> Bool {
+        pxPerMm >= b.pxPerMm * betterPx || (pxPerMm >= b.pxPerMm * 0.95 && sharpness >= b.sharpness * betterSharp)
+    }
+
+    enum KeyframeDecision: String, Sendable { case keep, near, cap, softCap }
+
+    /// A keyframe adds information when no kept one is within `keyframeSpacing` and `keyframeTurn` of it; past the
+    /// soft cap only one from a direction cell with no keyframe yet; never past the cap.
+    static func keyframe(pose m: simd_float4x4, kept: [simd_float4x4], cell: Int?, cellsWithKeyframes: Set<Int>) -> KeyframeDecision {
+        if kept.count >= maxKeyframes { return .cap }
+        let p = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
+        let f = simd_normalize(-SIMD3(m.columns.2.x, m.columns.2.y, m.columns.2.z))
+        let redundant = kept.contains { k in
+            simd_distance(p, SIMD3(k.columns.3.x, k.columns.3.y, k.columns.3.z)) < keyframeSpacing
+                && acos(max(-1, min(1, simd_dot(f, simd_normalize(-SIMD3(k.columns.2.x, k.columns.2.y, k.columns.2.z)))))) < keyframeTurn
+        }
+        if redundant { return .near }
+        if kept.count >= keyframeSoftCap, let cell, cellsWithKeyframes.contains(cell) { return .softCap }
+        return .keep
     }
 }

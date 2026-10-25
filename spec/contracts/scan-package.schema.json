@@ -38,15 +38,25 @@
     },
     "segments": {
       "type": "array",
-      "description": "Later capture segments of the same session: the object flipped for its underside (reason flipped: it moved, so registering the segment is a separate step on the Mac), or more photos of the same, unmoved object continued from the report (reason continued). Each has its own locked box and LiDAR cloud in the same ARKit world frame unless aligned is false. points_file/crop_box above are segment 0.",
+      "description": "Later capture segments of the same session: the object flipped for its underside (reason flipped, object_moved true: a quick mini-scan of the bottom in its own ARKit session; transform_to_segment0, from the phone's live alignment or the backend's registration, puts it on segment 0), or more photos of the same, unmoved object continued from the report (reason continued). Each has its own locked box and LiDAR cloud, in the same ARKit world frame as segment 0 unless aligned is false or object_moved is true. points_file/crop_box above are segment 0.",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["segment", "reason"],
+        "allOf": [
+          {
+            "if": { "required": ["object_moved", "aligned"], "properties": { "object_moved": { "const": true }, "aligned": { "const": true } } },
+            "then": { "required": ["transform_to_segment0"] }
+          }
+        ],
         "properties": {
           "segment": { "type": "integer", "minimum": 1 },
-          "reason": { "type": "string", "enum": ["flipped", "continued"], "description": "flipped: the object was turned over for its underside (it moved: not in segment 0's object frame). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id)." },
-          "aligned": { "type": "boolean", "description": "False when ARKit could not relocalise this segment into the scan's world frame: its stills' poses are not comparable with the scan, and the backend does not place their findings on it. Absent = aligned." },
+          "reason": { "type": "string", "enum": ["flipped", "continued"], "description": "flipped: the object was turned over for its underside (\"Scan the bottom\"; it moved: object_moved true, not in segment 0's frame unless transform_to_segment0 is applied). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id)." },
+          "aligned": { "type": "boolean", "description": "False when this segment's poses are not comparable with segment 0: ARKit could not relocalise it into the scan's world frame, or (object_moved) no transform_to_segment0 was found yet; the backend does not place its findings on the model until it registers the segment. Absent = aligned. For an object_moved segment, true means transform_to_segment0 is set and must be applied to its poses and points." },
+          "object_moved": { "type": "boolean", "description": "True when the object was moved for this segment (a flip): its keyframes, stills, crop_box and points_file are in this segment's own ARKit world frame, which says nothing about segment 0's object frame; only transform_to_segment0 relates them. Absent = false." },
+          "transform_to_segment0": { "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16, "description": "Row-major 4x4 rigid transform, metres: [p_segment0, 1] = T * [p_this_segment, 1] for points and camera poses of this segment (object_moved segments). From the phone's live 6-DoF registration of this segment's in-box cloud to segment 0's (pose_source arkit, transform_quality) or from the backend's." },
+          "transform_quality": { "type": "number", "minimum": 0, "maximum": 1, "description": "Confidence in transform_to_segment0, 0-1 (fit overlap, RMS and how clearly it beat the next best pose; a symmetric object without telling colour scores low)." },
+          "pose_source": { "type": "string", "enum": ["arkit", "object_tracked"], "description": "Where this segment's own poses come from (absent = arkit)." },
           "crop_box": { "$ref": "#/$defs/box" },
           "points_file": { "type": "string", "description": "Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world)." },
           "point_count": { "type": "integer", "minimum": 0 }

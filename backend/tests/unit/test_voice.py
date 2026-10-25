@@ -47,6 +47,8 @@ class Cartesia:
             return httpx2.Response(self.fail, json={"error": "nope"})
         if req.url.path == "/tts/bytes":
             return httpx2.Response(200, content=self.pcm, headers={"Content-Type": "audio/pcm"})
+        if req.url.path == "/access-token":
+            return httpx2.Response(200, json={"token": "short-lived-token"})
         if req.url.path == "/stt":
             return httpx2.Response(200, json={"type": "transcript", "text": f" {self.transcript} ", "language": "en",
                                               "duration": 1.4})
@@ -429,6 +431,32 @@ def test_sentence_splitter():
     assert sp.flush() == ["Then"]
 
 
+# ------------------------------------------------------------------ realtime token
+def test_token_is_short_lived_and_keeps_the_key_on_the_gateway(gw):
+    c = gw()
+    r = c.post("/v1/voice/token")
+    assert r.status_code == 200
+    out = r.json()
+    assert out["token"] == "short-lived-token" and out["expires_in"] == 300 and out["stt_model"] == "ink-2"
+    assert out["keyterms"] == ["Lea", "Leah"] and FAKE_KEY not in r.text
+    req = c.cart.calls[-1]
+    assert req.url.path == "/access-token" and req.headers["authorization"] == f"Bearer {FAKE_KEY}"
+    assert json.loads(req.content) == {"grants": {"stt": True, "tts": True}, "expires_in": 300}
+    assert c.post("/v1/voice/stream?kind=stt").json() == {"ok": True}
+    assert gw(key=None).post("/v1/voice/token").status_code == 503
+
+
+def test_token_and_streams_go_through_the_spend_guard(gw, spend):
+    c = gw()
+    c.post("/v1/voice/token")
+    c.post("/v1/voice/stream?kind=tts")
+    assert [s for s, _ in spend.calls] == ["cartesia", "cartesia"]
+    spend.blocked.add("cartesia")
+    assert c.post("/v1/voice/token").json()["error"] == "voice_paused"
+    assert c.post("/v1/voice/stream?kind=stt").json()["error"] == "voice_paused"
+    assert sum(1 for q in c.cart.calls if q.url.path == "/access-token") == 1
+
+
 # ------------------------------------------------------------------ spend guard
 class SpendLimit(RuntimeError):
     def __init__(self, service):
@@ -482,6 +510,32 @@ def test_paused_services_fall_back_to_spoken_lines(gw, spend):
     events = [p for k, p in fr if k == "J"]
     assert {"type": "audio_off"} in events and not any(k == "A" for k, _ in fr)
     assert len([e for e in events if e["type"] == "sentence"]) == 3
+
+
+def test_voice_claude_answers_record_their_measured_token_cost(gw):
+    """Greptile (PR #13): voice answers were charged at the shared estimate only. Each one now replaces it with the
+    cost of its own token counts (repairos.spend, the real module with this test's own counter file), priced by the
+    model that answered."""
+    from repairos import spend as real_spend
+
+    def usd_day() -> float:   # unrounded (usage() rounds to 4 places; one short answer is about 2e-5 USD)
+        c, _ = real_spend._conn()
+        return real_spend._window(c, "anthropic", real_spend._now())["usd_day"]
+
+    c = gw()
+    scan_id = publish_report(c)
+    price = real_spend.caps("anthropic")["usd_per_mtok"]["claude-haiku-5-5"]
+    assert usd_day() == 0
+    c.post("/v1/voice/ask", json={"scan_id": scan_id, "question": "is it safe to open"})
+    ask = (100 * price["input"] + 20 * price["output"]) / 1e6     # the Claude mock's usage for a message
+    assert usd_day() == pytest.approx(ask)            # not the 0.006 USD estimate
+    n = len(c.claude.bodies)
+    converse(c, scan_id, audio=False)
+    streams = len([b for b in c.claude.bodies[n:] if b.get("stream")])
+    turn = (50 * price["input"] + 30 * price["output"]) / 1e6    # a streamed turn: message_start + message_delta
+    assert streams >= 1
+    assert usd_day() == pytest.approx(ask + streams * turn)
+    assert real_spend.estimate_usd("anthropic") < real_spend.caps("anthropic")["usd_per_call"]   # learnt, not stuck
 
 
 # ------------------------------------------------------------------ live (only with a real key)

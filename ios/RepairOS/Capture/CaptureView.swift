@@ -45,6 +45,7 @@ struct SessionFlowView: View {
                 ReportView(record: current, upload: upload, close: { dismiss() })
                     .id(reportVersion)
                     .environment(\.continueScan, canContinue ? ContinueScanAction(run: continueScanning) : nil)
+                    .environment(\.scanBottom, canContinue ? ScanBottomAction { _ in scanBottom(current) } : nil)   // Capture/Handheld/FlipSegment
                     .environment(\.liveEvents, live)
                     // The Done gather hands over to the same cloud on the report's dark stage: a plain fade, no zoom.
                     .transition(.opacity)
@@ -58,6 +59,7 @@ struct SessionFlowView: View {
                 ObjectCaptureFlowView(flow: flow, close: { dismiss() }) { finished = flow.record }
             } else if let scan {
                 ScanView(scan: scan, live: live, close: { dismiss() }) { r in withAnimation(Motion.reveal) { finished = r } }
+                    .environment(\.scanBottom, scan.hasLiDAR ? ScanBottomAction { r in if let r { finished = r; scanBottom(r) } } : nil)
                     .transition(.opacity)
             }
         }
@@ -108,6 +110,15 @@ struct SessionFlowView: View {
     private func continueScanning() {
         let latest = app.storage.listSessions().first { $0.id == current.id } ?? current
         scan = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+    }
+
+    /// "Scan the bottom": a continuation that is a quick scan of the flipped object (Capture/Handheld/FlipSegment).
+    private func scanBottom(_ r: SessionRecord) {
+        let latest = app.storage.listSessions().first { $0.id == r.id } ?? r
+        let s = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        s.flip = FlipSegmentController(scan: s)
+        LeaVoice.shared.dynamicCue(FlipSegmentController.prompt, diag: s.diag)
+        withAnimation(Motion.reveal) { scan = s }
     }
 }
 
@@ -194,6 +205,7 @@ struct ScanView: View {
                     .allowsHitTesting(false)
                 // No photo / areas counters here: the shot tick confirms each photo; the report counts the rest.
                 HandheldModeChip(scan: scan, wanted: $turnWanted)
+                ScanBottomChip(scan: scan)
                 button
             }
             .padding(.horizontal, Spacing.l)
@@ -293,7 +305,7 @@ struct ScanView: View {
 
     private var cue: (text: String, symbol: String, tone: CueBanner.Tone) {
         switch scan.stage {
-        case .ready: return CueStyle.look(scan.cue ?? "Point at the object")
+        case .ready: return CueStyle.look(scan.cue ?? (scan.flip != nil ? FlipSegmentController.prompt : "Point at the object"))
         case .locking: return CueStyle.look(scan.cue ?? "Finding the object…")
         case .scanning:
             if let c = scan.cue { return CueStyle.look(c) }
@@ -311,6 +323,9 @@ struct ScanView: View {
                 .disabled(scan.stage == .locking)
         case .scanning:
             Button(action: done) { Label("Done", systemImage: "checkmark") }
+                .symbolEffect(.pulse, options: .repeating, isActive: scan.enough)   // the scan has enough: tap Done
+                .scaleEffect(scan.enough ? 1.04 : 1)
+                .animation(scan.enough ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true) : .default, value: scan.enough)
                 .buttonStyle(.primary(.light))
         case .failed:
             Button("Close", action: close).buttonStyle(.primary(.light))
@@ -348,6 +363,7 @@ enum CueStyle {
         "Walk slowly around it": ("figure.walk", .guide),
         "Keep walking around it": ("figure.walk", .guide),
         "Move closer here": ("plus.magnifyingglass", .guide),
+        ScanSession.enoughCue: ("checkmark", .good),
         "Hold still a moment": ("hand.raised.fill", .guide),
         "Tap the object to focus on it": ("hand.tap.fill", .guide),
         "Too dark: add light": ("lightbulb.fill", .caution),
