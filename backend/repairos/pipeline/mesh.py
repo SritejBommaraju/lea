@@ -348,7 +348,8 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
 
 
 def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]], *,
-                   max_triangles: int | None = None) -> ScanMesh | None:
+                   max_triangles: int | None = None,
+                   segment_transforms: Mapping[int, np.ndarray] | None = None) -> ScanMesh | None:
     """A thin object's mesh and cloud from its photo slab (recreation.flat), the 3D view when it is found: LiDAR
     cannot resolve a board, the slab carries its photos at full resolution. None when the object is not thin or the
     slab is not checked (then the LiDAR mesh is built as usual). The slab's top grid is coarsened to keep the mesh
@@ -361,13 +362,18 @@ def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[
     if m is None:
         log.info("no flat model: %s", why)
         return None
-    v, f, c = slab_mesh(m, max_triangles=max_triangles)
+    if segment_transforms:   # a registered flip: the same two-faced slab as the recreation (recreation.flat_flip)
+        from repairos.recreation.flat_flip import with_underside
+
+        m = with_underside(m, pkg_local, stills_local, segment_transforms)
+    v, f, c = slab_mesh(m, max_triangles=max_triangles)   # its underside a coloured grid like its top
     p, pc = slab_points(m)
     p, pc = thin_cloud(p, pc, CLOUD_MAX_POINTS)
     ply = mesh_ply_bytes(v, f, c, comments=("repairos flat object slab, arkit_world metres",))
     st = m.stats
     return ScanMesh(ply=ply, vertices=len(v), triangles=len(f), keyframes=len(pkg_local.get("keyframes") or []),
                     cloud_ply=points_ply(p, pc), cloud_points=len(p), hero="points",
+                    bottom_segments=[int(k) for k in st.get("bottom_segments") or []],
                     hero_reason="a thin object: its photos on a slab of its measured outline show it best",
                     size_m=round(float(max(st["measured_mm"])) / 1000, 4),
                     seconds={"total_s": round(time.perf_counter() - t0, 3)},
@@ -386,9 +392,9 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
     segments the server registered are fused in too, in segment 0's frame (the flipped bottom); when that leaves no
     mesh or a few scraps, the top scan alone is used (the gate before it is pipeline/segments.merge_gate). A thin
     object with photos is its photo slab (flat_scan_mesh). Raises MeshUnavailable."""
-    if stills_local:   # a thin object (a board, a remote): the photo slab from segment 0 (recreation.flat); its
-        # flipped bottom, registered or not, stays photos: LiDAR resolves neither side of a thin object
-        flat = flat_scan_mesh(pkg_local, stills_local, max_triangles=max_triangles)
+    if stills_local:   # a thin object (a board, a remote): the photo slab from segment 0 (recreation.flat), its
+        # registered flip's underside from that segment's own photos (recreation.flat_flip); LiDAR resolves neither
+        flat = flat_scan_mesh(pkg_local, stills_local, max_triangles=max_triangles, segment_transforms=segment_transforms)
         if flat is not None:
             return flat
     if segment_transforms:   # a merge that breaks the mesh (nothing left, a few scraps): the top scan alone

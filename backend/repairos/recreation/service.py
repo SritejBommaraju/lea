@@ -117,6 +117,10 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
         from repairos.recreation.flat import scan_flat_model
 
         flat, why = scan_flat_model(pkg_local, stills_local)
+        if flat is not None and segment_transforms:   # its registered flip: the underside from its own photos
+            from repairos.recreation.flat_flip import with_underside
+
+            flat = with_underside(flat, pkg_local, stills_local, segment_transforms)
         if flat is not None:
             buf = io.BytesIO()
             flat.atlas.save(buf, "JPEG", quality=92)
@@ -125,7 +129,8 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
             stats = {k: v for k, v in flat.stats.items() if isinstance(v, (int, float, str))}
             return Recreation("flat_slab", "usdz", data, [float(x) for x in (lo + hi) / 2],
                               float(np.linalg.norm(hi - lo) / 2), {"total_s": round(time.monotonic() - t0, 3)},
-                              {**stats, "measured_mm": "x".join(str(x) for x in flat.stats["measured_mm"])}, why)
+                              {**stats, "measured_mm": "x".join(str(x) for x in flat.stats["measured_mm"]),
+                               "bottom_segments": list(flat.stats.get("bottom_segments") or [])}, why)
         if why.startswith("thin"):   # a thin object whose slab failed its checks: say why, build the usual mesh
             note = (note + "; " if note else "") + why
     try:

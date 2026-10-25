@@ -14,6 +14,7 @@ are inspected and listed, but their findings get no 3D point.
 """
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -232,8 +233,8 @@ def frames_of(pkg_local: Mapping[str, Any], segments: set[int]) -> list[Any]:
     return frames_from_scan_package({**pkg_local, "keyframes": kfs}, Path("/"))
 
 
-def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = TIME_BUDGET_S
-                        ) -> tuple[dict, dict[int, Any]]:
+def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = TIME_BUDGET_S,
+                        stills_local: list[dict] | None = None) -> tuple[dict, dict[int, Any]]:
     """Register every moved segment of a scan package (file fields are absolute local paths) to segment 0.
     Returns (the run row record, {segment: its object cloud in segment 0's frame} for the aligned ones)."""
     from repairos.pipeline.mesh import keyframes_in_frame, plane_height, voxel_for
@@ -305,6 +306,16 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
         d = res.to_dict()
         d.update(reason=seg.get("reason"), object_moved=True, box=box_how,
                  plane_height_m=None if plane_k is None else round(plane_k, 4), table=table_k, why_not=d.pop("reason"))
+        if not res.aligned and stills_local and plane0 is not None and plane_k is not None and frames_k:
+            ff = _thin_flip(pkg_local, stills_local, seg, box0, plane0, ref, box_k, plane_k, mov)
+            if ff is not None:   # a thin object: registered by its two faces (recreation.flat_flip), or why not
+                d["flat_flip"] = ff["record"]
+                if ff["aligned"]:
+                    d.update(aligned=True, transform=[float(v) for v in ff["transform"].reshape(-1)], why_not=None,
+                             method="flat_flip: mirrored outline, side cues, silhouettes (recreation.flat_flip)")
+                    rec["segments"].append(d)
+                    continue
+                d["why_not"] = f"{d['why_not']}; as a thin object: {ff['why']}"
         if res.aligned:
             t = res.matrix
             clouds[k] = ObjectCloud(mov.points @ t[:3, :3].T + t[:3, 3], mov.colours)
@@ -312,8 +323,51 @@ def align_scan_segments(pkg_local: Mapping[str, Any], *, time_budget_s: float = 
             if not d["merge"]["ok"]:   # a merge that makes no sense: not in the model, its photos stay photos
                 del clouds[k]
         rec["segments"].append(d)
+    flips = {int(d["segment"]): np.asarray(d["transform"], float).reshape(4, 4) for d in rec["segments"]
+             if str(d.get("method") or "").startswith("flat_flip")}
+    if flips:   # locate ray-casts the same two-faced slab the mesh, cloud and recreation show (its LiDAR cannot)
+        slab = _thin_flip_slab(pkg_local, stills_local or [], flips)
+        if slab is not None:
+            clouds[min(flips)] = slab
     rec["seconds"] = round(time.perf_counter() - t0, 3)
     return rec, clouds
+
+
+def _thin_flip_slab(pkg_local: Mapping[str, Any], stills_local: list[dict], flips: Mapping[int, np.ndarray]
+                    ) -> Any | None:
+    """The thin object's slab with its registered underside (recreation.flat / flat_flip) as an object cloud in
+    segment 0's frame: both faces, so a finding on either is placed on the surface the report shows."""
+    from repairos.recon.segment_align import ObjectCloud
+    from repairos.recreation.flat import scan_flat_model, slab_points
+    from repairos.recreation.flat_flip import with_underside
+
+    m, _why = scan_flat_model(pkg_local, stills_local)
+    if m is None:
+        return None
+    m = with_underside(m, pkg_local, stills_local, flips)
+    p, c = slab_points(m)
+    return ObjectCloud(np.asarray(p, float), np.asarray(c, np.uint8))
+
+
+def _thin_flip(pkg_local: Mapping[str, Any], stills_local: list[dict], seg: Mapping[str, Any], box0: Any,
+               plane0: float, ref: Any, box_k: Any, plane_k: float, mov: Any) -> dict | None:
+    """The flat-object registration (recreation.flat_flip) for a thin object's refused flip; None when not thin."""
+    from repairos.config import get_settings
+    from repairos.recreation.flat import thin_object
+    from repairos.recreation.flat_flip import register_thin_flip
+
+    if not thin_object(ref.points, plane0)[0]:
+        return None
+    k = int(seg["segment"])
+    s0 = [s for s in stills_local if int(s.get("segment") or 0) == 0]
+    sk = [s for s in stills_local if int(s.get("segment") or 0) == k]
+    if not s0 or not sk:
+        return {"aligned": False, "transform": None, "why": "no photos of both faces", "record": {}}
+    key = get_settings().anthropic_api_key
+    model = os.environ.get("LEA_FLAT_FLIP_MODEL", "claude-sonnet-5-5")
+    return register_thin_flip(s0, box0, plane0, ref.points, sk, box_k, plane_k, mov.points,
+                              key=key.get_secret_value() if key else None, model=model,
+                              scan_id=str(pkg_local.get("scan_id") or ""))
 
 
 def restate_still(still: Mapping[str, Any], to0: np.ndarray) -> dict:

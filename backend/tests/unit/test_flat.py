@@ -110,9 +110,10 @@ def _stills(tmp_path, eyes, offset=None):
         p = tmp_path / f"s{k}.jpg"
         Image.fromarray(img).save(p, quality=95)
         s = {**s, "image_file": str(p)}
-        if offset is not None and k == offset:   # this photo's recorded pose is 2.5 cm off
+        if offset is not None and k == offset:   # this photo's recorded pose is 2.5 cm off, along z: the board's
+            # markings repeat every 6 mm along x, so a shift along x is ambiguous (phase correlation finds 7 mm)
             cam = dict(s["camera"])
-            cam["position_m"] = [cam["position_m"][0] + 0.025, *cam["position_m"][1:]]
+            cam["position_m"] = [*cam["position_m"][:2], cam["position_m"][2] + 0.025]
             s["camera"] = cam
         out.append(s)
     return out

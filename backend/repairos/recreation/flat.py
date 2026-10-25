@@ -44,6 +44,10 @@ RECT_FILL = 0.85         # the piece fills its minimum-area rectangle this much:
 ALIGN_MM = 10.0          # another still must land within this on the slab (real UNO scans: still poses 3-9 mm apart)
 CHECK_STILLS = 4         # stills compared with the top one; most of them must agree
 MIN_TOP_COS = 0.6        # stills looking at least this much down (53 deg from vertical) texture the top
+BOARD_THICK_M = 0.0016   # a printed circuit board's standard thickness (IPC-2221 nominal 1.57 mm, 0.062 in)
+BOARD_NOISE_M = 0.003    # a measured slab this thin is a board within LiDAR noise: use BOARD_THICK_M
+BOARD_LIKE_M = 0.005     # a rectangle this thin is board-like (its parts on top raise the 25th percentile; a phone is
+                         # 7-9 mm): use BOARD_THICK_M, its parts are the relief (recreation.relief)
 
 
 DEBUG: dict | None = None   # tests and diagnosis: the footprint's intermediate masks
@@ -378,12 +382,17 @@ def flat_model(pkg_local: Mapping[str, Any], stills: Sequence[Mapping[str, Any]]
     lidar_xz = None if lidar is None or not len(lidar) else lidar[:, [0, 2]]
     best = views[0]
     outline, info = footprint(best, seg_grid, table_y + 0.0016, lidar_xz)
-    thick = 0.0016
+    thick, measured = BOARD_THICK_M, None
     if lidar is not None and len(lidar) >= 20:
         inside = _inside(lidar[:, [0, 2]], outline)
         hs = lidar[inside, 1] - table_y
         if len(hs) >= 20:
-            thick = float(np.clip(np.percentile(hs, 25), 0.0015, 0.01))
+            measured = float(np.clip(np.percentile(hs, 25), 0.0015, 0.01))
+            board = measured <= BOARD_NOISE_M or (info.get("shape") == "rectangle" and measured <= BOARD_LIKE_M)
+            thick = BOARD_THICK_M if board else measured
+    info["thickness_from"] = "measured" if measured is not None and thick == measured else "board"
+    if measured is not None:
+        info["measured_thickness_mm"] = round(measured * 1000, 2)
     top_y = table_y + thick
     # Other stills must put the object where the first does (poses and plane agree). One photo's pose can be off on
     # its own (measured on a real board: one of five 6-9 mm off, the rest within 1.5 mm), so up to CHECK_STILLS are
@@ -580,10 +589,10 @@ def slab_mesh(m: FlatModel, cell: float = 0.0005, max_triangles: int | None = No
     top_y = float(m.vertices[0, 1])
     k = len(m.outline)
     o = np.asarray(m.outline, float)
-    rest = np.array([f for f in m.faces if not (f < k).all()])
-    # The texture is an affine map of (x, z) on the top: fitted on the outline's corners (exact)
-    A = np.c_[o, np.ones(k)]
-    uv_map, *_ = np.linalg.lstsq(A, np.asarray(m.uv[:k], float), rcond=None)
+    # a textured underside (a registered flip, recreation.flat_flip) is a grid too; else the bottom is the slab's fan
+    under = str(m.stats.get("underside", "")).startswith("textured")
+    u0 = int(m.stats.get("underside_first_vertex", 2 * k))
+    rest = np.array([f for f in m.faces if not (f < k).all() and not (under and ((f >= u0) & (f < u0 + k)).all())])
     # the grid along the outline's first edge, over the outline's extent in that frame
     a = (o[1] - o[0]) / max(float(np.linalg.norm(o[1] - o[0])), 1e-12)
     b = np.array([-a[1], a[0]])
@@ -592,41 +601,50 @@ def slab_mesh(m: FlatModel, cell: float = 0.0005, max_triangles: int | None = No
     def nodes(c: float) -> tuple[int, int]:
         return max(2, int(np.ceil(la / c)) + 1), max(2, int(np.ceil(lb / c)) + 1)
     if max_triangles:
-        budget = max(1000, int(max_triangles) - len(rest))
+        budget = max(1000, int(max_triangles) - len(rest)) // (2 if under else 1)
         cell = max(cell, float(np.sqrt(2.0 * la * lb / budget)))
         while 2 * (nodes(cell)[0] - 1) * (nodes(cell)[1] - 1) > budget:
             cell *= 1.01
     na, nb = nodes(cell)
-    s_, t_ = np.meshgrid(np.linspace(sa.min(), sa.max(), na), np.linspace(sb.min(), sb.max(), nb))
-    xz = o[0] + s_.reshape(-1, 1) * a + t_.reshape(-1, 1) * b
-    inside = _inside(xz, o)
-    on_edge = np.linalg.norm(_nearest_on_outline(xz, o) - xz, axis=1) < 1e-9
-    inside |= on_edge
-    idx = np.arange(na * nb).reshape(nb, na)
-    q00, q01, q10, q11 = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
-    up = _cross2(a, b) < 0     # (a, b) as seen from above: faces wind to face +Y
-    tris = np.vstack([np.stack([q00, q01, q11], 1), np.stack([q00, q11, q10], 1)]) if up else \
-        np.vstack([np.stack([q00, q11, q01], 1), np.stack([q00, q10, q11], 1)])
-    tris = tris[inside[tris].any(1)]                        # cells the outline reaches
-    moved = ~inside
-    xz[moved] = _nearest_on_outline(xz[moved], o)           # their outside corners onto the outline
-    # drop the slivers and folds this leaves (a corner of the outline cuts a cell)
-    p0, p1, p2 = xz[tris[:, 0]], xz[tris[:, 1]], xz[tris[:, 2]]
-    area = (p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1]) - (p1[:, 1] - p0[:, 1]) * (p2[:, 0] - p0[:, 0])
-    ref = area[inside[tris].all(1)]   # the grid's own winding, from cells wholly inside
-    sign = float(np.sign(np.median(ref if len(ref) else area))) or 1.0
-    tris = tris[area * sign > 1e-12]
-    used = np.unique(tris)
-    remap = np.full(len(xz), -1)
-    remap[used] = np.arange(len(used))
-    xz, tris = xz[used], remap[tris]
-    uv = np.c_[xz, np.ones(len(xz))] @ uv_map
-    col = atlas[np.clip((uv[:, 1] * h).astype(int), 0, h - 1), np.clip((uv[:, 0] * w).astype(int), 0, w - 1)]
-    verts = np.stack([xz[:, 0], np.full(len(xz), top_y), xz[:, 1]], 1)
-    # sides and bottom from the slab's own faces past its top fan (all grey)
+
+    def grid(y: float, uv_rows: np.ndarray, face_up: bool) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        # The texture is an affine map of (x, z) on this face: fitted on the outline's corners (exact)
+        uv_map, *_ = np.linalg.lstsq(np.c_[o, np.ones(k)], np.asarray(uv_rows, float), rcond=None)
+        s_, t_ = np.meshgrid(np.linspace(sa.min(), sa.max(), na), np.linspace(sb.min(), sb.max(), nb))
+        xz = o[0] + s_.reshape(-1, 1) * a + t_.reshape(-1, 1) * b
+        inside = _inside(xz, o)
+        inside |= np.linalg.norm(_nearest_on_outline(xz, o) - xz, axis=1) < 1e-9
+        idx = np.arange(na * nb).reshape(nb, na)
+        q00, q01, q10, q11 = idx[:-1, :-1].ravel(), idx[:-1, 1:].ravel(), idx[1:, :-1].ravel(), idx[1:, 1:].ravel()
+        up = (_cross2(a, b) < 0) == face_up     # (a, b) as seen from above: faces wind to face +Y (or -Y)
+        tris = np.vstack([np.stack([q00, q01, q11], 1), np.stack([q00, q11, q10], 1)]) if up else \
+            np.vstack([np.stack([q00, q11, q01], 1), np.stack([q00, q10, q11], 1)])
+        tris = tris[inside[tris].any(1)]                        # cells the outline reaches
+        moved = ~inside
+        xz[moved] = _nearest_on_outline(xz[moved], o)           # their outside corners onto the outline
+        # drop the slivers and folds this leaves (a corner of the outline cuts a cell)
+        p0, p1, p2 = xz[tris[:, 0]], xz[tris[:, 1]], xz[tris[:, 2]]
+        area = (p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1]) - (p1[:, 1] - p0[:, 1]) * (p2[:, 0] - p0[:, 0])
+        ref = area[inside[tris].all(1)]   # the grid's own winding, from cells wholly inside
+        sign = float(np.sign(np.median(ref if len(ref) else area))) or 1.0
+        tris = tris[area * sign > 1e-12]
+        used = np.unique(tris)
+        remap = np.full(len(xz), -1)
+        remap[used] = np.arange(len(used))
+        xz, tris = xz[used], remap[tris]
+        uv = np.c_[xz, np.ones(len(xz))] @ uv_map
+        col = atlas[np.clip((uv[:, 1] * h).astype(int), 0, h - 1), np.clip((uv[:, 0] * w).astype(int), 0, w - 1)]
+        return np.stack([xz[:, 0], np.full(len(xz), y), xz[:, 1]], 1), tris, col
+
+    verts, faces, col = grid(top_y, m.uv[:k], True)
+    if under:
+        bv, bf, bc = grid(float(m.vertices[2 * k, 1]), m.uv[u0:u0 + k], False)
+        faces = np.vstack([faces, bf + len(verts)])
+        verts, col = np.vstack([verts, bv]), np.vstack([col, bc])
+    # sides (and the bottom, untextured) from the slab's own faces past its top fan (all grey)
     n0 = len(verts)
     verts = np.vstack([verts, m.vertices.astype(float)])
-    faces = np.vstack([tris, rest + n0])
+    faces = np.vstack([faces, rest + n0])
     col = np.vstack([col, atlas[np.clip((m.uv[:, 1] * h).astype(int), 0, h - 1),     # sides grey, raised parts
                                 np.clip((m.uv[:, 0] * w).astype(int), 0, w - 1)]])   # (relief) from the photo
     return verts, faces.astype(np.int32), col.astype(np.uint8)

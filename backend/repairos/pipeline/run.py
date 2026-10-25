@@ -953,7 +953,10 @@ async def ensure_segment_alignment(ctx: Context, scan_id: str) -> dict:
         t0 = time.monotonic()
         try:
             local = await asyncio.to_thread(_local_scan, ctx, scan)
-            rec, clouds = await asyncio.to_thread(segments.align_scan_segments, local)
+            still_rows = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
+            local_stills = await asyncio.to_thread(   # a thin object's flip is registered by its photos
+                lambda: [map_files("still", s, lambda v, _b: str(ctx.local_file(scan_id, v))) for s in still_rows])
+            rec, clouds = await asyncio.to_thread(segments.align_scan_segments, local, stills_local=local_stills)
             merged = await asyncio.to_thread(segments.merged_cloud_ply, local.get("points_file"), clouds)
             if merged:
                 rec["cloud_ref"] = await asyncio.to_thread(ctx.blobs.put, merged, "application/x-ply")
