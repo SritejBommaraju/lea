@@ -59,6 +59,11 @@ final class LeaConversation {
     /// An answer started early on Ink-2's eager end: held until confirmed.
     @ObservationIgnored private var holding = false
     @ObservationIgnored private var heldEvents: [ConverseEvent] = []
+    /// A confirmed early answer's commit still in flight: every next turn waits for it, so its answer sees that exchange.
+    @ObservationIgnored private var pendingCommit: Task<Void, Never>?
+    /// A confirmed early answer not known to be saved (its commit failed or is still out): the next turn carries its id
+    /// (`converse?commit=`), and the gateway saves it before answering.
+    @ObservationIgnored private var unsavedHeld: String?
     @ObservationIgnored private var speculativeText: String?
     @ObservationIgnored private var speculativeTurn: UUID?
 
@@ -216,6 +221,8 @@ final class LeaConversation {
         var sonicFinished = false
         /// The sentences handed to Sonic, so a socket that fails part-way can have the unheard ones said by the phone.
         var sonicSent: [String] = []
+        /// The confirmed early answer this turn asked the gateway to save first (`unsavedHeld`), if any.
+        var carried: String?
         init(start: Date, id: Int, input: String, recorded: Bool) {
             self.start = start; self.id = id; self.input = input; self.recorded = recorded
         }
@@ -236,7 +243,7 @@ final class LeaConversation {
         // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
         // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil)
+        let gateway = self.gateway, scan = scanID, commit = pendingCommit
         let voice = LeaVoice.shared
         let st = TurnState(start: start, id: voice.beginStream(held: hold), input: audio == nil ? input : "recording",
                            recorded: audio != nil)
@@ -245,6 +252,10 @@ final class LeaConversation {
         if let grant { openSonic(grant, st) }
         task = Task {
             defer { st.sonic?.cancel() }
+            await commit?.value   // the confirmed exchange first (Greptile P1 on #21); commitHeld gives up after 3 s
+            st.carried = self.unsavedHeld
+            let stream = gateway.converse(scanID: scan, audio: audio, text: text, speech: voiceOn && grant == nil, held: hold,
+                                          commit: st.carried)
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
@@ -299,8 +310,20 @@ final class LeaConversation {
             if st.sonic == nil || st.sonicFailed, let say = st.fallback.audioOff() { voice.queueOnDevice(say, stream: st.id) }
         case .action(let kind, let label):
             action = (kind, label)
-        case .done(_, let timings):
+        case .done(_, let timings, let heldID):
             if let sonic = st.sonic, !st.sonicFailed { sonic.say("", more: false) }
+            // A held answer is applied only once confirmed (a dropped one never gets here): now it joins the
+            // conversation on the gateway too, so later answers and the turn caps see it.
+            if let heldID {
+                let gateway = self.gateway, scan = scanID
+                unsavedHeld = heldID
+                pendingCommit = Task { [weak self] in
+                    guard (try? await gateway.commitHeld(scanID: scan, heldID: heldID)) != nil else { return }
+                    if self?.unsavedHeld == heldID { self?.unsavedHeld = nil }
+                }
+            } else if let carried = st.carried, unsavedHeld == carried {
+                unsavedHeld = nil   // the gateway saved it with this turn
+            }
             diag?.log("voice_turn", ["input": st.input, "eager_start": st.confirmedEarly,
                                      "voice": st.sonic == nil ? "gateway" : (st.sonicFailed ? "sonic_failed" : "sonic_ws"),
                                      "end_to_first_sentence_ms": st.firstSentence ?? -1,

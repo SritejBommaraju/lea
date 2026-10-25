@@ -69,6 +69,8 @@ class Claude:
                                               "display_name": "test", "created_at": "2026-01-01T00:00:00Z"})
         self.bodies.append(json.loads(req.content))
         if self.bodies[-1].get("stream"):
+            if getattr(self, "on_stream", None):   # something that happens while an answer streams
+                self.on_stream()
             return httpx2.Response(200, content=sse(self.bodies[-1]["model"], self.deltas),
                                    headers={"Content-Type": "text/event-stream"})
         return httpx2.Response(200, json={
@@ -420,6 +422,73 @@ def test_converse_turn_caps(gw):
     converse(c2, scan_id)
     events = [p for k, p in converse(c2, scan_id) if k == "J"]
     assert "Start a new scan" in events[-1]["answer_text"]
+
+
+def test_converse_held_answer_is_remembered_only_once_committed(gw):
+    """An early answer (Ink-2's eager end, `held=1`) is kept aside (Greptile, PR #21): one the phone drops
+    (`turn.resume`) never reaches later answers or the caps; one the person's final words confirm is committed."""
+    c = gw(lea_voice_turns_per_minute=2)   # the dropped answer counting would refuse the confirmed one below
+    scan_id = publish_report(c)
+
+    def held(text):
+        r = c.post(f"/v1/voice/converse?audio=none&held=1&scan_id={scan_id}", json={"text": text})
+        assert r.status_code == 200, r.text
+        done = [p for k, p in frames(r.content) if k == "J"][-1]
+        assert done["type"] == "done" and done["held_id"]
+        return done["held_id"]
+
+    def commit(held_id):
+        r = c.post(f"/v1/voice/conversation/commit?scan_id={scan_id}", json={"held_id": held_id})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def history():
+        return [t["text"] for t in c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"]
+                if t["role"] == "user"]
+
+    dropped = held("is it the fuse")
+    assert history() == []
+    converse(c, scan_id, audio=False, mode="none")   # the words the person actually finished with
+    assert len(c.claude.bodies[1]["messages"]) == 1   # the dropped exchange is not in the answer's context...
+    assert history() == ["what should I check first"]   # ...nor in the history, nor the per-minute cap
+    assert commit(dropped) == {"committed": False, "turns": 1}   # replaced: it can no longer be committed
+
+    confirmed = held("is it the fuse")
+    assert commit(confirmed) == {"committed": True, "turns": 2}
+    assert history() == ["what should I check first", "is it the fuse"]
+    assert commit(confirmed) == {"committed": False, "turns": 2}   # once
+
+
+def test_a_commit_while_another_answer_streams_is_kept(gw):
+    """The phone commits a confirmed early answer while the person's next question is already streaming (Greptile
+    P1 on #21): the streaming answer is saved onto the conversation as it is then, so the committed exchange stays."""
+    c = gw()
+    scan_id = publish_report(c)
+    r = c.post(f"/v1/voice/converse?audio=none&held=1&scan_id={scan_id}", json={"text": "is it the fuse"})
+    held_id = [p for k, p in frames(r.content) if k == "J"][-1]["held_id"]
+
+    def commit_now():   # the commit lands between this answer's start and its save
+        c.claude.on_stream = None
+        assert c.post(f"/v1/voice/conversation/commit?scan_id={scan_id}", json={"held_id": held_id}).json()["committed"]
+    c.claude.on_stream = commit_now
+    converse(c, scan_id, audio=False, mode="none")
+    hist = [t["text"] for t in c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"] if t["role"] == "user"]
+    assert hist == ["is it the fuse", "what should I check first"]
+
+
+def test_the_next_turn_carries_a_commit_that_failed(gw):
+    """The phone's commit request failed (Greptile P1 on #26): the next turn carries the id (`commit=`), the confirmed
+    exchange joins before that answer, so it is in the answer's context and kept; a repeated id does nothing."""
+    c = gw()
+    scan_id = publish_report(c)
+    r = c.post(f"/v1/voice/converse?audio=none&held=1&scan_id={scan_id}", json={"text": "is it the fuse"})
+    held_id = [p for k, p in frames(r.content) if k == "J"][-1]["held_id"]
+    r = c.post(f"/v1/voice/converse?audio=none&commit={held_id}&scan_id={scan_id}", json={"text": "what should I check first"})
+    assert r.status_code == 200, r.text
+    assert [m["role"] for m in c.claude.bodies[-1]["messages"]] == ["user", "assistant", "user"]
+    r = c.post(f"/v1/voice/converse?audio=none&commit={held_id}&scan_id={scan_id}", json={"text": "and then"})
+    hist = [t["text"] for t in c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"] if t["role"] == "user"]
+    assert hist == ["is it the fuse", "what should I check first", "and then"]
 
 
 def test_sentence_splitter():
