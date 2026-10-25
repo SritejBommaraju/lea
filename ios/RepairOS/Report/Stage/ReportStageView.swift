@@ -67,6 +67,14 @@ struct ReportStageView: View {
     @State private var leaLabel: (id: String, text: String)?
     @State private var heroCue: LeaStageCue?
     static let leaRingSeconds: Double = 6
+    /// How much of the screen the stage takes (StageDetents): it grows while Lea answers.
+    @State private var stageLayout = StageDetents()
+    /// The window's top safe area: the stage lays out under the report's top bar, whatever the phone.
+    @State private var topInset: CGFloat = 48
+    /// Lea's camera move is under way (about a second after her cue): the name chip keeps out of the way.
+    @State private var cameraMoving = false
+    /// The stage's size, for placing the photo card clear of the part.
+    @State private var stageSize: CGSize = .zero
     /// Counts Lea's first sounds seen (from `voiceStarted`), read live by the landing task.
     @State private var heard = 0
     /// The 3D scan is on screen: the landing waits for it (at most `maxWait`), so markers and verdict arrive on it.
@@ -109,7 +117,13 @@ struct ReportStageView: View {
                     stage.id("stage")
                     sheetBody(proxy)
                         .padding(.top, -Self.overlap)
-                        .opacity(tour.active ? 0 : 1)
+                        .opacity(tour.active || stageLayout.detent == .expanded ? 0 : 1)
+                        // While the stage owns the screen the sheet only peeks: pulling it up brings the report back
+                        // (and it stays for the rest of the answer).
+                        .simultaneousGesture(DragGesture(minimumDistance: 16).onEnded { v in
+                            guard !stageLayout.sheetScrolls, v.translation.height < -30 else { return }
+                            setLayout { $0.userPulledSheetUp() }
+                        })
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -119,11 +133,17 @@ struct ReportStageView: View {
             }
             // Lea moved the model while the stage was mostly scrolled away: back to the stage first (L9).
             .onChange(of: leaCue) { _, cue in
-                guard cue != nil, scrolled > stageHeight * 0.4 else { return }
+                guard cue != nil, stageLayout.followsLea, scrolled > stageHeight * 0.4 else { return }
                 withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) }
             }
-            // The tour has the whole screen: the stage fills it and the sheet waits below.
-            .scrollDisabled(tour.active)
+            // An answer starting: the stage takes most of the screen, from the top (the sheet drops to a peek).
+            .onChange(of: stageLayout.detent) { old, new in
+                guard old == .report, new != .report else { return }
+                withAnimation(StageDetents.animation(reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) }
+            }
+            // The tour has the whole screen: the stage fills it and the sheet waits below. While Lea answers the stage
+            // owns the screen too, and the sheet waits for a pull.
+            .scrollDisabled(tour.active || !stageLayout.sheetScrolls)
             .onChange(of: tour.active) { _, on in
                 if on { withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) } }
             }
@@ -148,6 +168,19 @@ struct ReportStageView: View {
         .onChange(of: voiceStarted) { heard += 1 }
         .onChange(of: walkthrough) { startTour(afterLea: true) }
         .onChange(of: leaCue) { _, cue in applyLea(cue) }
+        // Lea answering: her first sentence (or first move) grows the stage; the answer ending leaves it be.
+        .onChange(of: captions?.speaking ?? false) { _, speaking in
+            if speaking { answerStarted() } else if !(captions?.thinking ?? false) { stageLayout.answerEnded() }
+        }
+        .onChange(of: heroCue) { _, cue in
+            guard cue != nil else { return }
+            cameraMoving = true
+            Task {
+                try? await Task.sleep(for: .seconds(Motion.Scene.flyRange.upperBound + 0.3))
+                cameraMoving = false
+            }
+        }
+        .onAppear { topInset = StageMetrics.windowTopInset }
         // The camera left the part Lea showed (a touch on the stage, the idle drift, a reset): her ring and label go
         // with it, so nothing stale stays drawn after a tap elsewhere.
         .onChange(of: probe.landed) { old, new in
@@ -204,8 +237,47 @@ struct ReportStageView: View {
         return all.first { $0.id == raw }?.crops.first
     }
 
-    /// The stage's share of the screen (the report centres on the model and Lea).
-    private var stageHeight: CGFloat { max(380, screenHeight * 0.62) }
+    /// The stage's share of the screen (the report centres on the model and Lea; more of it while she answers).
+    private var stageHeight: CGFloat { StageDetents.stageHeight(stageLayout.detent, container: screenHeight, touring: tour.active) }
+
+    /// Changes the stage's size with its own spring (a cut under Reduce Motion).
+    private func setLayout(_ change: (inout StageDetents) -> Void) {
+        withAnimation(StageDetents.animation(reduceMotion: reduceMotion)) { change(&stageLayout) }
+    }
+
+    private func answerStarted() {
+        guard !tour.active else { return }
+        setLayout { $0.answerStarted() }
+        #if DEBUG
+        // Design review only: the expanded stage a few seconds into the replayed answer.
+        if CommandLine.arguments.contains("--ui-stage-expand") {
+            Task { try? await Task.sleep(for: .seconds(4)); setLayout { $0.expand() } }
+        }
+        #endif
+    }
+
+    /// Where the photo card may go: the stage below the top bar, above the bottom controls (the caption strip and
+    /// the round recentre control), inset by the stage margin.
+    private var handoffArea: CGRect {
+        let top = topClear + Spacing.s
+        let bottom = Self.overlap + Spacing.m + band + 52
+        return CGRect(x: Spacing.l, y: top, width: max(0, stageSize.width - 2 * Spacing.l),
+                      height: max(0, stageSize.height - top - bottom))
+    }
+
+    /// The part Lea's camera landed on, in stage points (the hero sits under the top bar, above the bottom band).
+    private var landedOnStage: CGPoint? {
+        guard let p = probe.landedPoint, stageSize.width > 0 else { return nil }
+        let heroTop = topClear, heroHeight = stageSize.height - topClear - Self.overlap - band
+        return CGPoint(x: p.x * stageSize.width, y: heroTop + p.y * max(heroHeight, 1))
+    }
+
+    /// Lea is busy on the stage (answering, the camera moving, a ring, label or photo showing): the name chip keeps
+    /// out of the way until she is done.
+    private var stageBusy: Bool {
+        (captions?.speaking ?? false) || (captions?.thinking ?? false) || cameraMoving || !leaPins.isEmpty
+            || leaLabel != nil || handoffPhoto != nil
+    }
 
     /// The caption strip is on the stage: after the first turn, until a quiet spell, never during the walkthrough.
     private var showsCaptions: Bool { (captions?.started ?? false) && !captionIdle && !tour.active }
@@ -214,8 +286,9 @@ struct ReportStageView: View {
 
     /// How far the sheet rides up over the stage (its top corners are `Radius.sheet`).
     static let overlap: CGFloat = Radius.sheet
-    /// Status bar + navigation bar over the stage: the 3D view starts below them so the object is never under them.
-    static let topClear: CGFloat = 96
+    /// Status bar + the report's top bar (44 pt controls) over the stage: the 3D view starts below them so the object
+    /// is never under them, on any phone.
+    private var topClear: CGFloat { topInset + Spacing.xs + 44 + Spacing.s }
 
     // MARK: Stage
 
@@ -226,7 +299,13 @@ struct ReportStageView: View {
             .padding(.bottom, Self.overlap)
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: Spacing.s) {
-                    if hasTourContent {
+                    if stageLayout.detent != .report {
+                        // Back from the stage to the report (a swipe down on the caption strip does the same).
+                        Button { setLayout { $0.collapse() } } label: { Label("Report", systemImage: "chevron.down") }
+                            .buttonStyle(StageCapsuleButtonStyle())
+                            .accessibilityHint("Shows the report under the scan again")
+                    } else if hasTourContent, !stageLayout.answering {
+                        // Not while Lea answers: nothing extra over the model then.
                         Button { startTour() } label: { Label("Walk me through it", systemImage: "play") }
                             .buttonStyle(StageCapsuleButtonStyle())
                             .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
@@ -241,7 +320,7 @@ struct ReportStageView: View {
                 if tour.active {
                     // A tap on the object ends the tour; the cards below keep their own swipes and buttons.
                     Color.clear.contentShape(Rectangle())
-                        .padding(.top, Self.topClear)
+                        .padding(.top, topClear)
                         .padding(.bottom, Self.deckHeight + Self.overlap)
                         .onTapGesture { tour.stop() }
                         .accessibilityHidden(true)
@@ -257,9 +336,23 @@ struct ReportStageView: View {
         }
         .overlay(alignment: .bottom) {
             if showsCaptions, let c = captions {
-                LeaCaptionStrip(question: c.question, sentence: c.sentence, part: captionPart, thinking: c.thinking,
-                                failure: c.failure, tap: { showTranscript = true })
+                VStack(alignment: .leading, spacing: Spacing.s) {
+                    if stageLayout.detent == .expanded { LeaTranscriptOverlay(turns: c.turns) }
+                    // A tap grows the stage to the full screen; on the full screen it opens the whole transcript.
+                    LeaCaptionStrip(question: c.question, sentence: c.sentence, part: captionPart, thinking: c.thinking,
+                                    failure: c.failure, tap: {
+                                        if stageLayout.detent == .expanded { showTranscript = true } else { setLayout { $0.expand() } }
+                                    })
+                }
                     .padding(.horizontal, Spacing.l)
+                    // Swipe up on the strip: the stage fills the screen; swipe down: back towards the report.
+                    .simultaneousGesture(DragGesture(minimumDistance: 20).onEnded { v in
+                        if v.translation.height < -30 { setLayout { $0.expand() } }
+                        else if v.translation.height > 30 { setLayout { $0.collapse() } }
+                    })
+                    .accessibilityAction(named: stageLayout.detent == .expanded ? "Show the report" : "Bigger stage") {
+                        setLayout { stageLayout.detent == .expanded ? $0.collapse() : $0.expand() }
+                    }
                     // Its real height (Dynamic Type, a long sentence, the part line): the hero and the controls above
                     // it move up by that much, so the strip never covers them or gets cut off.
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
@@ -269,46 +362,57 @@ struct ReportStageView: View {
                     .transition(.opacity)
             }
         }
-        .overlay(alignment: .bottomTrailing) {
+        .overlay(alignment: .topLeading) {
             // The proof hand-off: when the camera lands on the part, its real photo (ringed by the gateway, or the
-            // finding's own crop) rises in near it; it recedes when the camera moves on.
+            // finding's own crop) rises in, in the stage corner farthest from the part (re-picked when the camera
+            // settles, with a crossfade), so it never covers the part, its ring or its label; it recedes when the
+            // camera moves on.
             if let sha = handoffPhoto, !tour.active {
+                let place = HandoffPlacement.pick(part: landedOnStage, in: handoffArea)
+                let frame = HandoffPlacement.rect(place.corner, side: place.side, in: handoffArea)
                 Button { handoffZoom = HandoffZoom(sha: sha) } label: {
                     CropThumb(sha: sha, cornerRadius: Radius.card)
-                        .frame(width: 120, height: 120)
+                        .frame(width: place.side, height: place.side)
                         .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous)
                             .strokeBorder(Palette.chalk.opacity(0.7), lineWidth: 1))
                         .overlay(alignment: .bottomLeading) {
-                            if let name = leaLabel?.text { Text(name).cameraChip().padding(6) }
+                            if let name = leaLabel?.text, place.side >= HandoffPlacement.card { Text(name).cameraChip().padding(6) }
                         }
                 }
                 .buttonStyle(PressableCardStyle())
                 .accessibilityLabel("Photo of \(leaLabel?.text ?? "the part")")
                 .accessibilityHint("Opens it full screen")
-                .padding(.trailing, Spacing.l)
-                .padding(.bottom, Self.overlap + Spacing.m + band + 52)
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 16)).combined(with: .scale(scale: 0.96, anchor: .bottomTrailing)))
-                .id(sha)
+                .offset(x: frame.minX, y: frame.minY)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
+                .id("\(sha)|\(place.corner)|\(Int(place.side))")
             }
         }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { stageSize = $0 }
         .motion(Motion.standard, value: handoffPhoto)
+        .animation(Motion.fade, value: probe.landedPoint)
         .fullScreenCover(item: $handoffZoom) { z in CropZoomView(shas: [z.sha], index: 0).environment(\.cropSource, cropSource) }
-        .overlay(alignment: .topLeading) {
-            if let objectName, !tour.active {
-                // What it is, prominent on the stage even when there is no usable 3D (a small object shows photos).
-                Text(objectName).display(.card).foregroundStyle(Palette.chalk)
-                    .lineLimit(2).minimumScaleFactor(0.8)
-                    .padding(.horizontal, Spacing.m).padding(.vertical, Spacing.s)
-                    .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.medium, style: .continuous)) }
-                    .dynamicTypeSize(...DynamicTypeSize.accessibility1)
-                    .padding(.leading, Spacing.l).padding(.trailing, 72)
-                    .padding(.top, Self.topClear + Spacing.s)
+        .overlay(alignment: .top) {
+            // What it is, as a compact chip in the top bar's row (between "Scans" and the round controls), never over
+            // the model: brand and model only, one line. It steps out of the way while Lea is busy on the stage and
+            // on the full-screen stage, and comes back when she is done.
+            if let objectName, let chip = StageChip.text(objectName), !tour.active, stageLayout.detent != .expanded, !stageBusy {
+                Text(chip).font(.subheadline.weight(.semibold)).foregroundStyle(Palette.chalk)
+                    .lineLimit(1).truncationMode(.middle)
+                    .padding(.horizontal, Spacing.m).frame(minHeight: 32)
+                    .background { SmokeFill(shape: Capsule()) }
+                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                    .frame(height: 44)
+                    .padding(.leading, 116).padding(.trailing, 112)   // clear of "‹ Scans" and the two round controls
+                    .padding(.top, topInset + Spacing.xs)
                     .accessibilityLabel("This is \(objectName)")
-                    .transition(.opacity)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -12)))
             }
         }
+        .motion(Motion.standard, value: stageBusy || stageLayout.detent == .expanded)
         .motion(Motion.standard, value: showsCaptions)
-        .containerRelativeFrame(.vertical) { [touring = tour.active] height, _ in touring ? height : max(380, height * 0.62) }
+        .containerRelativeFrame(.vertical) { [touring = tour.active, detent = stageLayout.detent] height, _ in
+            StageDetents.stageHeight(detent, container: height, touring: touring)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(stageLabel)
     }
@@ -322,21 +426,21 @@ struct ReportStageView: View {
         Group {
             switch hero {
             case .custom(let make):
-                make(context).padding(.top, Self.topClear)
+                make(context).padding(.top, topClear)
             case .automatic:
                 if isPhotoHero, let sessionDir {
                     PhotoHero(stillsDir: sessionDir.appending(path: "stills"), numbered: numberedPhotos,
                               focus: touring ? tour.step?.focus : focus, onMarkTap: context.select)
                         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                         .padding(.horizontal, Spacing.gutter)
-                        .padding(.top, Self.topClear)
+                        .padding(.top, topClear)
                         .padding(.bottom, Spacing.l)
                 } else {
                     ModelView(source: model, pins: pins, focus: focus, spin: true, showHint: false, stage: true,
                               onLoaded: { modelReady = true }, probe: probe, controls: !touring, tour: context.tour,
                               cue: context.cue, onPinTap: context.select)
                         // The object sits below the navigation bar drawn over the stage's top.
-                        .padding(.top, Self.topClear)
+                        .padding(.top, topClear)
                 }
             }
         }
@@ -374,6 +478,7 @@ struct ReportStageView: View {
         let plan = LeaStagePlan.make(cue.command, pins: pins, located: report.located)
         guard plan != .none else { return }
         if tour.active { tour.stop() }
+        answerStarted()   // her first move counts as the answer starting, as her first sentence does
         if let pin = plan.pin {
             // One of Lea's rings at a time: the previous one fades as this move starts (the hero fades leaving rings).
             leaPins = [pin]

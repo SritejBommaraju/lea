@@ -207,6 +207,32 @@ struct LeaCaptionStrip: View {
     }
 }
 
+/// The full-screen stage's thin transcript (above the caption strip): the last few lines you and Lea said, small and
+/// faded at the top, so the model stays the subject. Tap the strip for the whole transcript.
+struct LeaTranscriptOverlay: View {
+    let turns: [LeaConversation.Turn]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            ForEach(turns.suffix(3)) { t in
+                (Text(t.mine ? "You  " : "Lea  ").font(.caption.weight(.semibold))
+                    .foregroundColor(t.mine ? Palette.chalk.opacity(0.6) : Palette.next)
+                 + Text(t.text).font(.caption).foregroundColor(Palette.chalk.opacity(0.75)))
+                    .lineLimit(2)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, Spacing.m).padding(.vertical, Spacing.s)
+        .background { SmokeFill(shape: RoundedRectangle(cornerRadius: Radius.medium, style: .continuous)).opacity(0.7) }
+        .mask(LinearGradient(colors: [.clear, .black, .black], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.35)))
+        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Earlier in the conversation")
+        .allowsHitTesting(false)
+    }
+}
+
 // MARK: - Evidence photo
 
 /// A finding's full still with its `box_px` marked on it (the problem detail's photo-first layout, screen 18): the image

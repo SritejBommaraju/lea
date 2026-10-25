@@ -319,11 +319,24 @@ private struct RecreationHost: UIViewRepresentable {
             guard let id = arrival else { return }
             stage.arrive(id, animated: animate)
             probe?.land(id)
+            placeLanded()
+        }
+
+        /// Tells the stage where the landed part is on screen (fractions of the view), so the photo card can sit in
+        /// the corner farthest from it.
+        func placeLanded() {
+            guard let id = arrival, let view, view.bounds.width > 0, view.bounds.height > 0,
+                  let m = stage.markers.first(where: { $0.id == id }) else { return }
+            let world = stage.markerRoot.presentation.simdConvertPosition(stage.onSurface(m.point), to: nil)
+            let p = view.projectPoint(SCNVector3(world))
+            guard p.z > 0, p.z < 1 else { probe?.place(nil); return }
+            probe?.place(CGPoint(x: CGFloat(p.x) / view.bounds.width, y: CGFloat(p.y) / view.bounds.height))
         }
 
         /// The move settled: keep drawing a moment for the draw-on to finish, then back to on-demand; the idle drift
         /// may resume after a quiet spell.
         func settled() {
+            placeLanded()   // where the part really ended up, for the photo card's corner
             pulse(seconds: Motion.Scene.drawOn + 0.35)
             scheduleIdle()
         }
