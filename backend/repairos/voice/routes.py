@@ -347,7 +347,8 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
                              scan_id: Annotated[str | None, Query(max_length=128)] = None,
                              audio: Annotated[str, Query(pattern="^(stream|none)$")] = "stream",
                              live: Annotated[str | None, Query(max_length=2000)] = None,
-                             session_id: Annotated[str | None, Query(max_length=128)] = None):
+                             session_id: Annotated[str | None, Query(max_length=128)] = None,
+                             image: Annotated[str | None, Query(pattern=r"^blob://sha256:[0-9a-f]{64}$")] = None):
         """One turn of the conversation. Body: the recording (audio/m4a, ...) or JSON {text} (the phone's own
         recognizer, e.g. after "Hey Lea"). The answer streams back as frames (`frame()`): J events
         {type: transcript | sentence | action | done}, and A frames of PCM (s16le, 24 kHz) for each sentence right
@@ -355,11 +356,13 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
         paused it, or `audio=none`) is for the phone to say in its own voice. `live`: JSON of what the screen shows
         now (a scan's stage, cue, progress), read for this turn only; during a scan no scan is offered. `session_id`:
         before a scan exists, the session whose story row holds what the label photo identified and the product
-        brief, so Lea can talk about that product."""
+        brief, so Lea can talk about that product. `image`: a blob (JPEG, PUT /v1/blobs first) of what the camera shows
+        now; Lea sees it and can point (J events {type: mark, x, y, label}, fractions of that photo)."""
         rt = _runtime(request)
         t0 = time.perf_counter()
         scope = _scope(scan_id, d)
         now = parse_live(live)
+        seen = _look_image(request, image)
         question, stt_ms, paused_line = "", 0, None
         ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
         if ctype == "application/json":
@@ -417,6 +420,10 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             async def produce():
                 try:
                     msgs = messages_for(convo, context_block(report, identity, story), live_note(now) + question)
+                    if seen:   # the camera now, for this turn only (the history keeps words)
+                        msgs[-1]["content"] = [{"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                                             "data": seen}},
+                                               {"type": "text", "text": msgs[-1]["content"]}]
                     async for delta in talker.stream(scope, msgs):
                         for sentence in splitter.feed(delta):
                             await queue.put(sentence)
@@ -457,6 +464,8 @@ def register_voice_routes(app: FastAPI, device_dep) -> None:
             action = splitter.actions[0] if splitter.actions else None
             if now.get("screen") == "scan" and action == "start_scan":   # a scan is open: never a second one
                 action = None
+            for mark in splitter.marks if seen else []:   # only a turn that came with a photo can point at it
+                yield jframe({"type": "mark", **mark})
             if action and action in ACTIONS:
                 yield jframe({"type": "action", "action": action, "label": ACTIONS[action]})
             answer = " ".join(spoken)
@@ -505,6 +514,21 @@ async def _grounding(request: Request, scan_id: str | None,
     if not story and pkg:
         story = pkg.data.get("symptom") or None
     return report, story, identity
+
+
+MAX_LOOK_BYTES = 2_000_000
+
+
+def _look_image(request: Request, ref: str | None) -> str | None:
+    """The look photo as base64 JPEG, or None (no photo, not uploaded, too big, or not a JPEG): the turn goes ahead
+    on words alone."""
+    import base64
+
+    blobs = request.app.state.blobs
+    if not ref or not blobs.exists(ref) or blobs.size(ref) > MAX_LOOK_BYTES:
+        return None
+    data = blobs.get(ref)
+    return base64.b64encode(data).decode() if data[:3] == b"\xff\xd8\xff" else None
 
 
 async def _story_identity(st: Any, session_id: str) -> dict | None:

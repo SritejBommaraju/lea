@@ -46,6 +46,11 @@ final class LeaConversation {
     var sessionID: () -> String? = { nil }
     /// What the screen shows now, sent with each turn (a scan's stage, cue and progress); empty off the scanner.
     @ObservationIgnored var live: () -> [String: String] = { [:] }
+    /// While scanning: the camera now, as an uploaded photo for this turn, plus what Lea should know about it (the
+    /// person pointed). Nil off the scanner, or when the photo can't be made: the turn goes on words alone.
+    @ObservationIgnored var look: (() async -> (ref: String, live: [String: String])?)?
+    /// Lea pointed at things in the turn's photo (Voice/LeaSight pins them on the object).
+    @ObservationIgnored var onMarks: (([LeaMark]) -> Void)?
     /// Lea offered an action ("Start a scan") and the person said yes out loud: the same as tapping it.
     @ObservationIgnored var acceptOffer: ((String) -> Void)?
 
@@ -244,6 +249,8 @@ final class LeaConversation {
         var confirmedEarly = false
         /// The offer on screen when the turn began ("Start a scan"): a recorded yes takes it.
         var offered: String?
+        /// Where Lea pointed in this turn's photo, pinned once the answer is complete.
+        var marks: [LeaMark] = []
         /// Sonic's socket for this answer (nil: the gateway streams the audio, or the phone's voice).
         var sonic: SonicSocket?
         var sonicFailed = false
@@ -270,8 +277,7 @@ final class LeaConversation {
         // Primary: Sonic's socket on the phone, fed each sentence as it is written (one voice flow; after Samik's
         // PR #11). Without a ready token: the gateway streams the audio in the answer itself.
         let grant = voiceOn && WakeListener.shared.realtimeOn ? RealtimeTokens.ready : nil
-        let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil,
-                                      live: live(), sessionID: sessionID())
+        let liveNow = live(), session = sessionID(), looking = look
         let voice = LeaVoice.shared
         let st = TurnState(start: start, id: voice.beginStream(), input: audio == nil ? input : "recording",
                            recorded: audio != nil)
@@ -281,6 +287,15 @@ final class LeaConversation {
         if let grant { openSonic(grant, st) }
         task = Task {
             defer { st.sonic?.cancel() }
+            // Lea looks first: the camera now goes with the question (uploaded, then referenced).
+            var liveTurn = liveNow, image: String?
+            if let looking, let seen = await looking() {
+                image = seen.ref
+                liveTurn.merge(seen.live) { _, new in new }
+            }
+            if Task.isCancelled { return }
+            let stream = gateway.converse(scanID: scanID, audio: audio, text: text, speech: voiceOn && grant == nil,
+                                          live: liveTurn, sessionID: session, image: image)
             do {
                 for try await event in stream {
                     if Task.isCancelled { break }
@@ -338,7 +353,10 @@ final class LeaConversation {
             if st.sonic == nil || st.sonicFailed, let say = st.fallback.audioOff() { voice.queueOnDevice(say, stream: st.id) }
         case .action(let kind, let label):
             action = (kind, label)
+        case .mark(let m):
+            st.marks.append(m)
         case .done(_, let timings):
+            if !st.marks.isEmpty { onMarks?(st.marks) }
             if let sonic = st.sonic, !st.sonicFailed { sonic.say("", more: false) }
             diag?.log("voice_turn", ["input": st.input, "eager_start": st.confirmedEarly,
                                      "voice": st.sonic == nil ? "gateway" : (st.sonicFailed ? "sonic_failed" : "sonic_ws"),

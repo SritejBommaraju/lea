@@ -1,3 +1,4 @@
+import ARKit
 import AVFoundation
 import Foundation
 import Testing
@@ -226,5 +227,38 @@ struct StreamFallbackTests {
         var f = StreamFallback()
         _ = f.sentence("It looks fine from these photos.", withAudio: true)
         #expect(f.audioOff() == "It looks fine from these photos.")
+    }
+}
+
+/// Lea's look-and-point (Voice/LeaSight): where a mark in the photo lands on the object.
+@MainActor
+struct LeaSightTests {
+    @Test func photoAndSensorCoordinatesRoundTrip() {
+        // The photo is the sensor image turned right: its top-left is the sensor's bottom-left.
+        #expect(LeaSight.sensor(CGPoint(x: 0, y: 0)) == CGPoint(x: 0, y: 1))
+        #expect(LeaSight.sensor(CGPoint(x: 0.5, y: 0.25)) == CGPoint(x: 0.25, y: 0.5))
+        for p in [CGPoint(x: 0.1, y: 0.9), CGPoint(x: 0.42, y: 0.61)] {
+            let back = LeaSight.portrait(LeaSight.sensor(p))
+            #expect(abs(back.x - p.x) < 1e-9 && abs(back.y - p.y) < 1e-9)
+        }
+    }
+
+    @Test func aMarkIsPinnedFromTheCameraAndDepthOfItsPhoto() {
+        let k = simd_float3x3(SIMD3(1000, 0, 0), SIMD3(0, 1000, 0), SIMD3(960, 720, 1))
+        let depth = LeaSight.Depth(width: 4, height: 3, metres: [Float](repeating: 0.5, count: 12))
+        var moved = matrix_identity_float4x4
+        moved.columns.3 = SIMD4(1, 2, 3, 1)   // the phone 1 m right, 2 m up, 3 m back
+        let look = LeaSight.Snapshot(transform: moved, intrinsics: k, resolution: CGSize(width: 1920, height: 1440), depth: depth)
+        let centre = LeaSight.world(at: CGPoint(x: 0.5, y: 0.5), look, session: ARSession())
+        #expect(centre.map { simd_distance($0, SIMD3(1, 2, 2.5)) < 0.001 } == true)   // 0.5 m straight ahead
+        // A point right of centre in the sensor image lies right of the camera's axis.
+        let right = LeaSight.world(at: CGPoint(x: 0.75, y: 0.5), look, session: ARSession())
+        #expect(right.map { $0.x > 1.1 && abs($0.z - 2.5) < 0.001 } == true)
+    }
+
+    @Test func depthOutsideTheUsefulRangeIsNotUsed() {
+        let d = LeaSight.Depth(width: 2, height: 1, metres: [0.01, 9])
+        #expect(d.at(0, 0) == nil && d.at(0.9, 0) == nil)
+        #expect(LeaSight.Depth(width: 1, height: 1, metres: [1.2]).at(2, -1) == 1.2)   // clamped to the grid
     }
 }

@@ -446,6 +446,39 @@ def test_before_a_scan_lea_knows_the_product_the_label_photo_identified(gw):
     assert "not identified" in c.claude.bodies[1]["messages"][0]["content"]
 
 
+def test_marks_are_parsed_out_of_speech_and_never_split():
+    from repairos.voice.conversation import SentenceSplitter
+    sp = SentenceSplitter()
+    out = sp.feed("The cord enters at the back. Look at the strain relief there. <mark x=\"0.4")
+    out += sp.feed('2" y="0.61" label="cord entry. back"/><mark x="1.7" y="0.2" label="off photo"/>')
+    out += sp.flush()
+    assert out == ["The cord enters at the back.", "Look at the strain relief there."]
+    assert sp.marks == [{"x": 0.42, "y": 0.61, "label": "cord entry. back"}]   # 1.7 is outside the photo
+
+
+def test_a_look_turn_sends_the_photo_and_returns_marks_but_keeps_words(gw):
+    import urllib.parse
+    c = gw()
+    jpeg = b"\xff\xd8\xff\xe0" + b"look" * 50
+    ref = c.app.state.blobs.put(jpeg, "image/jpeg")
+    c.claude.deltas = ["That looks like the cord entry. ", 'Get a close-up there. <mark x="0.42" y="0.61" label="cord entry"/>']
+    live = urllib.parse.quote(json.dumps({"screen": "scan"}))
+    r = c.post(f"/v1/voice/converse?audio=none&live={live}&image={urllib.parse.quote(ref)}", json={"text": "what is this"})
+    events = [p for k, p in frames(r.content) if k == "J"]
+    assert {"type": "mark", "x": 0.42, "y": 0.61, "label": "cord entry"} in events
+    assert [e["text"] for e in events if e["type"] == "sentence"] == ["That looks like the cord entry.", "Get a close-up there."]
+    last = c.claude.bodies[0]["messages"][-1]["content"]
+    assert last[0]["type"] == "image" and last[0]["source"]["media_type"] == "image/jpeg"
+    assert last[1]["type"] == "text" and last[1]["text"].endswith("what is this")
+    turns = c.get("/v1/voice/conversation").json()["turns"]
+    assert turns[0]["text"] == "what is this" and "mark" not in turns[1]["text"]   # words only
+    # No photo: markers are ignored (nothing to point at), and a non-JPEG blob is not sent.
+    png = c.app.state.blobs.put(b"\x89PNG" + b"x" * 40, "image/png")
+    r = c.post(f"/v1/voice/converse?audio=none&image={urllib.parse.quote(png)}", json={"text": "and this"})
+    assert not [p for k, p in frames(r.content) if k == "J" and p["type"] == "mark"]
+    assert isinstance(c.claude.bodies[1]["messages"][-1]["content"], str)
+
+
 def test_converse_turn_caps(gw):
     c = gw(lea_voice_turns_per_minute=1)
     scan_id = publish_report(c)

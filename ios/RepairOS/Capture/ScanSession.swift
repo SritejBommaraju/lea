@@ -60,6 +60,8 @@ final class ScanSession: NSObject {
     let diag: Diag
     let hasLiDAR: Bool
     let session = ARSession()
+    /// What Lea sees and points at during this scan (Voice/LeaSight).
+    let sight = LeaSight()
     private(set) var renderer: PointCloudRenderer?
     private(set) var torch: Torch
     private let analyzer = FrameAnalyzer()

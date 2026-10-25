@@ -508,10 +508,13 @@ struct ScanTalkBar: View {
     @State private var pressedAt: Date?
 
     init(scanID: String, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String?,
-         live: @escaping () -> [String: String]) {
+         live: @escaping () -> [String: String], look: (() async -> (ref: String, live: [String: String])?)? = nil,
+         onMarks: (([LeaMark]) -> Void)? = nil) {
         let c = LeaConversation(scanID: scanID, gateway: gateway, diag: diag)
         c.sessionID = sessionID
         c.live = live
+        c.look = look
+        c.onMarks = onMarks
         _convo = State(initialValue: c)
     }
 

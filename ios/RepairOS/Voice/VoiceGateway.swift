@@ -111,16 +111,20 @@ enum ConverseEvent: Sendable {
     case audio(Data)
     case audioOff
     case action(String, label: String)
+    /// Lea points at something in the turn's photo (fractions of it, 0,0 top left).
+    case mark(LeaMark)
     case done(answer: String, timings: [String: Int])
 }
 
 extension GatewayClient {
     func converseRequest(scanID: String?, audio: Data?, text: String?, speech: Bool, live: [String: String] = [:],
-                         sessionID: String? = nil) -> URLRequest {
+                         sessionID: String? = nil, image: String? = nil) -> URLRequest {
         var q = "audio=\(speech ? "stream" : "none")"
         if let scanID { q += "&scan_id=\(scanID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? scanID)" }
         // Before the scan exists, the session tells the gateway what the label photo identified (the brief).
         if let sessionID { q += "&session_id=\(sessionID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionID)" }
+        // What the camera shows now (a blob uploaded first): Lea sees it and can point at things in it.
+        if let image { q += "&image=\(image.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? image)" }
         // What the screen shows now (a scan's stage, cue, progress): for this turn only.
         if !live.isEmpty, let json = try? JSONSerialization.data(withJSONObject: live, options: .sortedKeys),
            let encoded = String(decoding: json, as: UTF8.self).addingPercentEncoding(withAllowedCharacters: .alphanumerics) {
@@ -140,8 +144,9 @@ extension GatewayClient {
 
     /// The turn's frames as they arrive (1 byte kind, 4 bytes big-endian length, payload).
     func converse(scanID: String?, audio: Data?, text: String?, speech: Bool, live: [String: String] = [:],
-                  sessionID: String? = nil) -> AsyncThrowingStream<ConverseEvent, Error> {
-        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, live: live, sessionID: sessionID)
+                  sessionID: String? = nil, image: String? = nil) -> AsyncThrowingStream<ConverseEvent, Error> {
+        let req = converseRequest(scanID: scanID, audio: audio, text: text, speech: speech, live: live, sessionID: sessionID,
+                                  image: image)
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -191,6 +196,9 @@ extension GatewayClient {
         case "sentence": return .sentence(o["text"] as? String ?? "", audio: o["audio"] as? Bool ?? false)
         case "audio_off": return .audioOff
         case "action": return .action(o["action"] as? String ?? "", label: o["label"] as? String ?? "")
+        case "mark":
+            guard let x = o["x"] as? Double, let y = o["y"] as? Double else { return nil }
+            return .mark(LeaMark(x: x, y: y, label: o["label"] as? String ?? ""))
         case "done": return .done(answer: o["answer_text"] as? String ?? "", timings: o["timings_ms"] as? [String: Int] ?? [:])
         default: return nil
         }

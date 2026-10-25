@@ -68,7 +68,10 @@ struct SessionFlowView: View {
             // Voice/ScanTalkBar: talk with Lea while scanning; the conversation carries on at the report.
             if capturing, let gateway = app.gateway, app.isPaired {
                 ScanTalkBar(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
-                            sessionID: { [upload] in upload?.state.gatewaySessionID }, live: { liveScan })
+                            sessionID: { [upload] in upload?.state.gatewaySessionID }, live: { liveScan },
+                            look: lookForLea(gateway), onMarks: { [scan] marks in
+                                if let scan { scan.sight.pin(marks, session: scan.session) }
+                            })
                     .padding(.horizontal, Spacing.m)
             }
         }
@@ -90,6 +93,13 @@ struct SessionFlowView: View {
                 scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
             }
         }
+    }
+
+    /// Our ARKit scanner lets Lea see: each turn carries the camera frame (Voice/LeaSight). Object Capture keeps its
+    /// camera to itself, so there Lea talks without seeing.
+    private func lookForLea(_ gateway: GatewayClient) -> (() async -> (ref: String, live: [String: String])?)? {
+        guard let scan else { return nil }
+        return { await scan.lookForLea(gateway) }
     }
 
     /// A capture is on screen (not the report).
@@ -115,6 +125,7 @@ struct SessionFlowView: View {
             if scan.relocalizing { live["tracking"] = "lost; finding its place again" }
             if scan.flip != nil { live["part"] = "the bottom: the object is turned over for its underside" }
             if scan.enough { live["enough"] = "yes: they can tap Done" }
+            if let circled = scan.sight.circled { live["circled on screen"] = circled }
         } else if let flow {
             live["stage"] = switch flow.step {
             case .starting: "starting the camera"
@@ -217,6 +228,21 @@ struct ScanView: View {
                     .onAppear { scan.setViewSize(geo.size) }
                     .onChange(of: geo.size) { scan.setViewSize($1) }
                     .gesture(SpatialTapGesture().onEnded { scan.tap(at: $0.location) })
+                    // Voice/LeaSight: Lea's circles on the object, and a long press to point at something for her.
+                    .overlay { LeaSightOverlay(scan: scan) }
+                    .simultaneousGesture(LongPressGesture(minimumDuration: 0.45)
+                        .sequenced(before: DragGesture(minimumDistance: 0))
+                        .onEnded { value in
+                            guard case .second(true, let drag?) = value, let frame = scan.session.currentFrame,
+                                  scan.sight.point(at: drag.location, viewSize: geo.size, frame: frame, session: scan.session) else { return }
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            WakeListener.shared.listenForFollowUp()   // point, then ask: "what's this?"
+                        })
+                    .task {
+                        // Continuing a finished scan: its top findings are circled where they are on the object.
+                        guard scan.continuing, let json = CachedReport.load(scan.record, storage: scan.storage) else { return }
+                        scan.sight.show(findings: ReportModel(json: json).mostLikely.compactMap { p in p.point.map { ($0, p.part) } })
+                    }
                     .task {
                         // Developer hook (`--auto-scan`): press Scan once tracking has had a moment (smoke tests).
                         guard CommandLine.arguments.contains("--auto-scan") else { return }
