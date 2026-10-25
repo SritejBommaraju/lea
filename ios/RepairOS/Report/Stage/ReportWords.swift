@@ -36,6 +36,14 @@ enum ReportWords {
         r.setup.count == 1 ? "1 thing to set up" : "\(r.setup.count) things to set up"
     }
 
+    /// Under "Setup to check": what these rows are, and are not.
+    static let setupNote = "Not broken: put these right, then test again."
+
+    /// A setup row read aloud: its number (as on its marker), the part, how it looks, then its fix.
+    static func setupLabel(_ p: ReportModel.Problem, number: Int) -> String {
+        "\(number): \(p.part), \(p.issue). " + (p.fix.map(sanitize) ?? "Set up, not broken.")
+    }
+
     /// The top finding in the backend's own words ("Wire may be loose"), or the plain verdict when there is none.
     static func headline(_ r: ReportModel) -> String {
         switch r.verdict {

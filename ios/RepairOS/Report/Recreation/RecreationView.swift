@@ -137,6 +137,7 @@ struct RecreationView: View {
         case .caution: "caution"
         case .good: "good"
         case .cosmetic: "cosmetic"
+        case .setup: "setup"
         default: "neutral"
         }
         return RecreationMarker(id: p.id, number: p.number, point: p.point, rgb: RecreationMarker.rgb(tone: tone))

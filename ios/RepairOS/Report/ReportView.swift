@@ -612,7 +612,7 @@ struct ReportContent: View {
                 }
                 if !report.setup.isEmpty {
                     ProblemList(title: "Setup to check", problems: report.setup,
-                                note: "Not broken: put these right, then test again.").id("setup")
+                                note: ReportWords.setupNote).id("setup")
                 }
                 if !report.cosmetic.isEmpty {
                     ProblemList(title: "Cosmetic", problems: report.cosmetic,
@@ -742,6 +742,11 @@ extension ReportModel.Severity? {
         case .functional, .none: .caution
         }
     }
+}
+
+extension ReportModel.Problem {
+    /// Its colour: a setup state (not broken) is the calm setup tone, unless it is a hazard; else by severity.
+    var tone: Tone { isSetup && severity != .safety ? .setup : severity.tone }
 }
 
 private struct VerdictHeader: View {
@@ -1093,8 +1098,20 @@ struct ProblemDetailView: View {
                 crops
                 VStack(alignment: .leading, spacing: Spacing.s) {
                     Text(problem.part).font(.screenTitle)
-                    Text(problem.issue).font(.title3.weight(.semibold)).foregroundStyle(problem.severity.tone.color)
+                    Text(problem.issue).font(.title3.weight(.semibold)).foregroundStyle(problem.tone.text)
                     ProblemChips(problem: problem, all: true).padding(.top, Spacing.xs)
+                }
+                if let fix = problem.fix {
+                    VStack(alignment: .leading, spacing: Spacing.s) {
+                        Label(problem.isSetup ? "How to set it right" : "What to do", systemImage: "wrench.and.screwdriver")
+                            .font(.headline).foregroundStyle(problem.tone.text)
+                        Text(ReportWords.sanitize(fix)).font(.body).fixedSize(horizontal: false, vertical: true)
+                        if problem.isSetup && problem.severity != .safety {
+                            Text(ReportWords.setupNote).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .card(tone: problem.tone)
+                    .accessibilityElement(children: .combine)
                 }
                 if let observation = problem.observation {
                     VStack(alignment: .leading, spacing: Spacing.s) {

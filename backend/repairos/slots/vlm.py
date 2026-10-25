@@ -99,6 +99,7 @@ class AssemblyCheck:
     model: str
     latency_ms: int
     attempts: tuple[dict, ...] = field(default_factory=tuple)
+    refused: bool = False    # the model declined: no answer at all (never "nothing is wrong"); the check is redone
 
 
 @dataclass(frozen=True)

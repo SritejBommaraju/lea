@@ -730,7 +730,8 @@ class AnthropicVisionJudge:
         """What a complete, correctly assembled unit of this kind has and what the photos show of each (at most
         MAX_ASSEMBLY_ITEMS). One call to the first crop model, no escalation (a not_visible item is a gap, not a
         cannot_tell to settle). Boxes come back in the pixels of each image as given; an item whose photo number or
-        box is not usable keeps photo/box None (code never places it)."""
+        box is not usable keeps photo/box None (code never places it). A declined call is `refused` with no items: no
+        answer, never an empty checklist that reads as "everything in place"."""
         sent = [_sent_image(im) for im in images]
         content = [b for b, _s, _z in sent] + [{"type": "text", "text": assembly_request([z for _b, _s, z in sent],
                                                                                         object_words)}]
@@ -739,7 +740,7 @@ class AnthropicVisionJudge:
         self._record("assembly_check", hashlib.sha256(json.dumps(content, sort_keys=True).encode()).hexdigest(), [a])
         ans = a["answer"]
         if ans.get("refused"):
-            return AssemblyCheck("unknown", False, (), model, a["latency_ms"], (a,))
+            return AssemblyCheck("unknown", False, (), model, a["latency_ms"], (a,), refused=True)   # not an answer
         from repairos.vision.crops import as_pil
 
         given = [as_pil(im).size for im in images]

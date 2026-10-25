@@ -1011,7 +1011,7 @@ def _object_words(run_row: dict) -> str | None:
     return words or None
 
 
-def _assembly_sync(ctx: Context, scan_id: str, picked: list[dict], object_words: str | None) -> Any:
+def _assembly_sync(ctx: Context, scan_id: str, picked: list[dict], object_words: str | None, rev: int) -> Any:
     from repairos.vision.assembly import check_assembly
     from repairos.vision.crops import load_still
     from repairos.vision.scale import PixelScale
@@ -1025,7 +1025,7 @@ def _assembly_sync(ctx: Context, scan_id: str, picked: list[dict], object_words:
     res = check_assembly(views, scan_id=scan_id, judge=ctx.slot("VLM"), object_words=object_words,
                          max_confirm=cfg["max_confirm"], max_gaps=cfg["max_gaps"],
                          crop_dir=ctx.workdir(scan_id) / "crops" / "assembly", px_per_mm_of=scales,
-                         stop=ctx.stopping)
+                         stop=ctx.stopping, rev=rev)
     for f in res.findings:
         refs = f.get("evidence_refs") or {}
         crop = refs.get("crop_file")
@@ -1039,10 +1039,13 @@ async def run_assembly(ctx: Context, scan: dict, stills: list[dict]) -> tuple[di
     """The whole-object assembly check (repairos.vision.assembly), beside the inspection: its findings stored like
     any other (finding.create), its record on the run row (`assembly`). Returns (the report regions of every assembly
     finding of the scan, the ids of earlier checks' findings this check replaces). The same photos as the last check:
-    that answer stands (no new call). Other photos (more were added): a new check, and the earlier check's rows are
-    replaced, not added to (`superseded`: left out of fusion and the report, like an earlier report revision). Off in
-    config, or a vision slot without the check: nothing, and the run row says so. A failed call is not a verdict: one
-    not_inspected row says the check was not done and why (I3); the report still builds."""
+    that answer stands (no new call). Other photos (more were added), or a last check that was paused or failed: a new
+    check, revision `rev` (in its row ids, so a new answer is never hidden behind an earlier row of the same place).
+    A check the overview answered replaces the earlier rows, not added to (`superseded`: left out of fusion and the
+    report, like an earlier report revision). Off in config, or a vision slot without the check: nothing, and the run
+    row says so. A check with no answer (a failed, declined or paused overview) is not a verdict: one not_inspected
+    row says the check was not done and why (I3), the last answered check's rows stand beside it (`answer_ids`), and
+    the next report does it again; the report still builds."""
     from repairos.vision.assembly import finding_not_run, pick_stills
 
     scan_id = scan["scan_id"]
@@ -1062,24 +1065,35 @@ async def run_assembly(ctx: Context, scan: dict, stills: list[dict]) -> tuple[di
     ids = [s["still_id"] for s in picked]
     if not picked or (before.get("status") == "done" and before.get("stills") == ids):
         return regions_before, superseded_before
+    rev = int(before.get("rev") or 0) + 1
+    answered_before = list(before["answer_ids"] if "answer_ids" in before else
+                           (before.get("finding_ids") or []) if before.get("status") == "done" else [])
     t0 = time.monotonic()
     try:
-        res = await asyncio.to_thread(_assembly_sync, ctx, scan_id, picked, _object_words(run_row))
-        findings, record = res.findings, {**res.record, "status": "paused" if res.record.get("paused") else "done"}
-        regions = res.regions
+        res = await asyncio.to_thread(_assembly_sync, ctx, scan_id, picked, _object_words(run_row), rev)
+        status = "paused" if res.record.get("paused") else "failed" if res.record.get("failed") else "done"
+        findings, record, regions = res.findings, {**res.record, "status": status}, res.regions
     except Exception as e:
         if is_stopping(e):
             raise
         log.warning("assembly check for scan %s failed: %s", scan_id, e)
         f = finding_not_run(scan_id=scan_id, reason=f"the vision model call failed ({type(e).__name__}); it is "
-                                                    "tried again on the next report", still_ids=ids)
+                                                    "tried again on the next report", still_ids=ids, rev=rev)
         findings, record = [f], {"status": "failed", "stills": ids, "error": type(e).__name__}
         regions = {f["finding_id"]: {"part_class": "assembly check", "inspected_by": []}}
-    finding_ids, _kept = await _store_findings(ctx, findings)
+    answered = bool(record.get("answered"))
+    standing = [] if answered else answered_before   # no answer never replaces the last answer with nothing
+    if standing:
+        for f in findings:
+            f["evidence"].append("the earlier assembly check's answers stand until this one is done")
+    new_ids, _kept = await _store_findings(ctx, findings)   # a conflict is only a retry of this same revision
+    finding_ids = list(dict.fromkeys([*standing, *new_ids]))
     superseded = sorted((superseded_before | set(before.get("finding_ids") or [])) - set(finding_ids))
-    await _update(ctx, scan, {"assembly": {**record, "finding_ids": finding_ids, "regions": regions,
+    regions = {**regions_before, **regions}   # rows that stand keep their region on the next check too
+    await _update(ctx, scan, {"assembly": {**record, "rev": rev, "finding_ids": finding_ids,
+                                           "answer_ids": new_ids if answered else standing, "regions": regions,
                                            "superseded": superseded, "seconds": round(time.monotonic() - t0, 3)}})
-    return {**regions_before, **regions}, set(superseded)
+    return regions, set(superseded)
 
 
 async def _run_stages(ctx: Context, scan: dict) -> dict:

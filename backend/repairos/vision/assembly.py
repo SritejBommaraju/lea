@@ -16,11 +16,15 @@ what SHOULD be there. This check asks that question once per scan, product-agnos
   3. gaps       an item the photos do not show (not_visible, at most `max_gaps`) is insufficient_evidence with what
                 photo to take (I4): never a finding.
 
-A claim the confirm step calls ok leaves no row (the overview was wrong; it is kept in the run record). A later check
-over other photos (more photos added to the scan) replaces the earlier check's rows (pipeline.run.run_assembly).
-Every finding is a suspect (I1); a setup state (missing, unplugged, not fully in, in backwards) carries category
-`setup` and its plain fix (setup_fields). A spend cap that trips leaves the check not_inspected with the pause reason
-(I3); the report still builds.
+A claim the confirm step calls ok leaves no row (the overview was wrong; it is kept in the run record). A claim past
+`max_confirm` is not_inspected with its box and the budget reason (I3): the report says which places were never
+looked at closely. A later check over other photos (more photos added to the scan) replaces the earlier check's rows
+(pipeline.run.run_assembly); every check's rows carry its revision `rev` in their ids, so a later answer is a new row
+and never hidden behind an earlier one for the same place. Every finding is a suspect (I1); a setup state (missing,
+unplugged, not fully in, in backwards) carries category `setup` and its plain fix (setup_fields). A spend cap that
+trips, on the overview or on a close look, leaves that part not_inspected with the pause reason (I3) and marks the
+check `paused` (record), so it is done again later; an overview the model declined is `failed` the same way, never an
+empty answer. The report still builds.
 """
 from __future__ import annotations
 
@@ -130,8 +134,13 @@ def _base(scan_id: str, fid: str, subject: dict, state: str, evidence: list[str]
     return out
 
 
+def _claim_fid(scan_id: str, rev: int, still_id: str, k: int, item: Any) -> str:
+    """One claim's row id: the check's revision, the photo, the claim's place in the check and what it claims."""
+    return _fid(scan_id, ASSEMBLY_REF, rev, still_id, k, item.part, item.problem)
+
+
 def finding_from_state(*, scan_id: str, still_id: str, k: int, item: Any, crop: Any, state: Any,
-                       crop_file: str | None = None, sharpness: float | None = None) -> dict:
+                       crop_file: str | None = None, sharpness: float | None = None, rev: int = 1) -> dict:
     """The finding for one confirmed place: the state check's answer after the honesty gate. An issue is a suspect
     with the overview's and the close look's words and what to do; cannot_tell is insufficient_evidence with a retake
     request; ok returns the finding with state ok (the caller drops it: the claim was not confirmed)."""
@@ -163,8 +172,7 @@ def finding_from_state(*, scan_id: str, still_id: str, k: int, item: Any, crop: 
     if crop_file:
         refs["crop_file"] = crop_file
     finding_state = STATE_TO_FINDING[cs.state]
-    out = _base(scan_id, _fid(scan_id, ASSEMBLY_REF, still_id, item.part, item.problem),
-                _subject(item.kind, still_id, k),
+    out = _base(scan_id, _claim_fid(scan_id, rev, still_id, k, item), _subject(item.kind, still_id, k),
                 finding_state, evidence, refs,
                 0.0 if cs.state == "cannot_tell" else CONFIDENCE.get(cs.confidence_word, 0.35))
     meas: dict[str, Any] = {"views": 1}
@@ -181,7 +189,28 @@ def finding_from_state(*, scan_id: str, still_id: str, k: int, item: Any, crop: 
     return out
 
 
-def finding_gap(*, scan_id: str, k: int, item: Any, still_ids: Sequence[str]) -> dict:
+def finding_not_looked_at(*, scan_id: str, still_id: str, k: int, item: Any, box: Sequence[float], reason: str,
+                          rev: int = 1) -> dict:
+    """A claim that got no close look (a spend pause, the close-look budget): not_inspected with its place and the
+    reason (I3). The claim itself is not stated (it is not evidence until a close look confirms it)."""
+    return _base(scan_id, _claim_fid(scan_id, rev, still_id, k, item), _subject(item.kind, still_id, k),
+                 "not_inspected", [f"the {item.part} in still {still_id} was to get a close look for whether it is in "
+                                   f"place, but it was not inspected: {reason}"],
+                 {"still_ids": [still_id], "crop_box_px": [max(0, int(round(v))) for v in box]})
+
+
+def budget_reason(max_confirm: int) -> str:
+    """Why a claim past `max_confirm` got no close look, in plain words."""
+    if max_confirm <= 0:
+        return "close looks are turned off for the assembly check (assembly.max_confirm is 0)"
+    n = "1 place" if max_confirm == 1 else f"{max_confirm} places"
+    return f"the assembly check gives at most {n} a close look per check, and this one came later"
+
+
+REFUSED = "the vision model declined to answer for these photos; it is tried again on the next report"
+
+
+def finding_gap(*, scan_id: str, k: int, item: Any, still_ids: Sequence[str], rev: int = 1) -> dict:
     """An item the photos do not show: insufficient_evidence with the photo to take (I4), never a finding. It names
     the photos that were looked at (no box: it is not in them)."""
     stills_checked = f"{len(still_ids)} photos" if len(still_ids) != 1 else "photo"
@@ -189,18 +218,19 @@ def finding_gap(*, scan_id: str, k: int, item: Any, still_ids: Sequence[str]) ->
     keep = item.expect[1:2].isupper()   # "AA cells ...", "USB ...": an abbreviation keeps its capitals
     words = item.expect if keep else item.expect[:1].lower() + item.expect[1:]
     expect = f" (it should be: {words})" if item.expect else ""
-    return _base(scan_id, _fid(scan_id, ASSEMBLY_REF, "gap", item.part), {"kind": "wire" if item.kind == "wire" else
-                 "part", "ref": f"{scan_id}/{ASSEMBLY_REF}_gap{k}"}, "insufficient_evidence",
+    return _base(scan_id, _fid(scan_id, ASSEMBLY_REF, rev, "gap", item.part),
+                 {"kind": "wire" if item.kind == "wire" else "part", "ref": f"{scan_id}/{ASSEMBLY_REF}_gap{k}"},
+                 "insufficient_evidence",
                  [f"could not check the {item.part}: it is not clearly visible in the {stills_checked} the assembly "
                   f"check looked at{expect}", f"to check it: {need}",
                   "whole-object assembly check: a gap, not a fault"], {"still_ids": list(still_ids)}) | \
         {"part_words": item.part[:200]}
 
 
-def finding_not_run(*, scan_id: str, reason: str, still_ids: Sequence[str]) -> dict:
-    """The assembly check did not run (a spend pause, a failed call): not_inspected with the reason (I3), naming the
-    photos it was to look at."""
-    return _base(scan_id, _fid(scan_id, ASSEMBLY_REF, "not_run", reason),
+def finding_not_run(*, scan_id: str, reason: str, still_ids: Sequence[str], rev: int = 1) -> dict:
+    """The assembly check did not run (a spend pause, a failed or declined call): not_inspected with the reason (I3),
+    naming the photos it was to look at."""
+    return _base(scan_id, _fid(scan_id, ASSEMBLY_REF, rev, "not_run", reason),
                  {"kind": "part", "ref": f"{scan_id}/{ASSEMBLY_REF}"}, "not_inspected",
                  [f"the whole-object assembly check (is everything there, plugged in and the right way round) was not "
                   f"done: {reason}"], {"still_ids": list(still_ids)})
@@ -209,10 +239,11 @@ def finding_not_run(*, scan_id: str, reason: str, still_ids: Sequence[str]) -> d
 def check_assembly(views: Sequence[tuple[Mapping[str, Any], Any]], *, scan_id: str, judge: Any,
                    object_words: str | None = None, max_confirm: int = 3, max_gaps: int = 2,
                    crop_dir: str | Path | None = None, px_per_mm_of: Mapping[str, Callable | None] | None = None,
-                   workers: int = 3, stop: Any = None) -> AssemblyResult:
+                   workers: int = 3, stop: Any = None, rev: int = 1) -> AssemblyResult:
     """`views`: (still dict, full-resolution PIL image) for the stills to look at (pick_stills). Returns the findings,
     their report regions and a record for the run row. Raises only on a model error (the caller records it); a spend
-    pause is the not_inspected finding."""
+    pause is a not_inspected finding and record `paused`, a declined overview the not_run finding and record `failed`
+    (neither is an answer: the caller does the check again later). `rev`: the check's revision, in every row id."""
     from repairos.vision.crops import as_pil, context_view, cut, outline
     from repairos.vision.inspect import VLM_MAX_SIDE
 
@@ -230,11 +261,18 @@ def check_assembly(views: Sequence[tuple[Mapping[str, Any], Any]], *, scan_id: s
         res.record["calls"] += 1
         check = judge.assembly_check(previews, object_words)
     except SpendLimit:
-        f = finding_not_run(scan_id=scan_id, reason=PAUSED, still_ids=res.record["stills"])
+        f = finding_not_run(scan_id=scan_id, reason=PAUSED, still_ids=res.record["stills"], rev=rev)
         res.findings.append(f)
         res.regions[f["finding_id"]] = {"part_class": "assembly check", "inspected_by": []}
         res.record["paused"] = True
         return res
+    if getattr(check, "refused", False):   # declined: not an answer (an empty one would read as "all in place")
+        f = finding_not_run(scan_id=scan_id, reason=REFUSED, still_ids=res.record["stills"], rev=rev)
+        res.findings.append(f)
+        res.regions[f["finding_id"]] = {"part_class": "assembly check", "inspected_by": []}
+        res.record.update(failed="refused", model=check.model)
+        return res
+    res.record["answered"] = True   # the overview answered: this check's rows replace earlier ones
     res.record.update(object=check.object_words, opened=check.opened, model=check.model,
                       items=[{"part": i.part, "status": i.status, "problem": i.problem,
                               "still_id": views[i.photo][0]["still_id"] if i.photo is not None else None}
@@ -254,8 +292,8 @@ def check_assembly(views: Sequence[tuple[Mapping[str, Any], Any]], *, scan_id: s
             res.record.setdefault("claims_same_place", []).append(i.part)   # one place, one close look
             continue
         claims.append((i, i.photo, box))
-    over = claims[max_confirm:]
-    claims = claims[:max_confirm]
+    over = claims[max(0, max_confirm):]
+    claims = claims[:max(0, max_confirm)]
     res.record["claims_not_confirmed_budget"] = len(over)
 
     def confirm(c: tuple) -> tuple[tuple, Any, Any, Any]:
@@ -290,13 +328,11 @@ def check_assembly(views: Sequence[tuple[Mapping[str, Any], Any]], *, scan_id: s
         sid = views[p][0]["still_id"]
         item = replace(item, box=box)
         if paused is not None:
-            f = _base(scan_id, _fid(scan_id, ASSEMBLY_REF, sid, item.part, item.problem), _subject(item.kind, sid, k),
-                      "not_inspected", [f"the {item.part} in still {sid} was to get a close look for whether it is in "
-                                        f"place, but it was not inspected: {PAUSED}"],
-                      {"still_ids": [sid], "crop_box_px": [max(0, int(round(v))) for v in box]})
+            f = finding_not_looked_at(scan_id=scan_id, still_id=sid, k=k, item=item, box=box, reason=PAUSED, rev=rev)
             res.findings.append(f)
             res.regions[f["finding_id"]] = {"part_class": item.part, "inspected_by": []}
             outcomes.append({"part": item.part, "claim": item.problem, "confirm": "paused"})
+            res.record["paused"] = True   # not done: the check runs again once the cap clears (no "done" cache)
             continue
         path = None
         if crop_dir:
@@ -304,18 +340,26 @@ def check_assembly(views: Sequence[tuple[Mapping[str, Any], Any]], *, scan_id: s
             path = str(crop_dir / f"{sid}_{ASSEMBLY_REF}{k}.jpg")
             crop.image.save(path, quality=92)
         f = finding_from_state(scan_id=scan_id, still_id=sid, k=k, item=item, crop=crop, state=state, crop_file=path,
-                               sharpness=views[p][0].get("sharpness"))
+                               sharpness=views[p][0].get("sharpness"), rev=rev)
         outcomes.append({"part": item.part, "claim": item.problem, "confirm": state.state, "finding": f["state"]})
         if f["state"] == "ok":
             continue   # the close look does not confirm the claim: no row (the overview was wrong)
         res.findings.append(f)
         res.regions[f["finding_id"]] = {"part_class": state.part_class if state.part_class not in ("", "unknown")
                                         else item.part, "inspected_by": ["vlm"]}
+    reason = budget_reason(max_confirm)
+    for k, (item, p, box) in enumerate(over, start=len(claims)):   # past the budget: say so, with the place (I3)
+        sid = views[p][0]["still_id"]
+        f = finding_not_looked_at(scan_id=scan_id, still_id=sid, k=k, item=replace(item, box=box), box=box,
+                                  reason=reason, rev=rev)
+        res.findings.append(f)
+        res.regions[f["finding_id"]] = {"part_class": item.part, "inspected_by": []}
+        outcomes.append({"part": item.part, "claim": item.problem, "confirm": "over_budget"})
     res.record["confirms"] = outcomes
 
     gaps = [i for i in check.items if i.status == "not_visible"][:max_gaps]
     for k, item in enumerate(gaps):
-        f = finding_gap(scan_id=scan_id, k=k, item=item, still_ids=res.record["stills"])
+        f = finding_gap(scan_id=scan_id, k=k, item=item, still_ids=res.record["stills"], rev=rev)
         res.findings.append(f)
         res.regions[f["finding_id"]] = {"part_class": item.part, "inspected_by": ["vlm"]}
     res.record["gaps"] = len(gaps)
