@@ -38,6 +38,9 @@ final class LeaVoice: NSObject {
     /// The scan's diag.jsonl: every spoken cue is logged there (`voice_cue`).
     @ObservationIgnored private var cueDiag: Diag?
     @ObservationIgnored private var pendingCue: Task<Void, Never>?
+    /// A line that must be heard (`priorityCue`): its words, worked out when it can play, and who to tell once it starts.
+    @ObservationIgnored private var priority: (next: @MainActor () -> String?, said: @MainActor () -> Void)?
+    @ObservationIgnored private var priorityTask: Task<Void, Never>?
     @ObservationIgnored private var utterance = 0
     @ObservationIgnored private var deviceStarted: (@MainActor @Sendable () -> Void)?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
@@ -119,7 +122,7 @@ final class LeaVoice: NSObject {
     }
 
     private func consider(_ line: String, dynamic: Bool = false) {
-        switch limiter.decide(line, now: now, busy: speaking) {
+        switch limiter.decide(line, now: now, busy: speaking, held: priority != nil) {
         case .speak:
             pendingCue?.cancel()
             sayCue(line)
@@ -157,6 +160,43 @@ final class LeaVoice: NSObject {
         if let diag { cueDiag = diag }
         guard !muted, !line.isEmpty else { return }
         consider(line, dynamic: true)
+    }
+
+    /// A line that must be heard (what the object is). It waits out the gap and anything playing like the other cues,
+    /// but a scan instruction never replaces it: they wait for it. `next` gives the words when it can play (nil: nothing
+    /// left to say, e.g. the person corrected the guess) and `said` runs once they start. A newer call replaces it.
+    func priorityCue(diag: Diag?, next: @escaping @MainActor () -> String?, said: @escaping @MainActor () -> Void) {
+        if let diag { cueDiag = diag }
+        priority = (next, said)
+        tryPriority()
+    }
+
+    /// The scan is over: a line still waiting is not said.
+    func dropPriorityCue() {
+        priority = nil
+        priorityTask?.cancel()
+    }
+
+    private func tryPriority() {
+        priorityTask?.cancel()
+        guard let p = priority else { return }
+        guard !muted, let line = p.next(), !line.isEmpty else { priority = nil; return }
+        switch limiter.decide(line, now: now, busy: speaking) {
+        case .speak:
+            priority = nil
+            sayCue(line)
+            p.said()
+        case .drop:   // the same words a moment ago
+            priority = nil
+            p.said()
+        case .wait(let until):
+            let delay = max(0.05, until - now)
+            priorityTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled else { return }
+                self?.tryPriority()
+            }
+        }
     }
 
     // MARK: - Conversation streams

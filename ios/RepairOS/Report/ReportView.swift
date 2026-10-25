@@ -44,10 +44,12 @@ struct ReportView: View {
     private var gateway: GatewayClient? { offline ? nil : app.gateway }
 
     /// The photo-real recreation (Report/Recreation) when this scan has one (the phone's shell, else the server's);
-    /// otherwise the stage picks the 3D view or the photo hero itself.
+    /// otherwise the stage picks the 3D view or the photo hero itself. Not when the pipeline chose photos: the object is
+    /// too small or flat for LiDAR (a 7 cm board is a blob; the owner's Arduino, 2026-10-25), and the sharp stills
+    /// with their numbered marks are the honest view.
     private var stageHero: StageHero {
         let dir = RecreationCenter.scanDir(sessionDir: app.storage.dir(record), scanID: record.scanID)
-        guard RecreationCenter.shared.available(dir) else { return .automatic }
+        guard Self.showsRecreation(hero: heroChoice, available: RecreationCenter.shared.available(dir)) else { return .automatic }
         return .custom { ctx in
             AnyView(RecreationView(source: .scan(dir), markers: ctx.markers, focus: ctx.focus,
                                    onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour))
@@ -203,7 +205,13 @@ struct ReportView: View {
     }
 
     /// The backend's hero choice: the live `mesh_ready`, else the pipeline's, else the cached report's.
-    private var heroChoice: String? { live?.hero ?? pipelineHero ?? report?.hero }
+    private var heroChoice: String? { Self.heroChoice(live: live?.hero, pipeline: pipelineHero, cached: report?.hero) }
+
+    /// A reopened report never polls the pipeline, so the cached report's choice has to count as much as a live one.
+    static func heroChoice(live: String?, pipeline: String?, cached: String?) -> String? { live ?? pipeline ?? cached }
+
+    /// The recreation leads only when there is one and the backend did not choose the photos.
+    static func showsRecreation(hero: String?, available: Bool) -> Bool { available && hero != "photos" }
 
     /// Follows the backend's hero choice: fetches its cleaned cloud (`points`) or its mesh (`mesh`), cached beside the
     /// scan; `photos` needs nothing. `rev`: a newer revision was announced (live `mesh_ready` or the pipeline's

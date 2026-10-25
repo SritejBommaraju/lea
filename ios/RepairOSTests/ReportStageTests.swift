@@ -151,3 +151,68 @@ struct ProblemRingTests {
         #expect(RecreationStage.ring(rgb: SIMD3(0.5, 0.5, 0.6), dashed: true) != nil)
     }
 }
+
+/// What Lea says when the object is identified during the scan (Capture/CaptureView IdentitySpeech).
+@MainActor
+struct IdentitySpeechTests {
+    typealias I = LiveEvents.Identity
+    static let guess = I(category: "Microcontroller development board", brand: nil, model: nil, confidence: "medium")
+    static let named = I(category: "Microcontroller development board", brand: "ELEGOO", model: "UNO R3", confidence: "high")
+
+    @Test func firstGuessThenTheNamedProductOnce() {
+        let said = IdentitySpeech.Said()
+        #expect(said.next(Self.guess, corrected: nil) == "This looks like a microcontroller development board.")
+        said.spoke()
+        #expect(said.next(Self.named, corrected: nil) == "It's an ELEGOO UNO R3.")
+        said.spoke()
+        #expect(said.next(Self.named, corrected: nil) == nil)                                 // never twice
+        #expect(said.next(I(category: "air fryer", confidence: "low"), corrected: nil) == nil)   // no flip-flopping
+        #expect(IdentitySpeech.Said().next(I(category: "air fryer", confidence: "medium"), corrected: nil) == "This looks like an air fryer.")
+    }
+
+    /// Greptile PR #31: a medium guess that already carried the brand was said as its category only, so the
+    /// high-confidence name that follows is still said.
+    @Test func aBrandSaidAsItsCategoryStillGetsNamed() {
+        let said = IdentitySpeech.Said()
+        let branded = I(category: "Microcontroller development board", brand: "ELEGOO", model: "UNO R3", confidence: "medium")
+        #expect(said.next(branded, corrected: nil) == "This looks like a microcontroller development board.")
+        said.spoke()
+        #expect(said.level == .category)
+        #expect(said.next(Self.named, corrected: nil) == "It's an ELEGOO UNO R3.")
+    }
+
+    /// Only what started playing counts: a line that was offered but replaced by a newer guess is not "said".
+    @Test func onlyWordsThatPlayedCount() {
+        let said = IdentitySpeech.Said()
+        _ = said.next(Self.guess, corrected: nil)               // waiting for the voice gap, never played
+        #expect(said.level == .nothing)
+        #expect(said.next(Self.named, corrected: nil) == "It's an ELEGOO UNO R3.")   // the newest guess, at play time
+        said.spoke()
+        #expect(said.level == .product)
+        #expect(said.next(Self.guess, corrected: nil) == nil)
+    }
+
+    /// Greptile PR #31: the words are worked out when they play, so a correction saved while the line waited
+    /// silences the rejected guess.
+    @Test func aCorrectionSilencesTheWaitingGuess() {
+        let said = IdentitySpeech.Said()
+        #expect(said.next(Self.guess, corrected: "Arduino clone") == nil)
+        said.spoke()
+        #expect(said.level == .nothing)
+        #expect(IdentitySpeech.line(Self.named, said: .category, corrected: "Arduino clone") == nil)
+    }
+}
+
+/// Greptile PR #31: a reopened report never polls the pipeline; its cached choice of photos still keeps the
+/// recreation (a blob for a small object) off the stage.
+struct StageHeroChoiceTests {
+    @Test func aSavedReportStillHonoursPhotos() {
+        let cached = ReportModel(json: ["verdict": "no_issues_found", "mesh": ["hero": "photos", "rev": 2] as [String: Any]])
+        let hero = ReportView.heroChoice(live: nil, pipeline: nil, cached: cached.hero)
+        #expect(hero == "photos")
+        #expect(!ReportView.showsRecreation(hero: hero, available: true))
+        #expect(ReportView.showsRecreation(hero: ReportView.heroChoice(live: nil, pipeline: nil, cached: "mesh"), available: true))
+        #expect(!ReportView.showsRecreation(hero: "mesh", available: false))
+        #expect(ReportView.heroChoice(live: "mesh", pipeline: "photos", cached: "photos") == "mesh")   // live first
+    }
+}
