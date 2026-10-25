@@ -78,7 +78,8 @@ struct RecreationView: View {
 
     /// What this build can draw: textured meshes (PLY + atlas, or USDZ). A splat needs the splat renderer.
     nonisolated static func canDraw(_ m: RecreationManifest) -> Bool {
-        m.kind == "textured_mesh" && (m.file.hasSuffix(".ply") || m.file.hasSuffix(".usdz"))
+        // `flat_slab` (a thin object's photo slab, recreation/flat.py) is a textured mesh in a USDZ too.
+        ["textured_mesh", "flat_slab"].contains(m.kind) && (m.file.hasSuffix(".ply") || m.file.hasSuffix(".usdz"))
     }
 
     var body: some View {
