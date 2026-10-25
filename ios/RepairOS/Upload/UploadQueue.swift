@@ -59,6 +59,7 @@ final class UploadQueue {
     func cancel() {
         cancelled = true
         worker?.cancel()
+        batcher.stop()   // the uploads under way too (Greptile, PR #27)
         pending = []
         ahead = []
     }
@@ -279,19 +280,11 @@ final class UploadQueue {
     /// Files sent at once: over the internet each file costs a round trip, so one at a time leaves the link idle
     /// (the owner's mouse scan to the cloud ran at about one small file a second, 2026-10-24).
     static let parallel = 4
-    @ObservationIgnored private var uploading: [String: Task<String?, Error>] = [:]
+    @ObservationIgnored private let batcher = UploadBatcher(width: UploadQueue.parallel)
 
     /// Uploads these files, `parallel` at a time (each once: `ref`).
     private func refs(_ paths: [String]) async throws {
-        var rest = paths[...]
-        while !rest.isEmpty {
-            let batch = rest.prefix(Self.parallel)
-            rest = rest.dropFirst(batch.count)
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                for path in batch { group.addTask { _ = try await self.ref(path) } }
-                try await group.waitForAll()
-            }
-        }
+        try await batcher.all(paths.filter { !$0.hasPrefix("blob://") }) { [weak self] path in try await self?.upload(path: path) }
     }
 
     /// Uploads the file at a relative path once and returns its blob ref (nil stays nil). A file changed since its
@@ -299,11 +292,7 @@ final class UploadQueue {
     private func ref(_ value: Any?) async throws -> String? {
         guard let path = value as? String else { return nil }
         if path.hasPrefix("blob://") { return path }
-        if let running = uploading[path] { return try await running.value }
-        let task = Task { try await upload(path: path) }
-        uploading[path] = task
-        defer { uploading[path] = nil }
-        return try await task.value
+        return try await batcher.one(path) { [weak self] in try await self?.upload(path: path) }
     }
 
     private func upload(path: String) async throws -> String? {
