@@ -111,6 +111,17 @@ def test_the_caveat_counts_every_region_a_grouped_row_stands_for():
     assert verdict_line({"verdict_reason": {"text": "Nothing looks wrong."}}) == "Nothing looks wrong."
 
 
+def test_one_frame_rule_for_mesh_and_coverage():
+    from repairos.pipeline.mesh import keyframes_in_frame
+    from repairos.pipeline.segments import same_frame_segments
+
+    pkg = {"segments": [{"segment": 1, "reason": "continued"}, {"segment": 2, "reason": "continued", "aligned": False},
+                        {"segment": 3, "reason": "flipped"}, {"segment": 4, "reason": "continued", "object_moved": True}],
+           "keyframes": [{"keyframe_id": str(i), "segment": i} for i in range(5)]}
+    assert same_frame_segments(pkg) == {0, 1}
+    assert [k["keyframe_id"] for k in keyframes_in_frame(pkg)] == ["0", "1"]
+
+
 def test_the_new_verdict_has_words_everywhere_and_validates():
     assert export.TITLE["no_problems_seen"] == "No problems seen"
     assert "no_problems_seen" in summary.VERDICT_WORDS

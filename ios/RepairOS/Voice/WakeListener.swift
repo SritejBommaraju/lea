@@ -370,9 +370,11 @@ final class WakeListener {
 
     // MARK: Matching
 
-    /// One-word answers that are a turn on their own.
+    /// One-word answers that are a turn on their own: a yes (LeaConversation.isYes, the same words that take an offer)
+    /// or a no.
     static func isShortAnswer(_ words: String) -> Bool {
-        ["yes", "yeah", "yep", "yup", "no", "nope", "sure", "okay", "ok", "alright", "please"].contains(normalize(words))
+        let w = normalize(words)
+        return !w.contains(" ") && (LeaConversation.isYes(w) || w == "no" || w == "nope")
     }
 
     /// Lower-case letters and spaces only.

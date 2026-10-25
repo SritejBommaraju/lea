@@ -507,7 +507,9 @@ async def _grounding(request: Request, scan_id: str | None,
     pkg = await st.get("scan-package", scan_id) if scan_id else None
     sid = (report or {}).get("session_id") or (pkg.data.get("session_id") if pkg else None) or session_id
     if sid and not identity:
-        identity = await _story_identity(st, sid)
+        from repairos.pipeline.story import story_identity
+
+        identity = await story_identity(st, sid, detail=True)
     if sid:
         sess = await st.get("session", sid)
         story = (sess.data.get("symptom") if sess else None) or None
@@ -529,22 +531,6 @@ def _look_image(request: Request, ref: str | None) -> str | None:
         return None
     data = blobs.get(ref)
     return base64.b64encode(data).decode() if data[:3] == b"\xff\xd8\xff" else None
-
-
-async def _story_identity(st: Any, session_id: str) -> dict | None:
-    """What was identified before the scan: the product brief when its research is done (with the issues public
-    sources report, as reports, never findings), else the label photo's identity."""
-    from repairos.pipeline.story import STORY_KIND
-
-    row = await st.get(STORY_KIND, session_id)
-    d = row.data if row else {}
-    b = d.get("brief") or {}
-    if b.get("status") == "done":
-        known = [x.get("area") for x in b.get("known_issues") or [] if isinstance(x, dict) and x.get("area")][:3]
-        return {k: b[k] for k in ("name", "category", "brand", "model") if b.get(k)} | (
-            {"known_issues": known} if known else {})
-    ident = d.get("identity") or {}
-    return ident if ident.get("status") == "done" else None
 
 
 async def _report_and_story(request: Request, scan_id: str) -> tuple[dict, str | None]:

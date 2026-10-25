@@ -73,3 +73,22 @@ struct DepthCopy: Sendable {
         return vals.sorted()[vals.count / 2]
     }
 }
+
+extension DepthCopy {
+    /// The world point under a normalized sensor-image point (0…1, the depth map's own orientation): the nearest depth
+    /// pixel, when ARKit's confidence is at least `minConfidence` and the depth is 5 cm to 5 m. Nil otherwise.
+    func worldPoint(at s: CGPoint, minConfidence: UInt8 = 1) -> SIMD3<Float>? {
+        let x = min(width - 1, max(0, Int(s.x * Double(width)))), y = min(height - 1, max(0, Int(s.y * Double(height))))
+        let d = depth[y * width + x]
+        guard confidence[y * width + x] >= minConfidence, d.isFinite, d > 0.05, d < 5 else { return nil }
+        let ray = cameraRay(fx: fx, fy: fy, cx: cx, cy: cy, x: Float(s.x) * Float(width), y: Float(s.y) * Float(height))
+        let p = cameraToWorld * SIMD4(ray * d, 1)
+        return SIMD3(p.x, p.y, p.z)
+    }
+}
+
+/// The camera-space ray through an image pixel (ARKit camera: x right, y up, looking down -z), with z = -1, from the
+/// intrinsics of that image. Shared by tap-to-lock and Lea's pointing.
+func cameraRay(fx: Float, fy: Float, cx: Float, cy: Float, x: Float, y: Float) -> SIMD3<Float> {
+    SIMD3((x - cx) / fx, -(y - cy) / fy, -1)
+}

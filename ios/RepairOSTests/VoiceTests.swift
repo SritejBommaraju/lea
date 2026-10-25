@@ -245,9 +245,12 @@ struct LeaSightTests {
 
     @Test func aMarkIsPinnedFromTheCameraAndDepthOfItsPhoto() {
         let k = simd_float3x3(SIMD3(1000, 0, 0), SIMD3(0, 1000, 0), SIMD3(960, 720, 1))
-        let depth = LeaSight.Depth(width: 4, height: 3, metres: [Float](repeating: 0.5, count: 12))
         var moved = matrix_identity_float4x4
         moved.columns.3 = SIMD4(1, 2, 3, 1)   // the phone 1 m right, 2 m up, 3 m back
+        // A 4 × 3 depth map of the 1920 × 1440 image: intrinsics scaled as DepthCopy.from does.
+        let sx: Float = 4.0 / 1920, sy: Float = 3.0 / 1440
+        let depth = DepthCopy(width: 4, height: 3, depth: [Float](repeating: 0.5, count: 12), confidence: [UInt8](repeating: 2, count: 12),
+                              fx: 1000 * sx, fy: 1000 * sy, cx: 960 * sx, cy: 720 * sy, cameraToWorld: moved, timestamp: 0)
         let look = LeaSight.Snapshot(transform: moved, intrinsics: k, resolution: CGSize(width: 1920, height: 1440), depth: depth)
         let centre = LeaSight.world(at: CGPoint(x: 0.5, y: 0.5), look, session: ARSession())
         #expect(centre.map { simd_distance($0, SIMD3(1, 2, 2.5)) < 0.001 } == true)   // 0.5 m straight ahead
@@ -256,10 +259,15 @@ struct LeaSightTests {
         #expect(right.map { $0.x > 1.1 && abs($0.z - 2.5) < 0.001 } == true)
     }
 
-    @Test func depthOutsideTheUsefulRangeIsNotUsed() {
-        let d = LeaSight.Depth(width: 2, height: 1, metres: [0.01, 9])
-        #expect(d.at(0, 0) == nil && d.at(0.9, 0) == nil)
-        #expect(LeaSight.Depth(width: 1, height: 1, metres: [1.2]).at(2, -1) == 1.2)   // clamped to the grid
+    @Test func depthOutsideTheUsefulRangeOrLowConfidenceIsNotUsed() {
+        func one(_ metres: Float, _ conf: UInt8) -> DepthCopy {
+            DepthCopy(width: 1, height: 1, depth: [metres], confidence: [conf], fx: 1, fy: 1, cx: 0.5, cy: 0.5,
+                      cameraToWorld: matrix_identity_float4x4, timestamp: 0)
+        }
+        #expect(one(0.01, 2).worldPoint(at: CGPoint(x: 0.5, y: 0.5)) == nil)
+        #expect(one(9, 2).worldPoint(at: CGPoint(x: 0.5, y: 0.5)) == nil)
+        #expect(one(1.2, 0).worldPoint(at: CGPoint(x: 0.5, y: 0.5)) == nil)   // ARKit unsure of this pixel
+        #expect(one(1.2, 2).worldPoint(at: CGPoint(x: 2, y: -1)).map { abs($0.z + 1.2) < 0.001 } == true)   // clamped
     }
 }
 

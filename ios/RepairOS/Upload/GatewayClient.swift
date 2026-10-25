@@ -195,6 +195,14 @@ struct GatewayClient: Sendable {
         }
     }
 
+    /// A JPEG in memory uploaded as a blob (the label photo, Lea's look photo): the ref to send.
+    func uploadJPEG(_ jpeg: Data) async throws -> String {
+        let file = URL.temporaryDirectory.appending(path: "lea-\(UUID().uuidString).jpg")
+        try jpeg.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        return try await uploadBlob(file: file, sha256: Self.sha256(of: file), contentType: "image/jpeg")
+    }
+
     static func sha256(of file: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }

@@ -1,6 +1,5 @@
 import ARKit
 import CoreImage
-import CryptoKit
 import SwiftUI
 import UIKit
 
@@ -40,19 +39,8 @@ final class LeaSight {
         let transform: simd_float4x4
         let intrinsics: simd_float3x3
         let resolution: CGSize
-        let depth: Depth?
-    }
-
-    struct Depth {
-        let width: Int
-        let height: Int
-        let metres: [Float]
-
-        func at(_ sx: Double, _ sy: Double) -> Float? {
-            let x = min(width - 1, max(0, Int(sx * Double(width)))), y = min(height - 1, max(0, Int(sy * Double(height))))
-            let d = metres[y * width + x]
-            return d.isFinite && d > 0.05 && d < 5 ? d : nil
-        }
+        /// LiDAR depth of that moment (Capture/DepthAndPoints), nil without LiDAR.
+        let depth: DepthCopy?
     }
 
     static let longSide: CGFloat = 768
@@ -135,33 +123,18 @@ final class LeaSight {
     nonisolated static func portrait(_ sensor: CGPoint) -> CGPoint { CGPoint(x: 1 - sensor.y, y: sensor.x) }
 
     private static func snapshot(_ frame: ARFrame) -> Snapshot {
-        var depth: Depth?
-        if let map = (frame.smoothedSceneDepth ?? frame.sceneDepth)?.depthMap {
-            CVPixelBufferLockBaseAddress(map, .readOnly)
-            defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
-            let w = CVPixelBufferGetWidth(map), h = CVPixelBufferGetHeight(map)
-            let row = CVPixelBufferGetBytesPerRow(map) / MemoryLayout<Float32>.stride
-            if let base = CVPixelBufferGetBaseAddress(map)?.assumingMemoryBound(to: Float32.self) {
-                var out = [Float](repeating: 0, count: w * h)
-                for y in 0..<h { for x in 0..<w { out[y * w + x] = base[y * row + x] } }
-                depth = Depth(width: w, height: h, metres: out)
-            }
-        }
-        return Snapshot(transform: frame.camera.transform, intrinsics: frame.camera.intrinsics,
-                        resolution: frame.camera.imageResolution, depth: depth)
+        Snapshot(transform: frame.camera.transform, intrinsics: frame.camera.intrinsics,
+                 resolution: frame.camera.imageResolution, depth: DepthCopy.from(frame))
     }
 
     /// The world point under a normalized sensor-image point: LiDAR depth at that moment, else a raycast on any
     /// surface ARKit estimates (phones without LiDAR). Nil when neither finds one.
     static func world(at s: CGPoint, _ look: Snapshot, session: ARSession) -> SIMD3<Float>? {
+        if let p = look.depth?.worldPoint(at: s) { return p }
         let k = look.intrinsics
-        let px = Float(s.x * look.resolution.width), py = Float(s.y * look.resolution.height)
-        let ray = SIMD3((px - k[2][0]) / k[0][0], -(py - k[2][1]) / k[1][1], -1)
+        let ray = cameraRay(fx: k[0][0], fy: k[1][1], cx: k[2][0], cy: k[2][1],
+                            x: Float(s.x * look.resolution.width), y: Float(s.y * look.resolution.height))
         let m = look.transform
-        if let d = look.depth?.at(s.x, s.y) {
-            let p = m * SIMD4(ray * d, 1)
-            return SIMD3(p.x, p.y, p.z)
-        }
         let origin = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
         let d4 = m * SIMD4(simd_normalize(ray), 0)
         let query = ARRaycastQuery(origin: origin, direction: SIMD3(d4.x, d4.y, d4.z), allowing: .estimatedPlane, alignment: .any)
@@ -174,12 +147,8 @@ extension ScanSession {
     /// The photo for Lea's turn, uploaded as a blob, and what she should know about it. Nil while the camera has no
     /// frame (the turn goes ahead on words alone).
     func lookForLea(_ gateway: GatewayClient) async -> (ref: String, live: [String: String])? {
-        guard stage != .finishing, let frame = session.currentFrame, let shot = sight.capture(frame) else { return nil }
-        let sha = SHA256.hash(data: shot.jpeg).map { String(format: "%02x", $0) }.joined()
-        let file = FileManager.default.temporaryDirectory.appending(path: "lea-look-\(sha.prefix(12)).jpg")
-        defer { try? FileManager.default.removeItem(at: file) }
-        guard (try? shot.jpeg.write(to: file)) != nil,
-              let ref = try? await gateway.uploadBlob(file: file, sha256: sha, contentType: "image/jpeg") else { return nil }
+        guard stage != .finishing, let frame = session.currentFrame, let shot = sight.capture(frame),
+              let ref = try? await gateway.uploadJPEG(shot.jpeg) else { return nil }
         return (ref, shot.pointed ? ["pointed": "yes: the magenta ring in the photo"] : [:])
     }
 }

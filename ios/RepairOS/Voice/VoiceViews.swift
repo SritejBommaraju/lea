@@ -326,24 +326,11 @@ struct ConversationPanel: View {
         .scaleEffect(pressedAt != nil ? 0.97 : 1)
         .animation(Motion.press, value: pressedAt != nil)
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0)
-            .onChanged { _ in
-                guard pressedAt == nil else { return }
-                pressedAt = Date()
-                convo.pressToTalk()   // stops Lea at once (barge-in) and starts recording
-            }
-            .onEnded { _ in
-                let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
-                pressedAt = nil
-                if held < 0.35 {
-                    // A tap: hands-free. The phone listens; the turn ends when you stop talking.
-                    convo.cancelHold()
-                    convo.handsFree = true
-                    wake.listenForFollowUp()
-                } else {
-                    convo.releaseToTalk()
-                }
-            })
+        .holdOrTapToTalk(convo, pressedAt: $pressedAt) {
+            // A tap: hands-free. The phone listens; the turn ends when you stop talking.
+            convo.handsFree = true
+            wake.listenForFollowUp()
+        }
         .sensoryFeedback(.impact(weight: .light), trigger: pressedAt != nil) { _, new in new }   // on press only
         .accessibilityLabel("Talk to Lea")
         .accessibilityHint("Hold to ask, or tap once to talk hands-free")
@@ -538,17 +525,7 @@ struct ScanTalkBar: View {
                 .font(.system(size: 34))
                 .foregroundStyle(pressedAt != nil ? Palette.danger : .white)
                 .symbolEffect(.variableColor.iterative, isActive: listening || convo.phase == .speaking)
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { _ in
-                        guard pressedAt == nil else { return }
-                        pressedAt = Date()
-                        convo.pressToTalk()
-                    }
-                    .onEnded { _ in
-                        let held = pressedAt.map { Date().timeIntervalSince($0) } ?? 0
-                        pressedAt = nil
-                        if held < 0.35 { convo.cancelHold(); talkHandsFree() } else { convo.releaseToTalk() }
-                    })
+                .holdOrTapToTalk(convo, pressedAt: $pressedAt) { talkHandsFree() }
                 .accessibilityLabel("Talk to Lea")
                 .accessibilityHint("Hold to ask, or tap once to talk hands-free")
                 .accessibilityAddTraits(.isButton)
@@ -586,5 +563,25 @@ struct ScanTalkBar: View {
         convo.handsFree = true
         wake.continuous = true
         wake.listenForFollowUp()
+    }
+}
+
+// MARK: - Hold to ask, tap for hands-free
+
+extension View {
+    /// The talk button's gesture (the conversation panel and the scan bar): pressing stops Lea at once (barge-in) and
+    /// records; letting go after a hold sends the question; a tap (under 0.35 s) drops the recording and runs `tap`.
+    func holdOrTapToTalk(_ convo: LeaConversation, pressedAt: Binding<Date?>, tap: @escaping () -> Void) -> some View {
+        gesture(DragGesture(minimumDistance: 0)
+            .onChanged { _ in
+                guard pressedAt.wrappedValue == nil else { return }
+                pressedAt.wrappedValue = Date()
+                convo.pressToTalk()
+            }
+            .onEnded { _ in
+                let held = pressedAt.wrappedValue.map { Date().timeIntervalSince($0) } ?? 0
+                pressedAt.wrappedValue = nil
+                if held < 0.35 { convo.cancelHold(); tap() } else { convo.releaseToTalk() }
+            })
     }
 }

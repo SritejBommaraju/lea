@@ -148,7 +148,7 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
     announced = await announce(ctx, session_id)
     brief = await maybe_brief(ctx, session_id)   # before the scan: what this exact product is (seeds leads too)
     if identity is None:
-        identity = await _brief_identity(ctx, session_id)
+        identity = await story_identity(ctx.state, session_id)
     web, rec = await asyncio.to_thread(L.research, hyp, identity, vlm, parts.credentials())
     def merge(d: dict) -> dict:
         have = list(d.get("leads") or first)
@@ -166,13 +166,23 @@ async def _run_story(ctx: Any, session_id: str) -> dict:
     return out
 
 
-async def _brief_identity(ctx: Any, session_id: str) -> dict | None:
-    row = await ctx.state.get(STORY_KIND, session_id)
+async def story_identity(state: Any, session_id: str, *, detail: bool = False) -> dict | None:
+    """What was identified before the scan, from the story row: the product brief when its research is done, else
+    the label photo's identity. `detail` (Lea's conversation) adds the product name and up to three issues public
+    sources report (reports, never findings), and drops an identity that did not finish."""
+    row = await state.get(STORY_KIND, session_id)
     d = row.data if row else {}
     b = d.get("brief") or {}
     if b.get("status") == "done":
-        return {k: b[k] for k in ("brand", "model", "category") if b.get(k)} | {"confidence": "medium"}
-    return d.get("identity")
+        out = {k: b[k] for k in ("brand", "model", "category") if b.get(k)} | {"confidence": "medium"}
+        if detail:
+            known = [x.get("area") for x in b.get("known_issues") or [] if isinstance(x, dict) and x.get("area")][:3]
+            out |= ({"name": b["name"]} if b.get("name") else {}) | ({"known_issues": known} if known else {})
+        return out
+    ident = d.get("identity")
+    if detail:
+        return ident if (ident or {}).get("status") == "done" else None
+    return ident
 
 
 async def maybe_brief(ctx: Any, session_id: str) -> str | None:

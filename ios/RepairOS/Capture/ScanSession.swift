@@ -341,7 +341,7 @@ final class ScanSession: NSObject {
         let res = frame.camera.imageResolution
         let k = frame.camera.intrinsics
         let u = Float(n.x * res.width), v = Float(n.y * res.height)
-        let dirCam = simd_normalize(SIMD3((u - k[2][0]) / k[0][0], -(v - k[2][1]) / k[1][1], -1))
+        let dirCam = simd_normalize(cameraRay(fx: k[0][0], fy: k[1][1], cx: k[2][0], cy: k[2][1], x: u, y: v))
         let m = frame.camera.transform
         let origin = SIMD3(m.columns.3.x, m.columns.3.y, m.columns.3.z)
         let d4 = m * SIMD4(dirCam, 0)

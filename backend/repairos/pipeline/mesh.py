@@ -52,9 +52,10 @@ class ScanMesh:
 
 
 def keyframes_in_frame(pkg: Mapping[str, Any]) -> list[dict]:
-    """The keyframes whose poses are in the scan's frame: segment 0, and segments `continued` and not unaligned."""
-    same = {0} | {int(s["segment"]) for s in pkg.get("segments") or []
-                  if s.get("reason") == "continued" and s.get("aligned") is not False}
+    """The keyframes whose poses are in the scan's frame (segments.same_frame_segments)."""
+    from repairos.pipeline.segments import same_frame_segments
+
+    same = same_frame_segments(pkg)
     return [kf for kf in pkg.get("keyframes") or [] if int(kf.get("segment") or 0) in same]
 
 

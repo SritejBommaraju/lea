@@ -51,10 +51,7 @@ final class PreScan {
         do {
             let up = image.normalizedUp()
             let jpeg = up.jpegData(compressionQuality: 0.88) ?? Data()
-            let file = URL.temporaryDirectory.appending(path: "lea-label-\(ScanStorage.hex(4)).jpg")
-            try jpeg.write(to: file)
-            defer { try? FileManager.default.removeItem(at: file) }
-            let ref = try await gateway.uploadBlob(file: file, sha256: GatewayClient.sha256(of: file), contentType: "image/jpeg")
+            let ref = try await gateway.uploadJPEG(jpeg)
             // POST /v1/sessions/{id}/identify {image}: the backend reads the label and sends `product_brief`.
             var req = gateway.voiceRequest("POST", "v1/sessions/\(sid)/identify")
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")

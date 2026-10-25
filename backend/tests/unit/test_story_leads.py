@@ -276,6 +276,20 @@ def test_the_story_is_read_again_after_the_kept_list_is_full():
     assert S.already_read({"said": [{"text": "a"}], "hypothesis": {"said_count": 1}})   # a row from before the counter
 
 
+def test_one_story_identity_reader_for_research_and_lea(gw):  # noqa: F811
+    sid = new_session(gw)
+    brief = {"status": "done", "name": "Desk fan 40", "brand": "Breeze", "model": "DF-40", "category": "fan",
+             "known_issues": [{"area": "speed switch", "why": "wears out"}]}
+    run(gw.state.put("story", {"session_id": sid, "said": [], "brief": brief}))
+    assert run(S.story_identity(gw.state, sid)) == {"brand": "Breeze", "model": "DF-40", "category": "fan", "confidence": "medium"}
+    full = run(S.story_identity(gw.state, sid, detail=True))
+    assert full["name"] == "Desk fan 40" and full["known_issues"] == ["speed switch"]
+    failed = {"session_id": sid, "said": [], "identity": {"status": "failed", "error": "Timeout"}}
+    run(gw.state.put("story", failed, expect_rev=run(gw.state.get("story", sid)).rev))
+    assert run(S.story_identity(gw.state, sid))["status"] == "failed"   # research gets it as before
+    assert run(S.story_identity(gw.state, sid, detail=True)) is None   # Lea does not talk about it
+
+
 def test_the_story_job_sends_the_persons_lead_first_then_research_leads(gw, monkeypatch):  # noqa: F811
     sid = new_session(gw)
     st = gw.state
