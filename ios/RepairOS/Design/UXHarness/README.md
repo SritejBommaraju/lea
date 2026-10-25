@@ -8,11 +8,15 @@ File: `acZpRbLDyuavWtoJIqyj1u`. Regression board: [Warnings and findings](https:
 
 Load the `figma-use` skill, create a Figma MCP session for the file, then pass the complete contents of `audit.js` as the `code` argument to `use_figma`, with that file key and session ID. This is Figma Plugin API JavaScript, not a Node.js program. The response is JSON; `passed` must be true. Save the result to `latest-results.json` after any component change. The audit is read-only apart from selecting the Components page.
 
-The board contains six cases: 288 pt and 353 pt content widths at normal size, and 288 pt at 200% text, each in light and dark. They remain linked to the production design components, so source changes are tested on rerun. IDs are intentional stable fixture references; a missing board fails rather than silently recreating it.
+The board contains six cases: 288 pt and 353 pt content widths at normal size, and 288 pt at 200% text, each in light and dark. Each includes a safety notice, six status labels, and a glass control. They remain linked to the production design components, so source changes are tested on rerun. IDs are intentional stable fixture references; a missing board fails rather than silently recreating it.
 
 Checks cover component linkage, text containment, product font, text contrast, misleading underline styling, non-interactive status labels, distinct uninspected state, and editable vector/text content. The 4.5:1 threshold follows [WCAG text contrast](https://www.w3.org/WAI/WCAG21/Understanding/contrast-minimum).
 
+Glass checks require the shared material style and 24 px backdrop frost; effects are restricted to the glass controls. Contrast is measured against the actual solid ancestors and translucent fill. This does not validate arbitrary photographic backdrops: the current glass surfaces are designed over the lavender or deep-violet application canvas. Native Reduce Transparency must use an opaque surface and remove backdrop blur.
+
 ## Revised design
+
+The current [violet and frosted glass direction](purple-glass.md) supersedes the earlier green/brass colours. `palette.json` records the actual resolved Figma tokens in both modes. [Review the updated screens](https://www.figma.com/design/acZpRbLDyuavWtoJIqyj1u?node-id=95-1464).
 
 Safety uses a neutral surface, one warning symbol, “Disconnect power,” and two concise instructions. It retains the residual-charge warning and limits battery removal to user-removable batteries. Status labels use quiet text, with safety emphasized and uninspected regions explicitly dashed. Evidence counts describe photos, not certainty. These are Figma design changes; production SwiftUI is unchanged.
 
