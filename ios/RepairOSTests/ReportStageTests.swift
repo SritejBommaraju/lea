@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SceneKit
 import Testing
 @testable import RepairOS
 
@@ -132,6 +133,17 @@ struct ProblemRingTests {
     @Test func noRingWithoutAComputedPoint() {
         #expect(ReportModel.extent(["status": "failed", "region_min_m": [0, 0, 0], "region_max_m": [1, 1, 1]]) == nil)
         #expect(ReportModel.extent(["status": "computed", "point_m": [0, 0, 0]]) == nil)
+    }
+
+    @MainActor @Test func aBadgeWinsATapAndARingOnlyInsideItsCircle() {
+        let stage = RecreationStage()
+        let ring = SCNNode(geometry: SCNPlane(width: 0.026, height: 0.026))   // a 10 mm ring: 13 mm half-width plane
+        ring.name = "ring:a"
+        let badge = SCNNode(geometry: SCNPlane(width: 0.01, height: 0.01))
+        badge.name = "marker:b"
+        #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0.003, 0))]) == "a")        // inside the circle
+        #expect(stage.markerID(atHit: [(ring, SIMD3(0.0125, 0.0125, 0))]) == nil)      // a clear corner
+        #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0, 0)), (badge, nil)]) == "b")   // a badge first
     }
 
     @MainActor @Test func ringTextureDraws() {

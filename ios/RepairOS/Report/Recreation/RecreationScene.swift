@@ -276,9 +276,23 @@ final class RecreationStage {
     }
 
     func markerID(atHit nodes: [SCNNode]) -> String? {
-        nodes.lazy.compactMap(\.name).compactMap { name in
-            ["marker:", "ring:"].first(where: name.hasPrefix).map { String(name.dropFirst($0.count)) }
-        }.first
+        markerID(atHit: nodes.map { ($0, nil) })
+    }
+
+    /// The marker a tap selects: a number badge first; else a ring, but only inside its circle (the ring is drawn on a
+    /// square plane whose clear corners must not take a tap meant for a nearby badge; Greptile, PR #25). `local` is the
+    /// hit's point in the node's own plane; nil (no position known) counts as inside.
+    func markerID(atHit hits: [(node: SCNNode, local: SIMD3<Float>?)]) -> String? {
+        if let badge = hits.lazy.compactMap({ $0.node.name }).first(where: { $0.hasPrefix("marker:") }) {
+            return String(badge.dropFirst("marker:".count))
+        }
+        for hit in hits {
+            guard let name = hit.node.name, name.hasPrefix("ring:"), let plane = hit.node.geometry as? SCNPlane else { continue }
+            let radius = Float(plane.width) / 2 / 1.3 * 1.15   // the circle (1/1.3 of the plane) and its stroke
+            if let p = hit.local, simd_length(SIMD2(p.x, p.y)) > radius { continue }
+            return String(name.dropFirst("ring:".count))
+        }
+        return nil
     }
 
     // MARK: Building blocks

@@ -270,7 +270,7 @@ private struct RecreationHost: UIViewRepresentable {
             guard let view else { return }
             let hits = view.hitTest(g.location(in: view), options: [.searchMode: SCNHitTestSearchMode.all.rawValue,
                                                                      .rootNode: stage.markerRoot])
-            if let id = stage.markerID(atHit: hits.map(\.node)) { onMarkerTap(id) }
+            if let id = stage.markerID(atHit: hits.map { ($0.node, SIMD3<Float>($0.localCoordinates)) }) { onMarkerTap(id) }
         }
 
         nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
