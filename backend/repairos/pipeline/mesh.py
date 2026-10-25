@@ -10,16 +10,22 @@ rebuilds a fuller mesh.
 
 Output: binary little-endian PLY (float x y z, uchar red green blue per vertex, int triangle lists), which Model I/O
 (MDLAsset) loads directly. Open3D (MIT) does the TSDF and the quadric decimation.
+
+A thin object (a board, a remote, a phone) lies inside the band where each depth frame's table is cut: given the
+scan's stills, its mesh and cloud are the photo-textured slab of recreation.flat instead (flat_scan_mesh).
 """
 from __future__ import annotations
 
+import logging
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+log = logging.getLogger(__name__)
 
 GREY = 128
 DEPTH_AGREE_M = 0.02      # a vertex takes a keyframe's colour only where that keyframe's depth sees it (not occluded)
@@ -337,8 +343,35 @@ def moved_segment_frames(pkg_local: Mapping[str, Any], transforms: Mapping[int, 
     return out
 
 
+def flat_scan_mesh(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]]) -> ScanMesh | None:
+    """A thin object's mesh and cloud from its photo slab (recreation.flat), the 3D view when it is found: LiDAR
+    cannot resolve a board, the slab carries its photos at full resolution. None when the object is not thin or the
+    slab is not checked (then the LiDAR mesh is built as usual)."""
+    from repairos.importers.ply import mesh_ply_bytes
+    from repairos.recreation.flat import scan_flat_model, slab_mesh, slab_points
+
+    t0 = time.perf_counter()
+    m, why = scan_flat_model(pkg_local, stills_local)
+    if m is None:
+        log.info("no flat model: %s", why)
+        return None
+    v, f, c = slab_mesh(m)
+    p, pc = slab_points(m)
+    p, pc = thin_cloud(p, pc, CLOUD_MAX_POINTS)
+    ply = mesh_ply_bytes(v, f, c, comments=("repairos flat object slab, arkit_world metres",))
+    st = m.stats
+    return ScanMesh(ply=ply, vertices=len(v), triangles=len(f), keyframes=len(pkg_local.get("keyframes") or []),
+                    cloud_ply=points_ply(p, pc), cloud_points=len(p), hero="points",
+                    hero_reason="a thin object: its photos on a slab of its measured outline show it best",
+                    size_m=round(float(max(st["measured_mm"])) / 1000, 4),
+                    seconds={"total_s": round(time.perf_counter() - t0, 3)},
+                    method=f"flat slab {st['measured_mm'][0]} x {st['measured_mm'][1]} x {st['thickness_mm']} mm from "
+                           f"{st['top_still']} (second photo {st.get('second_still_shift_mm')} mm off)")
+
+
 def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
-                    segment_transforms: Mapping[int, np.ndarray] | None = None) -> ScanMesh:
+                    segment_transforms: Mapping[int, np.ndarray] | None = None,
+                    stills_local: Sequence[Mapping[str, Any]] | None = None) -> ScanMesh:
     """The object's coloured, decimated mesh from a scan package whose file fields are local paths: LiDAR depth inside
     the object box and above each frame's own table (segment_align.segment_object_depths), high and medium confidence
     (the table is cut first, so medium confidence brings the sides, not the table back), a TSDF at a voxel scaled to
@@ -354,6 +387,10 @@ def build_scan_mesh(pkg_local: Mapping[str, Any], *, max_triangles: int,
 
     t = {}
     t0 = time.perf_counter()
+    if stills_local and not segment_transforms:   # a thin object (a board, a remote): the photo slab (recreation.flat)
+        flat = flat_scan_mesh(pkg_local, stills_local)
+        if flat is not None:
+            return flat
     pkg = {**pkg_local, "keyframes": keyframes_in_frame(pkg_local)}
     frames = frames_from_scan_package(pkg, Path("/"))
     if not frames:

@@ -15,6 +15,7 @@ time is ours (no paid API); nothing here calls a paid service, so nothing goes t
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import os
 import time
@@ -22,6 +23,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +112,21 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     from repairos.recreation.texture import scan_views, texture_mesh
     from repairos.recreation.usdz import usdz_bytes
 
+    if not segment_transforms:   # a thin object (a board, a remote, a phone): its photos on a slab (recreation.flat)
+        from repairos.recreation.flat import scan_flat_model
+
+        flat, why = scan_flat_model(pkg_local, stills_local)
+        if flat is not None:
+            buf = io.BytesIO()
+            flat.atlas.save(buf, "JPEG", quality=92)
+            data = usdz_bytes(flat.vertices, flat.uv, flat.faces, buf.getvalue())
+            lo, hi = flat.vertices.min(0), flat.vertices.max(0)
+            stats = {k: v for k, v in flat.stats.items() if isinstance(v, (int, float, str))}
+            return Recreation("flat_slab", "usdz", data, [float(x) for x in (lo + hi) / 2],
+                              float(np.linalg.norm(hi - lo) / 2), {"total_s": round(time.monotonic() - t0, 3)},
+                              {**stats, "measured_mm": "x".join(str(x) for x in flat.stats["measured_mm"])}, why)
+        if why.startswith("thin"):   # a thin object whose slab failed its checks: say why, build the usual mesh
+            note = (note + "; " if note else "") + why
     try:
         surf = scan_surface(pkg_local, segment_transforms=segment_transforms)
     except MeshUnavailable as e:
