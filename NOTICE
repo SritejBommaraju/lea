@@ -1,0 +1,11 @@
+RepairOS
+Copyright 2026 the RepairOS contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The defect classifier head (training/models/cls_dinov2/) is trained on data under CC BY 4.0:
+- VisA (Visual Anomaly dataset), Amazon: Zou et al., "SPot-the-Difference Self-Supervised Pre-training for Anomaly
+  Detection and Segmentation", ECCV 2022. https://github.com/amazon-science/spot-diff
+- "defects" PCB dataset by Roboflow Universe user diplom-qz7q6 (mirror: keremberke/pcb-defect-segmentation).
+- Roboflow 100 "printed-circuit-board", https://universe.roboflow.com/object-detection/printed-circuit-board
+Its backbone, facebook/dinov2-base (Meta AI), is Apache-2.0. Sources and licences: training/datasets/MANIFEST.json.

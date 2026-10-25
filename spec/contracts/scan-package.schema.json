@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "scan-package.schema.json",
+  "title": "ScanPackage",
+  "description": "Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scan_id", "product_id", "session_id", "captured_at", "device", "frame", "units", "gravity_arkit_world", "keyframes"],
+  "allOf": [
+    {
+      "if": { "required": ["depth_source"], "properties": { "depth_source": { "const": "none" } } },
+      "then": { "not": { "anyOf": [{ "required": ["points_file"] }, { "required": ["point_count"] }, { "required": ["mesh_file"] }] } },
+      "else": { "required": ["points_file", "point_count"] }
+    }
+  ],
+  "properties": {
+    "scan_id": { "type": "string", "minLength": 1 },
+    "product_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1, "description": "One repair session; groups scans, stills and readings." },
+    "symptom": { "type": "string", "description": "One line from the user. Goes into model state, never instructions (A9)." },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "device": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "ios"],
+      "properties": {
+        "model": { "type": "string", "description": "Hardware identifier, e.g. iPhone17,1." },
+        "ios": { "type": "string" },
+        "app_version": { "type": "string" }
+      }
+    },
+    "frame": { "type": "string", "const": "arkit_world", "description": "Points and poses are in ARKit's world frame (metres, Y up). The design frame (mm, Z up) is reached via alignment.transform_arkit_world_to_design." },
+    "units": { "type": "string", "const": "m" },
+    "depth_source": {
+      "type": "string",
+      "enum": ["lidar", "none"],
+      "description": "Where the scan's geometry comes from. lidar (also when absent, as in every package before this field): ARKit sceneDepth fused into points_file. none: a no-LiDAR capture (A8): ARKit world-tracking poses and images only, so there is no points_file or point_count and nothing metric can be read off the scan itself."
+    },
+    "segments": {
+      "type": "array",
+      "description": "Later capture segments of the same session: the object flipped for its underside (reason flipped, object_moved true: a quick mini-scan of the bottom in its own ARKit session; transform_to_segment0, from the phone's live alignment or the backend's registration, puts it on segment 0), or more photos of the same, unmoved object continued from the report (reason continued). Each has its own locked box and LiDAR cloud, in the same ARKit world frame as segment 0 unless aligned is false or object_moved is true. points_file/crop_box above are segment 0.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["segment", "reason"],
+        "allOf": [
+          {
+            "if": { "required": ["object_moved", "aligned"], "properties": { "object_moved": { "const": true }, "aligned": { "const": true } } },
+            "then": { "required": ["transform_to_segment0"] }
+          }
+        ],
+        "properties": {
+          "segment": { "type": "integer", "minimum": 1 },
+          "reason": { "type": "string", "enum": ["flipped", "continued"], "description": "flipped: the object was turned over for its underside (\"Scan the bottom\"; it moved: object_moved true, not in segment 0's frame unless transform_to_segment0 is applied). continued: more photos of the same object, unmoved, taken later from the report (POST /v1/scans again with the same scan_id)." },
+          "aligned": { "type": "boolean", "description": "False when this segment's poses are not comparable with segment 0: ARKit could not relocalise it into the scan's world frame, or (object_moved) no transform_to_segment0 was found yet; the backend does not place its findings on the model until it registers the segment. Absent = aligned. For an object_moved segment, true means transform_to_segment0 is set and must be applied to its poses and points." },
+          "object_moved": { "type": "boolean", "description": "True when the object was moved for this segment (a flip): its keyframes, stills, crop_box and points_file are in this segment's own ARKit world frame, which says nothing about segment 0's object frame; only transform_to_segment0 relates them. Absent = false." },
+          "transform_to_segment0": { "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16, "description": "Row-major 4x4 rigid transform, metres: [p_segment0, 1] = T * [p_this_segment, 1] for points and camera poses of this segment (object_moved segments). From the phone's live 6-DoF registration of this segment's in-box cloud to segment 0's (pose_source arkit, transform_quality) or from the backend's." },
+          "transform_quality": { "type": "number", "minimum": 0, "maximum": 1, "description": "Confidence in transform_to_segment0, 0-1 (fit overlap, RMS and how clearly it beat the next best pose; a symmetric object without telling colour scores low)." },
+          "pose_source": { "type": "string", "enum": ["arkit", "object_tracked"], "description": "Where this segment's own poses come from (absent = arkit)." },
+          "crop_box": { "$ref": "#/$defs/box" },
+          "points_file": { "type": "string", "description": "Binary little-endian PLY of this segment's in-box LiDAR points (metres, ARKit world)." },
+          "point_count": { "type": "integer", "minimum": 0 },
+          "flip_align": { "title": "FlipAlign", "type": "object", "additionalProperties": false, "description": "The phone's live alignment of this flipped segment (FlipAligner), for diagnosis only and numbers only: how each cloud was cut to the object and the last few attempts. The backend never places anything with it.", "properties": {
+            "attempts": { "type": "integer", "minimum": 0 },
+            "main": { "$ref": "#/$defs/flip_cut" },
+            "bottom": { "$ref": "#/$defs/flip_cut" },
+            "last": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/flip_attempt" } }
+          } }
+        }
+      }
+    },
+    "support_plane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transform", "extent_m"],
+      "description": "The table the object stood on (segment 0), as ARKit detected it: a horizontal plane anchor.",
+      "properties": {
+        "transform": { "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16, "description": "Row-major 4x4 plane-to-arkit_world transform; the plane is its local XZ, normal +Y." },
+        "extent_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 2, "maxItems": 2, "description": "Plane size along its local X and Z, metres." }
+      }
+    },
+    "pose_source": {
+      "type": "string",
+      "enum": ["arkit", "photogrammetry", "object_tracked"],
+      "description": "Where keyframe poses and points_file come from. arkit (also when absent): ARKit world tracking, with points_file fused from sceneDepth into voxels (voxel_mm). object_tracked: the app's hand-held mode (the person turns or flips the object while the phone stays roughly still): the app tracks the object's 6-DoF pose and every pose and point is in the OBJECT frame, which is the ARKit world frame at the moment the object was locked (it rested on the support plane then; crop_box, support_plane and gravity_arkit_world describe that moment). Camera poses are the camera relative to the object, so they may lie below the support plane (the underside, seen after a flip) and the cloud includes the underside: never cut the cloud or the depth at the support plane for such a scan. Keyframes and stills carry pose_source and pose_quality; world-map relocalisation does not apply (the object moved), object-shape alignment does. photogrammetry: Apple PhotogrammetrySession (poses + pointCloud) run on the Object Capture images; poses and points share its gravity-aligned metric frame (metres, Y up, LiDAR-scaled when depth_source is lidar), and points_file is its point cloud, not voxel-fused, so there is no voxel_mm."
+    },
+    "voxel_mm": { "type": "number", "exclusiveMinimum": 0, "description": "Voxel pitch in millimetres when points_file is voxel-fused (3 default; 1-2 with PromptDA TSDF). Absent when the cloud keeps raw samples (the app's live LiDAR accumulation, photogrammetry)." },
+    "gravity_arkit_world": {
+      "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3,
+      "description": "Unit vector pointing down in arkit_world (ARKit: [0,-1,0])."
+    },
+    "points_file": { "type": "string", "description": "Binary little-endian PLY, xyz float32 + rgb uint8, optional confidence/views uint8." },
+    "point_count": { "type": "integer", "minimum": 0 },
+    "mesh_file": { "type": "string", "description": "Optional triangle mesh of the same scene, binary little-endian PLY, arkit_world metres: float x, y, z (+ uchar red, green, blue) vertices and a face list. From backend TSDF fusion (an import, B12) or ARKit scene reconstruction (A2). Used to ray-cast close-up boxes onto the scan (repairos.locate)." },
+    "crop_box": {
+      "$ref": "#/$defs/box",
+      "description": "The AR box the user dragged; points outside were dropped. Points on or below the supporting plane + 5 mm were dropped too."
+    },
+    "supporting_plane_removed": { "type": "boolean" },
+    "keyframes": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/keyframe" },
+      "description": "Kept frames only: tracking normal, sharp, no smudge. Selected every ~10 cm of travel or 15 deg of rotation."
+    },
+    "coverage_hint": { "type": "number", "minimum": 0, "maximum": 1, "description": "Fraction of visible voxels with >= 3 high-confidence hits (the on-phone heat map)." },
+    "alignment": {
+      "$ref": "#/$defs/alignment",
+      "description": "Filled by the backend after ICP. Absent before alignment."
+    }
+  },
+  "$defs": {
+    "pose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "position_m", "quaternion_xyzw"],
+      "properties": {
+        "frame": { "type": "string", "const": "arkit_world", "description": "Keyframe poses are ARKit world, metres, Y up." },
+        "position_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    },
+    "intrinsics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fx", "fy", "cx", "cy", "width_px", "height_px"],
+      "properties": {
+        "fx": { "type": "number" }, "fy": { "type": "number" },
+        "cx": { "type": "number" }, "cy": { "type": "number" },
+        "width_px": { "type": "integer", "minimum": 1 }, "height_px": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "center_m", "extent_m", "quaternion_xyzw"],
+      "description": "An oriented box in ARKit's world frame, metres.",
+      "properties": {
+        "frame": { "type": "string", "const": "arkit_world" },
+        "center_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "extent_m": { "type": "array", "items": { "type": "number", "exclusiveMinimum": 0 }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    },
+    "keyframe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyframe_id", "timestamp_s", "image_file", "camera", "intrinsics", "tracking_state"],
+      "properties": {
+        "keyframe_id": { "type": "string" },
+        "timestamp_s": { "type": "number", "description": "Seconds since scan start." },
+        "image_file": { "type": "string", "description": "JPEG q85, 1920x1440." },
+        "depth_file": { "type": "string", "description": "256x192 depth, float32 metres or 16-bit mm PNG; say which in depth_encoding." },
+        "depth_encoding": { "type": "string", "enum": ["float32_m", "uint16_mm"] },
+        "confidence_file": { "type": "string", "description": "256x192 uint8, ARKit confidence 0/1/2." },
+        "camera": { "$ref": "#/$defs/pose" },
+        "intrinsics": { "$ref": "#/$defs/intrinsics" },
+        "tracking_state": { "type": "string", "enum": ["normal", "limited", "unknown"], "description": "ARKit tracking state of the frame. unknown: the capture app did not record it (an import)." },
+        "segment": { "type": "integer", "minimum": 0, "description": "Capture segment of this keyframe (absent = 0; see segments)." },
+        "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance; higher is sharper." },
+        "exposure_s": { "type": "number", "exclusiveMinimum": 0 },
+        "pose_source": { "type": "string", "enum": ["arkit", "object_tracked"], "description": "Where this keyframe's camera pose comes from (absent = the package's pose_source). object_tracked: the camera relative to the tracked, moving object, in the object frame (see the package's pose_source)." },
+        "pose_quality": { "type": "number", "minimum": 0, "maximum": 1, "description": "The object tracker's confidence in this pose, 0-1 (object_tracked only). Under 0.7 one direction of the pose may be held by prediction only (a symmetric or flat object without visible texture)." }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "transform_arkit_world_to_design", "fitness", "rmse_mm", "gate_passed", "computed_at"],
+      "properties": {
+        "method": { "type": "string", "description": "e.g. open3d_robust_point_to_plane_icp" },
+        "transform_arkit_world_to_design": {
+          "type": "array", "items": { "type": "number" }, "minItems": 16, "maxItems": 16,
+          "description": "Row-major 4x4 mapping ARKit metres to design-frame millimetres: [p_design_mm, 1] = T * [p_arkit_m, 1]. The upper 3x3 is 1000 * R, where R is a rotation that includes the Y-up -> Z-up turn; the translation column is in mm."
+        },
+        "fitness": { "type": "number", "minimum": 0, "maximum": 1, "description": "Inlier fraction." },
+        "rmse_mm": { "type": "number", "minimum": 0 },
+        "gate_passed": { "type": "boolean", "description": "False means no part verdicts are made from this scan (fit gate)." },
+        "gate_threshold_fitness": { "type": "number", "minimum": 0, "maximum": 1 },
+        "computed_at": { "type": "string", "format": "date-time" },
+        "design_points_file": { "type": "string", "description": "The same cloud in the design frame's axes (Z up), written in design_points_units; uploaded to Grain with name=<scan_id>.ply, units=<design_points_units>, then diagnose with align=none, crop=false." },
+        "design_points_units": { "type": "string", "enum": ["m", "mm"], "description": "m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm: already design-frame millimetres (upload with units=mm)." },
+        "grain_scan_id": { "type": "string", "description": "The id Grain made for the upload (GrainScanRecord.id); Grain's ids are not ours." }
+      }
+    },
+    "flip_cut": { "title": "FlipCut", "type": "object", "additionalProperties": false, "description": "How the phone cut one cloud to the object before aligning it (FlipIsolation): the table it fitted and the tight box round the object.", "properties": { "input_points": { "type": "integer", "minimum": 0 }, "object_points": { "type": "integer", "minimum": 0 }, "table_y_m": { "type": "number", "description": "The fitted table's height under the object, in this cloud's ARKit world." }, "table_tilt_deg": { "type": "number", "minimum": 0 }, "cut_mm": { "type": "number", "minimum": 0, "description": "Cut above the table: its noise below its plane, mirrored." }, "floor_to_table_mm": { "type": "number", "description": "How far the locked box's floor sat below the fitted table." }, "box_extent_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 } } },
+    "flip_attempt": { "title": "FlipAttempt", "type": "object", "additionalProperties": false, "required": ["attempt"], "properties": { "attempt": { "type": "integer", "minimum": 1 }, "refused": { "type": "string", "description": "The check that refused it (inliers, rms, overlap, ambiguous, isolation); absent when accepted." }, "points": { "type": "integer", "minimum": 0, "description": "Mini-scan points used." }, "inliers": { "type": "integer", "minimum": 0 }, "overlap": { "type": "number", "minimum": 0 }, "rms_mm": { "type": "number", "minimum": 0 }, "margin": { "type": "number" }, "quality": { "type": "number", "minimum": 0, "maximum": 1 }, "flip_deg": { "type": "number" }, "agrees": { "type": "boolean", "description": "Agreed with the attempt before (two in a row line it up)." }, "ms": { "type": "integer", "minimum": 0 } } }
+  }
+}

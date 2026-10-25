@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grain-look-response.schema.json",
+  "title": "GrainLookResponse",
+  "description": "Grain -> RepairOS: POST /projects/{id}/scans/{sid}/look -- Grain's judgement of the photos of one record against the design. Also the `photos` member of a /call response. A judgement, not a measurement: observation confidence is a number 0-1, unlike fix confidence (a word). Synchronous and slow today, cached by content (cached: true). Pinned against a private recorded Grain fixture (private/grain/observed/), plus target fields marked x-target. status is ok, error (judgement carries error/raw) or not_checked (judgement null, reason says why). Camera poses, crop boxes and harness rows are not inputs yet (target T5). Grain owns the shape: additionalProperties allowed.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["status", "judgement"],
+  "properties": {
+    "status": { "type": "string", "enum": ["ok", "error", "not_checked"] },
+    "model": { "type": ["string", "null"], "description": "An identifier Grain reports; RepairOS does not read it." },
+    "provider": { "type": ["string", "null"], "description": "An identifier Grain reports; RepairOS does not read it." },
+    "photos": { "type": "integer", "minimum": 0, "description": "How many photos were judged." },
+    "judgement": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["observations"],
+          "properties": {
+            "matches_design": { "type": ["boolean", "null"], "description": "False with mostly missing/unsure observations means photos of another product." },
+            "observations": { "type": "array", "maxItems": 40, "items": { "$ref": "#/$defs/observation" } },
+            "differences": { "type": "array", "items": { "type": "string" } },
+            "summary": { "type": "string" },
+            "error": { "type": "string" },
+            "raw": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "seconds": { "type": "number", "minimum": 0 },
+    "note": { "type": "string" },
+    "reason": { "type": "string", "description": "For not_checked." },
+    "cached": { "type": "boolean" },
+    "call_id": { "type": "string", "x-target": "T6", "description": "Target T6: with detach: true, a 202 carries call_id; poll GET /call/{call_id}." }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["part", "what", "state", "confidence"],
+      "properties": {
+        "part": { "type": ["string", "null"], "description": "A Grain part name, or null when none could be named." },
+        "what": { "type": "string" },
+        "state": {
+          "type": "string",
+          "enum": ["broken", "missing", "shifted", "damaged", "worn", "dirty", "loose", "ok", "unsure"],
+          "description": "Maps 1:1 onto Finding.state (source grain.look). /call turns loose into reseat."
+        },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "photo": { "type": ["integer", "null"], "minimum": 1, "description": "1-based photo index on the record (photos[].n)." }
+      }
+    }
+  }
+}

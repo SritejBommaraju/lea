@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "meter-reading.schema.json",
+  "title": "MeterReading",
+  "description": "One multimeter reading typed or spoken by the user in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent to Grain /electrical/check as {net, volts} | {net, pins, continuity} | {net, pins, ohms} (GrainElectricalCheckRequest) and into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's own verdict (`verdict`, judged against [min, max]) is kept apart from Grain's (`grain_verdict`, plus the raw row).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reading_id", "scan_id", "session_id", "kind", "net", "value", "power_state", "source", "recorded_at"],
+  "properties": {
+    "reading_id": { "type": "string", "minLength": 1, "description": "Sent to Grain as the reading's id once T2 lands." },
+    "scan_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "action_id": { "type": "string", "description": "The NextAction this answers." },
+    "kind": { "type": "string", "enum": ["continuity", "voltage_dc", "resistance"] },
+    "net": { "type": "string", "minLength": 1, "description": "Grain net name (GET /electrical nets[].name). Not a harness wire name." },
+    "pins": {
+      "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 2, "maxItems": 2,
+      "description": "REF.PIN ids probed, in Grain's net naming (e.g. J1.1), not harness end names. Required for continuity and resistance; optional for voltage_dc ([probe +, probe -])."
+    },
+    "value": {
+      "description": "Exactly the field that matches kind (see allOf).",
+      "oneOf": [{ "$ref": "#/$defs/value_volts" }, { "$ref": "#/$defs/value_continuity" }, { "$ref": "#/$defs/value_ohms" }]
+    },
+    "power_state": { "type": "string", "enum": ["off", "on"] },
+    "condition": { "type": "string", "enum": ["idle", "load", "charging", "unknown"], "description": "Operating condition when read. RepairOS-side only: Grain's electrical check has no condition input today; we use it to pick which part of the SPICE [min, max] applies." },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What RepairOS judged against. volts_min/volts_max come from Grain's expected{min, max} (never from expected.volts alone; G2).",
+      "properties": {
+        "continuity": { "type": "boolean" },
+        "ohms_max": { "type": "number", "minimum": 0 },
+        "volts_min": { "type": "number" },
+        "volts_max": { "type": "number" },
+        "source": { "type": "string", "enum": ["grain_electrical", "report_json_minmax", "repairos_derived", "datasheet"] }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["agrees", "disagrees", "unknown"],
+      "description": "RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts). Ours wins over Grain's for a rail while G2 is open."
+    },
+    "grain_verdict": {
+      "type": ["string", "null"],
+      "enum": ["ok", "off", "open", "pin_not_on_net", "unknown_net", "no_expected", null],
+      "description": "Grain's row verdict (GrainElectricalCheckResponse readings[].verdict). Grain sends only ok|off today; the other values are T2 and, until then, derived by RepairOS (grain_verdict_derived true): continuity false + wire = open, known false = unknown_net, expected null = no_expected, a 'not on net' finding = pin_not_on_net. null when Grain has not been asked or gave nothing to derive from."
+    },
+    "grain_verdict_derived": { "type": "boolean", "description": "True when grain_verdict was derived by RepairOS (G22 fallback), not sent by Grain." },
+    "grain_row": {
+      "$ref": "grain-electrical-check-response.schema.json#/$defs/row",
+      "description": "The raw Grain row for this reading, as returned."
+    },
+    "grain_findings": {
+      "type": "array",
+      "items": { "$ref": "grain-electrical-check-response.schema.json#/$defs/finding" },
+      "description": "Grain findings about this reading (matched by text until T2 adds finding.reading)."
+    },
+    "grain_remake_wire": { "type": "string", "description": "grain_row.wire.name for an open on a harness wire, if any." },
+    "source": { "type": "string", "enum": ["typed", "voice"] },
+    "raw_text": { "type": "string", "description": "What the user said or typed, before parsing." },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "voltage_dc" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_volts" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "continuity" } } },
+      "then": { "required": ["pins"], "properties": { "value": { "$ref": "#/$defs/value_continuity" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "resistance" } } },
+      "then": { "required": ["pins"], "properties": { "value": { "$ref": "#/$defs/value_ohms" } } }
+    }
+  ],
+  "$defs": {
+    "value_volts": {
+      "type": "object", "additionalProperties": false, "required": ["volts"],
+      "properties": { "volts": { "type": "number" } }
+    },
+    "value_continuity": {
+      "type": "object", "additionalProperties": false, "required": ["continuity"],
+      "properties": { "continuity": { "type": "boolean", "description": "True when the meter beeps / reads under 5 ohm." } }
+    },
+    "value_ohms": {
+      "type": "object", "additionalProperties": false, "required": ["ohms"],
+      "properties": { "ohms": { "type": "number", "minimum": 0 } }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+// Copy to Signing.xcconfig (gitignored) and fill in. A free Apple ID works: Xcode > Settings > Accounts >
+// add the Apple ID, then use the Personal Team's id (10 characters) below.
+DEVELOPMENT_TEAM = ABCDE12345
+// Free teams need a globally unique bundle id; change the base if this one is taken.
+// PRODUCT_BUNDLE_IDENTIFIER_BASE = com.yourname.repairos

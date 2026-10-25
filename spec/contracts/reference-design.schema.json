@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "reference-design.schema.json",
+  "title": "ReferenceDesign",
+  "description": "The cached Grain reference for one product model. Built once per product model and never re-run for a product already seen (a design turn takes minutes). Files are Grain's reference artefacts fetched through the API and stored on the backend (handshake H1, private/grain/); the cache is keyed by grain_project_id + last_build until Grain reports last_build.hash (target T11).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["product_id", "make_model", "origin", "design_trust", "grain_project_id", "files", "fetched_at"],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1, "description": "RepairOS id for the product model (not a unit)." },
+    "make_model": { "type": "string", "description": "Human name as printed on the product label (make and model), or the user's description." },
+    "origin": {
+      "type": "string",
+      "enum": ["grain_designed", "grain_reconstructed", "none"],
+      "description": "grain_designed: built by the team in Grain. grain_reconstructed: Grain modelled a bought product from our brief. none: no reference; discovery mode only."
+    },
+    "design_trust": { "type": "string", "enum": ["high", "low"], "description": "high only for grain_designed. low widens tolerances and makes Grain verdicts advisory (I7)." },
+    "grain_project_id": { "type": ["string", "null"], "description": "Grain project id, or null when origin is none." },
+    "build_hash": { "type": ["string", "null"], "x-target": "T11", "description": "Grain's last_build.hash (target T11). null until Grain reports it; then last_build below is the cache key." },
+    "last_build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "seconds", "artifacts"],
+      "description": "Copy of GET /projects/{id} last_build at fetch time (the cache key until T11).",
+      "properties": {
+        "ok": { "type": "boolean" },
+        "errors": { "type": "integer", "minimum": 0 },
+        "seconds": { "type": "number", "minimum": 0 },
+        "artifacts": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Backend paths of the cached Grain artefacts. Missing keys mean Grain did not produce that file.",
+      "properties": {
+        "model_glb": { "type": "string", "description": "Reference geometry, design frame: millimetres, Z up. Node names are Grain part names (diagnose parts[].name; sub-parts like U1:usb); the BOM ref is a separate field (parts[].ref, null for made parts)." },
+        "model_step": { "type": "string", "description": "The whole model as a solid (Grain made[].file points here); a replacement part is cut from its node." },
+        "harness_csv": { "type": "string", "description": "name, from, to, gauge, length_mm, color, conductors. Ends are not in net pin naming (a part, or a board-prefixed connector; G26)." },
+        "elec_json": { "type": "string", "description": "Parts, nets and pins (REF.PIN), ERC, BOM rows. No 3D pin positions (G25)." },
+        "pins_json": { "type": "string", "x-target": "T7", "description": "Target T7: out/pins.json, REF.PIN -> {xyz_mm, normal, part} in the design frame." },
+        "netlist_net": { "type": "string" },
+        "main_placement_csv": { "type": "string", "description": "Board parts: ref, x, y, rot, side, footprint, in board millimetres (not the design frame)." },
+        "bom_json": { "type": "string", "description": "GET /bom: bought[{refs, name, mpn, supplier, url, datasheet, price, qty, line_total, dimensions_mm, why, footprint}], made[{name, process, material, mass_g, size_mm, file, finish}], total_usd." },
+        "electrical_json": { "type": "string", "description": "GET /electrical (GrainElectricalReference): nets, harness wires, expected_volts {volts, min, max, from}, SPICE signals." },
+        "report_json": { "type": "string", "description": "Build report; domains.sim holds the SPICE run, where RepairOS reads [min, max] for nets electrical_json has no expected value for." }
+      }
+    },
+    "has_harness": { "type": "boolean", "description": "True when harness data exists for this project." },
+    "pin_positions_available": { "type": "boolean", "description": "True only once files.pins_json exists (target T7). Until then stills target connectors by model.glb node bounds (G25)." },
+    "fetched_at": { "type": "string", "format": "date-time" },
+    "design_turns_used": { "type": "integer", "minimum": 0, "description": "Grain design turns spent on this reference (first turn + corrections). Each takes minutes." },
+    "corrections": {
+      "type": "array",
+      "description": "Discovery-mode corrections sent back to Grain, newest last.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sent_at", "text"],
+        "properties": {
+          "sent_at": { "type": "string", "format": "date-time" },
+          "text": { "type": "string" },
+          "applied": { "type": "boolean" }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>AlegreyaSans-Bold.ttf</string>
+		<string>AlegreyaSans-ExtraBold.ttf</string>
+		<string>AlegreyaSans-Black.ttf</string>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>lea</string>
+	<key>NSCameraUsageDescription</key>
+	<string>RepairOS uses the camera (and LiDAR when the phone has it) to scan the object and take close-up photos for the report.</string>
+	<key>INAlternativeAppNames</key>
+	<array>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Leah</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>lee uh</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Lea app</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>lee uh app</string>
+		</dict>
+		<dict>
+			<key>INAlternativeAppName</key>
+			<string>Lia</string>
+			<key>INAlternativeAppNamePronunciationHint</key>
+			<string>lee uh</string>
+		</dict>
+	</array>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Hold the mic button to ask lea a question or to say what's wrong; nothing is recorded otherwise.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>lea turns what you say into text on this phone when your Mac has no voice service.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>RepairOS sends your scan to the RepairOS gateway on your local network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>arm64</string>
+		<string>arkit</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

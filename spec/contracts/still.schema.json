@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "still.schema.json",
+  "title": "Still",
+  "description": "One Mode B close-up: a high-resolution still with its camera pose and the targets the backend asked for. camera is in arkit_world (metres, Y up) from the phone; the backend adds camera_design in the design frame (model.glb: millimetres, Z up) after alignment and per-still re-registration. The backend projects each target into the still from camera_design and the target's design-frame box.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["still_id", "scan_id", "session_id", "kind", "captured_at", "image_file", "width_px", "height_px", "targets", "tracking_state"],
+  "allOf": [
+    {
+      "if": { "required": ["pose_reliable"], "properties": { "pose_reliable": { "const": false } } },
+      "else": { "required": ["camera", "intrinsics"] }
+    }
+  ],
+  "properties": {
+    "still_id": { "type": "string", "minLength": 1 },
+    "scan_id": { "type": "string", "minLength": 1, "description": "The Mode A scan this still is registered to." },
+    "session_id": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": ["guided", "macro_detail", "label", "unguided"],
+      "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a still taken without a target ring, e.g. a frame of an imported capture (B12) or a plain camera photo (tools/import_photos.py, pose_reliable false, no camera); targets is empty."
+    },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "image_file": { "type": "string", "description": "JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it." },
+    "width_px": { "type": "integer", "minimum": 1 },
+    "height_px": { "type": "integer", "minimum": 1 },
+    "camera": { "$ref": "#/$defs/pose_arkit", "description": "Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate. May be absent only when pose_reliable is false: a plain photo has no pose, and none is made up." },
+    "camera_design": { "$ref": "#/$defs/pose_design", "description": "Backend-filled pose in the design frame (mm, Z up) after alignment and depth re-registration." },
+    "pose_reliable": { "type": "boolean", "description": "False for macro_detail, when tracking was limited, or when the still has no pose at all (a plain photo: camera absent). Only when false may camera and intrinsics be absent." },
+    "intrinsics": {
+      "type": "object",
+      "description": "Pinhole intrinsics in pixels of the width_px x height_px image. May be absent only when pose_reliable is false and the focal length is unknown (a plain photo without EXIF focal length).",
+      "additionalProperties": false,
+      "required": ["fx", "fy", "cx", "cy"],
+      "properties": {
+        "fx": { "type": "number" }, "fy": { "type": "number" }, "cx": { "type": "number" }, "cy": { "type": "number" }
+      }
+    },
+    "depth_file": { "type": "string", "description": "Nearest ARKit depth frame (256x192) for re-registration." },
+    "confidence_file": { "type": "string" },
+    "targets": {
+      "type": "array",
+      "description": "What the backend asked this still to cover. Empty for a label still.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_id"],
+        "properties": {
+          "target_id": { "type": "string" },
+          "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Grain part names (model.glb nodes, diagnose parts[].name) expected in view, e.g. J1, LOAD1." },
+          "harness_rows": { "type": "array", "items": { "type": "string" }, "description": "harness.csv wire names expected in view, e.g. WIRE_A." },
+          "box_mm": {
+            "type": "object", "additionalProperties": false, "required": ["min", "max"],
+            "description": "The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level, because Grain has no pin positions yet (G25; pins are target T7).",
+            "properties": {
+              "min": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+              "max": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
+            }
+          },
+          "reason": { "type": "string", "enum": ["connector", "non_ok_part", "symptom_power_path", "reshoot", "user_added"] }
+        }
+      }
+    },
+    "attached_to_target_id": { "type": "string", "description": "For macro_detail: the guided target this detail belongs to." },
+    "tracking_state": { "type": "string", "enum": ["normal", "limited", "unknown"], "description": "unknown: the capture app did not record it (an import); pose_reliable is then absent, or false when there is no pose at all (a plain photo)." },
+    "sharpness": { "type": "number", "minimum": 0, "description": "Laplacian variance." },
+    "torch_on": { "type": "boolean" },
+    "auto_fired": { "type": "boolean", "description": "True when the app took the shot because the ring filled, tracking was normal and sharpness was high." },
+    "user_skipped": { "type": "boolean", "description": "True when the user tapped 'skip, I can't reach it'. Targets then become not_inspected." },
+    "segment": { "type": "integer", "minimum": 0, "description": "Capture segment (absent = 0). The app starts segment 1 after the person flips the object for the underside: the object moved, so poses from different segments are not in the same object frame. Stills of segment ≥ 1 are pose_reliable false until the segments are registered (on the Mac); their camera pose stays in the session's world frame." },
+    "exposure_s": { "type": "number", "exclusiveMinimum": 0, "description": "Exposure duration of the still (ARKit camera)." },
+    "iso": { "type": "number", "exclusiveMinimum": 0, "description": "ISO of the still, from the frame's EXIF when ARKit gives it." },
+    "depth_gap_ms": { "type": "integer", "minimum": 0, "description": "Time between the still and the regular ARKit frame its depth_file came from (high-res frames carry no depth)." },
+    "torch_level": { "type": "number", "minimum": 0, "maximum": 1, "description": "Torch level during the still (0 = off); torch_on is level > 0." },
+    "view_cell": { "type": "string", "minLength": 1, "description": "The coverage-dome cell the still was taken from (app scan, e.g. r1s05: elevation ring 0-2 above the support plane, azimuth sector 0-11 around the object; b1s05 is a view of the underside: in a hand-held scan, pose_source object_tracked, ring 1-2 below the object's middle in the object frame; in a flipped segment (\"Scan the bottom\"), ring and sector around the flipped object). Lets the backend see which sides were photographed." },
+    "pose_source": { "type": "string", "enum": ["arkit", "object_tracked"], "description": "Where camera comes from. arkit (also when absent): ARKit world tracking. object_tracked: the app's hand-held mode: the camera relative to the tracked, moving object, in the scan's object frame (the ARKit world frame at the moment the object was locked; see scan-package pose_source)." },
+    "pose_quality": { "type": "number", "minimum": 0, "maximum": 1, "description": "The object tracker's confidence in camera, 0-1 (object_tracked only). Below 0.55 the app marks pose_reliable false; below 0.7 locate caps its confidence at medium." },
+    "low_light": { "type": "boolean", "description": "True when the app took the still in low light (it never blocks on light): judge dark detail with care." }
+  },
+  "$defs": {
+    "pose_arkit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "position_m", "quaternion_xyzw"],
+      "description": "Camera-to-world pose in ARKit's world frame: metres, Y up. Camera axes as ARKit (x right, y up, looking along -z).",
+      "properties": {
+        "frame": { "type": "string", "const": "arkit_world" },
+        "position_m": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    },
+    "pose_design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frame", "position_mm", "quaternion_xyzw"],
+      "description": "Camera-to-design pose in the design frame (model.glb): millimetres, Z up. Same camera axes as pose_arkit.",
+      "properties": {
+        "frame": { "type": "string", "const": "design" },
+        "position_mm": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+        "quaternion_xyzw": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 }
+      }
+    }
+  }
+}

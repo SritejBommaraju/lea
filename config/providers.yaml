@@ -1,0 +1,26 @@
+# Provider selection: config picks the implementation of every slot; code never does (PLAN.md §3).
+#
+# Read by backend/repairos/registry.py (runtime) and build/_lib.py (doctor, next, status). An implementation lives
+# in backend/repairos/slots/<slot>_<impl>/. Override one slot from the shell: REPAIROS_SLOT_<SLOT>=<impl>
+# (dev only; a release build refuses overrides). `none` = slot off; nothing is called.
+# A change of default is a PLAN.md §10 decision row. Format: strict YAML subset, one `SLOT: impl` per line.
+
+version: 3
+updated: 2026-10-24
+
+profile: phase1
+
+profiles:
+  phase1:
+    DET: owlv2       # OWLv2 base, zero-shot (built). gdino = Grounding DINO tiny swap-in (built). M9 measures both
+    VLM: anthropic   # Claude crop judge (built); models, effort, checklists: config/vlm.yaml
+    LLM: anthropic   # Claude Sonnet for plain-word report text (built)
+    FUSION: jev      # Jev judgments, decisions in code (built). No fallback: Jev down is a blocker
+    CLS: none        # dinov2 = DINOv2 defect classifier (built, M7). Not selected: it did not beat VLM-only on
+                     # held-out data (eval/defects/REPORT.md). Opt in: REPAIROS_SLOT_CLS=dinov2. MS5 re-decides
+    OCRB: none       # label and marking OCR on crops, planned (M8)
+    STATE: sqlite    # one SQLite file under data/ (built)
+    BLOB: local      # content-addressed files under data/blobs/ (built)
+    HOST: local_mac  # the dev laptop; dev only, a release build refuses it
+
+# Phase 2 adds the GRAIN slot (Grain API client); see PLAN.md §9.

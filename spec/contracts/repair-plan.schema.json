@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repair-plan.schema.json",
+  "title": "RepairPlan",
+  "description": "The plan shown to the user. The LLM writes the prose from these structured fields; it does not decide them. Every electrical root cause carries a proof reading or is marked unproven (I2). not_inspected and insufficient_evidence are listed, never hidden (I3, I4). Simulation checks are labelled as such (I5).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan_id", "scan_id", "session_id", "product_id", "symptom", "summary", "confidence_statement", "root_causes", "not_inspected", "insufficient_evidence", "safety", "parts", "steps", "confirm", "grain", "created_at"],
+  "properties": {
+    "plan_id": { "type": "string", "minLength": 1 },
+    "scan_id": { "type": "string", "minLength": 1 },
+    "session_id": { "type": "string", "minLength": 1 },
+    "product_id": { "type": "string", "minLength": 1 },
+    "symptom": { "type": "string" },
+    "summary": { "type": "string", "description": "Two or three sentences." },
+    "confidence_statement": { "type": "string", "description": "Plain words: what is proven, what is suspected, what was not seen." },
+    "root_causes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["suspect_id", "subject", "verdict", "proof_reading_id", "fix"],
+        "properties": {
+          "suspect_id": { "type": "string" },
+          "subject": { "$ref": "#/$defs/subject" },
+          "verdict": { "type": "string", "enum": ["confirmed", "suspect", "insufficient_evidence"] },
+          "proof_reading_id": { "type": ["string", "null"], "description": "Null means unproven; the plan must say so." },
+          "p_fault_word": { "type": "string", "enum": ["very_unlikely", "unlikely", "unsure", "likely", "very_likely"] },
+          "fix": { "type": "string", "enum": ["reseat", "recrimp", "rewire", "replace_part", "replace_wire", "rescan", "check", "none"] },
+          "evidence_summary": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "not_inspected": { "type": "array", "items": { "type": "string" }, "description": "Part refs or wires no still covered or the user skipped. Never reported ok." },
+    "insufficient_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["subject", "reason"],
+        "properties": {
+          "subject": { "$ref": "#/$defs/subject" },
+          "reason": { "type": "string" },
+          "what_would_help": { "type": "string" }
+        }
+      }
+    },
+    "safety": { "type": "array", "items": { "type": "string" }, "minItems": 1, "description": "Opens every plan: unplug, discharge capacitors, LiPo care, plus any supply-polarity rule (S1, S3)." },
+    "tools": { "type": "array", "items": { "type": "string" } },
+    "parts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["part_ref", "source"],
+        "properties": {
+          "part_ref": { "type": "string" },
+          "mpn": { "type": ["string", "null"] },
+          "description": { "type": "string" },
+          "source": { "type": "string", "enum": ["have", "print", "buy", "unresolved"] },
+          "part_on_hand_id": { "type": "string" },
+          "shopping_quote_id": { "type": "string" },
+          "print_file": { "type": "string" },
+          "substitute": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["candidate", "verdict", "basis", "reasons"],
+            "properties": {
+              "candidate": { "type": "string" },
+              "verdict": { "type": "string", "enum": ["yes", "yes_with_changes", "no", "need_simulation_check"] },
+              "basis": { "type": "string", "enum": ["quick_check", "simulation_check"] },
+              "reasons": { "type": "array", "items": { "type": "string" } },
+              "datasheet_url": { "type": "string" }
+            }
+          },
+          "cost": { "type": ["number", "null"], "minimum": 0 },
+          "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["n", "text"],
+        "properties": {
+          "n": { "type": "integer", "minimum": 1 },
+          "text": { "type": "string", "minLength": 1 },
+          "part_refs": { "type": "array", "items": { "type": "string" } },
+          "ar_labels": { "type": "array", "items": { "type": "string" } },
+          "safety_gate": { "type": "boolean", "description": "True for steps that touch the power path or a supply; the UI requires a confirm tap (S3). Required true when on_power_path is true or power_state is on." },
+          "on_power_path": { "type": "boolean", "description": "The step touches a part, wire or net on the symptom's power path (from the reference's power nets), including meter checks on it." },
+          "power_state": { "type": "string", "enum": ["off", "on", "n/a"] }
+        },
+        "allOf": [
+          {
+            "if": { "required": ["on_power_path"], "properties": { "on_power_path": { "const": true } } },
+            "then": { "required": ["safety_gate"], "properties": { "safety_gate": { "const": true } } }
+          },
+          {
+            "if": { "required": ["power_state"], "properties": { "power_state": { "const": "on" } } },
+            "then": { "required": ["safety_gate"], "properties": { "safety_gate": { "const": true } } }
+          }
+        ]
+      }
+    },
+    "confirm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method"],
+      "properties": {
+        "method": { "type": "string", "enum": ["rescan", "rerun_reading", "both"] },
+        "rerun_reading_ids": { "type": "array", "items": { "type": "string" } },
+        "expected": { "type": "string", "description": "e.g. 'J1 reads continuity on NET_A; the load comes back on'." }
+      }
+    },
+    "cost_to_buy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "currency"],
+      "properties": {
+        "amount": { "type": "number", "minimum": 0 },
+        "currency": { "type": "string", "pattern": "^[A-Z]{3}$" }
+      }
+    },
+    "grain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cross_check", "design_trust"],
+      "properties": {
+        "project_id": { "type": ["string", "null"] },
+        "build_hash": { "type": ["string", "null"], "description": "ReferenceDesign.build_hash: Grain last_build.hash (target T11); null until then." },
+        "design_trust": { "type": "string", "enum": ["high", "low", "none"] },
+        "cross_check": { "type": "string", "enum": ["done", "skipped", "failed"], "description": "Whether Grain diagnose and /call ran for this plan." },
+        "call_version": { "type": ["string", "null"], "x-target": "T10", "description": "GrainCallResponse.version (target T10); null until Grain sends one." },
+        "disagreements": { "type": "array", "items": { "type": "string" }, "description": "Where Grain's verdict differed from ours, in words." }
+      }
+    },
+    "generated_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "llm": { "type": "string" },
+        "fusion": { "type": "string", "enum": ["jev"] }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref"],
+      "description": "Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name or net name.",
+      "properties": {
+        "kind": { "type": "string", "enum": ["part", "wire", "net"] },
+        "ref": { "type": "string", "minLength": 1 },
+        "pins": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

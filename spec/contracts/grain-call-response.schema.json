@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grain-call-response.schema.json",
+  "title": "GrainCallResponse",
+  "description": "Grain -> RepairOS: the answer to POST /call. Every key is always present; diagnosis is null with no scan, electrical null with no readings, photos null with no photos, scan null with neither scan nor photos. The nested members reuse the endpoint contracts (diagnosis = GrainDiagnoseResponse, electrical = GrainElectricalCheckResponse, photos = GrainLookResponse, scan = GrainScanRecord). Pinned against the private recorded Grain fixtures (private/grain/observed/), plus target fields marked x-target. RepairOS never sends photos in /call, so `photos` is checked only against the /look shape. For electrical fixes `part` is free text today (a net with its pins, a wire name, an unknown net; G23 -> T3 subject). RepairOS compacts this (drops ok rows) before it reaches the assistant. Grain owns the shape: additionalProperties allowed.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["project", "question", "fixes", "buy", "remake", "design", "scan", "diagnosis", "electrical", "photos", "files", "timings", "summary"],
+  "properties": {
+    "project": { "type": "string" },
+    "question": { "type": ["string", "null"], "description": "Passed back unchanged." },
+    "fixes": { "type": "array", "items": { "$ref": "#/$defs/fix" }, "description": "In Grain's order: scan, photos, electrical, design, files." },
+    "buy": { "type": "array", "items": { "$ref": "#/$defs/bought" }, "description": "BOM bought rows for the fixes. Prices treated as current (owner decision 2026-10-23)." },
+    "remake": { "type": "array", "items": { "$ref": "#/$defs/made" } },
+    "design": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "The design files' build status as the last build (or a rebuild) saw them.",
+      "properties": {
+        "status": { "type": "string", "description": "ok, error, or absent." },
+        "fresh": { "type": "boolean" },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": true, "required": ["severity", "text"],
+            "properties": { "severity": { "type": "string", "enum": ["info", "warning", "error"] }, "text": { "type": "string" } }
+          }
+        },
+        "domains": { "type": "object", "additionalProperties": { "type": ["string", "null"] } },
+        "bbox_mm": { "$ref": "grain-diagnose-response.schema.json#/$defs/bbox" }
+      }
+    },
+    "scan": { "oneOf": [{ "$ref": "grain-scan-record.schema.json" }, { "type": "null" }] },
+    "diagnosis": { "oneOf": [{ "$ref": "grain-diagnose-response.schema.json" }, { "type": "null" }] },
+    "electrical": { "oneOf": [{ "$ref": "grain-electrical-check-response.schema.json" }, { "type": "null" }] },
+    "photos": { "oneOf": [{ "$ref": "grain-look-response.schema.json" }, { "type": "null" }] },
+    "files": { "type": "array", "items": { "type": "object", "additionalProperties": true }, "description": "One verifier report per loose file." },
+    "timings": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Seconds per stage: design, diagnosis, photos, electrical." },
+    "bom_total_usd": { "type": ["number", "null"] },
+    "seconds": { "type": "number", "minimum": 0 },
+    "summary": { "type": "string", "description": "Grain's plain-text summary." },
+    "version": { "type": "string", "x-target": "T10", "description": "Target T10: interface version, also in GET /call/schema. RepairOS pins it." }
+  },
+  "x-target-required": [
+    { "path": "version", "target": "T10" },
+    { "path": "fixes[*].subject", "target": "T3" },
+    { "path": "fixes[*].sources", "target": "T3" },
+    { "path": "electrical.readings[*].verdict", "target": "T2" },
+    { "path": "electrical.readings[*].i", "target": "T2" },
+    { "path": "electrical.findings[*].reading", "target": "T2" }
+  ],
+  "x-target-checks": [
+    { "check": "range_verdict", "path": "electrical.readings[*]", "target": "T1" }
+  ],
+  "$defs": {
+    "fix": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["part", "problem", "action", "confidence", "detail"],
+      "properties": {
+        "part": { "type": ["string", "null"], "description": "Display string. A Grain part name for scan and photo fixes; free text for electrical fixes; null for a design-wide or wrong-product fix." },
+        "problem": { "type": "string", "description": "A diagnose verdict (not_seen, damaged, shifted), photo:<state>, photo:not_this_product, electrical, design_error, or <kind>_error for a loose file." },
+        "action": { "type": "string", "enum": ["buy", "remake", "reseat", "rescan", "fix_design", "check", "rewire"] },
+        "confidence": { "type": "string", "enum": ["low", "medium", "high"], "description": "A word: low, medium or high. Never compared with /look's numeric confidence." },
+        "detail": { "type": ["string", "null"] },
+        "how": { "type": ["string", "null"] },
+        "note": { "type": "string" },
+        "seen_by": { "type": "string", "description": "photo, photo and scan, scan and photo." },
+        "coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "shift_mm": { "oneOf": [{ "$ref": "grain-diagnose-response.schema.json#/$defs/vec3" }, { "type": "null" }] },
+        "missing_region_mm": { "$ref": "grain-diagnose-response.schema.json#/$defs/missing_region" },
+        "buy": { "type": "object", "additionalProperties": true, "description": "The part's buy row plus ref and qty." },
+        "remake": { "$ref": "#/$defs/made" },
+        "subject": { "$ref": "grain-call-request.schema.json#/$defs/subject", "x-target": "T3", "description": "Target T3: structured subject; keep part as the display string." },
+        "sources": {
+          "type": "array", "x-target": "T3",
+          "items": { "type": "string", "enum": ["scan", "photo", "meter", "design", "repairos"] },
+          "description": "Target T3: which evidence produced the fix."
+        }
+      }
+    },
+    "bought": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "refs": { "type": "array", "items": { "type": "string" } },
+        "ref": { "type": ["string", "null"] },
+        "name": { "type": "string" },
+        "mpn": { "type": ["string", "null"] },
+        "supplier": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "datasheet": { "type": ["string", "null"] },
+        "price": { "type": ["number", "null"], "minimum": 0 },
+        "qty": { "type": "integer", "minimum": 0 },
+        "line_total": { "type": ["number", "null"], "minimum": 0 },
+        "dimensions_mm": { "type": ["array", "null"], "items": { "type": "number" } }
+      }
+    },
+    "made": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string", "description": "Grain part name." },
+        "process": { "type": ["string", "null"] },
+        "material": { "type": ["string", "null"] },
+        "file": { "type": ["string", "null"], "description": "Today out/model.step (the whole model)." },
+        "size_mm": { "oneOf": [{ "$ref": "grain-diagnose-response.schema.json#/$defs/vec3" }, { "type": "null" }] },
+        "mass_g": { "type": ["number", "null"], "minimum": 0 }
+      }
+    }
+  }
+}

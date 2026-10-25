@@ -1,0 +1,13 @@
+# The report verdict's coverage gate (repairos/report/verdict.py, rule V8 "no_problems_seen").
+#
+# V8: nothing a model judged shows an issue, some regions could not be judged or were not inspected, and the capture
+# still covered the object well enough to say "No problems seen" (with the unchecked areas listed as the caveat).
+# Below these numbers the verdict stays insufficient_evidence (V7): coverage really is poor.
+#
+# Coverage is measured generically, from where the camera was: every keyframe and still's position relative to the
+# object box, on the app's own view dome (ios/RepairOS/Capture/CoverageDome.swift: 3 elevation rings x 12 sectors of
+# 30 degrees = 36 cells; the app calls 24 cells "done").
+version: 1
+min_judged_regions: 2     # regions a model judged (ok or an issue): at least this many places seen clearly
+min_view_share: 0.33      # share of the 36 dome cells the capture saw (12 cells, half of the app's "done")
+min_sectors: 6            # distinct directions around the object (of 12): at least half way round it
