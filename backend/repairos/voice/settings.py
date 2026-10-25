@@ -65,6 +65,15 @@ class VoiceSettings(BaseSettings):
     # go on words alone). At most MAX_LOOK_IMAGES photos per turn (conversation.py).
     lea_voice_look_model: str = LOOK_MODEL
     lea_voice_look_turns_per_scan: int = 40
+    # Report turns: up to this many images (the scan's photos and renders of its 3D reconstruction, aimed at what
+    # the question is about) go with the question; 0 = words only. They count as looking turns for the cap above.
+    lea_voice_report_views: int = 3
+    # The part index (repairos.voice.evidence): one vision call per scan, in the background once the report exists.
+    # Sonnet reads small printed labels (pin names, port names) better than Haiku; one call is about 2 US cents.
+    lea_voice_index_model: str = "claude-sonnet-5-5"
+    # Web search (Anthropic's server tool) once the object is identified: at most this many searches per scan, one
+    # per turn; each turn that offers it is charged to the `anthropic_web_search` spend caps first.
+    lea_voice_searches_per_scan: int = 5
 
     @property
     def cartesia_key(self) -> str | None:

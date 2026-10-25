@@ -1,0 +1,22 @@
+{
+  "about": "Report turns on the owner's real scans (report_turns.py). Xbox controller scan_75033ad756b7f972 (no_problems_seen, photo-textured recreation), opened convection toaster oven scan_799d9ab8d44e0e2b (potential_issues, LiDAR cloud surface), handheld trimmer scan_c56fb68570165e4f (no_problems_seen, recreation). before = the persona and words-only context at git HEAD; heldout = a located finding removed so Lea has to point at it herself (error against its located point); sparse = only the listed stills kept.",
+  "items": [
+    {"id": "xbox_xb_here_before", "scan": "scan_75033ad756b7f972", "mode": "before", "kind": "owner", "question": "the X button and the B button are here."},
+    {"id": "xbox_xb_here", "scan": "scan_75033ad756b7f972", "mode": "after", "kind": "owner", "question": "the X button and the B button are here."},
+    {"id": "xbox_xyba_before", "scan": "scan_75033ad756b7f972", "mode": "before", "kind": "general", "question": "What does the X, Y, B, and A button do in this device?"},
+    {"id": "xbox_xyba", "scan": "scan_75033ad756b7f972", "mode": "after", "kind": "general", "question": "What does the X, Y, B, and A button do in this device?"},
+    {"id": "xbox_where_x", "scan": "scan_75033ad756b7f972", "mode": "after", "kind": "locate_non_finding", "question": "where's the X button"},
+    {"id": "xbox_batteries", "scan": "scan_75033ad756b7f972", "mode": "after", "kind": "general_and_locate", "question": "how do I change the batteries on this"},
+    {"id": "xbox_heldout_b", "scan": "scan_75033ad756b7f972", "mode": "heldout", "heldout": "f_25c6159f83e6", "kind": "locate_accuracy", "question": "where's the B button"},
+    {"id": "xbox_sparse_b", "scan": "scan_75033ad756b7f972", "mode": "sparse", "keep": ["s1"], "kind": "sparse", "question": "is the B button damaged?"},
+    {"id": "toaster_red_wire_before", "scan": "scan_799d9ab8d44e0e2b", "mode": "before", "kind": "wire", "question": "what is this red wire doing"},
+    {"id": "toaster_red_wire", "scan": "scan_799d9ab8d44e0e2b", "mode": "after", "kind": "wire", "question": "what is this red wire doing"},
+    {"id": "toaster_heldout_knob", "scan": "scan_799d9ab8d44e0e2b", "mode": "heldout", "heldout": "f_3269b3af85e5", "kind": "locate_accuracy", "question": "where's the control knob"},
+    {"id": "toaster_heldout_cover", "scan": "scan_799d9ab8d44e0e2b", "mode": "heldout", "heldout": "f_4cf167615202", "kind": "locate_accuracy", "question": "where's the outer cover with the vent slots"},
+    {"id": "toaster_heldout_motor", "scan": "scan_799d9ab8d44e0e2b", "mode": "heldout", "heldout": "f_d18e4d9d8b08", "kind": "locate_accuracy", "question": "where's the small motor with the pink coil"},
+    {"id": "toaster_sparse", "scan": "scan_799d9ab8d44e0e2b", "mode": "sparse", "keep": ["s1", "s2"], "kind": "sparse", "question": "is anything burnt or damaged in there?"},
+    {"id": "toaster_general", "scan": "scan_799d9ab8d44e0e2b", "mode": "after", "kind": "general", "question": "how does the fan motor in this work"},
+    {"id": "trimmer_blade", "scan": "scan_c56fb68570165e4f", "mode": "after", "kind": "general_search", "search": true, "question": "how do I replace the blade on this trimmer"},
+    {"id": "trimmer_where_button", "scan": "scan_c56fb68570165e4f", "mode": "after", "kind": "locate_non_finding", "question": "where's the power button"}
+  ]
+}

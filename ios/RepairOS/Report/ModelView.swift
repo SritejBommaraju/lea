@@ -292,6 +292,8 @@ struct ModelView: View {
     var controls = true
     /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the spin stops.
     var tour: WalkthroughPlayer? = nil
+    /// Lea's camera move while she answers (LeaStage): fly to a marker, look from a side, zoom.
+    var cue: LeaStageCue? = nil
     let onPinTap: (String) -> Void
 
     /// Reduce Motion: the walkthrough card the view shows (it cuts there while faded out).
@@ -311,7 +313,7 @@ struct ModelView: View {
             if let loaded {
                 SceneHost(content: loaded, pins: pins, focus: focus, recenter: recenter, animate: !reduceMotion,
                           spin: spin && !reduceMotion, active: visible, stage: stage, probe: probe,
-                          tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), onPinTap: onPinTap)
+                          tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), cue: cue, onPinTap: onPinTap)
                     .id(Self.loadedID(loaded))
                     .modifier(TourCutFade(nearest: frame?.nearest, on: reduceMotion, shown: $cutShown))
                     .transition(.opacity)
@@ -433,11 +435,13 @@ private struct SceneHost: UIViewRepresentable {
     var probe: StageProbe?
     /// The walkthrough's frame: the camera follows its pager instead of `focus`.
     var tour: TourFrame?
+    var cue: LeaStageCue?
     let onPinTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SCNView {
+        context.coordinator.cueN = cue?.n   // a move from before this view existed is not replayed
         let view = SCNView(frame: .zero)
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling2X
@@ -491,6 +495,10 @@ private struct SceneHost: UIViewRepresentable {
             c.recenter = recenter
             c.stopSpin()
             c.frameAll(animate: animate)
+        }
+        if let cue, c.cueN != cue.n {
+            c.cueN = cue.n
+            c.lea(cue.command, animate: animate)
         }
         c.setActive(active)
     }
@@ -766,6 +774,54 @@ private struct SceneHost: UIViewRepresentable {
                 node.opacity = CGFloat(rest * (0.45 + 0.55 * max(on, 1 - lit)))
                 node.simdScale = SIMD3(repeating: 1 + 0.35 * on)
             }
+        }
+
+        // MARK: Lea
+
+        /// The last of Lea's moves applied (LeaStageCue.n).
+        var cueN: Int?
+        /// The side the default framing looks from (`move`'s default direction).
+        static let front = StageCamera.azimuth(SIMD3(0.35, 0.55, 1))
+
+        /// One of Lea's moves: fly to a marker, look from a side (the spin turned back to rest first, so "front" is
+        /// the default framing's side), turn round, zoom. Reduce Motion: a cut.
+        func lea(_ command: StageCommand, animate: Bool) {
+            guard let view else { return }
+            stopSpin()
+            let now = TourPose(eye: cameraNode.simdWorldPosition, look: SIMD3<Float>(view.defaultCameraController.target))
+            let distance = radius * 3.5
+            switch command {
+            case .show(let id):
+                fly(to: id, animate: animate)
+                return
+            case .view(.reset):
+                rest(animate: animate)
+                frameAll(animate: animate)
+                return
+            case .view(let side):
+                if side != .around { rest(animate: animate) }
+                if let pose = StageCamera.pose(side, current: now, center: center, distance: distance, front: Self.front) {
+                    place(pose, animate: animate)
+                }
+            case .zoom(let zoomIn):
+                place(StageCamera.zoom(now, zoomIn: zoomIn, minDistance: radius * 0.6, maxDistance: radius * 7),
+                      animate: animate)
+            case .point:
+                return   // the stage turns a point into a marker first; the view flies with .show
+            }
+            view.isPlaying = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self, !self.spinning else { return }
+                self.view?.isPlaying = false
+            }
+        }
+
+        /// The spin back to rest, with the camera's move.
+        private func rest(animate: Bool) {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animate ? 0.7 : 0
+            pivot.simdOrientation = simd_quatf(angle: 0, axis: SIMD3(0, 1, 0))
+            SCNTransaction.commit()
         }
 
         func frameAll(animate: Bool) {

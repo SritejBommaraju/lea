@@ -42,11 +42,14 @@ struct RecreationView: View {
     var probe: StageProbe?
     /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the turntable stops.
     var tour: WalkthroughPlayer?
+    /// Lea's camera move while she answers (LeaStage): fly to a marker, look from a side, zoom.
+    var cue: LeaStageCue?
 
     init(source: RecreationSource, markers: [ModelPin], focus: String? = nil, spin: Bool = true,
          onMarkerTap: @escaping (String) -> Void = { _ in }, onLoaded: (() -> Void)? = nil, probe: StageProbe? = nil,
-         tour: WalkthroughPlayer? = nil) {
+         tour: WalkthroughPlayer? = nil, cue: LeaStageCue? = nil) {
         self.tour = tour
+        self.cue = cue
         self.source = source
         self.markers = markers
         self.focus = focus
@@ -84,7 +87,8 @@ struct RecreationView: View {
             if let loaded {
                 RecreationHost(loaded: loaded, markers: markers.map(Self.marker), focus: focus, spin: spin && !reduceMotion,
                                animate: !reduceMotion, active: visible, probe: probe,
-                               tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), onMarkerTap: onMarkerTap)
+                               tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), cue: cue,
+                               onMarkerTap: onMarkerTap)
                     .id(loaded.id)
                     .transition(.opacity)
             } else if !failed {
@@ -173,12 +177,14 @@ private struct RecreationHost: UIViewRepresentable {
     var probe: StageProbe?
     /// The walkthrough's frame: the camera follows its pager instead of `focus`.
     var tour: TourFrame?
+    var cue: LeaStageCue?
     let onMarkerTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SCNView {
         let c = context.coordinator
+        c.cueN = cue?.n   // a move from before this view existed is not replayed
         let view = FittingSCNView(frame: .zero)
         view.backgroundColor = .clear
         view.antialiasingMode = .multisampling4X
@@ -241,6 +247,10 @@ private struct RecreationHost: UIViewRepresentable {
                 view.defaultCameraController.target = SCNVector3(c.stage.focusCenter)
             }
             c.pulse()
+        }
+        if let cue, c.cueN != cue.n {
+            c.cueN = cue.n
+            c.lea(cue.command, animate: animate)
         }
         view.isPlaying = c.stage.isSpinning && active
     }
@@ -309,6 +319,48 @@ private struct RecreationHost: UIViewRepresentable {
             view?.allowsCameraControl = true
             stage.place(stage.markers, focus: nil)
             keepApart()
+        }
+
+        // MARK: Lea
+
+        /// The last of Lea's moves applied (LeaStageCue.n).
+        var cueN: Int?
+        /// The side the default framing looks from (RecreationStage.framePose).
+        static let front: Float = 0.6
+
+        /// One of Lea's moves: fly to a marker, look from a side (the model turned back to rest first, so "front" is
+        /// the default framing's side), turn round, zoom. Reduce Motion: a cut.
+        func lea(_ command: StageCommand, animate: Bool) {
+            guard let view else { return }
+            stage.stopSpin()
+            let cam = view.defaultCameraController
+            let now = TourPose(eye: stage.cameraNode.simdWorldPosition, look: SIMD3<Float>(cam.target))
+            var pose: TourPose?
+            switch command {
+            case .show(let id):
+                pose = stage.markerPose(id)
+            case .view(let side):
+                if side != .around { rest(animate: animate) }
+                pose = StageCamera.pose(side, current: now, center: stage.focusCenter, distance: stage.frameDistance,
+                                        front: Self.front) ?? stage.framePose()
+            case .zoom(let zoomIn):
+                pose = StageCamera.zoom(now, zoomIn: zoomIn, minDistance: stage.frameDistance * 0.2,
+                                        maxDistance: stage.frameDistance * 2.2)
+            case .point:
+                pose = nil   // the stage turns a point into a marker first; the hero flies with .show
+            }
+            guard let pose else { return }
+            stage.move(to: pose.eye, look: pose.look, animated: animate)
+            cam.target = SCNVector3(pose.look)
+            pulse()
+        }
+
+        /// The turntable back to rest, with the camera's move.
+        private func rest(animate: Bool) {
+            SCNTransaction.begin()
+            SCNTransaction.animationDuration = animate ? 0.7 : 0
+            stage.pivot.simdOrientation = simd_quatf(angle: 0, axis: SIMD3(0, 1, 0))
+            SCNTransaction.commit()
         }
 
         /// Whether the hero is on screen (the tour draws continuously only then).

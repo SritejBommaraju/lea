@@ -24,6 +24,8 @@ struct ReportStageView: View {
     /// Bumped by Lea's `walkthrough` voice action ("Lea, walk me through it"): plays the tour once she has finished
     /// saying she will.
     var walkthrough = 0
+    /// Lea's latest move of the 3D model while she answers (LeaStage): focus and ring a part, look from a side, zoom.
+    var leaCue: LeaStageCue?
     /// The hero on the stage. `.automatic` follows `model` (3D view or the photo hero); a 3D recreation plugs in
     /// with `.custom` (see `StageHeroContext`) without touching anything else here.
     var hero: StageHero = .automatic
@@ -47,6 +49,11 @@ struct ReportStageView: View {
     @State private var probe = StageProbe()
     /// "Walk me through it": the guided tour of this report on the hero (Walkthrough, WalkthroughDeck).
     @State private var tour = WalkthroughPlayer()
+    /// Rings Lea put on parts that are not numbered problems (a part with no issue, a spot read from the photos), for
+    /// a few seconds; and her camera move for the hero.
+    @State private var leaPins: [ModelPin] = []
+    @State private var heroCue: LeaStageCue?
+    static let leaRingSeconds: Double = 6
     /// Counts Lea's first sounds seen (from `voiceStarted`), read live by the landing task.
     @State private var heard = 0
     /// The 3D scan is on screen: the landing waits for it (at most `maxWait`), so markers and verdict arrive on it.
@@ -60,7 +67,7 @@ struct ReportStageView: View {
     private var pins: [ModelPin] {
         StageMarks.pins(report) + targets.filter { !$0.checked }.compactMap { t in
             t.simd.map { ModelPin(id: "target:" + t.id, number: nil, point: $0, tone: .accent, ringRadius: t.radius) }
-        }
+        } + leaPins
     }
 
     /// The numbered findings and setup rows only (the circled rings are not problems).
@@ -114,6 +121,7 @@ struct ReportStageView: View {
         .task(id: landingKey) { await land() }
         .onChange(of: voiceStarted) { heard += 1 }
         .onChange(of: walkthrough) { startTour(afterLea: true) }
+        .onChange(of: leaCue) { _, cue in applyLea(cue) }
         .onDisappear { tour.stop() }
         .fullScreenCover(isPresented: $showOnObject) {
             if let space {
@@ -253,7 +261,7 @@ struct ReportStageView: View {
         let context = StageHeroContext(markers: pins, focus: touring ? nil : focus, select: { id in
             focus = id
             sheet = all.first { $0.id == id }
-        }, ready: { modelReady = true }, probe: probe, tour: touring ? tour : nil)
+        }, ready: { modelReady = true }, probe: probe, tour: touring ? tour : nil, cue: touring ? nil : heroCue)
         Group {
             switch hero {
             case .custom(let make):
@@ -269,7 +277,7 @@ struct ReportStageView: View {
                 } else {
                     ModelView(source: model, pins: pins, focus: focus, spin: true, showHint: false, stage: true,
                               onLoaded: { modelReady = true }, probe: probe, controls: !touring, tour: context.tour,
-                              onPinTap: context.select)
+                              cue: context.cue, onPinTap: context.select)
                         // The object sits below the navigation bar drawn over the stage's top.
                         .padding(.top, Self.topClear)
                 }
@@ -298,6 +306,28 @@ struct ReportStageView: View {
         showOthers = false
         focus = nil
         withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { tour.start(steps, afterLea: afterLea) }
+    }
+
+    /// Lea showed something while answering: focus its marker (never opening its sheet: she is talking), ring a part
+    /// that has no marker for a few seconds in a neutral tone, and move the hero's camera. A tour in progress ends
+    /// (the person asked something else). Unknown parts are ignored.
+    private func applyLea(_ cue: LeaStageCue?) {
+        guard let cue else { return }
+        let plan = LeaStagePlan.make(cue.command, pins: pins, located: report.located)
+        guard plan != .none else { return }
+        if tour.active { tour.stop() }
+        circling = false
+        if let pin = plan.pin {
+            leaPins.removeAll { $0.id == pin.id }
+            leaPins.append(pin)
+            let id = pin.id
+            Task {
+                try? await Task.sleep(for: .seconds(Self.leaRingSeconds))
+                leaPins.removeAll { $0.id == id }   // the camera stays where she put it
+            }
+        }
+        if let f = plan.focus { focus = f }
+        if let camera = plan.camera { heroCue = LeaStageCue(n: cue.n, command: camera) }
     }
 
     /// A circle drawn on the stage: find the spot on the scan, then ask what to do with it.

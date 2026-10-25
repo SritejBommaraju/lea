@@ -13,6 +13,8 @@ final class LeaConversation {
         let id = UUID()
         var mine: Bool
         var text: String
+        /// The real photos (crop blob shas, ringed) of the spots Lea showed in this answer.
+        var photos: [String] = []
     }
 
     enum Phase: Equatable { case idle, listening, thinking, speaking, failed(String) }
@@ -52,6 +54,8 @@ final class LeaConversation {
     @ObservationIgnored var eyes: LeaEyes?
     /// Lea offered an action ("Start a scan") and the person said yes out loud: the same as tapping it.
     @ObservationIgnored var acceptOffer: ((String) -> Void)?
+    /// On a report: Lea moves its 3D model (LeaStage), each move timed to land with the sentence it belongs to.
+    @ObservationIgnored var onStage: ((StageCommand) -> Void)?
 
     private(set) var turns: [Turn] = []
     private(set) var phase: Phase = .idle
@@ -300,6 +304,10 @@ final class LeaConversation {
         var marks: [LeaMark] = []
         /// What the phone measured with LiDAR when Lea asked (said after her answer).
         var measured: String?
+        /// When her first sentence arrived (about when it starts being heard), and how many characters come before
+        /// the newest sentence: a 3D move is held until its sentence is heard (StageTiming).
+        var firstHeardAt: Date?
+        var charsBefore = 0
         /// Sonic's socket for this answer (nil: the gateway streams the audio, or the phone's voice).
         var sonic: SonicSocket?
         var sonicFailed = false
@@ -405,6 +413,8 @@ final class LeaConversation {
             if st.recorded, !t.isEmpty { turns.append(Turn(mine: true, text: t)); postStory(t) }
         case .sentence(let s, let withAudio):
             st.firstSentence = st.firstSentence ?? Self.ms(since: st.start)
+            st.firstHeardAt = st.firstHeardAt ?? Date()
+            st.charsBefore = st.answerText.isEmpty ? 0 : st.answerText.count + 1
             st.answerText = st.answerText.isEmpty ? s : st.answerText + " " + s
             let answer = Turn(mine: false, text: st.answerText)
             if let i = st.answerIndex, i < turns.count { turns[i].text = st.answerText } else { turns.append(answer); st.answerIndex = turns.count - 1 }
@@ -426,6 +436,16 @@ final class LeaConversation {
             st.marks.append(m)
         case .measure(let a, let b):
             st.measured = eyes?.measure(a, b)
+        case .stage(let command):
+            let wait = StageTiming.delay(firstHeardAt: st.firstHeardAt, charsBefore: st.charsBefore, now: Date())
+            guard wait > 0.05 else { onStage?(command); return }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(wait))
+                guard let self, self.current === st else { return }   // a newer turn took over: its moves win
+                self.onStage?(command)
+            }
+        case .photo(_, let crop):
+            if let i = st.answerIndex, i < turns.count, !turns[i].photos.contains(crop) { turns[i].photos.append(crop) }
         case .done(_, let timings, let heldID):
             if !st.marks.isEmpty { eyes?.marks(st.marks) }
             if let sonic = st.sonic, !st.sonicFailed { sonic.say("", more: false) }

@@ -105,6 +105,17 @@ spend:
     repeat_per_minute: 3
     breaker_cooldown_s: 600
     usd_per_call: null
+  anthropic_web_search:
+    label: Lea web search
+    # Lea's answers may search the web (Anthropic's web_search server tool, 10 USD per 1,000 searches) once the object
+    # is identified, at most one search per turn and lea_voice_searches_per_scan per scan. Each turn that offers the
+    # tool is charged one unit before the call, so the counts are an upper bound. Demo caps (~/lea-todo.md).
+    per_minute: 10
+    per_day: 150
+    usd_per_day: 1.5
+    repeat_per_minute: 3       # the same question offered search again and again: a loop
+    breaker_cooldown_s: 600
+    usd_per_call: 0.01
   cartesia:
     label: Voice
     # TTS lines and STT turns: about one a second while Lea talks; cached lines never reach Cartesia.

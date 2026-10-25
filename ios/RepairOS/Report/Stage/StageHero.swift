@@ -5,7 +5,7 @@ import SwiftUI
 ///
 ///     ReportStageView(..., hero: .custom { ctx in AnyView(RecreationView(source: src, markers: ctx.markers, focus: ctx.focus,
 ///                                                                      onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe,
-///                                                                      tour: ctx.tour)) })
+///                                                                      tour: ctx.tour, cue: ctx.cue)) })
 enum StageHero {
     case automatic
     case custom((StageHeroContext) -> AnyView)
@@ -23,6 +23,8 @@ struct StageHeroContext {
     let probe: StageProbe
     /// The walkthrough while it plays (nil otherwise): pass it on, so its pager drives the hero's camera.
     var tour: WalkthroughPlayer? = nil
+    /// Lea's latest camera move while she answers (LeaStage): `.show(marker id)`, `.view(side)` or `.zoom`.
+    var cue: LeaStageCue? = nil
 }
 
 /// After a circle on the stage: look closer now (Continue scanning aims at it), keep it marked, or drop it.

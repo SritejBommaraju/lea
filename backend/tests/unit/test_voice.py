@@ -808,3 +808,250 @@ def test_live_tts_and_stt(tmp_path):
         finally:
             await cart.aclose()
     asyncio.run(go())
+
+
+# ------------------------------------------------------------------ report turns: evidence, the 3D model, search
+def publish_scan_with_model(c, *, object_words=None, story="the X button sticks", scan_id: str | None = None) -> str:
+    """A published report on a scan Lea can look at: a dense coloured cloud (a plane 30 cm in front of the still's
+    camera), a decodable still with that pose, and two findings: f_example_a (not located) and f_example_b (located,
+    no issue)."""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    from repairos.importers.ply import ply_bytes
+    from repairos.locate.camera import Pose
+
+    sid = c.post("/v1/sessions", json={"symptom": story}).json()["session_id"]
+    up = Uploader(c)
+    st_example = json.loads((EXAMPLES / "still.json").read_text(encoding="utf-8"))
+    pose = Pose.from_contract(st_example["camera"])
+    g = np.linspace(-0.08, 0.08, 120)
+    xx, yy = np.meshgrid(g, g)
+    local = np.stack([xx.ravel(), yy.ravel(), np.full(xx.size, -0.3)], axis=1)      # camera frame: 30 cm ahead
+    xyz = pose.to_world(local).astype(np.float32)
+    rgb = np.tile(np.array([[60, 160, 90]], np.uint8), (len(xyz), 1))
+    pkg = make_scan(up, sid)
+    if scan_id:
+        pkg["scan_id"] = scan_id
+    pkg["points_file"] = up.upload(ply_bytes(xyz, rgb))
+    pkg["point_count"] = len(xyz)
+    pkg.pop("crop_box", None)
+    assert c.post("/v1/scans", json=pkg).status_code == 201
+    st = make_still(up, pkg)
+    buf = io.BytesIO()
+    Image.new("RGB", (st["width_px"], st["height_px"]), (90, 90, 100)).save(buf, "JPEG")
+    st["image_file"] = up.upload(buf.getvalue(), "image/jpeg")
+    st.pop("segment", None)
+    if scan_id:
+        st["still_id"] = f"{scan_id}_s7"
+    assert c.post("/v1/stills", json=st).status_code == 201
+    scan_id = pkg["scan_id"]
+    f = json.loads((EXAMPLES / "finding.json").read_text(encoding="utf-8"))
+    tag = "" if scan_id == "scan_7f3a" else "_" + scan_id[-6:]
+    f.update(finding_id="f_example_a" + tag, scan_id=scan_id, state="loose")
+    f["evidence_refs"]["still_ids"] = [st["still_id"]]
+    fb = {**copy.deepcopy(f), "finding_id": "f_example_b" + tag, "state": "ok"}
+    rep = report_example(scan_id, sid)
+    rep["findings"][1]["location"]["point_m"] = [float(v) for v in xyz[len(xyz) // 2 + 60]]
+    for row, fid in zip(rep["findings"], (f["finding_id"], fb["finding_id"])):
+        row["finding_id"] = fid
+    rep["most_likely"] = [x if not isinstance(x, str) else f["finding_id"] for x in rep.get("most_likely") or []]
+    rep["not_inspected"], rep["insufficient_evidence"] = [], []
+    if object_words:
+        rep["object"] = object_words
+
+    async def rows():
+        await c.state.transition("finding", f["finding_id"], "finding.create", f)
+        await c.state.transition("finding", fb["finding_id"], "finding.create", fb)
+        await c.state.transition("report", f"rep_{scan_id}", "report.publish", rep)
+    asyncio.run(rows())
+    return scan_id
+
+
+def streamed(c) -> list[dict]:
+    """The streamed answer requests (the part index is a separate, non-streamed call)."""
+    return [b for b in c.claude.bodies if b.get("stream")]
+
+
+def ask(c, scan_id, text, live=None):
+    import urllib.parse
+
+    q = f"?audio=none&scan_id={scan_id}" + (f"&live={urllib.parse.quote(json.dumps(live))}" if live else "")
+    r = c.post("/v1/voice/converse" + q, json={"text": text})
+    assert r.status_code == 200, r.text
+    return [p for k, p in frames(r.content) if k == "J"]
+
+
+def test_stage_markers_are_parsed_out_of_speech():
+    sp = SentenceSplitter()
+    out = sp.feed('<show part="f_ab12"/>The battery cover is on the back. <view side="Top"/>Here is the top. ')
+    out += sp.feed('<zoom dir="in"/><point photo="s4" x="0.41" y="0.55" label="X button"/>The X button is here. ')
+    out += sp.feed('<view side="sideways"/><zoom dir="far"/><point photo="s4" x="1.4" y="0.5"/><show part="a b"/>Done.')
+    out += sp.flush()
+    assert out == ["The battery cover is on the back.", "Here is the top.", "The X button is here.", "Done."]
+    assert sp.stage == [{"type": "show", "part": "f_ab12"}, {"type": "view", "side": "top"},
+                        {"type": "zoom", "dir": "in"},
+                        {"type": "point", "photo": "s4", "x": 0.41, "y": 0.55, "label": "X button"}]
+
+
+def test_voice_facts_leave_out_counts_and_coverage():
+    from repairos.voice.conversation import voice_facts
+    r = report_example("scan_x", "ses_x")
+    r["verdict_reason"] = {"text": "Nothing looked wrong.", "caveat": "19 areas need a closer photo."}
+    r["capture"] = {"stills": 20, "stills_inspected": 7, "coverage_words": "70 percent"}
+    r["limits"] = ["the bottom was not scanned"]
+    facts = voice_facts(r)
+    assert "photos" not in facts and "limits" not in facts and "verdict_caveat" not in facts
+    assert "summary" not in facts and "verdict_reason" not in facts and facts["verdict"] == r["verdict"]
+    r["insufficient_evidence"] = [{"part_class": "face button", "reason": "the photo was too blurry to judge"}]
+    assert voice_facts(r)["could_not_judge"] == ["face button"]          # which part, not the photo complaint
+    assert "blurry" not in json.dumps(voice_facts(r))
+
+
+def test_located_parts_list_every_located_finding_without_numbers():
+    from repairos.voice.conversation import located_parts, part_rows
+    r = report_example("scan_x", "ses_x")
+    r["findings"].append({**copy.deepcopy(r["findings"][1]), "finding_id": "f_old"})
+    r["findings"][1]["superseded_ids"] = ["f_old"]
+    rows = part_rows(r)
+    assert [x["id"] for x in rows] == ["f_example_b"] and rows[0]["photos_showed"] == "no issue"
+    assert rows[0]["point"] == [0.1, 0.02, -0.3] and rows[0]["still_id"] == "s1"
+    seen = located_parts(r)
+    assert seen == [{"id": "f_example_b", "part": "capacitor", "where": rows[0].get("where"),
+                     "photos_showed": "no issue"}] or (seen[0]["id"] == "f_example_b" and "point" not in seen[0])
+    assert "0.02" not in json.dumps(seen) and "s1" not in json.dumps(seen)
+
+
+def test_report_turn_sees_photos_and_views_and_moves_the_model(gw):
+    c = gw()
+    scan_id = publish_scan_with_model(c)
+    c.claude.deltas = ['<show part="f_example_b"/>The capacitor sits ', 'on the board. <view side="top"/>Here is the top. ',
+                       '<show part="f_nope"/><zoom dir="in"/>Closer now.']
+    events = ask(c, scan_id, "where is the capacitor")
+    kinds = [(e["type"], e.get("text") or e.get("part") or e.get("side") or e.get("dir")) for e in events
+             if e["type"] in ("sentence", "show", "view", "zoom")]
+    assert kinds == [("sentence", "The capacitor sits on the board."), ("show", "f_example_b"),
+                     ("sentence", "Here is the top."), ("view", "top"), ("sentence", "Closer now."), ("zoom", "in")]
+    photo = next(e for e in events if e["type"] == "photo")      # the real photo of the spot, ringed
+    assert photo["for"] == "f_example_b"
+    got = c.get(f"/v1/blobs/{photo['crop']}")
+    assert got.status_code == 200 and got.content[:3] == b"\xff\xd8\xff"
+    body = streamed(c)[0]
+    first = body["messages"][0]["content"]
+    first = first if isinstance(first, str) else next(b["text"] for b in first if b["type"] == "text" and "<scan>" in b["text"])
+    parts = json.loads(first.split("<parts>")[1].split("</parts>")[0])
+    assert [p["id"] for p in parts] == ["f_example_b"] and "point" not in parts[0]
+    last = body["messages"][-1]["content"]
+    captions = [b["text"] for b in last if b["type"] == "text"]
+    assert any(t.startswith("Photo s7") for t in captions) and any(t.startswith("View v1") for t in captions)
+    assert sum(1 for b in last if b["type"] == "image") <= 3 and body["model"] == "claude-haiku-5-5"
+    hist = c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"]
+    assert "<" not in hist[1]["text"]                             # markers never reach the words
+
+
+def test_a_point_marker_lands_on_the_model_and_a_repeat_is_a_lookup(gw):
+    c = gw()
+    scan_id = publish_scan_with_model(c)
+    c.claude.deltas = ['<point photo="s7" x="0.5" y="0.5" label="X button"/>The X button is right here. ',
+                       '<point photo="s9" x="0.5" y="0.5" label="ghost"/>That one is not in the photos.']
+    events = ask(c, scan_id, "where is the X button")
+    pts = [e for e in events if e["type"] == "point"]
+    assert len(pts) == 1 and pts[0]["id"] == "pt_1" and pts[0]["label"] == "X button"
+    assert all(isinstance(pts[0][k], float) for k in ("x", "y", "z")) and pts[0]["radius"] > 0
+    assert any(e["type"] == "photo" and e["for"] == "pt_1" for e in events)
+    c.claude.deltas = ['<show part="pt_1"/>Same spot as before.']
+    events = ask(c, scan_id, "show me the X button again")
+    again = [e for e in events if e["type"] == "point"]
+    assert again and again[0]["id"] == "pt_1" and again[0]["x"] == pts[0]["x"]
+    first = streamed(c)[-1]["messages"][0]["content"]
+    first = first if isinstance(first, str) else next(b["text"] for b in first if b["type"] == "text" and "<parts>" in b["text"])
+    assert '"id":"pt_1"' in first and "X button" in first
+
+
+def test_during_a_scan_the_report_model_is_not_moved(gw):
+    c = gw()
+    scan_id = publish_scan_with_model(c)
+    c.claude.deltas = ['<show part="f_example_b"/>Keep going round it.']
+    events = ask(c, scan_id, "where is the capacitor", live={"screen": "scan"})
+    assert not [e for e in events if e["type"] in ("show", "point", "view", "zoom", "photo")]
+    sent = streamed(c)[0]["messages"][0]["content"]
+    assert "<parts>" not in (sent if isinstance(sent, str) else json.dumps(sent))
+
+
+def test_web_search_is_offered_once_the_object_is_named_and_capped(gw):
+    c = gw()
+    named = publish_scan_with_model(c, object_words={"category": "game controller", "brand": "Acme", "model": "X1", "confidence_word": "high", "label_visible": True})
+    c.claude.deltas = ["It takes two AA batteries."]
+    ask(c, named, "which batteries does it take")
+    assert streamed(c)[-1]["tools"] == [{"type": "web_search_20250305", "name": "web_search", "max_uses": 1}]
+    c2 = gw(lea_voice_searches_per_scan=0)
+    capped = publish_scan_with_model(c2, object_words={"category": "game controller", "brand": "Acme", "confidence_word": "high", "label_visible": True},
+                                     scan_id="scan_capped01")
+    ask(c2, capped, "which batteries does it take")
+    assert "tools" not in streamed(c2)[-1]
+    c3 = gw()
+    unnamed = publish_scan_with_model(c3, scan_id="scan_unnamed01")
+    ask(c3, unnamed, "which batteries does it take")
+    assert "tools" not in streamed(c3)[-1]
+
+
+def test_searches_are_counted_from_usage():
+    from types import SimpleNamespace
+
+    from repairos.voice.conversation import searches_made, web_search_tool
+    assert searches_made(SimpleNamespace(server_tool_use=SimpleNamespace(web_search_requests=2))) == 2
+    assert searches_made(SimpleNamespace(server_tool_use=None)) == 0 and searches_made(None) == 0
+    assert web_search_tool("claude-sonnet-5-5")["type"] == "web_search_20260209"
+
+
+def test_the_part_index_is_built_once_per_scan_in_the_background(gw, tmp_path):
+    import time as _t
+    c = gw()
+    c.claude.text = json.dumps({"parts": [{"label": "A2", "kind": "pin", "photo": "s7", "x": 0.5, "y": 0.5,
+                                           "note": "analog input 2"}]})
+    scan_id = publish_scan_with_model(c)
+    c.get(f"/v1/voice/conversation?scan_id={scan_id}")     # the report opens
+    c.get(f"/v1/voice/conversation?scan_id={scan_id}")
+    index = tmp_path / "voice_index" / f"{scan_id}.json"
+    for _ in range(100):
+        if index.exists():
+            break
+        _t.sleep(0.05)
+    out = json.loads(index.read_text())
+    assert out["status"] == "done" and [e["label"] for e in out["entries"]] == ["A2"]
+    calls = [b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]
+    assert len(calls) == 1 and calls[0]["model"] == "claude-sonnet-5-5"
+    c.claude.deltas = ['<show part="ix_1"/>A2 is on the analog header, third from the left.']
+    events = ask(c, scan_id, "where is A2")
+    assert any(e["type"] == "point" and e["id"] == "ix_1" and e["label"] == "A2" for e in events)
+    assert len([b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]) == 1
+
+
+def test_persona_answers_confidently_and_keeps_the_hard_rules():
+    p = " ".join(PERSONA.split())
+    for words in ("Answer the question they asked first", "Partial evidence is enough",
+                  "Never mention photo counts, coverage, blur", "Never invent a defect",
+                  "Never say a part was checked or is fine when nothing shows it", "Partial evidence never clears a part",
+                  "Say where a wire goes only when you can see it attached at both ends", "from its colour",
+                  "<show part=", "<point photo=", '<view side="top"/>', '<zoom dir="in"/>',
+                  "a render of the 3D reconstruction of this real object", "name it in a few words",
+                  "nothing you have shows that spot at all", "never add a second pass", "even in the middle of a sentence"):
+        assert words in p, words
+    assert "but that photo was dark" not in p
+
+
+def test_a_repeated_sentence_is_not_spoken_but_its_move_happens(gw):
+    from repairos.voice.routes import repeats
+    assert repeats("A is the green one at the bottom.", ["A is the green one at the bottom, and it confirms."])
+    assert not repeats("B is the red one.", ["A is the green one at the bottom."])
+    assert not repeats("Yes it is.", ["Yes it is, I think."])          # too short to call a repeat
+    c = gw()
+    scan_id = publish_scan_with_model(c)
+    c.claude.deltas = ["The capacitor is the round part on the board, near the edge. ",
+                       '<show part="f_example_b"/>The capacitor is the round part on the board.']
+    events = ask(c, scan_id, "where is the capacitor")
+    assert [e["text"] for e in events if e["type"] == "sentence"] == [
+        "The capacitor is the round part on the board, near the edge."]
+    assert {"type": "show", "part": "f_example_b"} in events

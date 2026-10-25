@@ -234,11 +234,17 @@ struct ConversationPanel: View {
     /// A tap instead of a hold: the button says how to talk for a moment.
     @State private var tapHint = false
 
+    /// The spot photo open full screen (pinch to zoom).
+    @State private var zoomed: SpotZoom?
+
+    /// `onStage`: on a report, Lea's moves of its 3D model (show a part, a side, zoom).
     init(scanID: String?, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String? = { nil },
-         compact: Bool = false, afterTurn: (@MainActor () -> Void)? = nil, onAction: @escaping (String) -> Void) {
+         compact: Bool = false, afterTurn: (@MainActor () -> Void)? = nil, onStage: ((StageCommand) -> Void)? = nil,
+         onAction: @escaping (String) -> Void) {
         let c = LeaConversation(scanID: scanID, gateway: gateway, diag: diag)
         c.sessionID = sessionID
         c.afterTurn = afterTurn
+        c.onStage = onStage
         c.acceptOffer = onAction   // "yes" to the offer on screen is the same as tapping it
         _convo = State(initialValue: c)
         self.compact = compact
@@ -306,6 +312,10 @@ struct ConversationPanel: View {
                 VStack(alignment: .leading, spacing: Spacing.s) {
                     ForEach(convo.turns.suffix(compact ? 4 : 12)) { t in
                         CaptionRow(mine: t.mine, text: t.text).id(t.id)
+                        if !t.photos.isEmpty {
+                            SpotPhotos(shas: t.photos) { i in zoomed = SpotZoom(shas: t.photos, index: i) }
+                                .id("photos:\(t.id)")
+                        }
                     }
                     if !convo.liveCaption.isEmpty {
                         CaptionRow(mine: true, text: convo.liveCaption, live: true).id("live")
@@ -327,6 +337,11 @@ struct ConversationPanel: View {
             .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: Radius.card, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 0.5))
             .onChange(of: convo.turns.last?.text) { _, _ in withAnimation { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
+            .onChange(of: convo.turns.last?.photos) { _, photos in
+                guard let last = convo.turns.last, !(photos ?? []).isEmpty else { return }
+                withAnimation { proxy.scrollTo("photos:\(last.id)", anchor: .bottom) }
+            }
+            .fullScreenCover(item: $zoomed) { z in CropZoomView(shas: z.shas, index: z.index) }
             .onChange(of: convo.liveCaption) { _, _ in proxy.scrollTo("live", anchor: .bottom) }
         }
     }
@@ -613,4 +628,35 @@ extension View {
                 if held < 0.35 { convo.cancelHold(); tap() } else { convo.releaseToTalk() }
             })
     }
+}
+
+
+// MARK: - The photo of what Lea showed
+
+/// The real photo of each spot Lea showed in an answer, ringed where it is (the gateway crops it from the closest,
+/// sharpest still that sees the spot; with none, the 3D model close on it). Tap to open it full screen.
+struct SpotPhotos: View {
+    let shas: [String]
+    let open: (Int) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Spacing.s) {
+                ForEach(Array(shas.enumerated()), id: \.element) { i, sha in
+                    Button { open(i) } label: { CropThumb(sha: sha).frame(width: 112, height: 112) }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Photo of the spot Lea showed")
+                        .accessibilityHint("Opens it full screen")
+                        .transition(.opacity)
+                }
+            }
+        }
+        .frame(height: 112)
+    }
+}
+
+struct SpotZoom: Identifiable {
+    let id = UUID()
+    let shas: [String]
+    let index: Int
 }

@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// The gateway's voice routes (backend/repairos/voice/routes.py). The phone sends only its device token; the
 /// Cartesia key stays on the backend.
@@ -115,6 +116,11 @@ enum ConverseEvent: Sendable {
     case mark(LeaMark)
     /// Lea asks the phone to measure between two points of the turn's last photo (fractions of it), with LiDAR.
     case measure(CGPoint, CGPoint)
+    /// On a report: Lea moves its 3D model (show a part, look from a side, zoom), right after the sentence it goes with.
+    case stage(StageCommand)
+    /// The real photo of the spot she just showed (a blob sha for GET /v1/blobs, ringed where it is), for `forID`
+    /// (the finding or spot id of a `show` / `point`).
+    case photo(forID: String, crop: String)
     /// `heldID`: a held answer's id, for `commitHeld` once the person's final words confirm it.
     case done(answer: String, timings: [String: Int], heldID: String? = nil)
 }
@@ -215,6 +221,29 @@ extension GatewayClient {
             return .measure(CGPoint(x: x1, y: y1), CGPoint(x: x2, y: y2))
         case "done": return .done(answer: o["answer_text"] as? String ?? "", timings: o["timings_ms"] as? [String: Int] ?? [:],
                                   heldID: o["held_id"] as? String)
+        case "show", "point", "view", "zoom": return Self.stage(o).map(ConverseEvent.stage)
+        case "photo":
+            guard let id = o["for"] as? String, let sha = o["crop"] as? String, !sha.isEmpty else { return nil }
+            return .photo(forID: id, crop: sha)
+        default: return nil
+        }
+    }
+
+    /// A 3D-model move from its J event; nil when malformed (it is then ignored, never guessed).
+    static func stage(_ o: [String: Any]) -> StageCommand? {
+        func num(_ k: String) -> Float? { (o[k] as? NSNumber).map(\.floatValue) }
+        switch o["type"] as? String {
+        case "show": return (o["part"] as? String).flatMap { $0.isEmpty ? nil : StageCommand.show($0) }
+        case "point":
+            guard let id = o["id"] as? String, let x = num("x"), let y = num("y"), let z = num("z") else { return nil }
+            return .point(id: id, at: SIMD3(x, y, z), label: o["label"] as? String ?? "", radius: num("radius") ?? 0.015)
+        case "view": return (o["side"] as? String).flatMap(StageSide.init(rawValue:)).map(StageCommand.view)
+        case "zoom":
+            switch o["dir"] as? String {
+            case "in": return .zoom(in: true)
+            case "out": return .zoom(in: false)
+            default: return nil
+            }
         default: return nil
         }
     }

@@ -37,6 +37,8 @@ struct ReportView: View {
     @State private var fixLimited = false
     /// Bumped by Lea's `walkthrough` action ("Lea, walk me through it"): the stage plays its tour.
     @State private var walkthrough = 0
+    /// Lea's latest move of the 3D model while she answers (LeaStage): the stage focuses, rings and flies to it.
+    @State private var leaCue: LeaStageCue?
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -52,7 +54,8 @@ struct ReportView: View {
         guard Self.showsRecreation(hero: heroChoice, available: RecreationCenter.shared.available(dir)) else { return .automatic }
         return .custom { ctx in
             AnyView(RecreationView(source: .scan(dir), markers: ctx.markers, focus: ctx.focus,
-                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour))
+                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour,
+                                   cue: ctx.cue))
         }
     }
 
@@ -66,7 +69,8 @@ struct ReportView: View {
                                     fix: live?.fix ?? report.fix,
                                     fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
                                     fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil,
-                                    fresh: landedFresh, voiceStarted: voiceStarted, walkthrough: walkthrough, hero: stageHero)
+                                    fresh: landedFresh, voiceStarted: voiceStarted, walkthrough: walkthrough, leaCue: leaCue,
+                                    hero: stageHero)
                         .transition(.opacity)
                         .overlay(alignment: .top) {
                             if updating {
@@ -110,7 +114,8 @@ struct ReportView: View {
                 // Voice/: hold to ask Lea about this scan (needs the gateway: the answer is grounded in its report).
                 if report != nil, let gateway, app.isPaired {
                     ConversationPanel(scanID: record.scanID, gateway: gateway, diag: Diag.session(app.storage.dir(record)),
-                                      sessionID: { [upload] in upload?.state.gatewaySessionID }) { kind in
+                                      sessionID: { [upload] in upload?.state.gatewaySessionID },
+                                      onStage: { command in leaCue = LeaStageCue(n: (leaCue?.n ?? 0) + 1, command: command) }) { kind in
                         if kind == "continue_scan" { continueScan?() }
                         if kind == "walkthrough" { walkthrough += 1 }
                     }

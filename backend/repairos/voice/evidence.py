@@ -1,0 +1,247 @@
+"""A finished scan's evidence for Lea's report turns, read from the gateway's store and blobs (repairos.voice.views
+does the maths): the scan's surface, its posed stills, the images for a turn, the real photo of any spot, and the
+part index.
+
+The part index: once per scan, in the background after the report exists, one vision call over the scan's best
+photos lists what is visible (buttons, ports, pins and headers with their printed labels, connectors, screws, wire
+ends with their colour) with a pixel in a photo; each pixel becomes a point on the model. "Where's A2" or "where's
+the X button" is then a lookup (<show part="ix_3"/>), and the phone circles it. A model's pixel is not precise
+enough to pick one of two neighbouring pins, so an index point is a region (INDEX_RADIUS_M) and Lea says the
+position in words. Kept as one small JSON file per scan beside the conversations; one call per scan, through the
+spend guard.
+"""
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import logging
+import os
+import re
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from repairos.voice import views as V
+from repairos.voice.spend_guard import charge, key_of, record_claude
+
+log = logging.getLogger(__name__)
+
+INDEX_RADIUS_M = 0.02      # an index point is a region: about a fingertip round the model's pixel
+POINT_RADIUS_M = 0.015     # a spot Lea pointed at in a photo this turn
+FINDING_RADIUS_M = 0.012
+INDEX_PHOTOS = 4
+INDEX_PX = 1280            # the index reads printed labels: larger photos than a turn's
+MAX_INDEX = 40
+KINDS = ["button", "port", "pin", "header", "connector", "label", "screw", "wire end", "switch", "light", "chip",
+         "battery", "other"]
+
+INDEX_PROMPT = """These are photos of one real object from a scan{name}. List the components a person might ask \
+about that you can actually see: buttons, ports and jacks, pins and pin headers, connectors, switches, lights, \
+screws, chips, batteries, printed labels, and each visible wire end (with its colour and what it is plugged into). \
+For each give: label (its printed text when legible, e.g. "A2", "5V", "GND", "RESET", else a short name like "X \
+button" or "red wire end"), kind, the photo it is clearest in (its name, like s4), x and y (fractions of that photo, \
+0,0 top left, on the component itself; read them from the faint grid, whose ticks mark every tenth), and a short \
+note (what it is for, or for a wire what it connects to as far \
+as you can see). Only list what you can see; read printed text only when it is legible. At most 40, the most useful \
+first."""
+
+INDEX_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["parts"], "properties": {
+    "parts": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["label", "kind", "photo", "x", "y", "note"],
+        "properties": {"label": {"type": "string"}, "kind": {"type": "string", "enum": KINDS},
+                       "photo": {"type": "string"}, "x": {"type": "number"}, "y": {"type": "number"},
+                       "note": {"type": "string"}}}}}}
+
+
+class Evidence:
+    """Per gateway process: reads a scan's data once and keeps it in the views module's caches."""
+
+    def __init__(self, request_app: Any, root: Path):
+        self.app, self.root = request_app, root
+        self._building: set[str] = set()
+
+    # ------------------------------------------------------------------ scan data
+    def image_of(self, still: dict) -> bytes | None:
+        ref = still.get("image_file")
+        blobs = self.app.state.blobs
+        try:
+            return blobs.get(ref) if ref and blobs.exists(ref) else None
+        except Exception:  # noqa: BLE001 - a missing still is skipped
+            return None
+
+    async def stills(self, scan_id: str) -> list[dict]:
+        rows = await self.app.state.store.list("still", scan_id=scan_id)
+        return [r.data for r in rows if r.data]
+
+    async def surface(self, scan_id: str) -> V.Surface | None:
+        hit = V.SURFACES.get(scan_id)
+        if hit is not None:
+            return hit
+        st, blobs = self.app.state.store, self.app.state.blobs
+        run = await st.get("pipeline-run", f"run_{scan_id}")
+        rec = ((run.data if run else {}) or {}).get("recreation") or {}
+        pkg_row = await st.get("scan-package", scan_id)
+        pkg = pkg_row.data if pkg_row else {}
+
+        def load() -> V.Surface | None:
+            ref = rec.get("ref")
+            if ref and rec.get("format") == "usdz" and blobs.exists(ref):
+                s = V.surface_from_usdz(blobs.get(ref))
+                if s is not None:
+                    return s.focus(rec.get("focus_center"), rec.get("focus_radius"))
+            ref = pkg.get("points_file")
+            if ref and blobs.exists(ref):
+                from repairos.locate.cloud import read_ply
+
+                with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+                    f.write(blobs.get(ref))
+                try:
+                    return V.surface_from_cloud(read_ply(f.name), pkg.get("crop_box"), pkg.get("voxel_mm"))
+                finally:
+                    os.unlink(f.name)
+            return None
+        surface = await asyncio.to_thread(load)
+        if surface is not None:
+            V.SURFACES.put(scan_id, surface)
+        return surface
+
+    # ------------------------------------------------------------------ a turn
+    async def views(self, scan_id: str, question: str, rows: list[dict]) -> list[V.View]:
+        """The images for a report turn: [] when the scan has no surface or no posed stills."""
+        surface = await self.surface(scan_id)
+        if surface is None:
+            return []
+        stills = await self.stills(scan_id)
+        return await asyncio.to_thread(V.build_views, surface, stills, self.image_of, question, rows, scope=scan_id)
+
+    async def spot_photo(self, scan_id: str, point: list[float], radius_m: float) -> str | None:
+        """The ringed photo of a spot as a blob the phone fetches (GET /v1/blobs/<sha>), its sha; None when there
+        is nothing to show it on."""
+        surface = await self.surface(scan_id)
+        if surface is None:
+            return None
+        stills = await self.stills(scan_id)
+        key = (scan_id, "spot", tuple(round(v, 3) for v in point), round(radius_m, 3))
+        sha = V.VIEWS.get(key)
+        if sha is None:
+            jpeg, _ = await asyncio.to_thread(V.spot_photo, surface, stills, self.image_of, point, radius_m,
+                                              scope=scan_id)
+            sha = self.app.state.blobs.put(jpeg, "image/jpeg").split("sha256:")[-1]
+            V.VIEWS.put(key, sha)
+        return sha
+
+    # ------------------------------------------------------------------ the part index
+    def _index_path(self, scan_id: str) -> Path:
+        return self.root / (re.sub(r"[^A-Za-z0-9_.-]", "_", scan_id)[:120] + ".json")
+
+    def index(self, scan_id: str) -> list[dict]:
+        """The scan's index entries (id ix_N, label, kind, note, point, radius, still_id); [] while none."""
+        try:
+            return json.loads(self._index_path(scan_id).read_text(encoding="utf-8")).get("entries") or []
+        except (OSError, ValueError):
+            return []
+
+    async def ensure_index(self, scan_id: str, talker_key: str | None, model: str, identity: dict | None, *,
+                           http_client: Any = None) -> None:
+        """Starts the index once per scan (never twice at once, never again once written): its photos are read
+        here, then the vision call and the file write run on their own thread, so the answer never waits for it
+        and it outlives the request."""
+        if not talker_key or scan_id in self._building or self._index_path(scan_id).exists():
+            return
+        self._building.add(scan_id)
+        try:
+            views, why = await self._index_views(scan_id)
+        except Exception as e:  # noqa: BLE001
+            views, why = {}, f"{type(e).__name__}: {e}"
+        if not views:
+            self._write(scan_id, {"status": "skipped", "reason": why, "entries": []})
+            self._building.discard(scan_id)
+            return
+        name = (identity or {}).get("name") or " ".join(
+            str(x) for x in ((identity or {}).get("brand"), (identity or {}).get("model")) if x)
+
+        def run() -> None:
+            t0 = time.perf_counter()
+            try:
+                out = asyncio.run(self.call_index(scan_id, views, name, talker_key, model, http_client=http_client))
+            except Exception as e:  # noqa: BLE001 - the index is a speed-up; answers work without it
+                log.warning("voice index %s failed: %s", scan_id, e)
+                out = {"status": "failed", "reason": f"{type(e).__name__}: {e}"[:300], "entries": []}
+            out["seconds"] = round(time.perf_counter() - t0, 2)
+            self._write(scan_id, out)
+            self._building.discard(scan_id)
+            log.info("voice index %s: %s, %d parts in %.1f s", scan_id, out.get("status"),
+                     len(out.get("entries") or []), out["seconds"])
+        threading.Thread(target=run, name=f"voice-index-{scan_id}", daemon=True).start()
+
+    def _write(self, scan_id: str, out: dict) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        p = self._index_path(scan_id)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+
+    async def _index_views(self, scan_id: str) -> tuple[dict[str, V.View], str]:
+        """The best-coverage photos at INDEX_PX, each with its point map; ({}, why) when there are none."""
+        surface = await self.surface(scan_id)
+        stills = [s for s in await self.stills(scan_id) if V.usable(s)]
+        if surface is None or not stills:
+            return {}, "no 3D surface or no posed photos"
+        views = {}
+        for st in V.pick_photos(stills, "", [], surface.center, k=INDEX_PHOTOS):
+            img = self.image_of(st)
+            v = await asyncio.to_thread(V.photo_view, surface, st, img, V.short_key(st["still_id"]), INDEX_PX) \
+                if img else None
+            if v is not None:
+                views[v.key] = v
+        return views, "" if views else "no readable photos"
+
+    @staticmethod
+    async def call_index(scan_id: str, views: dict[str, V.View], name: str, key: str, model: str, *,
+                         http_client: Any = None) -> dict:
+        """One vision call listing what the photos show, placed on the model (index_entries)."""
+        import anthropic
+
+        content: list[dict] = []
+        for v in views.values():
+            content += [{"type": "text", "text": f"Photo {v.key}:"}, {"type": "image", "source": {
+                "type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(v.jpeg).decode()}}]
+        content.append({"type": "text", "text": INDEX_PROMPT.format(name=f" (it looks like a {name})" if name else "")})
+        kw = {"http_client": http_client} if http_client is not None else {}
+        client = anthropic.AsyncAnthropic(api_key=key, max_retries=1, timeout=90.0, **kw)
+        est = charge("anthropic", key=key_of("voice_index", scan_id))
+        extra = {} if "haiku" in model else {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+        r = await client.beta.messages.create(
+            model=model, max_tokens=8000, messages=[{"role": "user", "content": content}],
+            output_config={"effort": "low", "format": {"type": "json_schema", "schema": INDEX_SCHEMA}}, **extra)
+        record_claude((getattr(r, "model", None), model), getattr(r, "usage", None), est)
+        if r.stop_reason == "refusal":
+            return {"status": "failed", "reason": "refused", "entries": []}
+        text = next((b.text for b in r.content if getattr(b, "type", None) == "text"), "{}")
+        return {"status": "done", "model": model, "photos": list(views),
+                "entries": index_entries(json.loads(text).get("parts") or [], views)}
+
+
+def index_entries(parts: list[dict], views: dict[str, V.View]) -> list[dict]:
+    """The model's listed parts placed on the surface: each pixel through its photo's point map. A part whose pixel
+    is not on the model (or names no photo it was given) is dropped."""
+    out = []
+    for p in parts[:MAX_INDEX]:
+        v = views.get(str(p.get("photo", "")).strip().lower())
+        try:
+            x, y = float(p.get("x")), float(p.get("y"))
+        except (TypeError, ValueError):
+            continue
+        pt = V.point_at(v, x, y) if v is not None else None
+        label = " ".join(str(p.get("label") or "").split())[:40]
+        if pt is None or not label:
+            continue
+        out.append({"id": f"ix_{len(out) + 1}", "label": label, "part": label, "kind": p.get("kind") or "other",
+                    "note": " ".join(str(p.get("note") or "").split())[:140], "point": [round(float(c), 5) for c in pt],
+                    "radius": INDEX_RADIUS_M, "still_id": v.still_id, "where": "read from the scan's photos"})
+    return out
