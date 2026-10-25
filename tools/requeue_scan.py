@@ -215,6 +215,11 @@ def main(argv: list[str] | None = None) -> int:
         "stills": timing,
         "claude_crop_calls": sum(int(t.get("vlm_calls") or 0) for t in timing.values()),
     }
+    if a.upload:
+        # The public pipeline view carries stage and still statuses only, not the run's measurements: say so rather
+        # than print zero calls and empty timings (the counts are in the remote machine's STATE).
+        for k in ("stages", "stills", "claude_crop_calls"):
+            out[k] = "not available from a remote gateway (run without --upload on that machine for measurements)"
     if rep:
         r = rep.data
         by = {e["finding_id"]: e for e in r["findings"]}
