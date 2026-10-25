@@ -622,7 +622,7 @@ def upright_image(still: Mapping, image: bytes):
     """The still at full resolution, turned upright like every view of it (PIL image)."""
     from PIL import Image
 
-    key = still.get("still_id")
+    key = (still.get("still_id"), len(image), hash(image[:2048]), hash(image[-2048:]))
     hit = UPRIGHT.get(key)
     if hit is not None:
         return hit
@@ -676,3 +676,33 @@ def from_crop(rect: tuple[float, float, float, float], cx: float, cy: float) -> 
     """A spot given as fractions of a crop -> fractions of the whole upright image."""
     x0, y0, x1, y1 = rect
     return x0 + cx * (x1 - x0), y0 + cy * (y1 - y0)
+
+
+def text_likeness(still: Mapping, image: bytes, x: float, y: float) -> float:
+    """How much the spot at (x, y) (upright fractions) looks like printed text: the share of bright pixels in a small
+    window. A socket or contact a wire plugs into is a dark hole; a printed label is bright strokes. Used to keep the
+    reading of a pin that sits on its socket when two close-ups read the same label."""
+    im = upright_image(still, image)
+    w, h = im.size
+    r = max(6, int(0.006 * min(w, h)))
+    cx, cy = int(x * w), int(y * h)
+    patch = np.asarray(im.crop((max(0, cx - r), max(0, cy - r), min(w, cx + r), min(h, cy + r))).convert("L"))
+    return float((patch > 170).mean()) if patch.size else 0.0
+
+
+def photo_spot(still: Mapping, image: bytes, x: float, y: float, ring_frac: float, side_frac: float = 0.14) -> bytes:
+    """The real photo of a spot known only in that photo (a photo-only part, no 3D point yet): a full-resolution
+    crop of the upright still around (x, y), ringed. `ring_frac`: the ring's radius as a share of the shorter side."""
+    from PIL import Image
+
+    im = upright_image(still, image)
+    w, h = im.size
+    s = max(64, int(side_frac * min(w, h)))
+    x0 = int(np.clip(x * w - s / 2, 0, max(0, w - s)))
+    y0 = int(np.clip(y * h - s / 2, 0, max(0, h - s)))
+    crop = im.crop((x0, y0, min(w, x0 + s), min(h, y0 + s)))
+    scale = min(1.0, CROP_PX / max(crop.size))
+    crop = crop.resize((max(1, round(crop.size[0] * scale)), max(1, round(crop.size[1] * scale))),
+                       Image.Resampling.LANCZOS)
+    rr = max(18.0, ring_frac * min(w, h) * scale)
+    return _jpeg(_draw_ring(np.asarray(crop), (x * w - x0) * scale, (y * h - y0) * scale, rr), 82)

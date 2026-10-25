@@ -151,5 +151,37 @@ def test_index_entries_place_listed_parts_on_the_model():
              {"label": "ghost", "kind": "other", "photo": "s9", "x": 0.5, "y": 0.5, "note": ""},     # no such photo
              {"label": "edge", "kind": "other", "photo": "s3", "x": 0.0, "y": 0.0, "note": ""}]      # off the model
     out = index_entries(parts, {"s3": v})
-    assert [e["id"] for e in out] == ["ix_1"] and out[0]["label"] == "A2" and out[0]["radius"] == INDEX_RADIUS_M
+    assert [e["id"] for e in out] == ["ix_1", "ix_2"] and out[0]["label"] == "A2" and out[0]["radius"] == INDEX_RADIUS_M
     assert out[0]["still_id"] == "scan_t_s3" and abs(out[0]["point"][2] + 0.5) < 1e-3
+    assert out[1]["label"] == "edge" and out[1]["point"] is None and (out[1]["x"], out[1]["y"]) == (0.0, 0.0)  # photo-only
+
+
+def test_a_side_swap_is_vetoed_by_the_products_own_layout():
+    from repairos.voice.evidence import check_mirrors
+    entries = [{"label": "Left stick", "point": [0.10, 0, 0], "still_id": "a"},    # placed where the right one is
+               {"label": "Right stick", "point": [-0.10, 0, 0], "still_id": "b"},
+               {"label": "A button", "point": [0.12, 0, 0]}]
+    pairs = [{"a": "Left stick", "b": "Right stick", "anchor": "A button", "nearer": "b"}]
+    assert check_mirrors(entries, pairs) == ["Left stick / Right stick"]
+    assert entries[0]["point"] == [-0.10, 0, 0] and entries[1]["point"] == [0.10, 0, 0] and entries[1]["still_id"] == "a"
+    assert check_mirrors(entries, pairs) == []                                     # consistent now: left alone
+    assert check_mirrors(entries, [{"a": "Left stick", "b": "Nope", "anchor": "A button", "nearer": "a"}]) == []
+    loose = [{"label": "left thumbstick", "point": [0.10, 0, 0]}, {"label": "right thumbstick", "point": [-0.10, 0, 0]},
+             {"label": "A button", "point": [0.12, 0, 0]}]
+    assert check_mirrors(loose, [{"a": "Left Stick", "b": "right stick", "anchor": "a button", "nearer": "b"}]) == []
+    assert check_mirrors(loose, [{"a": "left thumbstick", "b": "right thumbstick", "anchor": "A",
+                                  "nearer": "b"}]) == ["left thumbstick / right thumbstick"]
+
+
+def test_printed_text_and_sockets_tell_apart_and_photo_only_spots_are_ringed():
+    img = Image.new("RGB", (800, 600), (20, 20, 20))
+    from PIL import ImageDraw
+    ImageDraw.Draw(img).text((395, 290), "A2", fill=(255, 255, 255))
+    for k in range(6):
+        ImageDraw.Draw(img).rectangle([380 + k * 3, 285, 381 + k * 3, 305], fill=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG")
+    st = still()
+    assert V.text_likeness(st, buf.getvalue(), 0.49, 0.49) > V.text_likeness(st, buf.getvalue(), 0.2, 0.8)
+    out = np.asarray(Image.open(io.BytesIO(V.photo_spot(st, buf.getvalue(), 0.5, 0.5, 0.012))))
+    assert (np.abs(out.astype(int) - V.RING_RGB).sum(axis=-1) < 90).sum() > 50

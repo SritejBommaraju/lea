@@ -1125,3 +1125,28 @@ def test_image_names_and_ids_are_never_spoken():
     sp = SentenceSplitter()
     out = sp.feed("In photo s2 the X button is the blue one. ") + sp.flush()
     assert out == ["The X button is the blue one."]
+
+
+def test_photo_only_parts_show_their_photo_and_are_placed_when_the_surface_changes(gw, tmp_path):
+    import asyncio as _a
+    c = gw()
+    scan_id = publish_scan_with_model(c)
+    still_id = c.state and _a.run(c.state.list("still", scan_id=scan_id))[0].data["still_id"]
+    index = tmp_path / "voice_index" / f"{scan_id}.json"
+    index.parent.mkdir(parents=True, exist_ok=True)
+    entry = {"id": "ix_1", "label": "A2", "part": "A2 pin", "kind": "pin", "point": None, "radius": 0.006,
+             "precision": "pin read in a close-up", "still_id": still_id, "x": 0.5, "y": 0.5}
+    index.write_text(json.dumps({"status": "done", "entries": [entry], "surface_key": "an older surface"}))
+    c.claude.deltas = ['<show part="ix_1"/>A2 is on the analog header.']
+    events = ask(c, scan_id, "where is A2")
+    # The surface changed since the index was written: A2 got its 3D point from its photo and pixel.
+    placed = json.loads(index.read_text())
+    assert placed["surface_key"] != "an older surface" and placed["entries"][0]["point"] is not None
+    assert any(e["type"] == "point" and e["id"] == "ix_1" for e in events)
+    assert any(e["type"] == "photo" and e["for"] == "ix_1" for e in events)
+    # On a surface that can't take it, the spot stays photo-only: its photo, the whole object, no ring.
+    off = {**entry, "x": 0.01, "y": 0.01}
+    index.write_text(json.dumps({"status": "done", "entries": [off], "surface_key": "older again"}))
+    events = ask(c, scan_id, "and where is A2 now")
+    assert {"type": "view", "side": "reset"} in events and not [e for e in events if e["type"] == "point"]
+    assert any(e["type"] == "photo" and e["for"] == "ix_1" for e in events)

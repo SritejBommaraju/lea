@@ -456,7 +456,7 @@ parts and what you know about the product"
         rows = part_rows(report) if on_model else []
         extra: list[dict] = []
         if ev is not None:
-            extra = ev.index(scan_id) + list(convo.get("located") or [])
+            extra = (await ev.entries(scan_id)) + list(convo.get("located") or [])
             await _start_index(request, rt, scan_id, identity)
         known = {r["id"]: r for r in rows + extra}
         finding_ids = {r["id"] for r in rows}
@@ -491,6 +491,15 @@ parts and what you know about the product"
                     return {}, None, 0.0
                 if r["id"] in finding_ids:
                     return {"type": "show", "part": r["id"]}, r.get("point"), FINDING_RADIUS_M
+                if r.get("point") is None:
+                    # A photo-only spot (the mesh can't place it yet): its ringed photo, and the whole object in view
+                    # rather than a ring in the wrong place.
+                    if r.get("still_id") and r.get("x") is not None:
+                        ring = 0.012 if r.get("precision") in ("pin read in a close-up", "refined in one photo",
+                                                               "confirmed in a second photo") else 0.03
+                        photos.append((r["id"], asyncio.create_task(
+                            ev.spot_photo_at(scan_id, r["still_id"], r["x"], r["y"], ring))))
+                    return {"type": "view", "side": "reset"}, None, 0.0
                 radius = float(r.get("radius") or POINT_RADIUS_M)
                 return _point_event(r, radius), r.get("point"), radius
             if mv["type"] == "point":
@@ -498,8 +507,7 @@ parts and what you know about the product"
                 # part's refined place, not a fresh guess from the whole photo.
                 named = _named_part(mv["label"], extra)
                 if named is not None:
-                    radius = float(named.get("radius") or POINT_RADIUS_M)
-                    return _point_event(named, radius), named.get("point"), radius
+                    return resolve({"type": "show", "part": named["id"]})
                 view = next((v for v in report_views if v.key == mv["photo"]), None)
                 pt = point_at(view, mv["x"], mv["y"]) if view is not None else None
                 if pt is None:
@@ -717,8 +725,8 @@ def _named_part(label: str, parts: list[dict]) -> dict | None:
     want = " ".join(str(label or "").lower().split())
     if not want:
         return None
-    return next((r for r in parts if r.get("point") and " ".join(str(r.get("label") or "").lower().split()) == want),
-                None)
+    return next((r for r in parts if (r.get("point") or r.get("x") is not None)
+                 and " ".join(str(r.get("label") or "").lower().split()) == want), None)
 
 
 def repeats(sentence: str, said: list[str]) -> bool:
