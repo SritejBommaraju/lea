@@ -126,9 +126,14 @@ final class RecreationStage {
     }
 
     func frame(animated: Bool, azimuth: Float = 0.6) {
-        let d = frameDistance
+        let p = framePose(azimuth: azimuth)
+        move(to: p.eye, look: p.look, animated: animated)
+    }
+
+    /// The whole object, from `azimuth` and a little above.
+    func framePose(azimuth: Float = 0.6) -> TourPose {
         let dir = SIMD3<Float>(sin(azimuth) * cos(Self.elevation), sin(Self.elevation), cos(azimuth) * cos(Self.elevation))
-        move(to: focusCenter + dir * d, look: focusCenter, animated: animated)
+        return TourPose(eye: focusCenter + dir * frameDistance, look: focusCenter)
     }
 
     func move(to position: SIMD3<Float>, look target: SIMD3<Float>, animated: Bool) {
@@ -142,12 +147,42 @@ final class RecreationStage {
 
     /// Flies to a marker from the side it faces (away from the object's centre, a little from above).
     func fly(to id: String, animated: Bool) {
-        guard let node = markerRoot.childNodes.first(where: { $0.name == "marker:\(id)" }) else { return }
+        guard let p = markerPose(id) else { return }
+        move(to: p.eye, look: p.look, animated: animated)
+    }
+
+    /// The view of one marker `fly(to:)` lands on; nil when there is no such marker.
+    func markerPose(_ id: String) -> TourPose? {
+        guard let node = markerRoot.childNodes.first(where: { $0.name == "marker:\(id)" }) else { return nil }
         let target = node.presentation.simdWorldPosition
         var dir = target - focusCenter
         dir.y = max(dir.y, 0) + 0.6 * simd_length(SIMD2(dir.x, dir.z))
         let from = simd_length(dir) > 1e-4 ? simd_normalize(dir) : SIMD3<Float>(0, 0.5, 0.87)
-        move(to: target + from * frameDistance * 0.55, look: target, animated: animated)
+        return TourPose(eye: target + from * frameDistance * 0.55, look: target)
+    }
+
+    /// The walkthrough's view of a step: its marker, or the whole object.
+    func tourPose(_ id: String?) -> TourPose { id.flatMap(markerPose) ?? framePose() }
+
+    /// Lights the markers by weight (TourCamera.weights) without rebuilding them: a marker at 1 is the selected one
+    /// (full, a little larger, its ring bright), the rest dim as it lights up; all at 0 is the resting look.
+    func emphasize(_ weights: [String: Float]) {
+        let lit = weights.values.max() ?? 0
+        for node in markerRoot.childNodes {
+            guard let name = node.name else { continue }
+            let ring = name.hasPrefix("ring:")
+            guard ring || name.hasPrefix("marker:"), let id = name.split(separator: ":", maxSplits: 1).last.map(String.init),
+                  let m = markers.first(where: { $0.id == id }) else { continue }
+            let on = weights[id] ?? 0
+            let shown = max(on, 1 - lit)
+            if ring {
+                node.opacity = CGFloat(0.4 + 0.6 * shown)
+                node.simdScale = SIMD3(repeating: 1 + 0.12 * on)
+            } else {
+                node.opacity = CGFloat((m.number == nil ? 0.8 : 1) * (0.45 + 0.55 * shown))
+                node.simdScale = SIMD3(repeating: 1 + 0.3 * on)
+            }
+        }
     }
 
     // MARK: Spin

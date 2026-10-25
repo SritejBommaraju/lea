@@ -402,6 +402,27 @@ def test_converse_action_marker_is_an_event_not_speech(gw):
     assert all(e.get("audio") is False for e in events if e["type"] == "sentence")
 
 
+def test_converse_walkthrough_marker_starts_the_tour_on_the_phone(gw):
+    c = gw()
+    scan_id = publish_report(c)
+    c.claude.deltas = ["Sure, I'll walk you through it now. <walk", "through/>"]
+    events = [p for k, p in converse(c, scan_id, audio=False, mode="none") if k == "J"]
+    assert [e["text"] for e in events if e["type"] == "sentence"] == ["Sure, I'll walk you through it now."]
+    assert {"type": "action", "action": "walkthrough", "label": "Walk me through it"} in events
+    assert events[-1]["type"] == "done" and events[-1]["action"] == "walkthrough"
+    # The prompt says when to use it (a walkthrough, a breakdown, the full analysis) and that the phone tours it.
+    persona = " ".join(PERSONA.split())
+    assert "<walkthrough/>" in persona and "breakdown" in persona and "full analysis" in persona
+
+
+def test_converse_walkthrough_needs_a_report(gw):
+    c = gw()
+    c.claude.deltas = ["I'll walk you through it. <walkthrough/>"]
+    events = [p for k, p in converse(c, None, audio=False, mode="none") if k == "J"]
+    assert not any(e["type"] == "action" for e in events)
+    assert events[-1]["action"] is None
+
+
 def test_converse_without_a_scan_is_a_home_conversation(gw):
     c = gw()
     converse(c, None, audio=False)

@@ -25,6 +25,9 @@ final class LeaVoice: NSObject {
     private(set) var status: VoiceStatus?
     /// "cartesia" or "device": what the last utterance used.
     private(set) var lastSource = ""
+    /// Which utterance is current: goes up with every new one and with `stop()`, so a caller can tell its own line
+    /// finished (still the same id when `speaking` goes false) from being cut off (the walkthrough pauses then).
+    var utteranceID: Int { utterance }
 
     @ObservationIgnored private weak var app: AppState?
     @ObservationIgnored private var player = PCMPlayer(sampleRate: 24000)
@@ -347,6 +350,18 @@ final class LeaVoice: NSObject {
         synth.speak(u)
     }
 
+    /// The phone's voice finished a sentence: Lea stops "speaking" once nothing else is queued. `isSpeaking` can still
+    /// read true for a moment after the last sentence ends (seen in the simulator: `speaking` then stayed on and the
+    /// walkthrough never moved on), so it is read again for up to a second, for this same utterance only.
+    private func deviceFinished() async {
+        let id = utterance
+        for _ in 0..<10 {
+            guard id == utterance else { return }
+            if !synth.isSpeaking { speaking = false; return }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+    }
+
     /// The best installed English voice (premium, then enhanced, then the default).
     private static let deviceVoice: AVSpeechSynthesisVoice? = {
         let en = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en-US") }
@@ -367,7 +382,7 @@ extension LeaVoice: AVSpeechSynthesizerDelegate {
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in if !self.synth.isSpeaking { self.speaking = false } }
+        Task { @MainActor in await self.deviceFinished() }
     }
 
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {

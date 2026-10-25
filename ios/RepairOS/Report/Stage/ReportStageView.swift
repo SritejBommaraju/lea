@@ -21,6 +21,9 @@ struct ReportStageView: View {
     var fresh = false
     /// Bumped when Lea's first sound for this report plays (ReportView.speakLanded): the verdict lands on that frame.
     var voiceStarted = 0
+    /// Bumped by Lea's `walkthrough` voice action ("Lea, walk me through it"): plays the tour once she has finished
+    /// saying she will.
+    var walkthrough = 0
     /// The hero on the stage. `.automatic` follows `model` (3D view or the photo hero); a 3D recreation plugs in
     /// with `.custom` (see `StageHeroContext`) without touching anything else here.
     var hero: StageHero = .automatic
@@ -41,6 +44,8 @@ struct ReportStageView: View {
     @State private var circleMiss = false
     @State private var targets: [InspectTarget] = []
     @State private var probe = StageProbe()
+    /// "Walk me through it": the guided tour of this report on the hero (Walkthrough, WalkthroughDeck).
+    @State private var tour = WalkthroughPlayer()
     /// Counts Lea's first sounds seen (from `voiceStarted`), read live by the landing task.
     @State private var heard = 0
     /// The 3D scan is on screen: the landing waits for it (at most `maxWait`), so markers and verdict arrive on it.
@@ -80,14 +85,19 @@ struct ReportStageView: View {
                     stage.id("stage")
                     sheetBody(proxy)
                         .padding(.top, -Self.overlap)
-                        .opacity(phase >= 2 ? 1 : 0)
+                        .opacity(phase >= 2 && !tour.active ? 1 : 0)
                         .offset(y: phase >= 2 || reduceMotion ? 0 : 24)
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
+            // The tour has the whole screen: the stage fills it and the sheet waits below.
+            .scrollDisabled(tour.active)
+            .onChange(of: tour.active) { _, on in
+                if on { withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) } }
+            }
             // Pulling down past the top shows more stage, never a strip of canvas.
             .background(alignment: .top) { StageBackground().frame(height: 700) }
-            .background(Palette.canvas)
+            .background(tour.active ? Palette.stageEdge : Palette.canvas)
             .ignoresSafeArea(edges: .top)
             .navigationDestination(for: String.self) { id in
                 if let p = all.first(where: { $0.id == id }) { ProblemDetailView(problem: p) }
@@ -102,6 +112,8 @@ struct ReportStageView: View {
         .sensoryFeedback(Haptic.select, trigger: focus) { _, new in new != nil }
         .task(id: landingKey) { await land() }
         .onChange(of: voiceStarted) { heard += 1 }
+        .onChange(of: walkthrough) { startTour(afterLea: true) }
+        .onDisappear { tour.stop() }
         .fullScreenCover(isPresented: $showOnObject) {
             if let space {
                 ObjectMarkersView(space: space, markers: findingPins.map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },
@@ -160,6 +172,9 @@ struct ReportStageView: View {
             .padding(.bottom, Self.overlap)
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: Spacing.s) {
+                    Button { startTour() } label: { Label("Walk me through it", systemImage: "play.fill") }
+                        .buttonStyle(StageCapsuleButtonStyle())
+                        .accessibilityHint("Lea goes through the report on the scan, one problem at a time")
                     if canShowOnObject {
                         Button { showOnObject = true } label: { Label("Show on object", systemImage: "arkit") }
                             .buttonStyle(StageCapsuleButtonStyle())
@@ -175,6 +190,25 @@ struct ReportStageView: View {
                 }
                 .padding(.leading, Spacing.l)
                 .padding(.bottom, Self.overlap + Spacing.m)
+                .opacity(tour.active ? 0 : 1)
+                .allowsHitTesting(!tour.active)
+            }
+            .overlay {
+                if tour.active {
+                    // A tap on the object ends the tour; the cards below keep their own swipes and buttons.
+                    Color.clear.contentShape(Rectangle())
+                        .padding(.top, Self.topClear)
+                        .padding(.bottom, Self.deckHeight + Self.overlap)
+                        .onTapGesture { tour.stop() }
+                        .accessibilityHidden(true)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if tour.active {
+                    WalkthroughDeck(player: tour)
+                        .padding(.bottom, Self.overlap + Spacing.m)
+                        .transition(.opacity.combined(with: .offset(y: reduceMotion ? 0 : 24)))
+                }
             }
             .overlay {
                 if circling {
@@ -194,7 +228,7 @@ struct ReportStageView: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if canCircle {
+                if canCircle, !tour.active {
                     // Circle to inspect, beside the recenter control (ModelView draws that one at the corner).
                     Button { withAnimation(Motion.fade) { circling.toggle(); circleMiss = false } } label: {
                         Image(systemName: circling ? Symbol.close : "lasso")
@@ -206,37 +240,54 @@ struct ReportStageView: View {
                 }
             }
         }
-        .containerRelativeFrame(.vertical) { height, _ in max(380, height * 0.54) }
+        .containerRelativeFrame(.vertical) { [touring = tour.active] height, _ in touring ? height : max(380, height * 0.54) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(stageLabel)
     }
 
     @ViewBuilder private var heroView: some View {
-        let context = StageHeroContext(markers: pins, focus: focus, select: { id in
+        let touring = tour.active
+        let context = StageHeroContext(markers: pins, focus: touring ? nil : focus, select: { id in
             focus = id
             sheet = all.first { $0.id == id }
-        }, ready: { modelReady = true }, probe: probe)
+        }, ready: { modelReady = true }, probe: probe, tour: touring ? tour : nil)
         Group {
             switch hero {
             case .custom(let make):
                 make(context).padding(.top, Self.topClear)
             case .automatic:
                 if isPhotoHero, let sessionDir {
-                    PhotoHero(stillsDir: sessionDir.appending(path: "stills"), numbered: numberedPhotos, focus: focus,
-                              onMarkTap: context.select)
+                    PhotoHero(stillsDir: sessionDir.appending(path: "stills"), numbered: numberedPhotos,
+                              focus: touring ? tour.step?.focus : focus, onMarkTap: context.select)
                         .clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
                         .padding(.horizontal, Spacing.gutter)
                         .padding(.top, Self.topClear)
                         .padding(.bottom, Spacing.l)
                 } else {
                     ModelView(source: model, pins: pins, focus: focus, spin: true, showHint: false, stage: true,
-                              onLoaded: { modelReady = true }, probe: probe, onPinTap: context.select)
+                              onLoaded: { modelReady = true }, probe: probe, controls: !touring, tour: context.tour,
+                              onPinTap: context.select)
                         // The object sits below the navigation bar drawn over the stage's top.
                         .padding(.top, Self.topClear)
                 }
             }
         }
-        .padding(.bottom, Self.overlap)
+        .padding(.bottom, Self.overlap + (touring ? Self.deckHeight : 0))
+    }
+
+    /// The walkthrough's cards, header and controls (WalkthroughDeck), and the room the hero leaves for them.
+    static let deckHeight: CGFloat = 44 + WalkthroughCard.height + 3 + 44 + 3 * Spacing.m + Spacing.m
+
+    /// Plays the tour from its first card. `afterLea`: asked by voice, so it starts once she has said she will.
+    private func startTour(afterLea: Bool = false) {
+        let photo = isPhotoHero, threeD = isCustomHero || !model.isNone
+        let steps = Walkthrough.steps(report) { p in photo ? p.cropStill != nil : threeD && p.point != nil }
+        circling = false
+        circleMiss = false
+        sheet = nil
+        showOthers = false
+        focus = nil
+        withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { tour.start(steps, afterLea: afterLea) }
     }
 
     /// A circle drawn on the stage: find the spot on the scan, then ask what to do with it.

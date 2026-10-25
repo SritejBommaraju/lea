@@ -127,6 +127,12 @@ final class LeaConversation {
     func heard(_ text: String, engine: String = "apple") {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         liveCaption = ""
+        // "Stop" during a walkthrough ends it; it is not a question for Lea.
+        if let tour = WalkthroughPlayer.current, tour.heard(words, leaSpeaking: false) {
+            cancelSpeculation()
+            turnDropped()
+            return
+        }
         if let spec = speculativeText {
             if Self.same(spec, words) {
                 confirmSpeculation(final: words)
@@ -190,8 +196,15 @@ final class LeaConversation {
 
     func showLive(_ caption: String) {
         if speculativeText == nil { stopLea() }   // the person is talking: Lea stops at once
+        WalkthroughPlayer.current?.personSpoke()  // and a walkthrough waits for them
         liveCaption = caption
         phase = .listening
+    }
+
+    /// The person's turn came to nothing for the conversation (it ended the walkthrough): back to idle.
+    func turnDropped() {
+        liveCaption = ""
+        if phase == .listening || phase == .thinking { phase = .idle }
     }
 
     /// Lea stops talking now (the person started to speak, or pressed the button).

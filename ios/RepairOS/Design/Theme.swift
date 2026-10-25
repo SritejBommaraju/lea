@@ -141,6 +141,8 @@ enum Motion {
     static let pop = Animation.spring(response: 0.35, dampingFraction: 0.8)
     /// A surface rising into place (the report sheet): critically damped, no overshoot.
     static let rise = Animation.spring(response: 0.4, dampingFraction: 1)
+    /// The walkthrough gliding to its next card, the camera with it: slow, critically damped, no overshoot.
+    static let glide = Animation.spring(response: 0.95, dampingFraction: 1)
     /// Gap between items that arrive together (markers, rows). Only the first few are staggered.
     static let stagger: Double = 0.06
     /// Colour and opacity only; also the Reduce Motion replacement.

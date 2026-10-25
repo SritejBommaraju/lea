@@ -9,6 +9,7 @@ import SwiftUI
 ///     --ui-screen stage|stage-landing|stage-wait  --ui-session <dir>
 ///                           the dark-stage report (Report/Stage) from a real saved session folder copied off the
 ///                           phone (report.json, crops/, scans/<id>/*.ply); `stage-landing` plays the landing moment.
+///     --ui-walkthrough       on the stage screens: start "Walk me through it" two seconds after opening.
 enum UIGallery {
     static var screen: String? { value("--ui-screen") }
     /// `--ui-scroll next|other|gaps`: scroll the report to that section.
@@ -58,9 +59,11 @@ enum UIGallery {
                 NavigationStack {
                     if let dir = session {
                         let report = sessionReport(dir)
-                        ReportStageView(report: report, symptom: CommandLine.arguments.contains("--ui-no-story") ? nil : "Stopped heating",
-                                        model: sessionModel(dir), sessionDir: dir, openFull: {}, fresh: screen == "stage-landing",
-                                        hero: sessionHero(dir), focus: focusFirst ? report.mostLikely.first?.id : nil)
+                        GalleryWalkthrough { walk in
+                            ReportStageView(report: report, symptom: CommandLine.arguments.contains("--ui-no-story") ? nil : "Stopped heating",
+                                            model: sessionModel(dir), sessionDir: dir, openFull: {}, fresh: screen == "stage-landing",
+                                            walkthrough: walk, hero: sessionHero(dir), focus: focusFirst ? report.mostLikely.first?.id : nil)
+                        }
                             .navigationTitle("").navigationBarTitleDisplayMode(.inline)
                             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") {}.fontWeight(.semibold) } }
                             // `--ui-build-shell`: build the phone's recreation shell for this session (next launch shows it).
@@ -132,7 +135,7 @@ enum UIGallery {
         guard RecreationCenter.shared.available(scanDir) else { return .automatic }
         return .custom { ctx in
             AnyView(RecreationView(source: .scan(scanDir), markers: ctx.markers, focus: ctx.focus,
-                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe))
+                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour))
         }
     }
 
@@ -196,6 +199,19 @@ enum UIGallery {
     private static func value(_ flag: String) -> String? {
         let args = CommandLine.arguments
         return args.firstIndex(of: flag).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+    }
+}
+
+/// `--ui-walkthrough`: bumps the stage's walkthrough trigger once, as Lea's voice action would.
+private struct GalleryWalkthrough<Content: View>: View {
+    @ViewBuilder let content: (Int) -> Content
+    @State private var walk = 0
+    var body: some View {
+        content(walk).task {
+            guard CommandLine.arguments.contains("--ui-walkthrough") else { return }
+            try? await Task.sleep(for: .seconds(2))
+            walk += 1
+        }
     }
 }
 

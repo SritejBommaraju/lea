@@ -40,9 +40,13 @@ struct RecreationView: View {
     var onLoaded: (() -> Void)?
     /// Circle to inspect (Report/Stage): turns a circle drawn over the view into a spot on the surface.
     var probe: StageProbe?
+    /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the turntable stops.
+    var tour: WalkthroughPlayer?
 
     init(source: RecreationSource, markers: [ModelPin], focus: String? = nil, spin: Bool = true,
-         onMarkerTap: @escaping (String) -> Void = { _ in }, onLoaded: (() -> Void)? = nil, probe: StageProbe? = nil) {
+         onMarkerTap: @escaping (String) -> Void = { _ in }, onLoaded: (() -> Void)? = nil, probe: StageProbe? = nil,
+         tour: WalkthroughPlayer? = nil) {
+        self.tour = tour
         self.source = source
         self.markers = markers
         self.focus = focus
@@ -55,6 +59,8 @@ struct RecreationView: View {
     @State private var loaded: Loaded?
     @State private var failed = false
     @State private var visible = true
+    /// Reduce Motion: the walkthrough card the hero shows (it cuts there while faded out).
+    @State private var cutShown = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private var center: RecreationCenter { .shared }
 
@@ -73,16 +79,19 @@ struct RecreationView: View {
     }
 
     var body: some View {
+        let frame = tour.flatMap { $0.active ? $0.frame : nil }
         ZStack {
             if let loaded {
                 RecreationHost(loaded: loaded, markers: markers.map(Self.marker), focus: focus, spin: spin && !reduceMotion,
-                               animate: !reduceMotion, active: visible, probe: probe, onMarkerTap: onMarkerTap)
+                               animate: !reduceMotion, active: visible, probe: probe,
+                               tour: frame?.drawn(reduceMotion: reduceMotion, shown: cutShown), onMarkerTap: onMarkerTap)
                     .id(loaded.id)
                     .transition(.opacity)
             } else if !failed {
                 ProgressView().tint(.white)
             }
         }
+        .modifier(TourCutFade(nearest: frame?.nearest, on: reduceMotion, shown: $cutShown))
         .onScrollVisibilityChange(threshold: 0.05) { visible = $0 }
         .task(id: reloadKey) { await load(); onLoaded?() }
         .accessibilityElement(children: .contain)
@@ -162,6 +171,8 @@ private struct RecreationHost: UIViewRepresentable {
     let animate: Bool
     let active: Bool
     var probe: StageProbe?
+    /// The walkthrough's frame: the camera follows its pager instead of `focus`.
+    var tour: TourFrame?
     let onMarkerTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -203,6 +214,17 @@ private struct RecreationHost: UIViewRepresentable {
     func updateUIView(_ view: SCNView, context: Context) {
         let c = context.coordinator
         c.onMarkerTap = onMarkerTap
+        c.active = active
+        if let tour {
+            if c.stage.markers != markers { c.stage.place(markers, focus: nil); c.keepApart() }
+            c.tour(tour, animate: animate)
+            return
+        }
+        if c.touring {
+            // The tour ended: back to the markers as they were, and the camera to the focus (or the whole object).
+            c.endTour()
+            c.focus = Coordinator.reframe   // never a marker id: the focus branch below frames the camera again
+        }
         if c.stage.markers != markers || c.focus != focus {
             c.stage.place(markers, focus: focus)
             c.keepApart()
@@ -237,6 +259,59 @@ private struct RecreationHost: UIViewRepresentable {
         }
         var focus: String?
         var onMarkerTap: (String) -> Void = { _ in }
+
+        // MARK: Walkthrough
+
+        private(set) var touring = false
+        /// One pose per step, worked out when the tour starts (the turntable is stopped, so they hold).
+        private var tourPoses: [TourPose] = []
+        private var tourFocuses: [String?]?
+        private var tourCut: Int?
+        /// The eased move onto the first card's view: frames that change nothing meanwhile do not cut it short.
+        private var glide: (progress: Double, until: Date)?
+        static let reframe = "\u{0}reframe"
+
+        /// One frame of the tour: the camera on the pager's path between two steps' views, the rings lit by weight.
+        func tour(_ f: TourFrame, animate: Bool) {
+            guard let view else { return }
+            var glideIn = false
+            if !touring {
+                touring = true
+                stage.stopSpin()
+                view.allowsCameraControl = false
+                glideIn = animate   // from wherever the camera is to the first card's view, eased
+            }
+            if tourFocuses != f.focuses {
+                tourFocuses = f.focuses
+                tourPoses = f.focuses.map(stage.tourPose)
+            }
+            guard let pose = TourCamera.pose(tourPoses, at: f.progress, around: stage.focusCenter, cut: f.cut) else { return }
+            if f.cut {
+                if tourCut != f.nearest { tourCut = f.nearest; stage.move(to: pose.eye, look: pose.look, animated: false) }
+            } else if glideIn {
+                stage.move(to: pose.eye, look: pose.look, animated: true)
+                glide = (f.progress, Date().addingTimeInterval(0.75))
+            } else if let g = glide, g.until > Date(), g.progress == f.progress {
+                // still easing in to the first card
+            } else {
+                glide = nil
+                stage.move(to: pose.eye, look: pose.look, animated: false)
+            }
+            stage.emphasize(TourCamera.weights(f.focuses, at: f.progress, cut: f.cut))
+            view.isPlaying = active
+        }
+
+        func endTour() {
+            touring = false
+            tourFocuses = nil
+            tourCut = nil
+            view?.allowsCameraControl = true
+            stage.place(stage.markers, focus: nil)
+            keepApart()
+        }
+
+        /// Whether the hero is on screen (the tour draws continuously only then).
+        var active = true
 
         @objc func touched(_ g: UILongPressGestureRecognizer) {
             guard g.state == .began, stage.isSpinning else { return }
