@@ -79,6 +79,17 @@ struct ScanStorage: Sendable {
         try? FileManager.default.removeItem(at: dir(r))
     }
 
+    /// Deletes these sessions (each once, never the one being captured); returns how many were deleted.
+    @MainActor @discardableResult
+    func delete(_ records: [SessionRecord]) -> Int {
+        var seen = Set<String>()
+        let doomed = records.filter {
+            seen.insert($0.id).inserted && canDelete($0) && FileManager.default.fileExists(atPath: dir($0).path)
+        }
+        doomed.forEach(delete)
+        return doomed.count
+    }
+
     /// Deletes every session except the one being captured; returns how many were deleted.
     @MainActor @discardableResult
     func deleteAll() -> Int {

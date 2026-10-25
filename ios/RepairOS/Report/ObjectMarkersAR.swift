@@ -744,7 +744,7 @@ final class MarkerScene: NSObject, ARSessionDelegate {
         let image = UIGraphicsImageRenderer(size: CGSize(width: side, height: side), format: .init(for: .init(displayScale: 1))).image { ctx in
             let rect = CGRect(x: 0, y: 0, width: side, height: side)
             let line = side * Line.drawing / 26
-            UIColor(hex: 0x211D30).setFill()
+            UIColor(hex: FixedHex.stageRaised).setFill()
             ctx.cgContext.fillEllipse(in: rect.insetBy(dx: line / 2, dy: line / 2))
             ctx.cgContext.setStrokeColor(colour.cgColor)
             ctx.cgContext.setLineWidth(line)

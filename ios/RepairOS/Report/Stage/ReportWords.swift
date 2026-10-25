@@ -53,8 +53,10 @@ enum ReportWords {
             if let s = r.setup.first { return s.fix ?? phrase(s) }   // nothing broken: lead with what to put right
             return r.photosInspected > 0 ? "Nothing looked wrong in \(r.photosInspected) photos" : "Nothing looked wrong"
         case .insufficientEvidence:
-            // Lead with what to do (the next step's title, e.g. "Take a closer photo"); the eyebrow says why.
-            return r.nextStep?.title ?? "Lea needs a closer look"
+            // Lead with what to do when it is an action (a meter check); a request for more photos never leads (the
+            // owner, 2026-10-25: no "closer photo" prompts in the default report).
+            if let step = r.nextStep, !isCaptureRequest(step) { return step.title }
+            return "Not enough to call it yet"
         case .noProblemsSeen:
             if let s = r.setup.first { return s.fix ?? phrase(s) }
             return "No problems seen"

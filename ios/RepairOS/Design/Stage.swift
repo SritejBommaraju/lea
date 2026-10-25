@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The stage the scan sits on in the report (and while the report is being written): #12101B in both modes with a
+// The stage the scan sits on in the report (and while the report is being written): `Palette.stage` (#0E131B, blue night) in both modes with a
 // subtle studio backdrop (the owner, 2026-10-25), and a construction circle and ground grid in chalk (DESIGN §7.6).
 // Static: drawn once and flattened, no blur, no material, nothing animated, so it costs nothing under the 3D view.
 // Controls on the stage are chalk on smoke.
@@ -11,7 +11,7 @@ struct StageBackground: View {
         Palette.stage
             // A subtle studio backdrop (static): a touch lighter behind the object, falling to the stage colour.
             .overlay {
-                RadialGradient(colors: [Color(fixed: 0x241F36), Palette.stage], center: UnitPoint(x: 0.5, y: 0.42),
+                RadialGradient(colors: [Color(fixed: FixedHex.stageGlow), Palette.stage], center: UnitPoint(x: 0.5, y: 0.42),
                                startRadius: 0, endRadius: 360)
             }
             .overlay {

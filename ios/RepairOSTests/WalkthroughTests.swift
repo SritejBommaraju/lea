@@ -56,7 +56,7 @@ struct WalkthroughTests {
 
     @Test func stepsFollowTheReportInOrder() {
         let steps = Walkthrough.steps(Self.full())
-        #expect(steps.map(\.kind) == [.intro, .problem, .problem, .problem, .others, .setup, .setup, .safety, .next, .outro])
+        #expect(steps.map(\.kind) == [.intro, .problem, .problem, .problem, .others, .setup, .setup, .safety, .outro])   // a closer-photo request is no step
         #expect(steps.map(\.id).filter { $0.hasPrefix("problem:") } == ["problem:f_wire", "problem:f_lid", "problem:f_fan"])
         #expect(steps[1].number == 1 && steps[3].number == 3)
         #expect(Set(steps.map(\.id)).count == steps.count)
@@ -104,10 +104,10 @@ struct WalkthroughTests {
         #expect(steps[6].speech.hasPrefix("Also something to set up, not broken: the power plug: not plugged in fully."))
         // What wasn't checked is not a step and not in the summary (no coverage caveat by default, owner 2026-10-25).
         #expect(steps[7].speech == "Safety first: unplug the device before you open it. Also, the heating element gets hot.")
-        #expect(steps[8].title == "Take a closer photo")
-        #expect(steps[8].speech == "Here's what to do next. Take a close, sharp photo of the red wire.")
-        #expect(steps[9].speech == "To sum up, most likely the wire may be loose. Two things need setting up. "
-                + "Start with the next step: take a closer photo. That's the walkthrough.")
+        // A request for a closer photo is not a step and not in the summary (the owner, 2026-10-25).
+        #expect(!steps.contains { $0.kind == .next })
+        #expect(steps[8].speech == "To sum up, most likely the wire may be loose. Two things need setting up. That's the walkthrough.")
+        #expect(!steps.contains { $0.title == "Take a closer photo" || $0.speech.lowercased().contains("closer photo") })
         #expect(!steps.contains { $0.speech.contains("spots") || $0.speech.contains("counted as fine") })
     }
 
@@ -146,7 +146,7 @@ struct WalkthroughTests {
         let r = try ReportModelTests.example("report.json")
         let steps = Walkthrough.steps(r)
         #expect(steps.first?.kind == .intro && steps.last?.kind == .outro)
-        #expect(steps.contains { $0.kind == .next })
+        #expect(!steps.contains { $0.kind == .next })   // its next step asks for a closer photo: not a tour step
         let problem = try #require(steps.first { $0.kind == .problem })
         #expect(problem.focus == nil)   // its location was not computed
         #expect(problem.speech.contains("In the photo, a gap is visible between the plug and its housing"))
@@ -207,7 +207,7 @@ struct WalkthroughTests {
         tour.start(Walkthrough.steps(Self.full()))
         #expect(tour.playing)
         let convo = LeaConversation(scanID: nil, gateway: GatewayClient(baseURL: URL(string: "http://127.0.0.1:9")!, token: nil), diag: nil)
-        convo.personStarted()   // what pressToTalk() does first
+        convo.personStarted()   // what a tap on the talk button does first
         #expect(tour.active && !tour.playing && tour.index == 0)
         tour.stop()
     }

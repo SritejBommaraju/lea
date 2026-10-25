@@ -12,9 +12,9 @@ struct ModelPin: Identifiable, Sendable, Equatable {
     var number: Int?
     var point: SIMD3<Float>
     var tone: Tone
-    /// A circled "look closer" area (Report/Stage/InspectTarget): drawn as a dashed ring of this radius (metres).
+    /// One of Lea's rings on a part that is not a numbered problem: a solid ring of this radius (metres).
     var ringRadius: Float? = nil
-    /// A finding's problem area on the scan (metres): the recreation circles it. Not a circled target (`ringRadius`).
+    /// A finding's problem area on the scan (metres): the recreation circles it. Not one of Lea's rings (`ringRadius`).
     var area: Float? = nil
     /// The part's name while Lea is showing it: drawn as a label on the model, out along the surface normal.
     var label: String? = nil
@@ -465,8 +465,6 @@ private struct SceneHost: UIViewRepresentable {
         context.coordinator.stage = stage
         context.coordinator.animateIn = stage && animate
         if stage { view.delegate = context.coordinator.separator }
-        let coordinator = context.coordinator
-        probe?.resolve = { [weak coordinator] center, radius in coordinator?.resolve(center, radius) }
         context.coordinator.build(content, pins: pins, traits: view.traitCollection)
         if spin { context.coordinator.startSpin() }
         return view
@@ -518,35 +516,6 @@ private struct SceneHost: UIViewRepresentable {
         /// Pop the markers in one by one the first time they are placed (off under Reduce Motion).
         var animateIn = false
         let separator = MarkerSeparator()
-        /// Up to 30k of the scan's points (scan frame) for circle to inspect.
-        private var sample: [SIMD3<Float>] = []
-
-        static func thin(_ p: [SIMD3<Float>]) -> [SIMD3<Float>] {
-            let step = max(1, p.count / 30_000)
-            return stride(from: 0, to: p.count, by: step).map { p[$0] }
-        }
-
-        /// A circle on screen → the spot on the scan inside it: the centroid of the nearer half (by depth) of the
-        /// scan points that project inside, and the circle's radius at that depth. nil when no points fall inside.
-        func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
-            guard let view, !sample.isEmpty else { return nil }
-            let space = content.presentation
-            var inside: [(p: SIMD3<Float>, z: Float)] = []
-            for p in sample {
-                let s = view.projectPoint(SCNVector3(space.simdConvertPosition(p, to: nil)))
-                guard s.z > 0, s.z < 1 else { continue }
-                let dx = CGFloat(s.x) - center.x, dy = CGFloat(s.y) - center.y
-                if dx * dx + dy * dy <= r * r { inside.append((p, s.z)) }
-            }
-            guard inside.count >= 3 else { return nil }
-            inside.sort { $0.z < $1.z }
-            let front = inside.prefix(max(3, inside.count / 2))
-            let c = front.reduce(SIMD3<Float>()) { $0 + $1.p } / Float(front.count)
-            let z = front[front.startIndex + front.count / 2].z
-            let a = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x), Float(center.y), z)))
-            let b = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
-            return (c, max(0.01, simd_distance(a, b)))
-        }
         /// Turns about the model's centre (the hero spin); `content` sits inside it, offset by −centre.
         private let pivot = SCNNode()
         private let content = SCNNode()
@@ -566,11 +535,9 @@ private struct SceneHost: UIViewRepresentable {
             switch loaded {
             case .cloud(let cloud):
                 modelNode.geometry = Self.geometry(cloud, stage: stage)
-                sample = Self.thin(cloud.positions)
                 bulk = cloud.bulk
             case .triangles(let mesh):
                 modelNode.geometry = Self.geometry(mesh)
-                sample = Self.thin(mesh.positions)
                 view?.autoenablesDefaultLighting = true
             case .mesh(let url):
                 if let mesh = try? SCNScene(url: url) { mesh.rootNode.childNodes.forEach { modelNode.addChildNode($0) } }
@@ -905,7 +872,7 @@ private struct SceneHost: UIViewRepresentable {
             let g = SCNGeometry(sources: sources, elements: [element])
             let m = SCNMaterial()
             m.lightingModel = .constant
-            m.diffuse.contents = cloud.colors == nil ? UIColor(light: 0x8A8A96, dark: 0xB4B4C0) : UIColor.white
+            m.diffuse.contents = cloud.colors == nil ? UIColor(light: 0x8A919C, dark: 0xB4BCC8) : UIColor.white
             g.materials = [m]
             return g
         }
@@ -925,7 +892,7 @@ private struct SceneHost: UIViewRepresentable {
             let m = SCNMaterial()
             m.lightingModel = .lambert
             m.isDoubleSided = true
-            m.diffuse.contents = mesh.colors == nil ? UIColor(light: 0xA9A9B4, dark: 0xB4B4C0) : UIColor.white
+            m.diffuse.contents = mesh.colors == nil ? UIColor(light: 0xA9B0BA, dark: 0xB4BCC8) : UIColor.white
             g.materials = [m]
             return g
         }
@@ -934,7 +901,7 @@ private struct SceneHost: UIViewRepresentable {
         private static func badge(_ pin: ModelPin, traits: UITraitCollection) -> UIImage {
             let rgb = StageMarkImages.rgb(pin.tone)
             if pin.ringRadius != nil {
-                return StageMarkImages.ring(rgb: rgb, dashed: pin.id.hasPrefix("target:")).map(UIImage.init(cgImage:)) ?? UIImage()
+                return StageMarkImages.ring(rgb: rgb).map(UIImage.init(cgImage:)) ?? UIImage()
             }
             return StageMarkImages.badge(number: pin.number, rgb: rgb, side: pin.number == nil ? 48 : 96)
                 .map(UIImage.init(cgImage:)) ?? UIImage()

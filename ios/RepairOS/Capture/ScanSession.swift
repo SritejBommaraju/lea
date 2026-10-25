@@ -41,10 +41,6 @@ final class ScanSession: NSObject {
     /// The spot the "Move closer here" cue points at (world), drawn as an anchored marker by the renderer.
     private(set) var closeTarget: SIMD3<Float>?
     private var closeTargetSeen: TimeInterval = 0
-    /// A spot the person circled on the report (Report/Stage/InspectTarget), for Continue scanning: the
-    /// "Move closer here" marker goes there first, until a close-up near it is taken. Same frame as the saved map,
-    /// so it is used only once the continuation is aligned with it.
-    private var lookTarget: InspectTarget?
     private var objectName: String?
     /// How much of what the backend needs is in (`ScanProgress`: views at the resolution target, required close-up
     /// faces, keyframe directions for the mesh), 0...1. One number for the dial and the cue.
@@ -194,7 +190,6 @@ final class ScanSession: NSObject {
             // After the highest number used so far (replaced stills leave gaps).
             stillOffset = record.stillIDs.compactMap { $0.split(separator: "_").last.flatMap { Int($0.dropFirst()) } }.max() ?? record.stillIDs.count
             recorder.startIndex(previous?.keyframes.count ?? 0)
-            lookTarget = InspectTargets.pending(storage.dir(record))
         }
     }
 
@@ -632,8 +627,8 @@ final class ScanSession: NSObject {
             return
         }
         updateProgress()
-        // Enough: nothing more to take (a spot the person circled still gets its close-up).
-        if enough, !(aligned && lookTarget != nil) {
+        // Enough: nothing more to take.
+        if enough {
             if cue != Self.enoughCue { cue = Self.enoughCue }
             return
         }
@@ -681,10 +676,6 @@ final class ScanSession: NSObject {
         let faceHere = dome.requiredFaces > 0 ? box.flatMap { CoverageDome.viewFace(cameraToWorld: m, box: $0) } : nil
         let faceWanted = faceHere.map { !dome.isFaceCovered($0) } ?? false
         let missingFace = dome.facesDone ? nil : box.flatMap { dome.nearestMissingFace(camera: cam, box: $0) }
-        // The circled spot, when there is one and the continuation is aligned with the scan it was circled on.
-        let target = aligned ? lookTarget?.simd : nil
-        let targetDistance = target.map { simd_distance(cam, $0) }
-        let atTarget = targetDistance.map { $0 <= band.upperBound } ?? false
         let wantDetail = detailHere && closeStills < closeStillsLimit
         let wantClose = wantDetail || (faceWanted && closeStills < closeStillsLimit)
         let moved = lastStillPose.map { Self.moved(from: $0, to: m) } ?? true
@@ -712,15 +703,7 @@ final class ScanSession: NSObject {
         let darkClose = closeMode && exposure.active && exposure.iso > Self.closeMaxISO
         if box != nil || cue == nil || cue == lastResult?.reason || cue?.hasPrefix("Move closer:") == true {
             // The detail rule's cue wins over everything else: getting close is the fix for most of the rejects too.
-            if let target, !atTarget {
-                // The person asked to look closer here: that comes before the scanner's own close-up choice.
-                cue = "Move closer here"
-                if closeTarget != target {
-                    closeTarget = target
-                    renderer?.marker = target
-                }
-                closeTargetSeen = t
-            } else if callClose, !inClose, (viewDistance ?? 1) > band.upperBound {
+            if callClose, !inClose, (viewDistance ?? 1) > band.upperBound {
                 cue = "Move closer here"
                 // Anchor the marker once; move it only when the detail spot is clearly elsewhere (> 4 cm).
                 if let spot = spotAhead(cameraToWorld: m) {
@@ -771,20 +754,13 @@ final class ScanSession: NSObject {
                                                         best: cellBest)
         let facesLeft = max(0, dome.requiredFaces - dome.closeFaces.count)
         let roomForOrbit = stills.count < CaptureSelection.maxStills - facesLeft
-        let roomForClose = faceWanted || atTarget || stills.count < CaptureSelection.maxStills
-        if (closeMode && inClose && closeResolved) || atTarget, roomForClose, movedClose || retryFace, closeOK, steadyEnough, !capturing,
+        let roomForClose = faceWanted || stills.count < CaptureSelection.maxStills
+        if closeMode && inClose && closeResolved, roomForClose, movedClose || retryFace, closeOK, steadyEnough, !capturing,
            closeResult.accept || closeResult.reason == "Keep the object in frame" {
             lastCloseShotPose = m
             lastCloseShotTime = t
-            if atTarget, let done = lookTarget {
-                // A close-up at the circled spot: it is checked; the report will show what the new photos found.
-                InspectTargets.markChecked(done.id, storage.dir(record))
-                diag.log("look_target_checked", ["radius_m": Double(done.radius)])
-                lookTarget = nil
-                milestoneTick += 1
-            }
             let shot = ShotContext(close: true, face: faceHere, fill: fill, distance: viewDistance, blurPx: blurPx,
-                                   centerHitsBox: framing?.centerHitsBox, mustKeep: atTarget)
+                                   centerHitsBox: framing?.centerHitsBox)
             Task { await fire(auto: true, lowLight: closeResult.lowLight, shot: shot, gate: (a.sharpness, a.medianSharpness)) }
             return
         }
@@ -806,8 +782,6 @@ final class ScanSession: NSObject {
         var distance: Float?
         var blurPx: Double
         var centerHitsBox: Bool?
-        /// A close-up at a spot the person circled: kept whatever the selection says.
-        var mustKeep = false
     }
 
     // MARK: - Progress and "enough"
@@ -1035,7 +1009,7 @@ final class ScanSession: NSObject {
     }
 
     private func fire(auto: Bool, lowLight: Bool? = nil, shot: ShotContext, gate: (Double, Double?)? = nil) async {
-        guard !capturing, stage == .scanning, !enough || shot.mustKeep else { return }
+        guard !capturing, stage == .scanning, !enough else { return }
         capturing = true
         defer { capturing = false }
         let close = shot.close
@@ -1095,7 +1069,7 @@ final class ScanSession: NSObject {
             let faceNew = faceShot.map { $0 < dome.requiredFaces && !dome.isFaceCovered($0) } ?? false
             // Selection: a still for a view cell that has one only when it is clearly better (it then replaces it).
             var replacing: CaptureSelection.Best?
-            if auto, !shot.mustKeep, !faceNew, let cell, let b = cellBest[cell] {
+            if auto, !faceNew, let cell, let b = cellBest[cell] {
                 if !CaptureSelection.better(pxPerMm: pxPerMm ?? 0, sharpness: sharp, than: b) {
                     stillsDropped["not_better", default: 0] += 1
                     diag.log("still_dropped", ["reason": "not_better", "cell": covered?.1 ?? "", "px_mm": pxPerMm.map { ($0 * 10).rounded() / 10 } ?? -1,

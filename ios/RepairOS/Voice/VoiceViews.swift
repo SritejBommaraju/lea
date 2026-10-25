@@ -40,61 +40,62 @@ enum AskLeaBar {
 
 // MARK: - Dictating what's wrong on the home screen
 
-/// A mic in the "What's wrong?" field: hold to dictate. Words come from the gateway (`/v1/voice/stt`) when it has a
-/// voice key, else from the phone's own recognizer; they are added to the field.
+/// A mic in the "What's wrong?" field: tap to dictate, tap again to stop (the same tap toggle as talking to Lea).
+/// Words come from the gateway (`/v1/voice/stt`) when it has a voice key, else from the phone's own recognizer; they
+/// are added to the field.
 struct StoryMicButton: View {
     @Binding var text: String
     let gateway: GatewayClient?
 
     @State private var recorder = VoiceRecorder()
-    @State private var held = false
+    @State private var toggle = TalkToggle()
     @State private var listening = false
     @State private var working = false
 
     var body: some View {
-        ZStack {
-            if working {
-                ProgressView().controlSize(.small).tint(Palette.secondary)
-            } else {
-                // The waveform only while really recording (the person is holding it).
-                Image(systemName: listening ? "waveform" : "mic")
-                    .foregroundStyle(listening ? Palette.accent : Palette.secondary)
-                    .contentTransition(.symbolEffect(.replace))
+        Button(action: tap) {
+            ZStack {
+                if working {
+                    ProgressView().controlSize(.small).tint(Palette.secondary)
+                } else {
+                    Image(systemName: listening ? "stop.circle.fill" : "mic")
+                        .foregroundStyle(listening ? Palette.accent : Palette.secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                }
             }
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
-        .frame(width: 44, height: 44)
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 0)
-            .onChanged { _ in if !held { held = true; press() } }
-            .onEnded { _ in held = false; release() })
-        .sensoryFeedback(.impact(weight: .light), trigger: listening) { _, new in new }   // on press only
-        .accessibilityLabel("Dictate what's wrong")
-        .accessibilityHint("Hold and speak, then let go")
-        .accessibilityAddTraits(.isButton)
+        .buttonStyle(.plain)
+        .disabled(working)
+        .sensoryFeedback(.impact(weight: .light), trigger: listening)
+        .accessibilityLabel(listening ? "Stop dictating" : "Dictate what's wrong")
+        .accessibilityHint(listening ? "Adds what you said to the field" : "Tap and speak, then tap again")
+        .onDisappear { if listening { listening = false; recorder.cancel() } }
     }
 
-    private func press() {
-        listening = true
-        Task {
-            if await !recorder.start() { listening = false } else if !held { release() }
-        }
-    }
-
-    private func release() {
-        guard listening else { return }
-        listening = false
-        guard let audio = recorder.stop() else { return }
-        working = true
-        Task {
-            defer { working = false }
-            var words = ""
-            if LeaVoice.shared.status?.cartesia == true, let gateway {
-                words = (try? await gateway.stt(audio: audio)) ?? ""
+    private func tap() {
+        toggle.sync(listening ? .listening : .idle)
+        switch toggle.tap(at: Date()) {
+        case .ignored, .interruptAndListen: return
+        case .startListening:
+            listening = true
+            Task { if await !recorder.start() { listening = false } else if !listening { recorder.cancel() } }
+        case .stopAndSend:
+            listening = false
+            guard let audio = recorder.stop() else { return }
+            working = true
+            Task {
+                defer { working = false }
+                var words = ""
+                if LeaVoice.shared.status?.cartesia == true, let gateway {
+                    words = (try? await gateway.stt(audio: audio)) ?? ""
+                }
+                if words.isEmpty { words = await recorder.transcribeOnDevice() }
+                words = words.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !words.isEmpty else { return }
+                text = text.trimmingCharacters(in: .whitespaces).isEmpty ? words : text + " " + words
             }
-            if words.isEmpty { words = await recorder.transcribeOnDevice() }
-            words = words.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !words.isEmpty else { return }
-            text = text.trimmingCharacters(in: .whitespaces).isEmpty ? words : text + " " + words
         }
     }
 }
@@ -121,18 +122,17 @@ final class LeaCaptionFeed {
     var started: Bool { question != nil || sentence != nil || thinking || failure != nil }
 
     func update(_ c: LeaConversation) {
-        turns = c.turns
-        let live = c.liveCaption.trimmingCharacters(in: .whitespacesAndNewlines)
-        let lastLea = c.turns.lastIndex { !$0.mine }
-        let lastMine = c.turns.lastIndex { $0.mine }
-        if !live.isEmpty {
-            question = live
-            sentence = nil
-        } else {
-            question = lastMine.map { c.turns[$0].text }
-            // Only an answer to that question (an older answer is not this exchange).
-            if let lea = lastLea, lea > (lastMine ?? -1) { sentence = Self.lastSentence(c.turns[lea].text) } else { sentence = nil }
+        // The transcript shows what has been said: the answer being spoken only up to the sentence being heard.
+        turns = c.turns.compactMap { t in
+            var t = t
+            t.text = c.shownText(t)
+            return t.text.trimmedOrNil == nil ? nil : t
         }
+        // The strip is this visit's exchange only: an answer from an earlier visit is in the transcript, not on the stage.
+        let now = Self.exchange(turns: Array(c.turns.dropFirst(c.historyCount)), live: c.liveCaption, heard: c.heardSentence,
+                                speaking: c.speakingTurnID)
+        question = now.question
+        sentence = now.sentence
         thinking = c.phase == .thinking
         speaking = c.phase == .speaking
         if case .failed(let m) = c.phase { failure = m } else { failure = nil }
@@ -142,7 +142,7 @@ final class LeaCaptionFeed {
     #if DEBUG
     /// Design review only (`--ui-lea-replay`): plays a recorded real turn's words through the strip.
     func replay(question: String?, sentence: String?, thinking: Bool, speaking: Bool, photoFor: [String: String] = [:],
-                answer: String? = nil) {
+                answer: [String]? = nil) {
         self.question = question
         self.sentence = sentence
         self.thinking = thinking
@@ -150,38 +150,41 @@ final class LeaCaptionFeed {
         failure = nil
         var t: [LeaConversation.Turn] = []
         if let question { t.append(LeaConversation.Turn(mine: true, text: question)) }
-        if let answer { var lea = LeaConversation.Turn(mine: false, text: answer); lea.photoFor = photoFor; lea.photos = Array(photoFor.values); t.append(lea) }
+        if let answer, !answer.isEmpty {
+            var lea = LeaConversation.Turn(mine: false, text: answer.joined(separator: " "), sentences: answer)
+            lea.photoFor = photoFor
+            lea.photos = Array(photoFor.values)
+            t.append(lea)
+        }
         turns = t
         revision += 1
     }
     #endif
 
-    /// The last sentence of `text` ("…the third one from the left on the top header.").
-    static func lastSentence(_ text: String) -> String? {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return nil }
-        var parts: [String] = []
-        var current = ""
-        for ch in t {
-            current.append(ch)
-            if ".!?".contains(ch) {
-                let s = current.trimmingCharacters(in: .whitespaces)
-                if !s.isEmpty { parts.append(s) }
-                current = ""
-            }
-        }
-        let rest = current.trimmingCharacters(in: .whitespaces)
-        if !rest.isEmpty { parts.append(rest) }
-        return parts.last
+    /// The current exchange for the strip: your question (the live words while you talk) and the sentence of Lea's
+    /// answer to it that you are hearing (`heard`, when `speaking` is that answer), else her last sentence. Her
+    /// sentences are the ones she streamed, never re-split (a split at every full stop cut "1.5 mm" into "5 mm.").
+    nonisolated static func exchange(turns: [LeaConversation.Turn], live: String, heard: Int?,
+                         speaking: UUID?) -> (question: String?, sentence: String?) {
+        if let words = live.trimmedOrNil { return (words, nil) }
+        let lastMine = turns.lastIndex { $0.mine && $0.text.trimmedOrNil != nil }
+        let lastLea = turns.lastIndex { !$0.mine && $0.text.trimmedOrNil != nil }
+        let question = lastMine.map { turns[$0].text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        // Only an answer to that question (an older answer is not this exchange).
+        guard let lea = lastLea, lea > (lastMine ?? -1) else { return (question, nil) }
+        let answer = turns[lea]
+        let said = answer.sentences.isEmpty ? LeaText.sentences(answer.text) : answer.sentences
+        if let heard, answer.id == speaking, !said.isEmpty { return (question, said[min(heard, said.count - 1)]) }
+        return (question, said.last)
     }
 }
 
-/// The conversation with Lea over one model and gesture (hold to talk; "Hey Lea" too), in two skins:
+/// The conversation with Lea over one model and gesture (tap to talk, tap again to send; "Hey Lea" too), in two skins:
 /// - `.talk` (the Talk to Lea sheet, DESIGN §7.7): captions inline on the canvas, newest at the bottom, the spot photos
-///   Lea shows under her words; at the bottom her mark at 88 pt (the hold target), her state in words and one help
-///   line; a keyboard button reveals "Type to Lea".
-/// - `.bar` (the report's pinned bar): `[mark · Hold to ask Lea]` as a quiet capsule, a keyboard button, and Continue
-///   scanning in violet when it can go; the one frosted bar on the screen. Captions go to the stage (`feed`).
+///   Lea shows under her words; at the bottom her mark at 88 pt (the talk button: a stop badge while it listens), her
+///   state in words and one help line; a keyboard button reveals "Type to Lea".
+/// - `.bar` (the report's pinned bar): `[mark · Talk to Lea]` as a quiet capsule, a keyboard button, and Continue
+///   scanning in blue when it can go; the one frosted bar on the screen. Captions go to the stage (`feed`).
 struct ConversationPanel: View {
     enum Skin: Sendable { case talk, bar }
 
@@ -192,14 +195,13 @@ struct ConversationPanel: View {
     var feed: LeaCaptionFeed?
     /// `.bar`: show Continue scanning (it calls `onAction("continue_scan")`).
     var continueScan = false
+    /// Start listening as it opens (the home Talk button), as one tap on the talk button would.
+    var listenOnOpen = false
 
     @State private var wake = WakeListener.shared
-    @State private var pressedAt: Date?
     @State private var typed = ""
     @State private var typing = false
     @FocusState private var typeFocused: Bool
-    /// A tap instead of a hold: the button says how to talk for a moment.
-    @State private var tapHint = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// The spot photo open full screen (pinch to zoom).
@@ -208,7 +210,7 @@ struct ConversationPanel: View {
     /// `onStage`: on a report, Lea's moves of its 3D model (show a part, a side, zoom).
     init(scanID: String?, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String? = { nil },
          compact: Bool = false, afterTurn: (@MainActor () -> Void)? = nil, onStage: ((StageCommand) -> Void)? = nil,
-         skin: Skin = .talk, feed: LeaCaptionFeed? = nil, continueScan: Bool = false,
+         skin: Skin = .talk, feed: LeaCaptionFeed? = nil, continueScan: Bool = false, listenOnOpen: Bool = false,
          onAction: @escaping (String) -> Void) {
         let c = LeaConversation(scanID: scanID, gateway: gateway, diag: diag)
         c.sessionID = sessionID
@@ -220,6 +222,7 @@ struct ConversationPanel: View {
         self.skin = skin
         self.feed = feed
         self.continueScan = continueScan
+        self.listenOnOpen = listenOnOpen
         self.onAction = onAction
     }
 
@@ -239,6 +242,7 @@ struct ConversationPanel: View {
         .onChange(of: convo.turns) { feed?.update(convo) }
         .onChange(of: convo.phase) { feed?.update(convo) }
         .onChange(of: convo.liveCaption) { feed?.update(convo) }
+        .onChange(of: convo.heardSentence) { feed?.update(convo) }
         .fullScreenCover(item: $zoomed) { z in CropZoomView(shas: z.shas, index: z.index) }
         .task {
             WakeListener.shared.capture(false)   // back from a scan: listening resumes here for sure
@@ -247,16 +251,19 @@ struct ConversationPanel: View {
             if let first = wake.pendingUtterance {
                 wake.pendingUtterance = nil
                 convo.heard(first)
+            } else if listenOnOpen, convo.talkState == .idle {
+                convo.tapTalk()
             }
         }
         .onDisappear {
             convo.disappeared()
-            if convo.visible == 0 { convo.stopLea() }
+            if convo.visible == 0 { convo.cancelRecording(); convo.stopLea() }
         }
     }
 
     private var isFailed: Bool { if case .failed = convo.phase { true } else { false } }
-    private var listening: Bool { convo.phase == .listening || wake.mode == .followUp }
+    /// Someone is being heard: the button's recording, or a "Hey Lea" turn.
+    private var listening: Bool { convo.recording || convo.phase == .listening || wake.mode == .followUp }
 
     /// Lea's mark follows her real state (no voice level is plumbed yet, so listening and speaking are static).
     private var markState: LeaMarkView.Phase {
@@ -275,12 +282,6 @@ struct ConversationPanel: View {
         convo.typed(words)
     }
 
-    private func showTapHint() {
-        // A tap is not a question (the owner, 2026-10-25: press and hold to talk; the tap-for-hands-free mode
-        // misfired): say how. "Hey Lea" still works hands-free.
-        withAnimation(Motion.fade) { tapHint = true }
-        Task { try? await Task.sleep(for: .seconds(1.6)); withAnimation(Motion.fade) { tapHint = false } }
-    }
 
     // MARK: Talk sheet skin
 
@@ -298,17 +299,17 @@ struct ConversationPanel: View {
             if typing { typeField.padding(.horizontal, Spacing.gutter) }
             VStack(spacing: Spacing.xs) {
                 ZStack {
-                    LeaMarkView(state: markState, size: 88)
-                        .scaleEffect(pressedAt != nil && !reduceMotion ? 0.94 : 1)
-                        .animation(Motion.press, value: pressedAt != nil)
-                        .frame(width: 104, height: 104)
-                        .contentShape(Circle())
-                        .holdOrTapToTalk(convo, pressedAt: $pressedAt, tap: showTapHint)
-                        .sensoryFeedback(.impact(weight: .light), trigger: pressedAt != nil) { _, new in new }   // on press only
-                        .accessibilityLabel("Talk to Lea")
-                        .accessibilityValue(stateWords)
-                        .accessibilityHint("Press and hold, ask, then let go")
-                        .accessibilityAddTraits(.isButton)
+                    Button { convo.tapTalk() } label: {
+                        LeaMarkView(state: markState, size: 88)
+                            .overlay(alignment: .bottomTrailing) { if convo.recording { StopBadge(size: 30) } }
+                            .frame(width: 104, height: 104)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(TalkButtonStyle())
+                    .sensoryFeedback(.impact(weight: .light), trigger: convo.recording)
+                    .accessibilityLabel(convo.recording ? "Stop listening" : "Talk to Lea")
+                    .accessibilityValue(stateWords)
+                    .accessibilityHint(convo.recording ? "Sends what you said to Lea" : "Tap and ask, then tap again to send")
                     HStack {
                         Spacer()
                         Button { typing.toggle(); typeFocused = typing } label: { Image(systemName: typing ? "keyboard.chevron.compact.down" : "keyboard") }
@@ -320,7 +321,7 @@ struct ConversationPanel: View {
                 Text(stateWords).font(.headline).foregroundStyle(Palette.ink)
                     .contentTransition(.opacity)
                     .accessibilityHidden(true)
-                Text("Hold to talk. Lea answers when you let go.")
+                Text(convo.recording ? "Tap again when you're done." : "Tap to talk. Tap again to send.")
                     .font(.subheadline).foregroundStyle(Palette.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, Spacing.gutter)
@@ -330,12 +331,11 @@ struct ConversationPanel: View {
     }
 
     private var stateWords: String {
-        if tapHint { return "Hold to talk" }
-        if listening { return "Listening…" }
+        if convo.recording || listening { return "Listening…" }
         switch convo.phase {
         case .thinking: return "Thinking…"
         case .speaking: return "Speaking"
-        default: return "Hold to talk"
+        default: return "Talk to Lea"
         }
     }
 
@@ -344,8 +344,8 @@ struct ConversationPanel: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.m) {
-                    ForEach(convo.turns.suffix(compact ? 4 : 30)) { t in
-                        CaptionLine(speaker: t.mine ? .you : .lea, text: t.text).id(t.id)
+                    ForEach(convo.turns.suffix(compact ? 4 : 30).filter { convo.shownText($0).trimmedOrNil != nil }) { t in
+                        CaptionLine(speaker: t.mine ? .you : .lea, text: convo.shownText(t)).id(t.id)
                         if !t.photos.isEmpty {
                             SpotPhotos(shas: t.photos) { i in zoomed = SpotZoom(shas: t.photos, index: i) }
                                 .id("photos:\(t.id)")
@@ -366,6 +366,8 @@ struct ConversationPanel: View {
             .scrollBounceBehavior(.basedOnSize)
             .defaultScrollAnchor(.bottom)
             .onChange(of: convo.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
+            .onChange(of: convo.heardSentence) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
+            .onChange(of: isFailed) { _, failed in if failed { withAnimation(Motion.fade) { proxy.scrollTo("failed", anchor: .bottom) } } }
             .onChange(of: convo.turns.last?.photos) { _, photos in
                 guard let last = convo.turns.last, !(photos ?? []).isEmpty else { return }
                 withAnimation(Motion.fade) { proxy.scrollTo("photos:\(last.id)", anchor: .bottom) }
@@ -426,29 +428,34 @@ struct ConversationPanel: View {
         }
     }
 
-    /// Hold to ask: the mark and the words in a quiet glass capsule (the same gesture as the sheet's mark).
+    /// Tap to talk: the mark and the words in a quiet glass capsule (the same toggle as the sheet's mark); while it
+    /// listens, a stop icon and the accent edge.
     private var askCapsule: some View {
-        HStack(spacing: Spacing.s) {
-            LeaMarkView(state: markState, size: 24).accessibilityHidden(true)
-            Text(tapHint ? "Hold to talk" : (listening ? "Listening… let go to ask" : "Hold to ask Lea"))
-                .contentTransition(.opacity)
+        Button { convo.tapTalk() } label: {
+            HStack(spacing: Spacing.s) {
+                if convo.recording {
+                    Image(systemName: "stop.circle.fill").font(.title3).foregroundStyle(Palette.accent)
+                        .accessibilityHidden(true)
+                } else {
+                    LeaMarkView(state: markState, size: 24).accessibilityHidden(true)
+                }
+                Text(convo.recording ? "Listening… tap to send" : "Talk to Lea")
+                    .contentTransition(.opacity)
+            }
+            .font(.buttonLabel)
+            .foregroundStyle(Palette.ink)
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .padding(.horizontal, Spacing.l)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background { Color.clear.glass(.card, in: Capsule()) }
+            .overlay(Capsule().strokeBorder(Palette.accent, lineWidth: Line.drawing).opacity(convo.recording ? 1 : 0))
+            .contentShape(Capsule())
         }
-        .font(.buttonLabel)
-        .foregroundStyle(Palette.ink)
-        .lineLimit(1)
-        .minimumScaleFactor(0.75)
-        .padding(.horizontal, Spacing.l)
-        .frame(maxWidth: .infinity, minHeight: 56)
-        .background { Color.clear.glass(.card, in: Capsule()) }
-        .overlay(Capsule().strokeBorder(Palette.accent, lineWidth: Line.drawing).opacity(listening ? 1 : 0))
-        .scaleEffect(pressedAt != nil && !reduceMotion ? 0.97 : 1)
-        .animation(Motion.press, value: pressedAt != nil)
-        .contentShape(Capsule())
-        .holdOrTapToTalk(convo, pressedAt: $pressedAt, tap: showTapHint)
-        .sensoryFeedback(.impact(weight: .light), trigger: pressedAt != nil) { _, new in new }   // on press only
-        .accessibilityLabel("Hold to ask Lea")
-        .accessibilityHint("Press and hold, ask about this scan, then let go")
-        .accessibilityAddTraits(.isButton)
+        .buttonStyle(TalkButtonStyle())
+        .sensoryFeedback(.impact(weight: .light), trigger: convo.recording)
+        .accessibilityLabel(convo.recording ? "Stop listening" : "Talk to Lea")
+        .accessibilityHint(convo.recording ? "Sends what you said to Lea" : "Tap and ask about this scan, then tap again to send")
     }
 }
 
@@ -461,19 +468,24 @@ struct LeaTranscriptSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: Spacing.m) {
-                    ForEach(feed.turns) { t in
-                        CaptionLine(speaker: t.mine ? .you : .lea, text: t.text)
-                        if !t.photos.isEmpty {
-                            SpotPhotos(shas: t.photos) { i in zoomed = SpotZoom(shas: t.photos, index: i) }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Spacing.m) {
+                        ForEach(feed.turns) { t in
+                            CaptionLine(speaker: t.mine ? .you : .lea, text: t.text).id(t.id)
+                            if !t.photos.isEmpty {
+                                SpotPhotos(shas: t.photos) { i in zoomed = SpotZoom(shas: t.photos, index: i) }
+                            }
                         }
+                        Color.clear.frame(height: 1).id("end")
                     }
+                    .padding(Spacing.gutter)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(Spacing.gutter)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .defaultScrollAnchor(.bottom)
+                // New words while the transcript is open: it follows the latest line.
+                .onChange(of: feed.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo("end", anchor: .bottom) } }
             }
-            .defaultScrollAnchor(.bottom)
             .background(Palette.canvas.ignoresSafeArea())
             .navigationTitle("Lea").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) } }
@@ -508,9 +520,11 @@ struct WakeIndicator: View {
 /// works out what the object is (what the person says, plus an optional photo of the label), says what public sources
 /// report about it, and the scan then starts in the same session (Voice/PreScan), so the conversation carries on at
 /// the report. DESIGN §7.7: the brief as a card, the label photo as a quiet button that becomes a status line, Start
-/// scan in violet, captions inline, Lea's mark at the bottom.
+/// scan in blue, captions inline, Lea's mark at the bottom.
 struct HomeConversationSheet: View {
     let gateway: GatewayClient
+    /// Opened by the Talk button: Lea is listening at once (the talk button's recording; a tap on her mark sends).
+    var listenOnOpen = false
     let startScan: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var pre = PreScan.shared
@@ -537,7 +551,7 @@ struct HomeConversationSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Spacing.gutter)
                 ConversationPanel(scanID: pre.scanID, gateway: gateway, diag: WakeListener.diag,
-                                  sessionID: { PreScan.shared.sessionID }, afterTurn: lookingUp) { kind in
+                                  sessionID: { PreScan.shared.sessionID }, afterTurn: lookingUp, listenOnOpen: listenOnOpen) { kind in
                     if kind == "start_scan" { begin() }
                 }
                 .id(pre.scanID)
@@ -556,7 +570,7 @@ struct HomeConversationSheet: View {
             .task {
                 await pre.begin(gateway: gateway)
                 // Opened by "Hey Siri, hey lea": Lea speaks first, then listens (hands-free).
-                if IntentInbox.shared.takeGreeting() { LeaConversation.active?.leaSays("Hey, what's up?") }
+                if IntentInbox.shared.takeGreeting() { LeaConversation.active?.leaSays("Hey, what's up?", listenAfter: true) }
             }
             // What the backend works out is said once, in Lea's voice, and shown in the conversation.
             .onChange(of: pre.live?.identity?.words) { _, words in
@@ -624,16 +638,13 @@ struct HomeConversationSheet: View {
 
 // MARK: - Talking with Lea while scanning
 
-/// Lea over the camera while scanning: the same conversation as this scan's report (it carries on there), one line
-/// of captions, an ear that turns continuous hands-free on and off, and the mic (hold to ask, tap to talk
-/// hands-free). Swipe up on it to start talking hands-free. Each turn tells Lea what the scan screen shows now
-/// (`live`), so she can coach while you scan. Small, so the camera stays clear.
+/// Lea over the camera while scanning: the same conversation as this scan's report (it carries on there), up to two
+/// lines of captions (the sentence she is saying), an ear that turns continuous hands-free on and off, and the talk
+/// button (tap to talk, tap again to send; a stop icon while it listens). Each turn tells Lea what the scan screen
+/// shows now (`live`), so she can coach while you scan. Small, so the camera stays clear.
 struct ScanTalkBar: View {
     @State private var convo: LeaConversation
     @State private var wake = WakeListener.shared
-    @State private var pressedAt: Date?
-    /// A tap instead of a hold: the caption says how to talk for a moment.
-    @State private var tapHint = false
 
     init(scanID: String, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String?,
          live: @escaping () -> [String: String], eyes: LeaEyes? = nil) {
@@ -660,18 +671,24 @@ struct ScanTalkBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentTransition(.opacity)
                 .animation(Motion.caption, value: caption)
-            // Lea's mark is the hold-to-talk target over the camera (her state, never fake movement).
-            LeaMarkView(state: markState, size: 24, tint: Palette.next)
-                .padding(10)
-                .background(Circle().fill(pressedAt != nil ? Palette.next.opacity(0.22) : .clear))
-                .contentShape(Circle())
-                .holdOrTapToTalk(convo, pressedAt: $pressedAt) {   // a tap says how; the switch turns hands-free on
-                    withAnimation(Motion.fade) { tapHint = true }
-                    Task { try? await Task.sleep(for: .seconds(1.6)); withAnimation(Motion.fade) { tapHint = false } }
+            // Lea's mark is the talk button over the camera (her state, never fake movement); a stop icon while it listens.
+            Button { convo.tapTalk() } label: {
+                Group {
+                    if convo.recording {
+                        Image(systemName: "stop.fill").font(.system(size: 13, weight: .bold)).foregroundStyle(Palette.cameraGlyph)
+                            .frame(width: 24, height: 24)
+                            .background(Circle().fill(Palette.next))
+                    } else {
+                        LeaMarkView(state: markState, size: 24, tint: Palette.next)
+                    }
                 }
-                .accessibilityLabel("Talk to Lea")
-                .accessibilityHint("Press and hold, ask, then let go")
-                .accessibilityAddTraits(.isButton)
+                .padding(10)
+                .contentShape(Circle())
+            }
+            .buttonStyle(TalkButtonStyle())
+            .sensoryFeedback(.impact(weight: .light), trigger: convo.recording)
+            .accessibilityLabel(convo.recording ? "Stop listening" : "Talk to Lea")
+            .accessibilityHint(convo.recording ? "Sends what you said to Lea" : "Tap and ask, then tap again to send")
         }
         .padding(.leading, Spacing.xs)
         .padding(.trailing, Spacing.xxs)
@@ -679,7 +696,6 @@ struct ScanTalkBar: View {
         .background { SmokeFill(shape: Capsule()) }
         .dynamicTypeSize(...DynamicTypeSize.accessibility1)
         .contentShape(Capsule())
-        .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkHandsFree() } })
         .environment(\.colorScheme, .dark)
         .onAppear {
             convo.appeared()
@@ -688,11 +704,11 @@ struct ScanTalkBar: View {
         .task { await convo.loadHistory() }
         .onDisappear {
             convo.disappeared()
-            if convo.visible == 0 { convo.stopLea() }
+            if convo.visible == 0 { convo.cancelRecording(); convo.stopLea() }
         }
     }
 
-    private var listening: Bool { convo.phase == .listening || wake.mode == .followUp }
+    private var listening: Bool { convo.recording || convo.phase == .listening || wake.mode == .followUp }
     private var isFailed: Bool { if case .failed = convo.phase { true } else { false } }
 
     private var markState: LeaMarkView.Phase {
@@ -705,39 +721,44 @@ struct ScanTalkBar: View {
     }
 
     private var caption: String {
-        if tapHint { return "Hold to talk" }
         if case .failed(let m) = convo.phase { return m }
         if !convo.liveCaption.isEmpty { return convo.liveCaption }
+        if convo.recording { return "Listening… tap the mic again to send." }
         if convo.phase == .thinking { return "Thinking…" }
-        if let last = convo.turns.last(where: { !$0.mine }), convo.phase == .speaking || !listening { return last.text }
-        return listening ? "Lea is listening. Ask anything while you scan." : "Swipe up and talk, or hold the mic."
-    }
-
-    /// Swipe up or tap: Lea listens hands-free and keeps listening after each answer.
-    private func talkHandsFree() {
-        convo.handsFree = true
-        wake.continuous = true
-        wake.listenForFollowUp()
+        // The sentence she is saying (the whole answer clipped to two lines only ever showed its beginning).
+        if convo.phase == .speaking || !listening,
+           let sentence = LeaCaptionFeed.exchange(turns: convo.turns, live: "", heard: convo.heardSentence,
+                                                   speaking: convo.speakingTurnID).sentence {
+            return sentence
+        }
+        return listening ? "Lea is listening. Ask anything while you scan." : "Tap the mic to talk to Lea."
     }
 }
 
-// MARK: - Hold to ask, tap for hands-free
+// MARK: - The talk button
 
-extension View {
-    /// The talk button's gesture (the conversation panel and the scan bar): pressing stops Lea at once (barge-in) and
-    /// records; letting go after a hold sends the question; a tap (under 0.35 s) drops the recording and runs `tap`.
-    func holdOrTapToTalk(_ convo: LeaConversation, pressedAt: Binding<Date?>, tap: @escaping () -> Void) -> some View {
-        gesture(DragGesture(minimumDistance: 0)
-            .onChanged { _ in
-                guard pressedAt.wrappedValue == nil else { return }
-                pressedAt.wrappedValue = Date()
-                convo.pressToTalk()
-            }
-            .onEnded { _ in
-                let held = pressedAt.wrappedValue.map { Date().timeIntervalSince($0) } ?? 0
-                pressedAt.wrappedValue = nil
-                if held < 0.35 { convo.cancelHold(); tap() } else { convo.releaseToTalk() }
-            })
+/// The talk button's press feedback (a small scale and fade; nothing under Reduce Motion but the fade).
+struct TalkButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.95 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(Motion.press, value: configuration.isPressed)
+    }
+}
+
+/// The stop badge on Lea's mark while the talk button listens: tap again to send.
+struct StopBadge: View {
+    var size: CGFloat = 28
+    var body: some View {
+        Image(systemName: "stop.fill")
+            .font(.system(size: size * 0.42, weight: .bold))
+            .foregroundStyle(Palette.onAccent)
+            .frame(width: size, height: size)
+            .background(Circle().fill(Palette.accent))
+            .overlay(Circle().strokeBorder(Palette.canvas, lineWidth: 2))
+            .accessibilityHidden(true)
     }
 }
 

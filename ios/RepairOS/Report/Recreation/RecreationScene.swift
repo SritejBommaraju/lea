@@ -371,7 +371,7 @@ final class RecreationStage {
         }
     }
 
-    /// The surface highlight: the part itself lights up (a soft violet rim and a gentle lift, falling off), its radius
+    /// The surface highlight: the part itself lights up (a soft sky-blue rim and a gentle lift, falling off), its radius
     /// growing in over 0.35 s; the previous one fades out (one active, one fading). nil clears it (fades).
     func light(_ center: SIMD3<Float>?, radius: Float = 0, animated: Bool) {
         let materials = Self.materials(of: modelNode)
@@ -443,7 +443,7 @@ final class RecreationStage {
                                    primitiveCount: 1, bytesPerIndex: 2)
         let g = SCNGeometry(sources: [src], elements: [e])
         let m = SCNMaterial()
-        m.diffuse.contents = CGColor(srgbRed: 0xF4 / 255, green: 0xF2 / 255, blue: 0xEC / 255, alpha: 1)
+        m.diffuse.contents = FixedHex.cgColor(FixedHex.chalk)
         m.lightingModel = .constant
         m.readsFromDepthBuffer = false
         m.writesToDepthBuffer = false
@@ -457,13 +457,13 @@ final class RecreationStage {
         return min(max(r, focusRadius * 0.06, 0.006), focusRadius * 0.45, 0.06)
     }
 
-    /// A billboard circle round the problem area: the marker's colour over a keyline (dashed only for a spot the person
-    /// circled and no scan has checked yet: unknown), a little larger while it is the selected one. A tap on it selects its marker (`markerID`).
+    /// A billboard circle round the problem area: the marker's colour over a keyline (always solid), a little larger
+    /// while it is the selected one. A tap on it selects its marker (`markerID`).
     private func ringNode(_ m: RecreationMarker, radius r: Float, on: Bool, normal: SIMD3<Float>?) -> SCNNode {
         let side = CGFloat(r) * 2 * 1.3
         let plane = SCNPlane(width: side, height: side)
         let mat = SCNMaterial()
-        mat.diffuse.contents = Self.ring(rgb: m.rgb, dashed: m.id.hasPrefix("target:"))
+        mat.diffuse.contents = Self.ring(rgb: m.rgb)
         mat.lightingModel = .constant
         mat.isDoubleSided = true
         mat.shaderModifiers = [.fragment: Self.drawOnModifier]
@@ -575,7 +575,7 @@ final class RecreationStage {
         let rim = SCNLight()
         rim.type = .directional
         rim.intensity = 230
-        rim.color = CGColor(srgbRed: 0.93, green: 0.91, blue: 1, alpha: 1)
+        rim.color = CGColor(srgbRed: 0.91, green: 0.95, blue: 1, alpha: 1)   // a cool studio rim, toward the sky accent
         let r = SCNNode()
         r.light = rim
         r.simdEulerAngles = SIMD3(-0.9, .pi, 0)
@@ -599,7 +599,7 @@ final class RecreationStage {
     #pragma transparent
     #pragma body
     float4 mp = scn_node.inverseModelViewTransform * float4(_surface.position, 1.0);
-    // Lea's highlight: the part lights up on the surface, a gentle lift inside and a soft violet rim, falling off.
+    // Lea's highlight: the part lights up on the surface, a gentle lift inside and a soft sky-blue rim, falling off.
     float d1 = distance(mp.xyz, hlCenter);
     float in1 = (1.0 - smoothstep(hlRadius * 0.6, hlRadius, d1)) * hlAmount * step(0.0001, hlRadius);
     float rim1 = smoothstep(hlRadius * 0.62, hlRadius * 0.9, d1) * (1.0 - smoothstep(hlRadius * 0.9, hlRadius * 1.12, d1)) * hlAmount * step(0.0001, hlRadius);
@@ -682,10 +682,10 @@ final class RecreationStage {
         return g
     }
 
-    /// The ring texture (Design/LeaStageStyle `StageMarkImages`): the tone over a keyline, dashed for a mark without a
-    /// number; the circle at 1/1.3 of the image. Drawn once per colour and style.
-    static func ring(rgb: SIMD3<Float>, dashed: Bool) -> CGImage? {
-        StageMarkImages.ring(rgb: rgb, dashed: dashed)
+    /// The ring texture (Design/LeaStageStyle `StageMarkImages`): the tone over a keyline, solid; the circle at 1/1.3 of
+    /// the image. Drawn once per colour.
+    static func ring(rgb: SIMD3<Float>) -> CGImage? {
+        StageMarkImages.ring(rgb: rgb)
     }
 
     /// The shared `Marker`: a dark disc outlined in the tone, the number in the display face (CoreText, so it draws the

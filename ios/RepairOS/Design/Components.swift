@@ -8,10 +8,11 @@ import UIKit
 
 // MARK: - Buttons
 
-/// The one big action on a screen: a 56 pt capsule. `.accent` (violet, onAccent label) on app screens, `.light`
-/// (chalk, ink label) over the live camera, `.quiet` (a glass capsule, ink label) for the secondary action beside it.
+/// The one big action on a screen: a 56 pt capsule. `.accent` (blue, onAccent label) on app screens, `.light`
+/// (chalk, ink label) over the live camera, `.quiet` (a glass capsule, ink label) for the secondary action beside it,
+/// `.danger` (danger fill) only for deleting.
 struct PrimaryButtonStyle: ButtonStyle {
-    enum Kind { case accent, light, quiet }
+    enum Kind { case accent, light, quiet, danger }
     var kind: Kind = .accent
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -35,8 +36,9 @@ struct PrimaryButtonStyle: ButtonStyle {
     private var foreground: Color {
         switch kind {
         case .accent: Palette.onAccent
-        case .light: Color(fixed: 0x211C32)
+        case .light: Color(fixed: FixedHex.inkLight)
         case .quiet: Palette.ink
+        case .danger: Palette.onDanger
         }
     }
 
@@ -45,6 +47,7 @@ struct PrimaryButtonStyle: ButtonStyle {
         case .accent: Capsule().fill(Palette.accent)
         case .light: Capsule().fill(Palette.chalk).overlay(Capsule().strokeBorder(Palette.keyline, lineWidth: Line.hairline))
         case .quiet: Color.clear.glass(.card, in: Capsule())
+        case .danger: Capsule().fill(Palette.danger)
         }
     }
 }
@@ -110,7 +113,7 @@ extension ButtonStyle where Self == TextActionStyle {
 // MARK: - Glass
 
 /// The shared frosted treatment (DESIGN §3): `glassFill` with the `glassEdge`, a 1 pt inner top highlight (white at
-/// 22%) and a soft violet shadow. `.bar` adds the backdrop blur and is for the one floating bar per screen; `.card` is
+/// 22%) and a soft navy shadow. `.bar` adds the backdrop blur and is for the one floating bar per screen; `.card` is
 /// the same look without a backdrop (cards, quiet capsules, round buttons on the canvas). Reduce Transparency:
 /// opaque `surface` with a hairline, no blur, no shadow.
 enum GlassKind: Sendable { case bar, card }
@@ -132,7 +135,7 @@ private struct GlassModifier<S: InsettableShape>: ViewModifier {
                 .overlay(shape.strokeBorder(Palette.glassEdge, lineWidth: Line.hairline))
                 .overlay(shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.22), .clear], startPoint: .top,
                                                            endPoint: UnitPoint(x: 0.5, y: 0.12)), lineWidth: 1))
-                .shadow(color: Color(red: 0.12, green: 0.07, blue: 0.24).opacity(0.07), radius: 18, y: 6)
+                .shadow(color: Palette.glassShadow.opacity(0.07), radius: 18, y: 6)
             }
         }
     }
@@ -440,7 +443,7 @@ struct Marker: View {
             .lineLimit(1)
             .minimumScaleFactor(0.6)
             .frame(width: size, height: size)
-            .background(Circle().fill(onStage ? Color(fixed: 0x211D30) : Palette.surface))
+            .background(Circle().fill(onStage ? Palette.stageRaised : Palette.surface))
             .overlay(Circle().strokeBorder(colour, lineWidth: Line.drawing))
             .accessibilityLabel("\(number)")
     }
@@ -464,7 +467,7 @@ struct Marker: View {
 
 // MARK: - Lea's mark
 
-/// Lea's mark: a ring with 12 ticks inside the rim and a centre point (the astrolabe), always in the violet accent.
+/// Lea's mark: a ring with 12 ticks inside the rim and a centre point (the astrolabe), always in the blue accent.
 /// The ticks are her voice level: yours while she listens, hers while she speaks; while she thinks, three lit ticks
 /// walk round (only while a real request runs). Idle ticks are at 30%. Without a real level, listening and speaking
 /// show a static waveform state (never fake movement); Reduce Motion shows static glyphs. Pair it with words.
