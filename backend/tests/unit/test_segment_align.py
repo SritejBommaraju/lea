@@ -677,3 +677,22 @@ def test_without_depth_frames_a_small_overlap_is_never_enough():
     (ref, _, p0), (mov, _, p1) = seg["ref"], seg["mov"]
     res = align_clouds(ref, mov, voxel_m=0.003, ref_plane_y=p0, mov_plane_y=p1, expect_flip=True)
     assert not res.aligned or res.fitness >= 0.30
+
+
+def test_mixed_pixels_at_the_silhouette_are_dropped_for_the_mesh():
+    """For the mesh, medium-confidence depth within a couple of pixels of the object's silhouette is dropped (its depth
+    blends the object and the table behind it: an orange skirt round the rim); high confidence and the rest stay."""
+    from repairos.recon.segment_align import segment_object_depths
+    from repairos.recon.tsdf import ObjectBox
+
+    box = ObjectBox.from_contract(BIG_BOX)
+    frames = []
+    for f in _frames(np.eye(4)):
+        _, side = _faces(f)
+        frames.append(DepthFrame(f.name, f.pose, f.depth_cam, f.depth_m, np.where(side, 1, 2).astype(np.uint8)))
+    plain, _ = segment_object_depths(frames, box, 0.0)
+    edged, _ = segment_object_depths(frames, box, 0.0, edge_px=2)
+    for f, a, b in zip(frames, plain, edged, strict=True):
+        assert np.all(b[f.confidence == 2] == a[f.confidence == 2])          # high confidence untouched
+        assert (b > 0).sum() < (a > 0).sum()                                  # some rim pixels gone
+        assert ((b > 0) & (f.confidence == 1)).sum() > 0.3 * ((a > 0) & (f.confidence == 1)).sum()   # sides stay

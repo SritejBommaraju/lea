@@ -305,10 +305,12 @@ def segment_object_cloud(frames: Sequence[Any], box: Any, plane_y: float | None,
 
 
 def segment_object_depths(frames: Sequence[Any], box: Any, plane_y: float | None, *,
-                          min_confidence: int = SURFACE_MIN_CONFIDENCE) -> tuple[list[np.ndarray], Support]:
+                          min_confidence: int = SURFACE_MIN_CONFIDENCE, edge_px: int = 0
+                          ) -> tuple[list[np.ndarray], Support]:
     """Per frame, the depth kept for the object: `min_confidence` or better, in the box, above that frame's own
-    table (fitted near `plane_y`; cut at the table's noise below its plane, mirrored). Returns the depths and the
-    measured table."""
+    table (fitted near `plane_y`; cut at the table's noise below its plane, mirrored). `edge_px`: below-high-confidence
+    pixels within this many pixels of a dropped one are dropped too (mixed pixels at the object's silhouette, where
+    a pixel's depth blends the object and the table behind it). Returns the depths and the measured table."""
     from repairos.locate.camera import backproject
 
     rng = np.random.default_rng(0)
@@ -338,6 +340,9 @@ def segment_object_depths(frames: Sequence[Any], box: Any, plane_y: float | None
                 cuts.append(cut)
             else:
                 keep &= pts[..., 1] > plane_y + SUPPORT_MIN_MARGIN_M
+        if edge_px and conf is not None:
+            near_dropped = _window_min(keep.astype(np.int8), edge_px) == 0
+            keep &= ~(near_dropped & (conf < FREE_SPACE_MIN_CONFIDENCE))
         depths.append(np.where(keep, f.depth_m, 0.0))
     if heights:
         hs = np.asarray(heights)

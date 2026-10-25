@@ -439,7 +439,7 @@ final class ScanSession: NSObject {
                 plane = prev.supportPlane ?? plane
                 cropBox = prev.cropBox ?? cropBox
                 flip?.stop()
-                segments.append(Segment_(aligned: flip.map { $0.aligned } ?? (aligned ? nil : false), cropBox: box?.contract,
+                segments.append(Segment_(aligned: flip.map { $0.aligned } ?? (aligned ? nil : false), cropBox: box?.contract, flipAlign: flip?.flipAlign,
                                          objectMoved: flip == nil ? nil : true, pointCount: ownCloud ? count : nil,
                                          pointsFile: ownCloud ? pointsFile : nil, poseSource: nil, reason: flip == nil ? .continued : .flipped,
                                          segment: segment, transformQuality: flip?.transformQuality, transformToSegment0: flip?.transformRowMajor))
@@ -799,7 +799,8 @@ final class ScanSession: NSObject {
     nonisolated static let enoughCue = "That's enough: tap Done"
     /// Cues that only say "carry on": they carry the progress number instead.
     nonisolated static let steadyCues: Set<String> = ["Keep walking around it", "Keep turning it slowly", "Keep going around the bottom",
-                                                      FlipSegmentController.sidesCue]
+                                                      FlipSegmentController.sidesCue, FlipSegmentController.lowerCue,
+                                                      FlipSegmentController.flatCue]
 
     /// "74% — keep going" (the progress number, then the steady cue or the way to the next needed view).
     nonisolated static func progressCue(_ percent: Int, _ then: String) -> String {
@@ -812,7 +813,8 @@ final class ScanSession: NSObject {
         guard box != nil else { return }
         let sectors = Set(keyframeCells.map { $0 % CoverageDome.sectors }).count
         let elapsed = lockedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let p = flip.map { ScanProgress.flip(dome: dome, keyframeSectors: sectors, linedUp: $0.aligned, elapsed: elapsed) }
+        let p = flip.map { ScanProgress.flip(dome: dome, keyframeSectors: sectors, linedUp: $0.aligned, elapsed: elapsed,
+                                             keyframes: keptKeyframePoses.count) }
             ?? ScanProgress.main(dome: dome, keyframeSectors: sectors)
         if p != scanProgress { scanProgress = p }
         if p.enough, !enough { reachedEnough() }
