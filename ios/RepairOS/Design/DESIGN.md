@@ -1,6 +1,6 @@
 # LEA design: the inspector's codex
 
-Draft 3, 2026-10-24, after review 3 (§13). The direction for the iOS app, drawn from the moodboard and written so the
+Draft 3.1, 2026-10-25, after review 4: an impeccable critique and polish (§13). The direction for the iOS app, drawn from the moodboard and written so the
 Figma prototypes and the next `Theme.swift` change can be built from it without guessing. Reference numbers (No. 01-30)
 point at the [moodboard](https://claude.ai/artifact/NeND4dq9nJpS9FyS1QkpzL) (private until shared). Product truth:
 [PRODUCT.md](PRODUCT.md). Tokens in code: [Theme.swift](Theme.swift); capture wiring: [INTEGRATION.md](INTEGRATION.md).
@@ -93,6 +93,7 @@ the neutral tone always comes with its dashed form.
 | `keyline` | `#0E1214` at 80 % | A stroke 2 pt wider under each chalk line (1 pt each side), so it reads on bright and dark scenes without a shadow (10.2 : 1 on white) |
 | `smoke` | `#0E1214` at 72 % | Solid fill behind the cue, pills, dial disc and round buttons |
 | `next` | `#8FD3C7` verdigris | The next dome cell and the locked brackets. Lea's colour, so it is the same green as on the app screens |
+| `stage` | `#111417` ebony | The report stage behind the 3D scan, flat, in both modes. Replaces `stageCenter` / `stageEdge` (no radial gradient) |
 
 Measured over a white scene, the worst case: chalk text on smoke 6.8 : 1, empty dial cells at 55 % chalk 3.3 : 1.
 
@@ -140,6 +141,7 @@ Token mapping (every custom face scales with `Font.custom(_:size:relativeTo:)`):
 | `metric` | SF Rounded semibold title2 | SF Pro semibold `.title2`, `monospacedDigit()` |
 | `wordmark` | SF Rounded bold 30, fixed | Alegreya Sans ExtraBold 34, fixed, tracking -1 %, always lowercase `lea` |
 | `label` (new) | | SF Pro semibold `.footnote`, sentence case |
+| `number` (new) | | Alegreya Sans Bold 15, relative to `.subheadline`: problem numbers and step numbers |
 | `judgement` (new) | | SF Pro `.subheadline` in `secondary`: confidence and likelihood words |
 
 - Body text stays SF Pro at the system text styles, so Dynamic Type, Bold Text and accessibility sizes behave as
@@ -161,7 +163,10 @@ Token mapping (every custom face scales with `Font.custom(_:size:relativeTo:)`):
 | Card edge | 0.5 pt hairline | 0.5 pt hairline; dark mode uses brass |
 | Inside a card | grey wells | 0.5 pt ruled rows between fields (No. 20) |
 | Tags | tone text on a tinted capsule | 0.5 pt tone outline, tone icon, tone word, no tint (No. 24) |
-| Problem numbers | a filled disc | a 26 pt disc outlined in the severity tone, the number in Alegreya Sans, matching the marker on the 3D scan |
+| Problem numbers | a filled disc | one `Marker`: a 26 pt disc on `surface`, outlined 1.5 pt in the severity tone, the number in `number`. The same mark on the card, the 3D stage and the photo leader |
+| Headings | | Two levels only: `sectionTitle` for a section, `cardTitle` for an item in it. No label above a heading |
+| Boxes | | Only the safety card, the problem specimen labels and grouped lists (iOS inset rows) get a frame. Everything else is a section on the canvas |
+| Navigation | custom rows | 44 pt rows; Back, Done and Skip in the tint (verdigris), chalk over the stage |
 | Spacing | `Spacing` | Unchanged |
 
 Line weights: 0.5 pt rules; 1 pt construction lines and empty dome cells; 1.5 pt searching brackets, drawings and
@@ -203,13 +208,20 @@ What the Figma prototypes show. Each screen in light and dark; capture over a ca
   the report). The numbers are real: it is a sequence.
 - Each past scan is one row: crop thumbnail (48 pt, radius 6), object words in SF Pro semibold, date and photo count
   in `secondary`, and a verdict tag. Rows are separated by hairlines, not boxed one by one.
-- Bottom: the talk bar. "What happened? (optional)" with the mic, Start scan in verdigris, and Lea's mark as the
-  button that opens the conversation (7.7).
+- Bottom: the talk bar. "What happened? (optional)" with the dictation mic in `secondary`; then "Talk to Lea" (a quiet
+  capsule with her mark and her name, which opens the conversation, 7.7) beside Start scan in verdigris. Start scan is
+  the wider of the two.
+- Not paired yet: "Not connected · Set up" in ochre under the bar, as on `main`.
 
 ### 7.2 Consent, pairing, settings (No. 08, 29, 30)
 
-Alegreya Sans screen title, grouped rows on `surface`, section headers as labels. At most one drawing per screen (the
-construction circle on consent). Pairing code digits in `metric`. No new components.
+Alegreya Sans screen title, grouped rows on `surface`. At most one drawing per screen.
+
+- **Consent** says what `main` does, row for row: first, to the lea server; then analysed by Claude and Jev
+  (Anthropic and TypeSafe); location and photo details removed; only what you scan. "Agree and continue" in
+  verdigris; "Not now" is a text button, not a second capsule.
+- **Pairing**: "Connect to the lea server", the server address and the pairing code (digits in `metric`), Pair in
+  verdigris, Skip in the navigation row. The developer note is labelled "For developers".
 
 ### 7.3 Capture (No. 12-17)
 
@@ -227,50 +239,62 @@ construction circle on consent). Pairing code digits in `metric`. No new compone
 ### 7.4 Report progress (No. 02, 13, 29)
 
 The orb is a construction drawing: a hairline circle with an inscribed square (No. 29), the progress arc drawn on in
-ink over it. Failed turns the arc and glyph oxblood. Steps read like a notebook index: plain numbers, SF Pro titles,
-an ink check when done, a small ink spinner while active. On `main` the waiting state is the scan turning on the dark
+ink over it. Failed turns the arc and glyph oxblood. Steps read like a notebook index: numbers in a fixed 20 pt
+column, SF Pro titles, done steps in `secondary` with an ink check, the active step in ink with a small spinner. On `main` the waiting state is the scan turning on the dark
 stage; the Theme PR keeps that and draws the stage's ground as below (7.6).
 
 ### 7.5 Report (No. 04-06, 09, 18-23, 25)
 
-In this order:
+The object leads: the report opens on the stage, as on `main`, and the sheet rises over it.
 
-1. **Verdict.** The verdict in `heroTitle`, the reason in SF Pro, then one meta line: your own words in quotes, the
-   object, photos, date. No eyebrow above it and no rule under it. The verdict's tone is in the tags and icons, not in
-   the title.
+- **Stage** (400 pt, `stage`, the same in both modes): Back and the voice toggle in chalk, the scan in true colour on
+  a construction-circle ground, and a `Marker` on each problem. Tapping a marker scrolls to its card.
+- **Sheet** (canvas, 16 pt top corners, overlapping the stage by 16 pt), sections 32 pt apart, in this order:
+
+1. **Verdict.** The verdict in `heroTitle`, the reason in SF Pro (it says how many parts Lea couldn't check), then
+   one meta line: your own words in quotes, the object, the date. No eyebrow above it and no rule under it.
 2. **Safety card.** Oxblood hairline frame, 10 % oxblood wash, oxblood title with the triangle. No side bar.
 3. **What Lea said.** Her mark (speaking) and the plain-words summary she spoke when the report landed, unboxed.
-4. **Most likely problems.** The 3D view with numbered pins, then problem cards as specimen labels: the numbered
-   disc and the outlined severity tag; part name in `cardTitle`; issue in the tone colour; crop on the right (radius
-   6, hairline, true colour); ruled rows for where and evidence; confidence as a plain word at the right.
-5. **What you suspected.** Your words in quotes, then "What Lea found" with its badge (photos agree, not seen in the
-   photos, could not check) and the backend's note. Your guess only steered where she looked; it is never a finding.
-6. **Next step.** Ink hairline frame, a "Next step" label, title in `cardTitle`, instruction in SF Pro.
-7. **Fix it.** The part, offers as ruled rows (title, seller, price as the backend gives it) and the replacement
-   guide. Every word comes from the backend; nothing is invented.
-8. **Cosmetic.** One row per cosmetic finding.
-9. **What Lea couldn't check.** Not inspected and could-not-judge in one card: a one-sentence summary, the dashed
-   rows with their reasons, Continue scanning, and "Show all".
-10. **What photos can't tell.** No frame; a quiet title and the lines in `secondary`, like notes at the foot of a page.
-11. **Ask Lea.** The bar at the bottom: hold to ask about this scan. The answer is spoken and captioned.
+4. **Most likely problems.** The count is the number of cards shown. Problem cards are specimen labels: the
+   `Marker` and the outlined severity tag; part name in `cardTitle`; issue in the tone colour; crop on the right
+   (radius 6, hairline, true colour); ruled rows for where and evidence; confidence as a plain word at the right.
+5. **What you suspected.** Your words in quotes, then a ruled row: "What Lea found" with its badge (photos agree,
+   not seen in the photos, could not check) and the backend's note. Your guess only steered where she looked.
+6. **Next step.** Title in `cardTitle`, instruction in SF Pro, the reason in `secondary`, then the report's one
+   verdigris action: Continue scanning, aimed at the spot.
+7. **Fix it.** The part in `cardTitle`, then one grouped list: offers (title, seller, price as the backend gives it)
+   and the replacement guide. Every word comes from the backend; nothing is invented.
+8. **Cosmetic.** One grouped row per cosmetic finding.
+9. **What Lea couldn't check.** A one-sentence summary, then one grouped list of the dashed rows with their reasons
+   and "Show all".
+10. **What photos can't tell.** No frame; a quiet title and the lines at `.subheadline` in `secondary`.
+11. **Full report with photos.** A grouped link row.
+
+**Ask Lea** is pinned at the bottom in a canvas toolbar with a hairline: hold to ask about this scan. The answer is
+spoken and captioned.
 
 ### 7.6 Problem detail and 3D model (No. 02, 21, 22, 26)
 
-- Header in museum-label order: "Problem 1 of 3", part (`screenTitle`), issue in its tone, then where, confidence and
-  likelihood as words.
-- The photo crop carries a hairline leader line from the defect box to its number (No. 22). The box itself is a
-  1.5 pt tone-coloured corner set, the same shape as the lock brackets.
-- 3D model: the scan in its true colour (principle 5), set on a line-art stage: a hairline ground grid and a
-  construction circle under it, ink on gesso or brass on ebony (No. 02, 26). Problem pins are tone-coloured dots with
-  leader lines to their number. The dark stage from PR #13 keeps its layout but loses the radial gradient and the
-  violet: flat ebony, the construction-circle ground, verdigris for selection.
+- A sheet: the grabber, then a 44 pt row with previous and next problem and Done (verdigris).
+- Header in museum-label order: "Problem 1 of 3", part (`screenTitle`), issue in its tone, then where, confidence
+  ("Medium") and likelihood ("Likely") as words.
+- The photo crop carries a 1 pt leader line from the defect box to its `Marker` (No. 22). The box itself is a
+  1.5 pt tone-coloured corner set, the same shape as the lock brackets. The photo's caption is chalk on a smoke pill,
+  as over the camera, because it sits on real evidence.
+- 3D model: the scan in its true colour (principle 5) on the `stage`: a ground grid and a construction circle in
+  chalk at 35 %, in both modes (No. 02, 26). Each problem is a `Marker` on the scan where it was found. The dark
+  stage from PR #13 keeps its layout but loses the radial gradient and the violet: flat ebony, the
+  construction-circle ground, verdigris for selection.
 
 ### 7.7 Talk to Lea (new)
 
 The conversation before a scan (`HomeConversationSheet` on `main`). Title "Lea" and Done. One line: "Tell Lea what it
 is and what's wrong. She'll work out the exact product before you scan." The product brief as a card with ruled rows
-(what it looks like, known issue, sources). Two quiet buttons: the label photo and Start scan. Then the captions, both
-sides, Lea's name in verdigris. At the bottom, Lea's mark at 88 pt, listening, with one line of help.
+(what it looks like, known issue, sources). Before the label photo is sent, a quiet "Show me the label" button;
+after, a quiet line ("Label photo sent"), because a status is never a button. Start scan in verdigris. Then the
+captions, both sides in ink, the names telling them apart (Lea's in verdigris). When you mention heat, smoke or a
+smell, Lea's first words are the safety step ("If it gets hot, unplug it before you pick it up."). At the bottom, Lea's
+mark at 88 pt with her state in words ("Listening…", `.headline`) and one line of help.
 
 ## 8. Accessibility
 
@@ -301,8 +325,9 @@ tokens, `cautionText` and the report motion from PR #13.
 - `Radius`: §5. `Symbol`: outline variants.
 - `StatusPill` becomes an outlined tag (no tint). `LockBrackets` loses its rounded corners and round caps.
   `DomeDial` gets the rim tick for the next cell and 55 % empty cells.
-- New views: `LeaMark` (four states), the dashed badge for unknown, a keyline stroke helper for camera lines, the
-  draw-on modifier.
+- New views: `LeaMark` (four states), `Marker` (replaces `StageNumber`), the dashed badge for unknown, a keyline
+  stroke helper for camera lines, the draw-on modifier. `NextStepCard`, `UserLeadCard`, `FixItCard` and
+  `CouldNotCheckCard` become sections (§5 Boxes).
 - `DesignGallery.swift` previews updated so every token shows in light, dark and over a camera frame.
 
 ## 10. Open questions
@@ -313,6 +338,8 @@ tokens, `cautionText` and the report motion from PR #13.
 | Who draws the three or four line illustrations? | Design |
 | Who gets edit access to the Figma file | Design |
 | The report stage from PR #13 against 7.5 and 7.6: one pass in the Theme PR | App |
+| Failure screens: pairing failed, upload failed, report failed, Lea unreachable | Design |
+| Capture: an empty dial before lock-on, and Lea's mark over the camera while she talks | Design |
 | ~~Website: same codex direction, or its own?~~ The same direction: §11 | Decided 2026-10-24 |
 
 ## 11. Website
@@ -368,7 +395,11 @@ guess the look from the category alone ("repair app", "AI report"), rework it.
 - Purple-to-blue or any decorative gradient, glow blobs, blur used as decoration, floating 3D shapes,
   corporate-Memphis figures, stock illustration.
 - A cream or parchment ground with a serif display face and tracked mono labels.
-- Small uppercase tracked labels ("REPORT · 24 OCT 2026"); an eyebrow over a heading; a short accent rule under one.
+- Small uppercase tracked labels ("REPORT · 24 OCT 2026"); an eyebrow over a heading, in caps or in sentence case
+  ("Next step" above "Take a closer photo"); a short accent rule under a heading.
+- A status drawn as a button ("Label sent" as a capsule); the same capsule doing several jobs.
+- A box around every section; a heading voice per card. Two heading levels, and boxes only where §5 allows them.
+- Custom navigation rows with targets under 44 pt.
 - "No. 01" catalogue numbering, or leading zeros, where the numbers are not a sequence the reader uses.
 - Italic or script type for asides, confidence or anything the model judged.
 - Chat bubbles for Lea; she speaks in captions.
@@ -399,9 +430,18 @@ decoration won't fix it. Record what was removed in §13.
 
 **Two loops, then tighten.** At most two design iterations, then the work moves to code: contrast, spacing and copy.
 
+**Copy is product truth.** Every claim on a screen matches `main`: who gets the photos, what each control does,
+what the backend sends. A prototype that is prettier but untrue is worse than the old one (review 4, consent).
+
+**Critique, then polish.** Before a design goes to review, run impeccable's critique with its two assessments kept
+apart (a design review, and a deterministic pass: the detector where it can read the files, a lint of the Figma file
+where it cannot), then a polish pass on every P0 and P1. Record the score in §13.
+
 **Checks.**
 
 - Every text and background pair passes 4.5 : 1, in both modes (§3, §8). The proprietary guard passes.
+- **Figma:** no raw colours outside camera and evidence stand-ins; spacing on the scale; every text on a style;
+  targets ≥ 44 pt; light and dark frames identical in structure.
 - **iOS:** Xcode Accessibility Inspector on every screen, and SwiftLint.
 - **Web:** a contrast check, and a look at 390, 768 and 1440 px in both modes.
 
@@ -457,3 +497,23 @@ me off". The moodboard stays; its rendition changed.
    Ask Lea bar, those three cards, and screen 09.
 5. Azurite over the camera became verdigris (ΔE ≥ 34 from every cue colour), so Lea has one colour everywhere.
 6. Status tones re-measured: light worst pair 14.3 (was 13.3), dark 16.2 (was 19.3, still above today's 12.6).
+
+Review 4, 2026-10-25, an impeccable critique of every screen and component (design review and Figma lint run
+apart), then a polish pass. Score 27/40 before the polish (Acceptable).
+
+1. P0: Consent and Pairing contradicted `main` ("nothing goes to a cloud", "only to your Mac"). Both now say what the
+   app does: the lea server, then Claude and Jev; "Agree and continue"; the server address; Skip.
+2. P1: the report had no next action and opened on text. It now opens on the stage with markers, Next step carries
+   the verdigris Continue scanning, and Ask Lea is pinned.
+3. P1: six heading voices and surviving sentence-case eyebrows. Two heading levels; Next step, What you suspected,
+   Fix it and What Lea couldn't check became sections; boxes only for safety, problem labels and grouped lists.
+4. P1: Lea's entry was an unlabelled glyph; on 09 a status was a button and the state was 13 pt. "Talk to Lea" is
+   labelled; "Label photo sent" is a line; "Listening…" is a headline; Lea leads with "unplug it" when it gets hot.
+5. P2: numbers and counts disagreed. One `Marker` everywhere; counts match the cards; the Scans list escalates a
+   safety scan to "Safety problem".
+6. Lint fixes: the photo caption (2.5 : 1) moved to chalk on smoke; 23 off-scale spacings onto the scale; 44 pt
+   navigation with Back, Done and Skip in the tint; the 08 nav's empty 100 pt frame removed; 06's home indicator
+   added; step numbers in a fixed column; icon meanings untangled (trash, location, upload, possible problems);
+   the gear redrawn; draft-2 backdrops on the Components page made neutral.
+7. Not done: failure screens (pairing, upload, report), the empty dial before lock-on on 04, and Lea's mark over the
+   camera. They are §10 follow-ups.
