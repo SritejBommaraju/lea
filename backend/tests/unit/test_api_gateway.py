@@ -356,4 +356,4 @@ def test_gateway_imports_no_provider_package():
     src = (Path(__file__).resolve().parents[2] / "repairos" / "api").rglob("*.py")
     imports = [line for p in src for line in p.read_text(encoding="utf-8").splitlines()
                if line.lstrip().startswith(("import ", "from "))]
-    assert imports and not [i for i in imports if "slots.state_" in i or "slots.blob_" in i or "grain" in i.lower()]
+    assert imports and not [i for i in imports if "slots.state_" in i or "slots.blob_" in i]

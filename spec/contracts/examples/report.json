@@ -206,6 +206,5 @@
     "summary_writer": "<llm model id>",
     "jev": "<jev model version>",
     "locate": "not available"
-  },
-  "grain": "not called"
+  }
 }

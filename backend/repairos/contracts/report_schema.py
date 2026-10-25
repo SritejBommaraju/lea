@@ -85,7 +85,6 @@ class Kind(StrEnum):
     run_continuity_test = 'run_continuity_test'
     run_voltage_test = 'run_voltage_test'
     run_resistance_test = 'run_resistance_test'
-    run_grain_second_opinion = 'run_grain_second_opinion'
     report_insufficient_evidence = 'report_insufficient_evidence'
     report_finding = 'report_finding'
     ask_user = 'ask_user'
@@ -430,7 +429,7 @@ class UserLead(BaseModel):
     sources: list[Source] | None = Field(None, max_length=5)
 
 
-class Kind6(StrEnum):
+class Kind5(StrEnum):
     part = 'part'
     wire = 'wire'
     net = 'net'
@@ -444,7 +443,7 @@ class Subject(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    kind: Kind6
+    kind: Kind5
     ref: str = Field(..., min_length=1)
     pins: list[str] | None = None
 
@@ -584,7 +583,7 @@ class LikelihoodWord(StrEnum):
     very_likely = 'very_likely'
 
 
-class Verdict7(StrEnum):
+class Verdict5(StrEnum):
     suspect = 'suspect'
     confirmed = 'confirmed'
     cleared = 'cleared'
@@ -612,7 +611,7 @@ class Judgment(BaseModel):
     )
     rank: int = Field(..., ge=1)
     likelihood_word: LikelihoodWord
-    verdict: Verdict7
+    verdict: Verdict5
     explains_symptom: ExplainsSymptom | None = Field(
         None,
         description="Jev's judgment, in a word, of whether a problem with this subject would explain the reported symptom (code bands the noul: fusion.questions.band).",
@@ -829,7 +828,7 @@ class BottomNotPlacedItem(BaseModel):
 
 class Report(BaseModel):
     """
-    The Phase 1 inspection report for one scan (task B9), written by the pipeline (B10) and the report builder (B11). Code picks the verdict from a truth table; Claude writes `summary.text` from words only (S5). Every stored finding of the scan appears exactly once: in `findings` (a model judged its state), `not_inspected` (nobody looked at it, I3) or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No probability number appears anywhere: confidence is a word (I6). A vision finding is a suspect; only a meter reading proves or rules out (I1, I2). Phase 1 makes no Grain calls.
+    The Phase 1 inspection report for one scan (task B9), written by the pipeline (B10) and the report builder (B11). Code picks the verdict from a truth table; Claude writes `summary.text` from words only (S5). Every stored finding of the scan appears exactly once: in `findings` (a model judged its state), `not_inspected` (nobody looked at it, I3) or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No probability number appears anywhere: confidence is a word (I6). A vision finding is a suspect; only a meter reading proves or rules out (I1, I2).
     """
 
     model_config = ConfigDict(
@@ -891,9 +890,6 @@ class Report(BaseModel):
     models: Models = Field(
         ...,
         description='Provenance: which model (and version) did each step, or why a step did not run.',
-    )
-    grain: Literal['not called'] = Field(
-        ..., description='Phase 1 makes no Grain calls.'
     )
     object: Object | None = Field(
         None,

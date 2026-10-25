@@ -1,30 +1,15 @@
 #!/usr/bin/env python3
-"""Check the contracts in spec/contracts/ against our examples and, when present, the private Grain fixtures.
+"""Check the contracts in spec/contracts/ against our examples.
 
 Run:  python3 -I spec/contracts/check.py            (from the repo root or anywhere; Windows: python -I ...)
       python3 -I spec/contracts/check.py --fallback (force the built-in validator even if jsonschema is installed)
 
 What it does, in order:
 1. Every `*.schema.json` is draft 2020-12 and has at least one example `examples/<name>.json` (more may sit at
-   `examples/<name>.<label>.json`). Every example must validate. An example with no schema is a failure. An
-   example labelled `target` (`<name>.target.json`) shows the shape once Grain ships the targets, so it must also
-   meet every x-target-required / x-target-checks entry of its schema (keeps the ledger's targets coherent).
+   `examples/<name>.<label>.json`). Every example must validate. An example with no schema is a failure.
 2. Every `examples/invalid/*.json` is `{"schema": "<name>", "why": "...", "instance": {...}}`, or
    `{"schema", "why", "base": "<example file>", "patch": {...}}` (an RFC 7386 merge patch on a valid example: null
    deletes a key, arrays are replaced whole). It must FAIL validation.
-3. PRIVATE Grain material (Grain is proprietary; `private/` is gitignored, teammates get it from Sritej):
-   `private/grain/examples/` (more examples, plus `invalid/`) is checked exactly like steps 1-2, and every fixture in
-   `private/grain/observed/` (recorded Grain responses) is listed in its `MAP.json`: `{"body": <schema>, "request": <schema>, "request_must_fail": <schema>}` or
-   `{"skip": "<reason>"}`. Mapped bodies and requests must validate (a failure here is drift: Grain's real shape
-   no longer matches our contract). An unlisted fixture is a failure. When `private/grain/` is absent this prints
-   one line, "private Grain fixtures not present; skipped", and the public checks still decide the exit code.
-4. The GAP LEDGER: a schema may declare what Grain should send once a target (T1-T13, recorded privately) lands:
-       "x-target-required": [{"path": "readings[*].verdict", "target": "T2"}]
-       "x-target-checks":   [{"check": "range_verdict", "path": "readings[*]", "target": "T1"}]
-   Paths are dot-separated keys from the document root; `[*]` means every element of an array. A null or absent
-   parent means "nothing to check here". `x-target-required` asks that the last key be present; a check is a named
-   semantic test in CHECKS below. Each recorded fixture is measured; the ledger prints `gap` (Grain does not do it
-   yet) or `met` (Grain now does it) per target. Gaps never fail the run.
 
 Validator: the `jsonschema` package when it is installed (with `referencing` for cross-file $refs), else a small
 stdlib-only validator covering what these contracts use: type, properties, required, additionalProperties, items,
@@ -44,27 +29,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 EXAMPLES = HERE / "examples"
 INVALID = EXAMPLES / "invalid"
-PRIVATE = HERE.parent.parent / "private" / "grain"      # gitignored; from Sritej
-PRIVATE_EXAMPLES = PRIVATE / "examples"
-OBSERVED = PRIVATE / "observed"
-MAP_FILE = OBSERVED / "MAP.json"
 DRAFT = "https://json-schema.org/draft/2020-12/schema"
-
-TARGETS = {
-    "T1": "voltage judged against [min, max]",
-    "T2": "a verdict on every reading, joined to its finding",
-    "T3": "structured fix subjects and sources",
-    "T4": "RepairOS findings in /call",
-    "T5": "photos by reference, with metadata",
-    "T6": "long work detached",
-    "T7": "pin positions in the design frame; one pin naming",
-    "T8": "expected values everywhere the meter goes",
-    "T9": "scan frame and gravity",
-    "T10": "versioned, retry-safe",
-    "T11": "project copy and cache validation",
-    "T12": "diagnose holds on real phone scans",
-    "T13": "a removed part is never ok at phone noise",
-}
 
 
 def _read(path: Path):
@@ -269,92 +234,6 @@ def pick_validator(force_fallback: bool):
     return validate_fallback, "built-in subset validator" + ("" if force_fallback else " (jsonschema not installed)")
 
 
-# ----------------------------------------------------------------------------- gap ledger
-
-def select(doc, path: str):
-    """All (location, node) reached by a path like 'electrical.readings[*]'. '' is the root."""
-    toks = re.findall(r"\[\*\]|[^.\[\]]+", path)
-    found = [("$", doc)]
-    for t in toks:
-        nxt = []
-        for loc, node in found:
-            if t == "[*]":
-                if isinstance(node, list):
-                    nxt += [(f"{loc}[{i}]", x) for i, x in enumerate(node)]
-            elif isinstance(node, dict) and node.get(t) is not None:
-                nxt.append((f"{loc}.{t}", node[t]))
-        found = nxt
-    return found
-
-
-def required_at(doc, path: str):
-    """For 'a[*].b': one (location, present) per element of a."""
-    parent, _, key = path.rpartition(".")
-    if "[" in key:
-        raise SchemaError(f"x-target-required path must end in a key: {path}")
-    return [(f"{loc}.{key}", isinstance(node, dict) and key in node) for loc, node in select(doc, parent)]
-
-
-def _check_range_verdict(row):
-    """T1: a voltage inside [min - tol, max + tol] is ok, outside is off (tol = 0.25 V or 5 %, the larger)."""
-    exp = row.get("expected") if isinstance(row, dict) else None
-    if not (isinstance(row.get("volts"), (int, float)) and isinstance(exp, dict)
-            and isinstance(exp.get("min"), (int, float)) and isinstance(exp.get("max"), (int, float))):
-        return None
-    v, lo, hi = row["volts"], exp["min"], exp["max"]
-    tol = max(0.25, 0.05 * max(abs(lo), abs(hi)))
-    want = "ok" if lo - tol <= v <= hi + tol else "off"
-    got = row.get("verdict")
-    return got == want, f"{row.get('net')} {v} V in [{lo:.3g}, {hi:.3g}] should be {want!r}, Grain says {got!r}"
-
-
-def _check_power_nets_expected(doc):
-    """T8: every net marked power (other than ground, the meter's reference) has an expected voltage."""
-    exp = doc.get("expected_volts") or {}
-    return [(n["name"] in exp, f"power net {n['name']} has no expected_volts")
-            for n in doc.get("nets") or []
-            if isinstance(n, dict) and n.get("power") and str(n.get("name")).upper() not in ("GND", "0V", "VSS")]
-
-
-CHECKS = {
-    "range_verdict": lambda node: [r] if (r := _check_range_verdict(node)) else [],
-    "power_nets_expected": _check_power_nets_expected,
-}
-
-
-def ledger_for(schema: dict, doc) -> list[dict]:
-    """One row per declared target item: {target, what, total, missing, examples}."""
-    rows = []
-    for item in schema.get("x-target-required", []):
-        hits = required_at(doc, item["path"])
-        miss = [loc for loc, present in hits if not present]
-        rows.append({"target": item["target"], "what": item["path"], "verb": "has it", "total": len(hits), "missing": len(miss),
-                     "examples": miss[:2]})
-    for item in schema.get("x-target-checks", []):
-        fn = CHECKS.get(item["check"])
-        if fn is None:
-            raise SchemaError(f"unknown x-target-check {item['check']!r}")
-        results = []
-        for loc, node in select(doc, item["path"]):
-            results += [(loc, ok, msg) for ok, msg in fn(node)]
-        bad = [f"{loc}: {msg}" for loc, ok, msg in results if not ok]
-        rows.append({"target": item["target"], "what": f"{item['check']} @ {item['path'] or '$'}", "verb": "passes", "total": len(results),
-                     "missing": len(bad), "examples": bad[:3]})
-    return rows
-
-
-def collect_targets(node, out: set[str]) -> None:
-    if isinstance(node, dict):
-        t = node.get("x-target")
-        if isinstance(t, str):
-            out.add(t)
-        for v in node.values():
-            collect_targets(v, out)
-    elif isinstance(node, list):
-        for v in node:
-            collect_targets(v, out)
-
-
 def merge_patch(target, patch):
     """RFC 7386 JSON merge patch."""
     if not isinstance(patch, dict):
@@ -385,8 +264,7 @@ def main(argv: list[str]) -> int:
 
     print(f"validator: {engine}")
 
-    have_private = PRIVATE.is_dir()
-    example_roots = [(EXAMPLES, "")] + ([(PRIVATE_EXAMPLES, "private:")] if PRIVATE_EXAMPLES.is_dir() else [])
+    example_roots = [(EXAMPLES, "")]
 
     def check_example(ex: Path, schema: dict, tag: str) -> int:
         bad = 0
@@ -399,10 +277,6 @@ def main(argv: list[str]) -> int:
                 print(f"     {e}")
         else:
             print(f"ok   {label}")
-        if ex.name.endswith(".target.json"):
-            for r in (r for r in ledger_for(schema, _read(ex)) if r["missing"]):
-                bad += 1
-                print(f"FAIL {label}: target {r['target']} not met: {r['what']} {r['examples']}")
         return bad
 
     # 1. schemas and their examples (the public examples alone must cover every schema)
@@ -446,94 +320,7 @@ def main(argv: list[str]) -> int:
                 failures += 1
                 print(f"FAIL {tag}{neg.name}: {case['schema']} accepted it ({case.get('why', '')})")
 
-    # 3. recorded Grain responses (private)
-    ledger: dict[str, list[tuple[str, dict]]] = {}
-    if not (have_private and OBSERVED.is_dir()):
-        print("\nprivate Grain fixtures not present; skipped")
-    else:
-        print("\n-- private Grain fixtures (recorded responses; a failure is drift)")
-        mapping = _read(MAP_FILE) if MAP_FILE.exists() else {}
-        for fx in sorted(OBSERVED.glob("*.json")):
-            if fx.name == MAP_FILE.name:
-                continue
-            entry = mapping.get(fx.name)
-            if entry is None:
-                failures += 1
-                print(f"FAIL {fx.name}: not listed in MAP.json")
-                continue
-            if "skip" in entry:
-                print(f"skip {fx.name}: {entry['skip']}")
-                continue
-            rec = _read(fx)
-            for part, key, must_fail in (("body", "body", False), ("request", "request", False),
-                                         ("request", "request_must_fail", True)):
-                name = entry.get(key)
-                if not name:
-                    continue
-                schema = schema_named(name)
-                if schema is None:
-                    failures += 1
-                    print(f"FAIL {fx.name}: MAP names unknown schema {name!r}")
-                    continue
-                errors = run(rec.get(part), schema)
-                tag = f"{fx.name} {part} [{rec.get('_status')}] -> {name}"
-                if must_fail:
-                    if errors:
-                        print(f"ok   {tag} rejects it, as Grain did: {errors[0]}")
-                    else:
-                        failures += 1
-                        print(f"FAIL {tag}: Grain rejected this request but our schema accepts it")
-                    continue
-                if errors:
-                    failures += 1
-                    print(f"FAIL {tag}")
-                    for e in errors[:20]:
-                        print(f"     {e}")
-                else:
-                    print(f"ok   {tag}")
-                if part == "body":
-                    try:
-                        for row in ledger_for(schema, rec["body"]):
-                            ledger.setdefault(row["target"], []).append((fx.name, row))
-                    except SchemaError as exc:
-                        failures += 1
-                        print(f"FAIL {name}: {exc}")
-        unknown = sorted(set(mapping) - {p.name for p in OBSERVED.glob("*.json")} - {"_comment"})
-        if unknown:
-            failures += 1
-            print(f"FAIL MAP.json lists fixtures that do not exist: {unknown}")
-
-    # 4. gap ledger
-    print("\n-- GAP LEDGER (target fields Grain does not send yet; gaps never fail the run)")
-    measured = set(ledger)
-    gaps = 0
-    for t in sorted(ledger, key=lambda k: int(k[1:])):
-        print(f"{t:4} {TARGETS.get(t, '')}")
-        by_what: dict[str, list[tuple[str, dict]]] = {}
-        for fixture, row in ledger[t]:
-            by_what.setdefault(row["what"], []).append((fixture, row))
-        for what, hits in by_what.items():
-            hits = [(f, r) for f, r in hits if r["total"]]           # fixtures with something to measure
-            if not hits:
-                print(f"     n/a  {what}  (no recorded fixture exercises it)")
-                continue
-            bad = [(f, r) for f, r in hits if r["missing"]]
-            state = "gap " if bad else "met "
-            gaps += bool(bad)
-            counts = ", ".join(f"{f.removesuffix('.json')} {r['total'] - r['missing']}/{r['total']}" for f, r in hits)
-            print(f"     {state} {what:<38} {hits[0][1]['verb']}: {counts}")
-            if bad:
-                print(f"            e.g. {'; '.join(bad[0][1]['examples'])}")
-    declared: set[str] = set()
-    for s in SCHEMA_FILES.values():
-        collect_targets(s, declared)
-    rest = sorted(declared - measured, key=lambda k: int(k[1:]))
-    if rest:
-        why = "request-side, or no field to observe" if OBSERVED.is_dir() else "private Grain fixtures not present"
-        print(f"     not measured from responses ({why}): "
-              + ", ".join(f"{t} ({TARGETS.get(t, '')})" for t in rest))
-
-    print(f"\n{len(SCHEMA_FILES)} schemas, {failures} failure(s), {gaps} open gap(s)")
+    print(f"\n{len(SCHEMA_FILES)} schemas, {failures} failure(s)")
     return 1 if failures else 0
 
 

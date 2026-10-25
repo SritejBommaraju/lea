@@ -46,7 +46,7 @@ class Validation(unittest.TestCase):
         self.assertTrue(any("B5: Phase 1 task depends on Phase 2 task B4" in e for e in errs))
 
     def test_fields_and_references(self):
-        errs = _lib.validate_tasks(registry(task("b1"), task("B2", stream="grain"), task("B3", human=["nope"]),
+        errs = _lib.validate_tasks(registry(task("b1"), task("B2", stream="nope"), task("B3", human=["nope"]),
                                             task("B4", status="claimed"), task("B5", slots=["det-owl"]),
                                             {"id": "B6", "stream": "build"},
                                             milestones=[{"id": "MS1", "requires": ["B99"]}]))
@@ -139,7 +139,6 @@ class RealFiles(unittest.TestCase):
         p = _lib.load_providers(environ={})
         self.assertEqual(p["profile"], "phase1")
         self.assertEqual(p["slots"]["DET"], "owlv2")
-        self.assertNotIn("GRAIN", p["slots"])
         self.assertEqual(_lib.load_providers(environ={"REPAIROS_SLOT_DET": "gdino"})["slots"]["DET"], "gdino")
 
     def test_task_slots_exist_in_providers(self):

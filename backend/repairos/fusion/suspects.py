@@ -97,7 +97,6 @@ def rank_suspects(fs: FusionState, judgments: dict[tuple[str, str], Judgment], m
             "jev_model": model,
             "design_trust": fs.design_trust,
             "calibration_validated": False,   # I6: words only until a reliability diagram on our own data
-            "grain_verdict": None,            # Phase 1: no Grain
             "updated_at": stamp,
         }
         if j is not None:

@@ -44,7 +44,7 @@
     "qty": { "type": "integer", "minimum": 0 },
     "photo_file": { "type": "string" },
     "datasheet_url": { "type": "string" },
-    "datasheet_extract": { "type": "string", "description": "Ratings table text we pre-extracted, so a long datasheet's tables reach Grain's design turn intact." },
+    "datasheet_extract": { "type": "string", "description": "Ratings table text we pre-extracted, so a long datasheet's tables stay intact." },
     "source": { "type": "string", "enum": ["user_typed", "user_voice", "photo_ocr"] },
     "added_at": { "type": "string", "format": "date-time" },
     "match": {
@@ -56,7 +56,7 @@
         "matched_part_ref": { "type": "string", "description": "BOM ref it was checked against." },
         "order": { "type": "string", "enum": ["exact_mpn", "same_spec", "researched_substitute"], "description": "Which rung of the ladder matched. print and buy are not matches of an on-hand item." },
         "verdict": { "type": "string", "enum": ["yes", "yes_with_changes", "no", "need_simulation_check"] },
-        "basis": { "type": "string", "enum": ["quick_check", "simulation_check"], "description": "simulation_check means Grain's simulation check passed on a project copy with the swap; a limited check, never 'verified' (I5)." },
+        "basis": { "type": "string", "enum": ["quick_check", "simulation_check"], "description": "simulation_check means a simulation check passed with the swap; a limited check, never 'verified' (I5)." },
         "reasons": { "type": "array", "items": { "type": "string" } },
         "changes_required": { "type": "array", "items": { "type": "string" }, "description": "For yes_with_changes." },
         "safety_notes": { "type": "array", "items": { "type": "string" }, "description": "Always includes the polarity rule when the item is a supply (S1)." },

@@ -17,7 +17,6 @@ class Kind(StrEnum):
     run_continuity_test = 'run_continuity_test'
     run_voltage_test = 'run_voltage_test'
     run_resistance_test = 'run_resistance_test'
-    run_grain_second_opinion = 'run_grain_second_opinion'
     report_insufficient_evidence = 'report_insufficient_evidence'
     report_finding = 'report_finding'
     ask_user = 'ask_user'
@@ -32,25 +31,24 @@ class Target(BaseModel):
         extra='forbid',
     )
     part_refs: list[str] | None = Field(
-        None, description='Grain part names (model.glb nodes).'
+        None, description="Part names (the reference model's node names)."
     )
     harness_row: str | None = Field(
-        None,
-        description='harness.csv wire name (GrainElectricalReference wires[].name).',
+        None, description="Harness wire name from the design's electrical reference."
     )
-    net: str | None = Field(None, description='Grain net name.')
+    net: str | None = Field(
+        None, description="Net name from the design's electrical reference."
+    )
     pins: list[str] | None = Field(
         None,
-        description="REF.PIN ids to probe in Grain's net naming (e.g. J1.1), the form /electrical/check accepts; never shown to the user bare.",
+        description="REF.PIN ids to probe in the design's net naming (e.g. J1.1); never shown to the user bare.",
         max_length=2,
         min_length=2,
     )
     ar_labels: list[str] | None = Field(
         None, description='Labels drawn on the real product for these pins or parts.'
     )
-    still_ids: list[str] | None = Field(
-        None, description='Crops to send for a Grain second opinion.'
-    )
+    still_ids: list[str] | None = Field(None, description='Crops this action is about.')
 
 
 class PowerState(StrEnum):
@@ -68,7 +66,6 @@ class Source(StrEnum):
     report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches.
     """
 
-    grain_electrical = 'grain_electrical'
     report_json_minmax = 'report_json_minmax'
     repairos_derived = 'repairos_derived'
     datasheet = 'datasheet'
@@ -76,7 +73,7 @@ class Source(StrEnum):
 
 class Expected(BaseModel):
     """
-    What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from Grain's expected{min, max}, never from expected.volts alone (G2).
+    What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from the reference's expected {min, max}, never from a single expected value.
     """
 
     model_config = ConfigDict(
@@ -143,7 +140,7 @@ class NextAction(BaseModel):
     )
     expected: Expected | None = Field(
         None,
-        description="What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from Grain's expected{min, max}, never from expected.volts alone (G2).",
+        description="What a good reading looks like. Numbers compared in code (S5). volts_min/volts_max come from the reference's expected {min, max}, never from a single expected value.",
     )
     safety_notes: list[str] | None = Field(
         None,

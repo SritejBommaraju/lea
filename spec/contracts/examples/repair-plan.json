@@ -23,7 +23,7 @@
       "proof_reading_id": null,
       "p_fault_word": "very_likely",
       "fix": "replace_part",
-      "evidence_summary": ["coverage 0.03 in our scan", "Grain diagnose: not_seen"]
+      "evidence_summary": ["coverage 0.03 in our scan"]
     }
   ],
   "not_inspected": ["SW1 internals"],
@@ -48,14 +48,6 @@
   ],
   "confirm": { "method": "both", "rerun_reading_ids": ["rd_0003"], "expected": "NET_A reads continuity; rescan shows BRKT1 ok" },
   "cost_to_buy": { "amount": 5.61, "currency": "USD" },
-  "grain": {
-    "project_id": "proj_example",
-    "build_hash": null,
-    "design_trust": "low",
-    "cross_check": "done",
-    "call_version": null,
-    "disagreements": ["Grain diagnose called J1 ok (connector gap is below LiDAR resolution); our close-up and the meter say otherwise."]
-  },
   "generated_by": { "llm": "claude-sonnet-5-5", "fusion": "jev" },
   "created_at": "2026-10-23T18:25:00Z"
 }

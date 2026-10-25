@@ -5,14 +5,13 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 
 class State(StrEnum):
     """
-    Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).
+    Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence).
     """
 
     ok = 'ok'
@@ -41,7 +40,7 @@ class State(StrEnum):
 
 class Source(StrEnum):
     """
-    Which stage produced it. Grain sources are wrapped Grain results, kept separate so they are never merged with our measurements.
+    Which stage produced it.
     """
 
     repairos_scan = 'repairos.scan'
@@ -50,9 +49,6 @@ class Source(StrEnum):
     repairos_ocr = 'repairos.ocr'
     repairos_meter = 'repairos.meter'
     repairos_user = 'repairos.user'
-    grain_diagnose = 'grain.diagnose'
-    grain_look = 'grain.look'
-    grain_electrical = 'grain.electrical'
 
 
 class CropBoxPxItem(RootModel[int]):
@@ -72,8 +68,7 @@ class EvidenceRefs(BaseModel):
         min_length=4,
     )
     crop_file: str | None = Field(
-        None,
-        description='Full-resolution crop saved for the UI and for a Grain /look second opinion (Grain stores photos downsized).',
+        None, description='Full-resolution crop saved for the UI.'
     )
     render_file: str | None = Field(
         None, description="CAD render of the same view (the 'normal' reference)."
@@ -97,7 +92,7 @@ class Measurements(BaseModel):
     )
     shift_mm: list[float] | None = Field(
         None,
-        description="Translation in the design frame (mm, Z up), as Grain's shift_mm.",
+        description='Translation in the design frame (mm, Z up).',
         max_length=3,
         min_length=3,
     )
@@ -150,43 +145,6 @@ class DesignTrust(StrEnum):
     low = 'low'
 
 
-class Endpoint(StrEnum):
-    diagnose = 'diagnose'
-    look = 'look'
-    electrical_check = 'electrical_check'
-    call = 'call'
-
-
-class Grain(BaseModel):
-    """
-    For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    endpoint: Endpoint
-    verdict: str | None = Field(
-        ...,
-        description="Grain's word: a diagnose verdict, a /look state, an electrical row verdict, or a /call fix action. null when Grain gave none (e.g. an electrical row without a verdict today, G22).",
-    )
-    name: str | None = Field(
-        None,
-        description="Grain part name (diagnose parts[].name), a finding's where, or a fix's part string.",
-    )
-    ref: str | None = Field(
-        None, description="Grain's BOM ref (diagnose parts[].ref); null for made parts."
-    )
-    confidence: float | str | None = Field(
-        None,
-        description='As Grain gave it: a number for /look, a word (low|medium|high) for /call fixes.',
-    )
-    raw: dict[str, Any] | None = Field(
-        None,
-        description='The Grain object this came from (a part row, observation, reading row or fix).',
-    )
-
-
 class Kind(StrEnum):
     part = 'part'
     wire = 'wire'
@@ -195,7 +153,7 @@ class Kind(StrEnum):
 
 class Subject(BaseModel):
     """
-    What the finding is about. Maps onto Grain's target subject {kind, id, pins} (T3/T4) with ref -> id.
+    What the finding is about.
     """
 
     model_config = ConfigDict(
@@ -204,17 +162,17 @@ class Subject(BaseModel):
     kind: Kind
     ref: str = Field(
         ...,
-        description='part: the Grain part name, i.e. the model.glb node (diagnose parts[].name, e.g. U1 or a sub-part U1:usb) -- not the BOM ref, which is null for made parts; wire: the harness.csv name; net: the net name.',
+        description="part: the part name, i.e. the reference model's node name (e.g. U1 or a sub-part U1:usb), not the BOM ref; wire: the harness wire name; net: the net name.",
         min_length=1,
     )
     pins: list[str] | None = Field(
-        None, description="Optional REF.PIN ids in Grain's net naming, e.g. SW1.1."
+        None, description="Optional REF.PIN ids in the design's net naming, e.g. SW1.1."
     )
 
 
 class Finding(BaseModel):
     """
-    One piece of evidence about a part, wire or net from one source. A finding is a suspect, never proof, unless its source is repairos.meter (I1). Findings feed fusion, and go to Grain /call as findings[] once target T4 lands (until then as text in `question`). Grain results are wrapped as findings with a grain.* source and keep Grain's own verdict and row in `grain`.
+    One piece of evidence about a part, wire or net from one source. A finding is a suspect, never proof, unless its source is repairos.meter (I1). Findings feed fusion.
     """
 
     model_config = ConfigDict(
@@ -225,12 +183,9 @@ class Finding(BaseModel):
     subject: Subject
     state: State = Field(
         ...,
-        description='Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault).',
+        description='Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence).',
     )
-    source: Source = Field(
-        ...,
-        description='Which stage produced it. Grain sources are wrapped Grain results, kept separate so they are never merged with our measurements.',
-    )
+    source: Source = Field(..., description='Which stage produced it.')
     confidence: float = Field(
         ...,
         description="Source's own confidence. Not calibrated; fusion recalibrates.",
@@ -242,7 +197,7 @@ class Finding(BaseModel):
     )
     evidence: list[str] = Field(
         ...,
-        description="Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev and Grain.",
+        description="Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev.",
     )
     evidence_refs: EvidenceRefs | None = None
     measurements: Measurements | None = Field(
@@ -276,7 +231,3 @@ class Finding(BaseModel):
     design_trust: DesignTrust | None = None
     on_symptom_power_path: bool | None = None
     created_at: AwareDatetime
-    grain: Grain | None = Field(
-        None,
-        description='For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.',
-    )

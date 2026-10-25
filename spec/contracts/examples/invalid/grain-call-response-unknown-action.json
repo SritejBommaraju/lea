@@ -1,3 +1,0 @@
-{ "schema": "grain-call-response", "why": "action is one of Grain's 7 (buy remake reseat rescan fix_design check rewire); 'replace_wire' is our plan vocabulary",
-  "base": "grain-call-response.json",
-  "patch": { "fixes": [ { "part": "WIRE_A", "problem": "electrical", "action": "replace_wire", "confidence": "high", "detail": "NET_A is open", "how": "replace WIRE_A" } ] } }

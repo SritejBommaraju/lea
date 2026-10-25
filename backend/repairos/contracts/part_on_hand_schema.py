@@ -76,7 +76,7 @@ class Verdict(StrEnum):
 
 class Basis(StrEnum):
     """
-    simulation_check means Grain's simulation check passed on a project copy with the swap; a limited check, never 'verified' (I5).
+    simulation_check means a simulation check passed with the swap; a limited check, never 'verified' (I5).
     """
 
     quick_check = 'quick_check'
@@ -114,7 +114,7 @@ class Match(BaseModel):
     verdict: Verdict
     basis: Basis = Field(
         ...,
-        description="simulation_check means Grain's simulation check passed on a project copy with the swap; a limited check, never 'verified' (I5).",
+        description="simulation_check means a simulation check passed with the swap; a limited check, never 'verified' (I5).",
     )
     reasons: list[str]
     changes_required: list[str] | None = Field(
@@ -162,7 +162,7 @@ class PartOnHand(BaseModel):
     datasheet_url: str | None = None
     datasheet_extract: str | None = Field(
         None,
-        description="Ratings table text we pre-extracted, so a long datasheet's tables reach Grain's design turn intact.",
+        description="Ratings table text we pre-extracted, so a long datasheet's tables stay intact.",
     )
     source: Source
     added_at: AwareDatetime

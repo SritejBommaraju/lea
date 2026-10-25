@@ -22,7 +22,7 @@
       "description": "guided: AR-ring target with pose. macro_detail: ultrawide macro outside the AR session, no reliable pose, evidence-only. label: product label for identification. unguided: a still taken without a target ring, e.g. a frame of an imported capture (B12) or a plain camera photo (tools/import_photos.py, pose_reliable false, no camera); targets is empty."
     },
     "captured_at": { "type": "string", "format": "date-time" },
-    "image_file": { "type": "string", "description": "JPEG (q >= 85). HEIC is converted on the phone; Grain does not accept it." },
+    "image_file": { "type": "string", "description": "JPEG (q >= 85). HEIC is converted on the phone." },
     "width_px": { "type": "integer", "minimum": 1 },
     "height_px": { "type": "integer", "minimum": 1 },
     "camera": { "$ref": "#/$defs/pose_arkit", "description": "Camera pose in arkit_world at capture (from the ARFrame returned with the still). For macro_detail this is the last AR pose and is approximate. May be absent only when pose_reliable is false: a plain photo has no pose, and none is made up." },
@@ -48,11 +48,11 @@
         "required": ["target_id"],
         "properties": {
           "target_id": { "type": "string" },
-          "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Grain part names (model.glb nodes, diagnose parts[].name) expected in view, e.g. J1, LOAD1." },
+          "part_refs": { "type": "array", "items": { "type": "string" }, "description": "Part names (reference model nodes) expected in view, e.g. J1, LOAD1." },
           "harness_rows": { "type": "array", "items": { "type": "string" }, "description": "harness.csv wire names expected in view, e.g. WIRE_A." },
           "box_mm": {
             "type": "object", "additionalProperties": false, "required": ["min", "max"],
-            "description": "The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level, because Grain has no pin positions yet (G25; pins are target T7).",
+            "description": "The target's box in the design frame (mm, Z up), from the model.glb node bounds. Connector-level.",
             "properties": {
               "min": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
               "max": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "finding.schema.json",
   "title": "Finding",
-  "description": "One piece of evidence about a part, wire or net from one source. A finding is a suspect, never proof, unless its source is repairos.meter (I1). Findings feed fusion, and go to Grain /call as findings[] once target T4 lands (until then as text in `question`). Grain results are wrapped as findings with a grain.* source and keep Grain's own verdict and row in `grain`.",
+  "description": "One piece of evidence about a part, wire or net from one source. A finding is a suspect, never proof, unless its source is repairos.meter (I1). Findings feed fusion.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -54,7 +54,7 @@
         "insufficient_evidence",
         "unsure"
       ],
-      "description": "Scan states (ok partly shifted missing, Phase 2), Grain /look states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence). Grain mapping: diagnose verdict ok->ok, partly->partly, shifted->shifted, damaged->damaged, not_seen->missing, not_visible->not_inspected; /look state 1:1; electrical row verdict ok->ok, off->out_of_range, open->open, pin_not_on_net/unknown_net/no_expected->insufficient_evidence (a probe or naming problem, not a fault)."
+      "description": "Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence)."
     },
     "source": {
       "type": "string",
@@ -64,12 +64,9 @@
         "repairos.wire_check",
         "repairos.ocr",
         "repairos.meter",
-        "repairos.user",
-        "grain.diagnose",
-        "grain.look",
-        "grain.electrical"
+        "repairos.user"
       ],
-      "description": "Which stage produced it. Grain sources are wrapped Grain results, kept separate so they are never merged with our measurements."
+      "description": "Which stage produced it."
     },
     "confidence": {
       "type": "number",
@@ -86,7 +83,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev and Grain."
+      "description": "Short human sentences, e.g. 'housing gap ~2 mm (still s7)'. These go to Jev."
     },
     "evidence_refs": {
       "type": "object",
@@ -116,7 +113,7 @@
         },
         "crop_file": {
           "type": "string",
-          "description": "Full-resolution crop saved for the UI and for a Grain /look second opinion (Grain stores photos downsized)."
+          "description": "Full-resolution crop saved for the UI."
         },
         "render_file": {
           "type": "string",
@@ -149,7 +146,7 @@
           },
           "minItems": 3,
           "maxItems": 3,
-          "description": "Translation in the design frame (mm, Z up), as Grain's shift_mm."
+          "description": "Translation in the design frame (mm, Z up)."
         },
         "gap_mm": {
           "type": "number",
@@ -234,59 +231,6 @@
     "created_at": {
       "type": "string",
       "format": "date-time"
-    },
-    "grain": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "For a grain.* source: what Grain said, unmapped, so the mapping above can be audited.",
-      "required": [
-        "endpoint",
-        "verdict"
-      ],
-      "properties": {
-        "endpoint": {
-          "type": "string",
-          "enum": [
-            "diagnose",
-            "look",
-            "electrical_check",
-            "call"
-          ]
-        },
-        "verdict": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Grain's word: a diagnose verdict, a /look state, an electrical row verdict, or a /call fix action. null when Grain gave none (e.g. an electrical row without a verdict today, G22)."
-        },
-        "name": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Grain part name (diagnose parts[].name), a finding's where, or a fix's part string."
-        },
-        "ref": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Grain's BOM ref (diagnose parts[].ref); null for made parts."
-        },
-        "confidence": {
-          "type": [
-            "number",
-            "string",
-            "null"
-          ],
-          "description": "As Grain gave it: a number for /look, a word (low|medium|high) for /call fixes."
-        },
-        "raw": {
-          "type": "object",
-          "description": "The Grain object this came from (a part row, observation, reading row or fix)."
-        }
-      }
     }
   },
   "$defs": {
@@ -309,17 +253,17 @@
         "ref": {
           "type": "string",
           "minLength": 1,
-          "description": "part: the Grain part name, i.e. the model.glb node (diagnose parts[].name, e.g. U1 or a sub-part U1:usb) -- not the BOM ref, which is null for made parts; wire: the harness.csv name; net: the net name."
+          "description": "part: the part name, i.e. the reference model's node name (e.g. U1 or a sub-part U1:usb), not the BOM ref; wire: the harness wire name; net: the net name."
         },
         "pins": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Optional REF.PIN ids in Grain's net naming, e.g. SW1.1."
+          "description": "Optional REF.PIN ids in the design's net naming, e.g. SW1.1."
         }
       },
-      "description": "What the finding is about. Maps onto Grain's target subject {kind, id, pins} (T3/T4) with ref -> id."
+      "description": "What the finding is about."
     }
   }
 }

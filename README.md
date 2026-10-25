@@ -19,8 +19,6 @@ milestones and every task.
   trained defect classifier (planned), Claude VLM for explanations and unclear cases, OCR for labels, Jev
   judgments with the decisions made in code, then the report.
 - **Benchmark**: labelled real captures with held-out products. Every target comes from its measurements.
-- **No Grain calls.** Grain, the team's proprietary design engine, comes in Phase 2 (reference designs,
-  replacement parts, simulation checks).
 
 Built so far: the gateway, state and blobs, recorded sessions and replay, the detector slots, crops, the VLM and
 LLM slots, Jev fusion, contracts with codegen, the provider registry and config. Not built yet: the iOS app, the
@@ -33,7 +31,7 @@ iPhone.
 
 ```
 make bootstrap                          # backend/.venv from backend/requirements.lock
-make hooks                              # pre-commit guard: blocks Grain internals and private files
+make hooks                              # pre-commit guard: blocks private files
 cp backend/.env.example backend/.env    # then add TYPESAFE_KEY and ANTHROPIC_API_KEY (never commit it)
 make test                               # backend unit + conformance tests
 make run-gateway                        # FastAPI gateway on :8000, the only server the phone talks to

@@ -99,7 +99,7 @@ def test_replay_runs_offline(format_session, tmp_path):
     assert [s["stage"] for s in summary["stages"]] == ["validate", "ingest", "pipeline"]
     pipe = summary["stages"][2]
     assert pipe["status"] == "failed" and "stage inspect (still s7)" in pipe["error"]
-    assert summary["reports"] == [] and summary["grain"] == "not called (Phase 1)"
+    assert summary["reports"] == []
     assert summary["outcome"]["missed"]  # nothing has looked at it yet: the induced fault is missed, not invented
     check = subprocess.run([sys.executable, str(ROOT / "tools" / "replay.py"), "--check", "--session",
                             str(format_session)], capture_output=True, text=True, timeout=60)

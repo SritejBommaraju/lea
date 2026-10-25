@@ -9,7 +9,7 @@ Tasks and milestones: [PLAN.md](../PLAN.md) §6-§7; machine twin: [build/tasks.
 | [Modeling + benchmark](modeling-benchmark.md) | one person (owner assigns) | perception slots, `vision/**`, `eval/**`, `training/**`, `samples/sessions/**` | `python3 -I build/next.py --stream modeling` |
 | [Build execution](build-execution.md) | Rohan + agents | the rest of `backend/**`, `build/`, `config/`, `tools/`, contracts, CI | `python3 -I build/next.py --stream build` |
 
-Phase 2 (Grain) has no stream yet: [PLAN.md](../PLAN.md) §9.
+Phase 2 has no stream yet: [PLAN.md](../PLAN.md) §9.
 
 ## Contracts at the boundaries
 

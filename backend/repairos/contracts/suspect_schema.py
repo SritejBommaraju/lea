@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from enum import Enum, StrEnum
+from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
@@ -61,49 +61,6 @@ class DesignTrust(StrEnum):
     low = 'low'
 
 
-class GrainVerdict(Enum):
-    """
-    Grain diagnose verdict for the same part (GrainDiagnoseResponse parts[].verdict, joined on parts[].name = subject.ref), if any. Kept separate; advisory when design_trust is low. null when Grain has no row for it.
-    """
-
-    ok = 'ok'
-    partly = 'partly'
-    shifted = 'shifted'
-    damaged = 'damaged'
-    not_seen = 'not_seen'
-    not_visible = 'not_visible'
-    NoneType_None = None
-
-
-class Action(StrEnum):
-    buy = 'buy'
-    remake = 'remake'
-    reseat = 'reseat'
-    rescan = 'rescan'
-    fix_design = 'fix_design'
-    check = 'check'
-    rewire = 'rewire'
-
-
-class Confidence(StrEnum):
-    low = 'low'
-    medium = 'medium'
-    high = 'high'
-
-
-class GrainFix(BaseModel):
-    """
-    The Grain /call fix merged into this suspect, if any (joined by part name, wire name or net name until T3 adds fixes[].subject).
-    """
-
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    action: Action
-    confidence: Confidence
-    part: str | None = Field(None, description="Grain's display string, as sent.")
-
-
 class Kind(StrEnum):
     part = 'part'
     wire = 'wire'
@@ -112,7 +69,7 @@ class Kind(StrEnum):
 
 class Subject(BaseModel):
     """
-    Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name or net name.
+    Same as Finding.subject: ref is the part name (reference model node), harness wire name or net name.
     """
 
     model_config = ConfigDict(
@@ -162,13 +119,5 @@ class Suspect(BaseModel):
     calibration_validated: bool = Field(
         ...,
         description='True only after a reliability diagram on our labelled scans for this product class. Until then the UI shows p_fault_word only.',
-    )
-    grain_verdict: GrainVerdict | None = Field(
-        None,
-        description='Grain diagnose verdict for the same part (GrainDiagnoseResponse parts[].verdict, joined on parts[].name = subject.ref), if any. Kept separate; advisory when design_trust is low. null when Grain has no row for it.',
-    )
-    grain_fix: GrainFix | None = Field(
-        None,
-        description='The Grain /call fix merged into this suspect, if any (joined by part name, wire name or net name until T3 adds fixes[].subject).',
     )
     updated_at: AwareDatetime
