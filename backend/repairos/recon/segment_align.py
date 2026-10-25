@@ -12,8 +12,8 @@ Method (Open3D, MIT):
    checkers), a few seeds. Each result is a candidate. The phone's estimate is one more candidate. It is never
    trusted as is: it is refined and scored like the others.
 3. More starts, because feature matching can miss on a plain object:
-   - Gravity sweep: both segments share one gravity-aligned ARKit world, so the object lies upright or upside
-     down at some heading. 2 x 12 headings, centre on centre.
+   - Gravity sweep: both segments share one gravity-aligned ARKit world, so the object lies upright, on a side or upside
+     down at some heading: 2 x 12 headings (upright, upside down) and 4 x 6 (a side), centre on centre.
    - Symmetric objects: the best candidate turned 180 deg about each principal axis of the segment-0 cloud. A
      box-shaped object fits equally well several ways round.
 4. Each candidate is refined by point-to-plane ICP, coarse to fine (3, 1.5 and 1 voxel; the sweep starts at 10),
@@ -78,11 +78,13 @@ class Candidate:
     colour_distance: float | None
     free_space: float | None = None     # share of points that a camera of the other segment saw as empty space
     below_plane: float | None = None    # share of points under the other segment's support plane
+    free_space_excess: float | None = None   # free space beyond what those cameras see of their own segment's cloud
 
     def brief(self) -> dict:
         return {"source": self.source, "fitness": round(self.fitness, 4), "rmse_mm": round(self.rmse_m * 1000, 3),
                 "colour_distance": None if self.colour_distance is None else round(self.colour_distance, 4),
                 "free_space_violation": None if self.free_space is None else round(self.free_space, 4),
+                "free_space_excess": None if self.free_space_excess is None else round(self.free_space_excess, 4),
                 "below_table": None if self.below_plane is None else round(self.below_plane, 4)}
 
 
@@ -275,11 +277,20 @@ def below_plane(points: np.ndarray, plane_y: float, margin_m: float) -> float:
     return float((np.asarray(points)[:, 1] < plane_y - margin_m).mean()) if len(points) else 0.0
 
 
-def _gravity_starts(src_pts: np.ndarray, tgt_pts: np.ndarray, steps: int = 12) -> list[tuple[str, np.ndarray]]:
+def _gravity_starts(src_pts: np.ndarray, tgt_pts: np.ndarray, steps: int = 12, src_plane_y: float | None = None,
+                    tgt_plane_y: float | None = None, side_steps: int = 6) -> list[tuple[str, np.ndarray]]:
     """Starts for an object moved on the table, in one gravity-aligned (Y up) world: upright or upside down (180 deg
-    about a horizontal axis), at `steps` headings, centre on centre. Global registration can miss on a plain,
-    symmetric object; these cover every resting pose on the same face or the opposite one."""
+    about a horizontal axis), at `steps` headings, centre on centre across the table. Global registration can miss on
+    a plain, symmetric object; these cover every resting pose on the same face, the opposite one or a side.
+    With both support planes known, the height comes from them: the object rests on its table in both segments, so
+    upright keeps its height above the table, and upside down puts the segment's table contact at the object's top
+    (the object's height is the taller of the two clouds above their tables). A segment sees only one side of a flat
+    object, so centring the two clouds' middles would lay the moved side onto the other side's face."""
     cs, ct = src_pts.mean(axis=0), tgt_pts.mean(axis=0)
+    planes = src_plane_y is not None and tgt_plane_y is not None
+    if planes:
+        height = max(float(np.percentile(src_pts[:, 1], 98)) - src_plane_y,
+                     float(np.percentile(tgt_pts[:, 1], 98)) - tgt_plane_y, 0.0)
     flip = np.diag([1.0, -1.0, -1.0])        # 180 deg about x
     out = []
     for upside, base in (("upright", np.eye(3)), ("flipped", flip)):
@@ -290,8 +301,28 @@ def _gravity_starts(src_pts: np.ndarray, tgt_pts: np.ndarray, steps: int = 12) -
             m = np.eye(4)
             m[:3, :3] = r
             m[:3, 3] = ct - r @ cs
+            if planes:   # y' = r_yy y + t_y: the segment's table goes to the table (upright) or to the top (flipped)
+                m[1, 3] = (tgt_plane_y - src_plane_y) if upside == "upright" else (tgt_plane_y + height + src_plane_y)
             out.append((f"gravity_{upside}_{round(np.degrees(a))}", m))
+    # On one of its four sides (90 deg about a horizontal axis): many things cannot rest upside down (a mouse rocks,
+    # a controller stands on its triggers), so the person lays them on a side. Centre on centre, fewer headings;
+    # ICP and the free-space / under-the-table checks decide as for the others.
+    sides = {"side_px": np.array([[1.0, 0, 0], [0, 0, -1], [0, 1, 0]]), "side_nx": np.array([[1.0, 0, 0], [0, 0, 1], [0, -1, 0]]),
+             "side_pz": np.array([[0, -1.0, 0], [1, 0, 0], [0, 0, 1]]), "side_nz": np.array([[0, 1.0, 0], [-1, 0, 0], [0, 0, 1]])}
+    for name, base in sides.items():
+        for k in range(side_steps):
+            a = 2 * np.pi * k / side_steps
+            yaw = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+            r = yaw @ base
+            m = np.eye(4)
+            m[:3, :3] = r
+            m[:3, 3] = ct - r @ cs
+            out.append((f"gravity_{name}_{round(np.degrees(a))}", m))
     return out
+
+
+def _pct(x: float | None) -> str:
+    return "unmeasured" if x is None else f"{x:.0%}"
 
 
 def rotation_deg(r: np.ndarray) -> float:
@@ -351,35 +382,40 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
     margin = max(FREE_SPACE_MARGIN_M, 3.0 * voxel_m)
     plane_margin = max(PLANE_MARGIN_M, 2.0 * voxel_m)
     src_pts, tgt_pts = np.asarray(src.points), np.asarray(tgt.points)
-    baseline = [b for b in (free_space_violation(tgt_pts, ref_frames, margin_m=margin) if ref_frames else None,
-                            free_space_violation(src_pts, mov_frames, margin_m=margin) if mov_frames else None)
-                if b is not None]
-    fs_base = max(baseline) if baseline else 0.0
+    # Each segment's cameras are calibrated by their own cloud: the share of it they see as empty space is their
+    # drift and noise (ARKit drifts a centimetre or two over one capture). A candidate is judged per segment against
+    # that segment's own baseline, so a drifting segment does not hide what the steadier one sees.
+    base_ref = free_space_violation(tgt_pts, ref_frames, margin_m=margin) if ref_frames else None
+    base_mov = free_space_violation(src_pts, mov_frames, margin_m=margin) if mov_frames else None
 
     def evaluate(name: str, start: np.ndarray, schedule=(3.0, 1.5, 1.0)) -> Candidate:
         t = _icp(src, tgt, start, voxel_m, schedule)
         f, e, c = _score(src, tgt, t, voxel_m, src_col, tgt_col)
-        fs_parts = []
+        fs_parts = []   # (violation, that camera set's own baseline)
         if ref_frames:
-            fs_parts.append(free_space_violation(src_pts @ t[:3, :3].T + t[:3, 3], ref_frames, margin_m=margin))
+            fs_parts.append((free_space_violation(src_pts @ t[:3, :3].T + t[:3, 3], ref_frames, margin_m=margin),
+                             base_ref))
         if mov_frames:
             ti = np.linalg.inv(t)
-            fs_parts.append(free_space_violation(tgt_pts @ ti[:3, :3].T + ti[:3, 3], mov_frames, margin_m=margin))
+            fs_parts.append((free_space_violation(tgt_pts @ ti[:3, :3].T + ti[:3, 3], mov_frames, margin_m=margin),
+                             base_mov))
         below = []
         if ref_plane_y is not None:
             below.append(below_plane(src_pts @ t[:3, :3].T + t[:3, 3], ref_plane_y, plane_margin))
         if mov_plane_y is not None:
             ti = np.linalg.inv(t)
             below.append(below_plane(tgt_pts @ ti[:3, :3].T + ti[:3, 3], mov_plane_y, plane_margin))
-        fs_parts = [x for x in fs_parts if x is not None]
-        cand = Candidate(name, t, f, e, c, max(fs_parts) if fs_parts else None, max(below) if below else None)
+        fs_parts = [(x, b or 0.0) for x, b in fs_parts if x is not None]
+        cand = Candidate(name, t, f, e, c, max(x for x, _ in fs_parts) if fs_parts else None,
+                         max(below) if below else None,
+                         max(x - b for x, b in fs_parts) if fs_parts else None)
         cands.append(cand)
         return cand
 
     for name, start in starts:
         evaluate(name, start)
     if gravity_sweep:   # same ARKit world, Y up: the object lies upright or upside down, at some heading
-        for name, start in _gravity_starts(src_pts, tgt_pts):
+        for name, start in _gravity_starts(src_pts, tgt_pts, src_plane_y=mov_plane_y, tgt_plane_y=ref_plane_y):
             evaluate(name, start, (10.0, 3.0, 1.5, 1.0))
     if cands:
         best = max(cands, key=lambda c: c.fitness)
@@ -397,7 +433,7 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
     def tilt(c: Candidate) -> float:
         return float(np.degrees(np.arccos(np.clip(up @ c.transform[:3, :3] @ up, -1.0, 1.0))))
 
-    plausible = [c for c in cands if (c.free_space is None or c.free_space - fs_base <= max_free_space)
+    plausible = [c for c in cands if (c.free_space_excess is None or c.free_space_excess <= max_free_space)
                  and (c.below_plane is None or c.below_plane <= MAX_BELOW_PLANE)
                  and (not expect_flip or tilt(c) >= FLIP_MIN_TILT_DEG)]
     if not plausible:
@@ -405,9 +441,10 @@ def align_clouds(ref: ObjectCloud, mov: ObjectCloud, *, voxel_m: float, init: np
         return SegmentAlignment(aligned=False, transform=None, fitness=round(best.fitness, 4),
                                 rmse_mm=round(best.rmse_m * 1000, 3), **{**base, "method": "none"},
                                 candidates=[c.brief() for c in sorted(cands, key=lambda c: -c.fitness)][:12],
-                                reason=f"every candidate puts {max_free_space:.0%} more of its points than the "
-                                       f"segment's own ({fs_base:.0%}) where the other segment's cameras saw empty "
-                                       f"space, or over {MAX_BELOW_PLANE:.0%} of them under the table"
+                                reason=f"every candidate puts {max_free_space:.0%} more of its points than a segment's own "
+                                       f"cloud ({_pct(base_ref)} for segment 0, {_pct(base_mov)} for this one) where "
+                                       f"that segment's cameras saw empty space, or over {MAX_BELOW_PLANE:.0%} of "
+                                       f"them under the table"
                                        + (", or keeps the object upright although it was flipped" if expect_flip
                                           else ""),
                                 seconds=secs)

@@ -2,8 +2,8 @@ import SceneKit
 import SwiftUI
 import UIKit
 
-// The photo-real recreation for the report's hero: the object (and a little of its table, fading into the stage)
-// textured from the scan's own photos, framed to fill the view, soft light, a slow turntable until touched, the
+// The photo-real recreation for the report's hero: the object alone (its table is cut away on both tiers; with a
+// registered flipped segment the gateway's model is closed underneath and turns over), textured from the scan's own photos, framed to fill the view, soft light, a slow turntable until touched, the
 // numbered problems on the surface. Transparent background: it sits on the report's dark stage.
 //
 // Drop-in for the report layout (the redesign owns where it goes):
@@ -63,6 +63,8 @@ struct RecreationView: View {
         var content: RecreationContent
         var focus: (center: SIMD3<Float>, radius: Float)?
         var origin: String
+        /// The underside is part of the model (RecreationManifest.closedBottom): the camera may go below it.
+        var closedBottom = false
     }
 
     /// What this build can draw: textured meshes (PLY + atlas, or USDZ). A splat needs the splat renderer.
@@ -120,7 +122,7 @@ struct RecreationView: View {
         let url = folder.appending(path: m.file)
         if m.file.hasSuffix(".usdz") {
             guard let scene = try? SCNScene(url: url) else { return nil }
-            return Loaded(id: id, content: .sceneFile(scene), focus: focus, origin: m.origin)
+            return Loaded(id: id, content: .sceneFile(scene), focus: focus, origin: m.origin, closedBottom: m.closedBottom)
         }
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
               let (mesh, tex) = try? TexturedPLY.read(data),
@@ -128,7 +130,7 @@ struct RecreationView: View {
               let src = CGImageSourceCreateWithURL(folder.appending(path: texName) as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
         else { return nil }
-        return Loaded(id: id, content: .texturedMesh(mesh, image), focus: focus, origin: m.origin)
+        return Loaded(id: id, content: .texturedMesh(mesh, image), focus: focus, origin: m.origin, closedBottom: m.closedBottom)
     }
 
     private static func marker(_ p: ModelPin) -> RecreationMarker {
@@ -177,8 +179,8 @@ private struct RecreationHost: UIViewRepresentable {
         let cam = view.defaultCameraController
         cam.interactionMode = .orbitTurntable
         cam.inertiaEnabled = true
-        // Stay above the table: the recreation is open underneath.
-        cam.minimumVerticalAngle = 4
+        // Stay above the table while the recreation is open underneath; a scanned bottom can be turned to.
+        cam.minimumVerticalAngle = loaded.closedBottom ? -82 : 4
         cam.maximumVerticalAngle = 82
         view.addGestureRecognizer(UITapGestureRecognizer(target: c, action: #selector(Coordinator.tap(_:))))
         let touch = UILongPressGestureRecognizer(target: c, action: #selector(Coordinator.touched(_:)))

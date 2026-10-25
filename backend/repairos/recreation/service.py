@@ -30,6 +30,10 @@ DEFAULTS = {"engine": "textured_mesh", "atlas_px": 4096, "max_stills": 60, "max_
             "splat_steps": 4000, "splat_max_gaussians": 600_000}
 
 
+SURFACE_METHOD = "object-only-1"   # part of every build's input key: a change to the surface rebuilds old scans once
+                                   # (object-only-1: the table is cut from the mesh; earlier builds kept a table patch)
+
+
 class RecreationUnavailable(RuntimeError):
     """No recreation can be built from this scan (the reason is the message)."""
 
@@ -75,10 +79,12 @@ def _deadline(t0: float, timeout_s: float, stage: str) -> None:
         raise RecreationTimeout(f"the recreation took longer than {timeout_s:.0f} s (stopped before {stage})")
 
 
-def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]], cfg: Mapping[str, Any]
-                     ) -> Recreation:
+def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mapping[str, Any]], cfg: Mapping[str, Any],
+                     segment_transforms: Mapping[int, Any] | None = None) -> Recreation:
     """The recreation from a scan package and its stills whose file fields are local paths (CPU textured mesh, or
-    the GPU splat when configured and available). Raises RecreationUnavailable or RecreationTimeout."""
+    the GPU splat when configured and available). `segment_transforms` ({segment: 4x4}, pipeline/segments.py): the
+    flipped segments the server registered close the textured mesh underneath. Raises RecreationUnavailable or
+    RecreationTimeout."""
     from repairos.pipeline.mesh import MeshUnavailable
     from repairos.recon.tsdf import ObjectBox
 
@@ -104,11 +110,12 @@ def build_recreation(pkg_local: Mapping[str, Any], stills_local: Sequence[Mappin
     from repairos.recreation.usdz import usdz_bytes
 
     try:
-        surf = scan_surface(pkg_local)
+        surf = scan_surface(pkg_local, segment_transforms=segment_transforms)
     except MeshUnavailable as e:
         raise RecreationUnavailable(str(e)) from e
     _deadline(t0, cfg["timeout_s"], "texturing")
-    views = scan_views(pkg_local, stills, box=box, max_keyframes=int(cfg["max_keyframes"]))
+    views = scan_views(pkg_local, stills, box=box, max_keyframes=int(cfg["max_keyframes"]),
+                       segment_transforms=segment_transforms)
     if not views:
         raise RecreationUnavailable("the scan has no posed photos")
     _deadline(t0, cfg["timeout_s"], "texturing")
@@ -135,16 +142,19 @@ def payload(scan_id: str, rec: Mapping[str, Any]) -> dict:
             "rev": rec["rev"], "format": rec["format"], "frame": "arkit_world", "bytes": rec.get("bytes")}
 
 
-def input_key(scan_rev: int, stills: Sequence[Mapping[str, Any]]) -> str:
-    """What a build used: the scan package revision and its stills (a continuation adds both)."""
-    return f"{scan_rev}:" + ",".join(sorted(s["still_id"] for s in stills))
+def input_key(scan_rev: int, stills: Sequence[Mapping[str, Any]], bottom: Sequence[int] = ()) -> str:
+    """What a build used: the scan package revision, its stills (a continuation adds both) and the flipped segments
+    the server registered (`bottom`)."""
+    key = f"{scan_rev}:" + ",".join(sorted(s["still_id"] for s in stills)) + f"|{SURFACE_METHOD}"
+    return key + (f"|bottom:{','.join(str(k) for k in sorted(bottom))}" if bottom else "")
 
 
 async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
     """The scan's recreation for its current inputs, built once: a blob recorded on the run row (`recreation`)
     with the live event `recreation_ready`. A scan it cannot be built for records why; a failed rebuild keeps the
     earlier recreation served."""
-    from repairos.pipeline.run import _local_scan, _run_row, _update
+    from repairos.pipeline import segments
+    from repairos.pipeline.run import _local_scan, _run_row, _segment_record, _update
     from repairos.sessions.layout import map_files
 
     cfg = recreation_config()
@@ -157,7 +167,8 @@ async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
             raise RecreationUnavailable(f"no scan-package {scan_id}")
         scan, rev = row.data, row.rev
         stills = [r.data for r in await ctx.state.list("still", scan_id=scan_id)]
-        key = input_key(rev, stills)
+        moved = segments.aligned_transforms(await _segment_record(ctx, scan_id, rev))   # the registered bottom
+        key = input_key(rev, stills, list(moved))
         have = (await _run_row(ctx, scan_id) or {}).get("recreation") or {}
         if have.get("input_key") == key and have.get("status") in ("done", "unavailable"):
             return have
@@ -166,7 +177,7 @@ async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
             local = await asyncio.to_thread(_local_scan, ctx, scan)
             local_stills = await asyncio.to_thread(
                 lambda: [map_files("still", s, lambda v, _b: str(ctx.local_file(scan_id, v))) for s in stills])
-            r = await asyncio.to_thread(build_recreation, local, local_stills, cfg)
+            r = await asyncio.to_thread(build_recreation, local, local_stills, cfg, moved)
         except Exception as e:  # noqa: BLE001 - the recreation never fails the report; the row says why
             unavailable = isinstance(e, RecreationUnavailable)
             if not unavailable:
@@ -183,6 +194,7 @@ async def ensure_recreation(ctx: Any, scan_id: str) -> dict:
         rec = {"status": "done", "ref": ref, "kind": r.kind, "format": r.format, "rev": int(have.get("rev") or 0) + 1,
                "input_key": key, "scan_rev": rev, "frame": "arkit_world", "bytes": len(r.data),
                "focus_center": [round(x, 5) for x in r.focus_center], "focus_radius": round(r.focus_radius, 5),
+               "bottom_segments": [int(k) for k in r.stats.get("bottom_segments") or []],
                "seconds": {**r.seconds, "with_io_s": round(time.monotonic() - t0, 3)},
                "stats": {k: v for k, v in r.stats.items() if isinstance(v, (int, float, str))}, "note": r.note or None,
                "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}

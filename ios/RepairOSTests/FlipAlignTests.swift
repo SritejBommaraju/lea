@@ -46,3 +46,15 @@ struct FlipAlignTests {
         #expect(f.allSatisfy { abs($0.y - c.target.box.planeY) < 1e-5 })
     }
 }
+
+/// The bottom scan's carry-on cue: the sides (what both scans share) until it lines up, after a few seconds.
+struct FlipGuidanceTests {
+    @Test func asksForTheSidesUntilLinedUp() {
+        typealias F = FlipSegmentController
+        #expect(F.steadyCue(replacing: "Keep walking around it", aligned: false, elapsed: 2) == "Keep going around the bottom")
+        #expect(F.steadyCue(replacing: "Keep walking around it", aligned: false, elapsed: 9) == F.sidesCue)
+        #expect(F.steadyCue(replacing: "Keep walking around it", aligned: true, elapsed: 30) == "Keep going around the bottom")
+        #expect(F.steadyCue(replacing: "Move closer", aligned: false, elapsed: 30) == nil)
+        #expect(F.prompt.contains("onto a side") && F.prompt.contains("firm surface") && F.prompt.contains("sides"))
+    }
+}
