@@ -159,6 +159,17 @@ struct GatewayClient: Sendable {
     func uploadBlob(file: URL, sha256: String, contentType: String) async throws -> String {
         let total = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int ?? 0
         var offset = 0
+        // One chunk (every capture file today): PUT it straight away, without asking first. The gateway answers 200
+        // when it already has the blob; anything else falls back to the resumable path below. Half the round trips.
+        if total > 0, total <= Self.chunkSize {
+            var req = request("PUT", "v1/blobs/\(sha256)", auth: true)
+            req.setValue(contentType, forHTTPHeaderField: "Content-Type")
+            req.setValue("bytes 0-\(total - 1)/\(total)", forHTTPHeaderField: "Content-Range")
+            if let (_, resp) = try? await Self.session.upload(for: req, fromFile: file),
+               [200, 201].contains((resp as? HTTPURLResponse)?.statusCode) {
+                return "blob://sha256:\(sha256)"
+            }
+        }
         let head = request("HEAD", "v1/blobs/\(sha256)", auth: true)
         let (_, headResp) = try await Self.session.data(for: head)
         let headHTTP = headResp as? HTTPURLResponse

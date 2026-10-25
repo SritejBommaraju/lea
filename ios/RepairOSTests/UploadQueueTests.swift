@@ -44,3 +44,51 @@ struct UploadQueueTests {
         #expect(segs[1]["segment"] as? Int == 2)
     }
 }
+
+/// Several uploads at once (UploadBatcher, Greptile on PR #27): the width limit, one upload per path, a failure that
+/// can be retried, and a stop that cancels what runs and refuses more.
+@MainActor
+struct UploadBatcherTests {
+    @MainActor final class Probe {
+        var now = 0, peak = 0, calls: [String: Int] = [:]
+        func run(_ path: String, fail: Bool = false) async throws -> String? {
+            calls[path, default: 0] += 1
+            now += 1; peak = max(peak, now)
+            defer { now -= 1 }
+            try await Task.sleep(for: .milliseconds(30))
+            if fail { throw URLError(.timedOut) }
+            return "blob://\(path)"
+        }
+    }
+
+    @Test func neverMoreThanTheWidthAtOnce() async throws {
+        let b = UploadBatcher(width: 4), probe = Probe()
+        try await b.all((0..<10).map { "f\($0)" }) { try await probe.run($0) }
+        #expect(probe.peak == 4)
+        #expect(probe.calls.count == 10 && probe.calls.values.allSatisfy { $0 == 1 })
+    }
+
+    @Test func aPathAskedForTwiceAtOnceUploadsOnce() async throws {
+        let b = UploadBatcher(width: 4), probe = Probe()
+        async let x = b.one("same") { try await probe.run("same") }
+        async let y = b.one("same") { try await probe.run("same") }
+        let (rx, ry) = try await (x, y)
+        #expect(rx == "blob://same" && ry == "blob://same" && probe.calls["same"] == 1)
+    }
+
+    @Test func aFailedUploadRunsAgainWhenAskedAgain() async throws {
+        let b = UploadBatcher(width: 2), probe = Probe()
+        await #expect(throws: URLError.self) { try await b.one("f") { try await probe.run("f", fail: true) } }
+        #expect(try await b.one("f") { try await probe.run("f") } == "blob://f")
+        #expect(probe.calls["f"] == 2)
+    }
+
+    @Test func stopCancelsAndRefusesMore() async throws {
+        let b = UploadBatcher(width: 2)
+        let slow = Task { try await b.one("slow") { try await Task.sleep(for: .seconds(5)); return "late" } }
+        try await Task.sleep(for: .milliseconds(20))
+        b.stop()
+        await #expect(throws: CancellationError.self) { try await slow.value }
+        await #expect(throws: CancellationError.self) { try await b.all(["x"]) { _ in "never" } }
+    }
+}

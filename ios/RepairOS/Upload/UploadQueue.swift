@@ -59,6 +59,7 @@ final class UploadQueue {
     func cancel() {
         cancelled = true
         worker?.cancel()
+        batcher.stop()   // the uploads under way too (Greptile, PR #27)
         pending = []
         ahead = []
     }
@@ -164,14 +165,15 @@ final class UploadQueue {
                 }
                 continue
             }
-            if let path = ahead.first {
+            if !ahead.isEmpty {
                 do {
                     if state.gatewaySessionID == nil {
                         state.gatewaySessionID = try await gateway.createSession(symptom: record.symptom)
                         persist()
                     }
-                    _ = try await ref(path)
-                    ahead.removeFirst()
+                    let batch = Array(ahead.prefix(Self.parallel))
+                    try await refs(batch)
+                    ahead.removeAll { batch.contains($0) }
                 } catch {
                     break    // network trouble: these go again with the scan package
                 }
@@ -220,7 +222,14 @@ final class UploadQueue {
         }
         switch item {
         case .scan:
-            var body = try await Self.withRefs(loadJSON(storage.scanPackageURL(record)), ref)
+            let package = try loadJSON(storage.scanPackageURL(record))
+            var files: [String] = []
+            _ = try await Self.withRefs(package) { v in
+                if let path = v as? String, !path.hasPrefix("blob://") { files.append(path) }
+                return v as? String
+            }
+            try await refs(files)
+            var body = try await Self.withRefs(package, ref)
             body["session_id"] = state.gatewaySessionID
             let data = try JSONSerialization.data(withJSONObject: body)
             let answer = try await gateway.postScan(data)
@@ -268,11 +277,25 @@ final class UploadQueue {
         return "\(size)@\(modified)"
     }
 
+    /// Files sent at once: over the internet each file costs a round trip, so one at a time leaves the link idle
+    /// (the owner's mouse scan to the cloud ran at about one small file a second, 2026-10-24).
+    static let parallel = 4
+    @ObservationIgnored private let batcher = UploadBatcher(width: UploadQueue.parallel)
+
+    /// Uploads these files, `parallel` at a time (each once: `ref`).
+    private func refs(_ paths: [String]) async throws {
+        try await batcher.all(paths.filter { !$0.hasPrefix("blob://") }) { [weak self] path in try await self?.upload(path: path) }
+    }
+
     /// Uploads the file at a relative path once and returns its blob ref (nil stays nil). A file changed since its
-    /// ref was made is uploaded again.
+    /// ref was made is uploaded again. Two callers asking for the same file at once share one upload.
     private func ref(_ value: Any?) async throws -> String? {
         guard let path = value as? String else { return nil }
         if path.hasPrefix("blob://") { return path }
+        return try await batcher.one(path) { [weak self] in try await self?.upload(path: path) }
+    }
+
+    private func upload(path: String) async throws -> String? {
         let url = storage.dir(record).appending(path: path)
         let stamp = Self.stamp(of: url)
         if let done = state.cachedRef(path, stamp: stamp) { return done }

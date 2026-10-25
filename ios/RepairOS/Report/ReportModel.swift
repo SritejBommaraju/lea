@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// What the report screen shows, read leniently from the gateway's report JSON (spec/contracts/report.schema.json)
 /// so a new enum value on the backend never blanks the screen. Wording stays the backend's; this only picks,
@@ -69,6 +70,8 @@ struct ReportModel: Sendable {
         var locationNote: String?
         /// Where it is on the scan (metres, the scan's ARKit frame, Y up), when the locator computed it.
         var point: SIMD3<Float>?
+        /// Half the diagonal of the region the locator found (metres): how big the problem area is on the scan.
+        var extent: Float? = nil
         var proved: Bool
         /// The main crop's photo and its box there (pixels of the full still, sensor orientation).
         var cropStill: String? = nil
@@ -274,6 +277,7 @@ struct ReportModel: Sendable {
             regions: f["regions"] as? Int ?? 1,
             locationNote: location?["status"] as? String == "computed" ? nil : location?["reason"] as? String,
             point: Self.point(location),
+            extent: Self.extent(location),
             proved: ((f["proof"] as? [String: Any])?["status"] as? String).map { $0 != "not_measured" } ?? false,
             cropStill: (f["crop"] as? [String: Any])?["still_id"] as? String,
             cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue),
@@ -337,6 +341,15 @@ struct ReportModel: Sendable {
         guard location?["status"] as? String == "computed", let p = location?["point_m"] as? [Any], p.count == 3 else { return nil }
         let v = p.compactMap { ($0 as? NSNumber)?.floatValue }
         return v.count == 3 ? SIMD3(v[0], v[1], v[2]) : nil
+    }
+
+    /// Half the diagonal of `location.region_min_m`...`region_max_m` when the point was computed.
+    static func extent(_ location: [String: Any]?) -> Float? {
+        guard point(location) != nil,
+              let lo = (location?["region_min_m"] as? [Any])?.compactMap({ ($0 as? NSNumber)?.floatValue }), lo.count == 3,
+              let hi = (location?["region_max_m"] as? [Any])?.compactMap({ ($0 as? NSNumber)?.floatValue }), hi.count == 3
+        else { return nil }
+        return simd_distance(SIMD3(lo[0], lo[1], lo[2]), SIMD3(hi[0], hi[1], hi[2])) / 2
     }
 
     static func sha(_ ref: Any?) -> String? {

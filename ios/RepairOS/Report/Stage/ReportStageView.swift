@@ -451,7 +451,7 @@ enum StageMarks {
 
     static func pins(_ r: ReportModel) -> [ModelPin] {
         (r.mostLikely + r.setup).enumerated().compactMap { i, p in
-            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.tone) }
+            p.point.map { ModelPin(id: p.id, number: i + 1, point: $0, tone: p.tone, area: p.extent) }
         }
     }
 
