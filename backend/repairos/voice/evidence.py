@@ -31,9 +31,17 @@ from repairos.voice.spend_guard import charge, key_of, record_claude
 
 log = logging.getLogger(__name__)
 
-INDEX_RADIUS_M = 0.02      # an index point is a region: about a fingertip round the model's pixel
-POINT_RADIUS_M = 0.015     # a spot Lea pointed at in a photo this turn
+# Ring sizes follow how sure the spot is (measured on the owner's controller: a model's pixel on a whole photo was
+# 59-78 mm off the named button; zoomed crops bring it to the part). Never a tight ring on a guess.
+COARSE_RADIUS_M = 0.03     # a model's pixel on a whole photo, not refined: a region
+REFINED_RADIUS_M = 0.014   # refined on full-resolution crops, seen in one photo
+TIGHT_MIN_M = 0.012        # refined and agreeing across two photos: the part, plus the photos' pose offsets
+AGREE_M = 0.015            # two photos' refined points closer than this agree
+INDEX_RADIUS_M = COARSE_RADIUS_M
+POINT_RADIUS_M = COARSE_RADIUS_M   # a spot Lea pointed at this turn, until its refine lands
 FINDING_RADIUS_M = 0.012
+REFINE_SIDES = (0.5, 0.18)  # crop windows, as fractions of the photo's shorter side: pass 1, pass 2 (and checks)
+LIVE_REFINE_SIDE = 0.3
 INDEX_PHOTOS = 4
 INDEX_PX = 1280            # the index reads printed labels: larger photos than a turn's
 MAX_INDEX = 40
@@ -49,6 +57,16 @@ button" or "red wire end"), kind, the photo it is clearest in (its name, like s4
 note (what it is for, or for a wire what it connects to as far \
 as you can see). Only list what you can see; read printed text only when it is legible. At most 40, the most useful \
 first."""
+
+REFINE_PROMPT = """Each crop above is a full-resolution close-up from a photo of one real object{name}. For each \
+crop, find the named component and give its centre: x and y as fractions of that crop (0,0 top left), read from \
+the faint grid (its ticks mark every tenth). seen is false when that component is not in the crop; do not guess."""
+
+REFINE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["items"], "properties": {
+    "items": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["crop", "seen", "x", "y"],
+        "properties": {"crop": {"type": "integer"}, "seen": {"type": "boolean"}, "x": {"type": "number"},
+                       "y": {"type": "number"}}}}}}
 
 INDEX_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["parts"], "properties": {
     "parts": {"type": "array", "items": {
@@ -119,21 +137,38 @@ class Evidence:
         stills = await self.stills(scan_id)
         return await asyncio.to_thread(V.build_views, surface, stills, self.image_of, question, rows, scope=scan_id)
 
-    async def spot_photo(self, scan_id: str, point: list[float], radius_m: float) -> str | None:
+    async def spot_photo(self, scan_id: str, point: list[float], radius_m: float, prefer: str | None = None
+                         ) -> str | None:
         """The ringed photo of a spot as a blob the phone fetches (GET /v1/blobs/<sha>), its sha; None when there
         is nothing to show it on."""
         surface = await self.surface(scan_id)
         if surface is None:
             return None
         stills = await self.stills(scan_id)
-        key = (scan_id, "spot", tuple(round(v, 3) for v in point), round(radius_m, 3))
+        key = (scan_id, "spot", tuple(round(v, 3) for v in point), round(radius_m, 3), prefer)
         sha = V.VIEWS.get(key)
         if sha is None:
             jpeg, _ = await asyncio.to_thread(V.spot_photo, surface, stills, self.image_of, point, radius_m,
-                                              scope=scan_id)
+                                              scope=scan_id, prefer=prefer)
             sha = self.app.state.blobs.put(jpeg, "image/jpeg").split("sha256:")[-1]
             V.VIEWS.put(key, sha)
         return sha
+
+    async def refine_live(self, scan_id: str, item: dict, key: str, model: str, *, http_client: Any = None
+                          ) -> dict | None:
+        """A spot Lea pointed at this turn, refined on one full-resolution crop (one call): {point, radius,
+        precision}, or None when there is nothing to refine on."""
+        import anthropic
+
+        surface = await self.surface(scan_id)
+        if surface is None:
+            return None
+        stills = await self.stills(scan_id)
+        kw = {"http_client": http_client} if http_client is not None else {}
+        client = anthropic.AsyncAnthropic(api_key=key, max_retries=1, timeout=30.0, **kw)
+        out, _ = await refine_points(surface, stills, self.image_of, [item], client=client, model=model,
+                                     scan_id=scan_id, sides=(LIVE_REFINE_SIDE,), verify=False)
+        return out[0] if out and out[0]["precision"] != "coarse" else None
 
     # ------------------------------------------------------------------ the part index
     def _index_path(self, scan_id: str) -> Path:
@@ -165,10 +200,13 @@ class Evidence:
         name = (identity or {}).get("name") or " ".join(
             str(x) for x in ((identity or {}).get("brand"), (identity or {}).get("model")) if x)
 
+        surface, stills = V.SURFACES.get(scan_id), await self.stills(scan_id)
+
         def run() -> None:
             t0 = time.perf_counter()
             try:
-                out = asyncio.run(self.call_index(scan_id, views, name, talker_key, model, http_client=http_client))
+                out = asyncio.run(self.call_index(scan_id, views, name, talker_key, model, http_client=http_client,
+                                                  surface=surface, stills=stills, image_of=self.image_of))
             except Exception as e:  # noqa: BLE001 - the index is a speed-up; answers work without it
                 log.warning("voice index %s failed: %s", scan_id, e)
                 out = {"status": "failed", "reason": f"{type(e).__name__}: {e}"[:300], "entries": []}
@@ -203,8 +241,10 @@ class Evidence:
 
     @staticmethod
     async def call_index(scan_id: str, views: dict[str, V.View], name: str, key: str, model: str, *,
-                         http_client: Any = None) -> dict:
-        """One vision call listing what the photos show, placed on the model (index_entries)."""
+                         http_client: Any = None, surface: V.Surface | None = None, stills: list[dict] | None = None,
+                         image_of: Any = None) -> dict:
+        """One vision call listing what the photos show, placed on the model (index_entries), then each place
+        refined on full-resolution crops (refine_points) when the surface and stills are given."""
         import anthropic
 
         content: list[dict] = []
@@ -223,8 +263,17 @@ class Evidence:
         if r.stop_reason == "refusal":
             return {"status": "failed", "reason": "refused", "entries": []}
         text = next((b.text for b in r.content if getattr(b, "type", None) == "text"), "{}")
-        return {"status": "done", "model": model, "photos": list(views),
-                "entries": index_entries(json.loads(text).get("parts") or [], views)}
+        entries = index_entries(json.loads(text).get("parts") or [], views)
+        calls = 1
+        if entries and surface is not None and stills and image_of is not None:
+            refined, n = await refine_points(surface, stills, image_of, entries, client=client, model=model,
+                                             scan_id=scan_id, name=name)
+            calls += n
+            for e, r_ in zip(entries, refined):
+                e["coarse_point"] = e["point"]
+                e.update(point=[round(float(c), 5) for c in r_["point"]], radius=r_["radius"],
+                         precision=r_["precision"], still_id=r_["still_id"] or e.get("still_id"))
+        return {"status": "done", "model": model, "photos": list(views), "calls": calls, "entries": entries}
 
 
 def index_entries(parts: list[dict], views: dict[str, V.View]) -> list[dict]:
@@ -243,5 +292,124 @@ def index_entries(parts: list[dict], views: dict[str, V.View]) -> list[dict]:
             continue
         out.append({"id": f"ix_{len(out) + 1}", "label": label, "part": label, "kind": p.get("kind") or "other",
                     "note": " ".join(str(p.get("note") or "").split())[:140], "point": [round(float(c), 5) for c in pt],
-                    "radius": INDEX_RADIUS_M, "still_id": v.still_id, "where": "read from the scan's photos"})
+                    "radius": INDEX_RADIUS_M, "still_id": v.still_id, "x": round(x, 4), "y": round(y, 4),
+                    "where": "read from the scan's photos"})
     return out
+
+
+async def ask_crops(client: Any, model: str, scan_id: str, crops: list[tuple[str, bytes]], name: str
+                    ) -> list[tuple[float, float] | None]:
+    """One call: for each (label, crop) where that component's centre is in the crop (fractions), or None."""
+    content: list[dict] = []
+    for k, (label, jpeg) in enumerate(crops, 1):
+        content += [{"type": "text", "text": f"Crop {k}: find the {label}."}, {"type": "image", "source": {
+            "type": "base64", "media_type": "image/jpeg", "data": base64.b64encode(jpeg).decode()}}]
+    content.append({"type": "text", "text": REFINE_PROMPT.format(name=f" (a {name})" if name else "")})
+    est = charge("anthropic", key=key_of("voice_refine", scan_id, *[c[0] for c in crops], len(crops)))
+    extra = {} if "haiku" in model else {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
+    r = await client.beta.messages.create(
+        model=model, max_tokens=4000, messages=[{"role": "user", "content": content}],
+        output_config={"effort": "low", "format": {"type": "json_schema", "schema": REFINE_SCHEMA}}, **extra)
+    record_claude((getattr(r, "model", None), model), getattr(r, "usage", None), est)
+    out: list[tuple[float, float] | None] = [None] * len(crops)
+    if r.stop_reason == "refusal":
+        return out
+    text = next((b.text for b in r.content if getattr(b, "type", None) == "text"), "{}")
+    for it in json.loads(text).get("items") or []:
+        try:
+            k, x, y = int(it["crop"]) - 1, float(it["x"]), float(it["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if it.get("seen") and 0 <= k < len(crops) and 0 <= x <= 1 and 0 <= y <= 1:
+            out[k] = (x, y)
+    return out
+
+
+def ring_for(own: Any, check: Any, refined: bool) -> tuple[Any, float, str]:
+    """(point, ring radius, precision word) from a refined point and an independent one from a second photo."""
+    if own is not None and check is not None:
+        d = float(np.linalg.norm(np.asarray(own) - np.asarray(check)))
+        if d < AGREE_M:
+            return (np.asarray(own) + np.asarray(check)) / 2, max(TIGHT_MIN_M, d), "two photos agree"
+        return own, float(np.clip(d, REFINED_RADIUS_M, 0.04)), "photos disagree"
+    if refined:
+        return own, REFINED_RADIUS_M, "refined in one photo"
+    return own, COARSE_RADIUS_M, "coarse"
+
+
+async def refine_points(surface: V.Surface, stills: list[dict], image_of: Any, items: list[dict], *, client: Any,
+                        model: str, scan_id: str, name: str = "", sides: tuple[float, ...] = REFINE_SIDES,
+                        verify: bool = True) -> tuple[list[dict], int]:
+    """Each item ({label, point, and optionally still_id + x, y: its pixel as upright fractions}) refined on
+    full-resolution crops of its photo, one batched call per photo per pass (windows `sides`), and with `verify`
+    found again in a second photo that sees it (in the last pass's call for that photo). Returns
+    ([{point, radius, precision}], calls made). Spots off the model or not seen keep their earlier point."""
+    usable = [s for s in stills if V.usable(s)]
+    by_id = {s["still_id"]: s for s in usable}
+    state = []
+    for it in items:
+        st = by_id.get(it.get("still_id"))
+        xy = (it["x"], it["y"]) if st is not None and it.get("x") is not None else None
+        if xy is None:
+            cands = V.photo_candidates(usable, np.asarray(it["point"], float))
+            st = cands[0][1] if cands else None
+            xy = V.to_upright(st, cands[0][2], cands[0][3]) if st is not None else None
+        state.append({"still": st, "xy": xy, "point": np.asarray(it["point"], float), "ok": 0, "check": None})
+
+    def view_of(st: dict) -> V.View | None:
+        key = (scan_id, "photo", st.get("still_id"))
+        v = V.VIEWS.get(key)
+        if v is None:
+            img = image_of(st)
+            v = V.photo_view(surface, st, img, V.short_key(str(st.get("still_id")))) if img else None
+            if v is not None:
+                V.VIEWS.put(key, v)
+        return v
+
+    calls = 0
+    for n, side in enumerate(sides):
+        last = n == len(sides) - 1
+        jobs: dict[str, list[tuple[str, int, tuple[float, float]]]] = {}
+        for i, s_ in enumerate(state):
+            if s_["still"] is not None and s_["xy"] is not None:
+                jobs.setdefault(s_["still"]["still_id"], []).append(("own", i, s_["xy"]))
+        if last and verify:   # the same spot in another photo, found independently in that photo's call
+            for i, s_ in enumerate(state):
+                if not s_["ok"] or s_["still"] is None:
+                    continue
+                for _, st2, u, v, _d in V.photo_candidates(usable, s_["point"]):
+                    if st2["still_id"] != s_["still"]["still_id"]:
+                        jobs.setdefault(st2["still_id"], []).append(("check", i, V.to_upright(st2, u, v)))
+                        break
+
+        async def one(sid: str, job: list) -> None:
+            nonlocal calls
+            st, img = by_id[sid], image_of(by_id[sid])
+            if not img:
+                return
+            crops, rects = [], []
+            for kind, i, (x, y) in job:
+                jpeg, rect = await asyncio.to_thread(V.refine_crop, st, img, x, y, side * (1.6 if kind == "check" else 1))
+                crops.append((items[i]["label"], jpeg))
+                rects.append(rect)
+            answers = await ask_crops(client, model, scan_id, crops, name)
+            calls += 1
+            view = await asyncio.to_thread(view_of, st)
+            for (kind, i, _), rect, a in zip(job, rects, answers):
+                if a is None or view is None:
+                    continue
+                x, y = V.from_crop(rect, *a)
+                pt = V.point_at(view, x, y)
+                if pt is None:
+                    continue
+                if kind == "own":
+                    state[i].update(xy=(x, y), point=pt, ok=state[i]["ok"] + 1)
+                else:
+                    state[i]["check"] = pt
+        await asyncio.gather(*(one(sid, job) for sid, job in jobs.items()))
+    out = []
+    for s_ in state:
+        pt, radius, word = ring_for(s_["point"], s_["check"] if s_["ok"] else None, s_["ok"] > 0)
+        out.append({"point": pt, "radius": round(float(radius), 4), "precision": word,
+                    "still_id": (s_["still"] or {}).get("still_id")})
+    return out, calls

@@ -494,6 +494,12 @@ parts and what you know about the product"
                 radius = float(r.get("radius") or POINT_RADIUS_M)
                 return _point_event(r, radius), r.get("point"), radius
             if mv["type"] == "point":
+                # A spot she points at that a placed part already names (the part index read "B button"): that
+                # part's refined place, not a fresh guess from the whole photo.
+                named = _named_part(mv["label"], extra)
+                if named is not None:
+                    radius = float(named.get("radius") or POINT_RADIUS_M)
+                    return _point_event(named, radius), named.get("point"), radius
                 view = next((v for v in report_views if v.key == mv["photo"]), None)
                 pt = point_at(view, mv["x"], mv["y"]) if view is not None else None
                 if pt is None:
@@ -505,13 +511,23 @@ parts and what you know about the product"
                     n = 1 + max([int(str(x["id"])[3:]) for x in extra + new_located
                                  if str(x["id"]).startswith("pt_") and str(x["id"])[3:].isdigit()] or [0])
                     r = {"id": f"pt_{n}", "label": label, "part": label, "where": "pointed out earlier in this talk",
-                         "point": [round(float(c), 5) for c in pt], "radius": POINT_RADIUS_M}
+                         "point": [round(float(c), 5) for c in pt], "radius": POINT_RADIUS_M,
+                         "still_id": view.still_id}
                     new_located.append(r)
                     known[r["id"]] = r
-                return _point_event(r, POINT_RADIUS_M), r["point"], POINT_RADIUS_M
+                    # Refined on a full-resolution crop after the sentence is out (never before it): the phone gets
+                    # the same id again with the tighter spot.
+                    item = {"label": label, "point": r["point"], "still_id": view.still_id,
+                            "x": mv["x"] if view.still_id else None, "y": mv["y"] if view.still_id else None}
+                    refines.append((r, asyncio.create_task(ev.refine_live(
+                        scan_id, item, rt.claude_key(), rt.settings.lea_voice_index_model,
+                        http_client=rt.anthropic_http_client))))
+                radius = float(r.get("radius") or POINT_RADIUS_M)
+                return _point_event(r, radius), r["point"], radius
             return mv, None, 0.0
 
         photos: list[tuple[str, asyncio.Task]] = []
+        refines: list[tuple[dict, asyncio.Task]] = []
 
         def stage_events(splitter: SentenceSplitter, sent: list[dict], through: int | None = None):
             for mv in splitter.stage if through is None else splitter.moves_through(through):
@@ -525,10 +541,28 @@ parts and what you know about the product"
                     continue
                 yield jframe(event)
                 if point is not None:   # the real photo of the spot, ringed: sent when it is ready
-                    photos.append((event.get("part") or event.get("id"),
-                                   asyncio.create_task(ev.spot_photo(scan_id, point, radius))))
+                    fid = event.get("part") or event.get("id")
+                    prefer = (known.get(fid) or {}).get("still_id")
+                    photos.append((fid, asyncio.create_task(ev.spot_photo(scan_id, point, radius, prefer))))
 
         async def photo_events(wait: bool):
+            deadline = time.perf_counter() + 8
+            for item in list(refines):
+                r, task = item
+                if not task.done() and wait:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(task), timeout=max(0.1, deadline - time.perf_counter()))
+                    except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+                        pass
+                if task.done():
+                    refines.remove(item)
+                    got = None if task.cancelled() or task.exception() else task.result()
+                    if got:
+                        r.update(point=[round(float(c), 5) for c in got["point"]], radius=got["radius"])
+                        yield jframe(_point_event(r, float(got["radius"])))
+                        photos.append((r["id"], asyncio.create_task(ev.spot_photo(scan_id, r["point"], r["radius"],
+                                                                                  got.get("still_id")))))
+                        r["still_id"] = got.get("still_id")
             for item in list(photos):
                 fid, task = item
                 if not task.done() and wait:
@@ -676,6 +710,15 @@ parts and what you know about the product"
 
         return StreamingResponse(stream(), media_type="application/x-lea-voice",
                                  headers={"Cache-Control": "no-cache", "X-Sample-Rate": str(SAMPLE_RATE)})
+
+
+def _named_part(label: str, parts: list[dict]) -> dict | None:
+    """The placed part (index entry or earlier spot) whose label is `label`, ignoring case and spacing."""
+    want = " ".join(str(label or "").lower().split())
+    if not want:
+        return None
+    return next((r for r in parts if r.get("point") and " ".join(str(r.get("label") or "").lower().split()) == want),
+                None)
 
 
 def repeats(sentence: str, said: list[str]) -> bool:

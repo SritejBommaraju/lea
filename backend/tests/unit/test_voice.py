@@ -376,7 +376,8 @@ def test_converse_streams_sentences_then_their_audio_and_keeps_history(gw):
     tts = [json.loads(q.content)["transcript"] for q in c.cart.calls if q.url.path == "/tts/bytes"]
     assert tts == sentences
     sent = c.claude.bodies[0]
-    assert sent["system"] == PERSONA and sent["stream"] is True
+    assert sent["system"] == [{"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}}]
+    assert sent["stream"] is True
     first = sent["messages"][0]["content"]
     assert "<scan>" in first and "<story>it stopped charging</story>" in first and first.endswith("is it safe to open")
     # Second turn: the history goes back with it, grounded once at the start.
@@ -1022,11 +1023,20 @@ def test_the_part_index_is_built_once_per_scan_in_the_background(gw, tmp_path):
     out = json.loads(index.read_text())
     assert out["status"] == "done" and [e["label"] for e in out["entries"]] == ["A2"]
     calls = [b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]
-    assert len(calls) == 1 and calls[0]["model"] == "claude-sonnet-5-5"
+    listing = [b for b in calls if "parts" in b["output_config"]["format"]["schema"]["properties"]]
+    refine = [b for b in calls if "items" in b["output_config"]["format"]["schema"]["properties"]]
+    assert len(listing) == 1 and listing[0]["model"] == "claude-sonnet-5-5"
+    assert len(refine) == 2 and out["calls"] == 3          # two zoom passes on the one photo, in the same job
+    # The fake answers no refine: the spot stays a region, never a tight ring on a guess.
+    assert out["entries"][0]["precision"] == "coarse" and out["entries"][0]["radius"] == 0.03
     c.claude.deltas = ['<show part="ix_1"/>A2 is on the analog header, third from the left.']
     events = ask(c, scan_id, "where is A2")
     assert any(e["type"] == "point" and e["id"] == "ix_1" and e["label"] == "A2" for e in events)
-    assert len([b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]) == 1
+    # Pointing in a photo at a part the index already names: the index's place, not a new guess.
+    c.claude.deltas = ['<point photo="s7" x="0.9" y="0.9" label="a2"/>That is A2.']
+    events = ask(c, scan_id, "and where is A2 again")
+    assert [e["id"] for e in events if e["type"] == "point"] == ["ix_1"]
+    assert len([b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]) == 3
 
 
 def test_persona_answers_confidently_and_keeps_the_hard_rules():
@@ -1055,3 +1065,50 @@ def test_a_repeated_sentence_is_not_spoken_but_its_move_happens(gw):
     assert [e["text"] for e in events if e["type"] == "sentence"] == [
         "The capacitor is the round part on the board, near the edge."]
     assert {"type": "show", "part": "f_example_b"} in events
+
+
+def test_ring_size_follows_how_sure_the_spot_is():
+    from repairos.voice.evidence import ring_for
+    p, r, word = ring_for([0, 0, 0], [0.004, 0, 0], True)
+    assert word == "two photos agree" and r == 0.012 and abs(p[0] - 0.002) < 1e-9
+    assert ring_for([0, 0, 0], [0.03, 0, 0], True)[1:] == (0.03, "photos disagree")
+    assert ring_for([0, 0, 0], None, True)[1:] == (0.014, "refined in one photo")
+    assert ring_for([0, 0, 0], None, False)[1:] == (0.03, "coarse")
+
+
+def test_refine_maps_a_crop_answer_back_to_the_model():
+    """refine_points with a real crop pipeline and a recorded-shape answer: the crop centre maps back onto the
+    surface point under it (synthetic plane, known pose)."""
+    import asyncio as _a
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    from repairos.voice import views as V
+    from repairos.voice.evidence import refine_points
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from test_voice_views import plane, still
+
+    s = plane()
+    st = still()
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), (100, 100, 100)).save(buf, "JPEG")
+    img = buf.getvalue()
+
+    class Fake:   # answers every crop with its centre
+        class beta:
+            class messages:
+                @staticmethod
+                async def create(**kw):
+                    n = sum(1 for b in kw["messages"][0]["content"] if b["type"] == "image")
+                    from types import SimpleNamespace as NS
+                    text = json.dumps({"items": [{"crop": k + 1, "seen": True, "x": 0.5, "y": 0.5} for k in range(n)]})
+                    return NS(stop_reason="end_turn", content=[NS(type="text", text=text)], usage=None, model="m")
+    target = np.array([0.03, 0.02, -0.5])
+    x, y, _ = V.project_upright(st, target)
+    out, calls = _a.run(refine_points(s, [st], lambda _s: img, [{"label": "A2", "point": [0, 0, -0.5],
+                                                                 "still_id": st["still_id"], "x": x, "y": y}],
+                                      client=Fake(), model="claude-sonnet-5-5", scan_id="t", verify=False))
+    assert calls == 2 and out[0]["precision"] == "refined in one photo"
+    assert np.linalg.norm(np.asarray(out[0]["point"]) - target) < 0.004

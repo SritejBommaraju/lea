@@ -519,14 +519,18 @@ def photo_candidates(stills: Sequence[Mapping], p: np.ndarray) -> list[tuple[flo
 
 
 def spot_photo(surface: Surface, stills: Sequence[Mapping], image_of, p: Sequence[float], radius_m: float,
-               *, scope: str = "") -> tuple[bytes, str | None]:
+               *, scope: str = "", prefer: str | None = None) -> tuple[bytes, str | None]:
     """The real photo of a spot with a ring drawn on it: (JPEG, still_id). The closest, sharpest still that sees
     the point unblocked (a soft or dark one still counts); a full-resolution crop around it, turned upright. With no
     photo that sees it: a render of the model close on the spot, ringed, and still_id None."""
     from PIL import Image
 
     p = np.asarray(p, float)
-    for _, st, u, v, depth in photo_candidates(stills, p)[:4]:
+    cands = photo_candidates(stills, p)
+    # The photo the spot was found or refined in first: a point is exact in its own photo, while small pose and
+    # surface offsets between photos can move it a centimetre or more in another one.
+    cands.sort(key=lambda c: c[1].get("still_id") != prefer)
+    for _, st, u, v, depth in cands[:4]:
         key = (scope, "photo", st.get("still_id"))
         view = VIEWS.get(key)
         if view is None:
@@ -571,3 +575,65 @@ def spot_photo(surface: Surface, stills: Sequence[Mapping], image_of, p: Sequenc
     rgb = np.asarray(_Image.open(io.BytesIO(view.jpeg)).convert("RGB"))
     f = CROP_PX / 2 / math.tan(math.radians(RENDER_FOV_DEG) / 2)
     return _jpeg(_draw_ring(rgb, CROP_PX / 2, CROP_PX / 2, max(22.0, f * radius_m / dist)), 82), None
+
+
+# ------------------------------------------------------------------------------------------------ zoom and refine
+UPRIGHT = Lru(4)    # full-resolution stills turned upright, for refine crops
+
+
+def upright_image(still: Mapping, image: bytes):
+    """The still at full resolution, turned upright like every view of it (PIL image)."""
+    from PIL import Image
+
+    key = still.get("still_id")
+    hit = UPRIGHT.get(key)
+    if hit is not None:
+        return hit
+    im = Image.open(io.BytesIO(image)).convert("RGB")
+    if upright(still):
+        im = im.transpose(Image.Transpose.ROTATE_270)     # clockwise, as np.rot90(k=-1)
+    UPRIGHT.put(key, im)
+    return im
+
+
+def to_upright(still: Mapping, u: float, v: float) -> tuple[float, float]:
+    """Full-resolution sensor pixel -> fractions of the upright image."""
+    w0, h0 = float(still.get("width_px") or 1), float(still.get("height_px") or 1)
+    return (1 - v / h0, u / w0) if upright(still) else (u / w0, v / h0)
+
+
+def project_upright(still: Mapping, p: Sequence[float]) -> tuple[float, float, float] | None:
+    """Where point p is in the upright still (fractions) and how far (m); None when behind or outside it."""
+    try:
+        pose = Pose.from_contract(still["camera"])
+        cam = Pinhole.from_contract(still["intrinsics"], still.get("width_px"), still.get("height_px"))
+    except (KeyError, ValueError):
+        return None
+    (u, v), d = (a[0] for a in project(np.asarray(p, float)[None], pose, cam))
+    if not (d > 0.05 and 0 <= u <= (cam.width or 0) and 0 <= v <= (cam.height or 0)):
+        return None
+    x, y = to_upright(still, float(u), float(v))
+    return x, y, float(d)
+
+
+def refine_crop(still: Mapping, image: bytes, x: float, y: float, side: float, size: int = 640
+                ) -> tuple[bytes, tuple[float, float, float, float]]:
+    """A full-resolution square window of the upright still centred on (x, y) (fractions), `side` a fraction of the
+    image's shorter side, with the grid; and its rectangle in upright fractions (x0, y0, x1, y1)."""
+    from PIL import Image
+
+    im = upright_image(still, image)
+    w, h = im.size
+    s = max(32, int(side * min(w, h)))
+    cx, cy = x * w, y * h
+    x0 = int(np.clip(cx - s / 2, 0, max(0, w - s)))
+    y0 = int(np.clip(cy - s / 2, 0, max(0, h - s)))
+    crop = im.crop((x0, y0, min(w, x0 + s), min(h, y0 + s)))
+    crop = crop.resize((size, round(size * crop.size[1] / max(1, crop.size[0]))), Image.Resampling.LANCZOS)
+    return _jpeg(np.asarray(crop), 80, grid=True), (x0 / w, y0 / h, min(w, x0 + s) / w, min(h, y0 + s) / h)
+
+
+def from_crop(rect: tuple[float, float, float, float], cx: float, cy: float) -> tuple[float, float]:
+    """A spot given as fractions of a crop -> fractions of the whole upright image."""
+    x0, y0, x1, y1 = rect
+    return x0 + cx * (x1 - x0), y0 + cy * (y1 - y0)

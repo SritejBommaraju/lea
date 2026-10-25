@@ -95,7 +95,8 @@ async def index_scan(scan: Scan, key: str, out: Path) -> dict:
     ident = scan.identity or {}
     name = ident.get("name") or " ".join(str(x) for x in (ident.get("brand"), ident.get("model")) if x)
     t0 = time.perf_counter()
-    res = await Evidence.call_index(scan.id, views, name, key, "claude-sonnet-5-5")
+    res = await Evidence.call_index(scan.id, views, name, key, "claude-sonnet-5-5", surface=scan.surface,
+                                    stills=scan.stills, image_of=scan.image_of)
     res["seconds"] = round(time.perf_counter() - t0, 1)
     return res
 
@@ -105,11 +106,12 @@ async def turn(scan: Scan, item: dict, talker, index: list[dict], shots: Path) -
     from repairos.voice import views as V
     from repairos.voice.answer import report_facts
     from repairos.voice.evidence import FINDING_RADIUS_M, POINT_RADIUS_M
+    from repairos.voice.routes import _named_part
 
     mode = item.get("mode", "after")
     rows = C.part_rows(scan.report)
     held = None
-    if mode == "heldout":
+    if mode in ("heldout", "heldout_index"):
         held = next(r for r in rows if r["id"] == item["heldout"])
         rows = [r for r in rows if r["id"] != held["id"]]
     extra = [] if mode in ("before", "heldout") else index
@@ -125,7 +127,7 @@ async def turn(scan: Scan, item: dict, talker, index: list[dict], shots: Path) -
         C.PERSONA, saved = old_persona(), C.PERSONA
     else:
         report = scan.report
-        if mode == "heldout":   # the finding is not in <parts> (nor in the report Lea reads)
+        if mode in ("heldout", "heldout_index"):   # the finding is not in <parts> (nor in the report she reads)
             report = {**report, "findings": [f for f in report["findings"] if f.get("finding_id") != held["id"]]}
         msgs = C.messages_for({}, C.context_block(report, scan.identity, scan.story, parts=True, extra_parts=extra),
                               item["question"])
@@ -158,6 +160,10 @@ async def turn(scan: Scan, item: dict, talker, index: list[dict], shots: Path) -
         if mv["type"] == "show" and mv["part"] in known:
             r = known[mv["part"]]
             pt, label, radius = r.get("point"), r.get("label") or r.get("part"), r.get("radius") or FINDING_RADIUS_M
+        elif mv["type"] == "point" and _named_part(mv["label"], extra) is not None:   # as the gateway does
+            r = _named_part(mv["label"], extra)
+            pt, label, radius = r["point"], r["label"], r.get("radius") or POINT_RADIUS_M
+            mv = {**mv, "part": r["id"]}
         elif mv["type"] == "point":
             v = next((x for x in views if x.key == mv["photo"]), None)
             got = V.point_at(v, mv["x"], mv["y"]) if v is not None else None
@@ -168,7 +174,8 @@ async def turn(scan: Scan, item: dict, talker, index: list[dict], shots: Path) -
         name = f"{item['id']}_{len(points) + 1}.jpg"
         (shots / name).write_bytes(jpeg)
         points.append({"marker": mv, "label": label, "point": [round(float(c), 4) for c in pt], "photo": sid,
-                       "shot": name})
+                       "shot": name, "source": "index" if str(mv.get("part", "")).startswith("ix_") else
+                       ("point" if mv["type"] == "point" else "finding")})
     err = None
     if held is not None and points:
         err = round(min(float(np.linalg.norm(np.asarray(p["point"]) - np.asarray(held["point"]))) for p in points) * 1000, 1)
@@ -176,7 +183,12 @@ async def turn(scan: Scan, item: dict, talker, index: list[dict], shots: Path) -
     from repairos import spend
     counts = {k: getattr(u, k, 0) or 0 for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens",
                                                    "cache_read_input_tokens")} if u else {}
-    return {"id": item["id"], "scan": scan.id, "mode": mode, "kind": item.get("kind"), "question": item["question"],
+    if item.get("expect_label") and points:   # did she show the part she was asked for (not a neighbour)?
+        want = item["expect_label"].lower()
+        used_right = any(want in str(p["label"]).lower() for p in points)
+    else:
+        used_right = None
+    return {"id": item["id"], "scan": scan.id, "mode": mode, "used_the_named_part": used_right, "kind": item.get("kind"), "question": item["question"],
             "spoken": words, "raw": raw, "moves": sp.stage, "points": points, "heldout_error_mm": err,
             "views": [v.key for v in views], "prep_s": round(prep, 2),
             "first_sentence_s": None if first is None else round(first, 2),
@@ -221,7 +233,8 @@ async def main() -> None:
             scans[k] = Scan(data, it["scan"], it.get("keep"))
         r = await turn(scans[k], it, talker, (indexes.get(it["scan"]) or {}).get("entries") or [], a.shots)
         out.append(r)
-        print(json.dumps({x: r[x] for x in ("id", "mode", "spoken", "heldout_error_mm", "first_sentence_s", "views")},
+        print(json.dumps({x: r[x] for x in ("id", "mode", "spoken", "heldout_error_mm", "used_the_named_part",
+                                            "first_sentence_s", "views")},
                          ensure_ascii=False), flush=True)
         for p in r["points"]:
             print("   ->", p["label"], p["photo"], p["shot"])

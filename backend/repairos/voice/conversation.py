@@ -101,6 +101,9 @@ Showing it on the 3D model (only when <parts> is given: the person is looking at
 - Write your answer once, and put <show part="its id from parts"/> right where you first name that part, even in \
 the middle of a sentence ("B is the <show part="ix_2"/>red one on the right"): the phone flies the camera to it, \
 circles it and shows its photo as you say it. Use only ids listed in <parts>, never say them.
+- When they name a specific part, show that exact part. If an entry in <parts> has that name (the parts read from \
+the photos list buttons, ports, pins and printed labels by name, already placed precisely), use <show> with it; use \
+<point> only when no entry names it. Never show a different part because it is nearby or was flagged.
 - For something not in <parts> that you can see in one of this turn's images, put \
 <point photo="s4" x="0.41" y="0.55" label="two or three words"/> the same way, where you first name it: photo is \
 the image's name (s4 or v1), x and y are fractions of that image (0,0 top left). Point only at what you can see.
@@ -492,8 +495,11 @@ class Talker:
             extra["thinking"] = thinking
         if tools:
             extra["tools"] = tools
+        # The persona is the same on every turn: cached (Haiku 5.5 caches from 512 tokens), so a turn reads it
+        # instead of processing it again.
+        system = [{"type": "text", "text": PERSONA, "cache_control": {"type": "ephemeral"}}]
         async with self._client.beta.messages.stream(
-                model=model, max_tokens=1024, system=PERSONA,
+                model=model, max_tokens=1024, system=system,
                 output_config={"effort": s.lea_voice_answer_effort}, messages=messages, **extra) as st:
             final = None
             try:

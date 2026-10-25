@@ -1,0 +1,199 @@
+[
+ {
+  "id": "xbox_heldout_b_index",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "heldout_index",
+  "used_the_named_part": true,
+  "kind": "prefer_index",
+  "question": "where's the B button",
+  "spoken": "The B button is the red one with the letter B, on the right side of the face buttons. In photo s2 it's the red button on the left of the four colored buttons, so it sits on the left side of the controller face, between the left thumbstick and the green A. Looking at the controller from the front, B is the red key just to the left of the X button cluster. Since you said something isn't working, you can test it by pressing B in a game menu and seeing whether it registers. If it doesn't, tell me what's happening and we can narrow it down.",
+  "raw": "The B button is the red one with the letter B, on the right side of the face buttons. In photo s2 it's the red button on the left of the four colored buttons, so it sits on the left side of the controller face, between the left thumbstick and the green A. Looking at the controller from the front, B is the red key just to the left of the X button cluster.\n\n<point photo=\"s2\" x=\"0.22\" y=\"0.55\" label=\"B button\"/>\n\nSince you said something isn't working, you can test it by pressing B in a game menu and seeing whether it registers. If it doesn't, tell me what's happening and we can narrow it down.",
+  "moves": [
+   {
+    "type": "point",
+    "photo": "s2",
+    "x": 0.22,
+    "y": 0.55,
+    "label": "B button"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "point",
+     "photo": "s2",
+     "x": 0.22,
+     "y": 0.55,
+     "label": "B button"
+    },
+    "label": "B button",
+    "point": [
+     -0.019,
+     -0.4026,
+     -0.0937
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_heldout_b_index_1.jpg",
+    "source": "point"
+   }
+  ],
+  "heldout_error_mm": 49.1,
+  "views": [
+   "s3",
+   "s2",
+   "v1"
+  ],
+  "prep_s": 0.27,
+  "first_sentence_s": 0.98,
+  "searches": 0,
+  "usd": 0.0010339250000000002
+ },
+ {
+  "id": "toaster_heldout_knob_index",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "heldout_index",
+  "used_the_named_part": true,
+  "kind": "prefer_index",
+  "question": "where's the control knob",
+  "spoken": "The control knobs are the four round knobs in a row along the stainless front panel, which has been pulled out and tilted toward the bottom of the photo. The one at the left end is the function knob, and the temperature knob is further along the row, as shown here.",
+  "raw": "The control knobs are the four round knobs in a row along the stainless front panel, which has been pulled out and tilted toward the bottom of the photo. The one at the left end is the <show part=\"ix_5\"/>function knob, and the temperature knob is further along the row, as <show part=\"ix_4\"/>shown here.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_5"
+   },
+   {
+    "type": "show",
+    "part": "ix_4"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_5"
+    },
+    "label": "function knob",
+    "point": [
+     -0.2283,
+     -0.2932,
+     -0.3453
+    ],
+    "photo": null,
+    "shot": "toaster_heldout_knob_index_1.jpg",
+    "source": "index"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_4"
+    },
+    "label": "temperature knob",
+    "point": [
+     -0.2331,
+     -0.2976,
+     -0.4133
+    ],
+    "photo": null,
+    "shot": "toaster_heldout_knob_index_2.jpg",
+    "source": "index"
+   }
+  ],
+  "heldout_error_mm": 136.0,
+  "views": [
+   "s20",
+   "s21",
+   "v1"
+  ],
+  "prep_s": 0.51,
+  "first_sentence_s": 3.32,
+  "searches": 0,
+  "usd": 0.0009838100000000001
+ },
+ {
+  "id": "toaster_heldout_motor_index",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "heldout_index",
+  "used_the_named_part": true,
+  "kind": "prefer_index",
+  "question": "where's the small fan motor",
+  "spoken": "The small fan motor is the round grey housing in the middle of the open oven, mounted on the back wall. Its beige coil sits in the centre, and the red and blue wires attach to spade terminals on it.",
+  "raw": "The small fan motor is the round grey housing in the middle of the open oven, mounted on the back wall. Its beige coil sits in the centre, and the red and blue wires attach to spade terminals on it. <show part=\"ix_1\"/>",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_1"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_1"
+    },
+    "label": "fan motor",
+    "point": [
+     -0.0262,
+     -0.2792,
+     -0.3366
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s6",
+    "shot": "toaster_heldout_motor_index_1.jpg",
+    "source": "index"
+   }
+  ],
+  "heldout_error_mm": 85.5,
+  "views": [
+   "s16",
+   "s20",
+   "v1"
+  ],
+  "prep_s": 0.35,
+  "first_sentence_s": 2.08,
+  "searches": 0,
+  "usd": 0.00092971
+ },
+ {
+  "id": "xbox_where_x_index",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "used_the_named_part": true,
+  "kind": "prefer_index",
+  "question": "where's the X button",
+  "spoken": "The X button is the blue one with the X mark, in the four-button diamond on the right side of the face. It sits above the green A and between the green A and the yellow Y, toward the top of the controller. Which part is acting up for you, and what happens when you press it?",
+  "raw": "The X button is the blue one with the X mark, in the four-button diamond on the right side of the face. It sits above the green A and between the green A and the yellow Y, toward the top of the controller. <show part=\"ix_3\"/>\n\nWhich part is acting up for you, and what happens when you press it?",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.019,
+     -0.3802,
+     -0.0804
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_where_x_index_1.jpg",
+    "source": "index"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s3",
+   "s2",
+   "v1"
+  ],
+  "prep_s": 0.06,
+  "first_sentence_s": 4.45,
+  "searches": 0,
+  "usd": 0.0009317100000000001
+ }
+]

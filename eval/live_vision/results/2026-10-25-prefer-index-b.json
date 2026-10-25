@@ -1,0 +1,51 @@
+[
+ {
+  "id": "xbox_heldout_b_index",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "heldout_index",
+  "used_the_named_part": true,
+  "kind": "prefer_index",
+  "question": "where's the B button",
+  "spoken": "The B button is the red one with the letter B, on the right side of the face. In photo s2 it's the red button on the left side of the image, which is the controller's right side from your point of view, so it sits to the left of the Xbox logo area when you look at the front. Let me point at it. Since you said something stopped working, if B is the one not responding, press it firmly and watch whether the game registers it. If it's sticky or feels loose, that's usually a worn rubber contact under the button, which is an easy fix with the back cover off.",
+  "raw": "The B button is the red one with the letter B, on the right side of the face. In photo s2 it's the red button on the left side of the image, which is the controller's right side from your point of view, so it sits to the left of the Xbox logo area when you look at the front. Let me point at it.\n\n<point photo=\"s2\" x=\"0.23\" y=\"0.45\" label=\"B button\"/>\n\nSince you said something stopped working, if B is the one not responding, press it firmly and watch whether the game registers it. If it's sticky or feels loose, that's usually a worn rubber contact under the button, which is an easy fix with the back cover off.",
+  "moves": [
+   {
+    "type": "point",
+    "photo": "s2",
+    "x": 0.23,
+    "y": 0.45,
+    "label": "B button"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "point",
+     "photo": "s2",
+     "x": 0.23,
+     "y": 0.45,
+     "label": "B button"
+    },
+    "label": "B button",
+    "point": [
+     0.0165,
+     -0.3764,
+     -0.0967
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_heldout_b_index_1.jpg",
+    "source": "point"
+   }
+  ],
+  "heldout_error_mm": 43.5,
+  "views": [
+   "s3",
+   "s2",
+   "v1"
+  ],
+  "prep_s": 0.32,
+  "first_sentence_s": 1.0,
+  "searches": 0,
+  "usd": 0.0010373000000000001
+ }
+]
