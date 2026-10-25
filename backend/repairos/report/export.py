@@ -16,6 +16,7 @@ from repairos.fusion import words
 from repairos.report.safety import LIMITS
 
 TITLE = {"looks_good": "No visible problems found", "potential_issues": "Potential issues",
+         "no_problems_seen": "No problems seen",
          "insufficient_evidence": "Not enough evidence"}
 PROOF = {"not_measured": "suspicion from photos, not proof", "confirmed_by_meter": "confirmed by a meter reading",
          "ruled_out_by_meter": "ruled out by a meter reading"}

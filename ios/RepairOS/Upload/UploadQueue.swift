@@ -44,6 +44,8 @@ final class UploadQueue {
     /// Files to send ahead of their JSON (recorded keyframes), so little is left to upload after Done.
     private var ahead: [String] = []
     private var cancelled = false
+    /// The item being uploaded right now (it can no longer be withdrawn).
+    private var inFlight: Item?
 
     private struct Weak { weak var queue: UploadQueue? }
     private static var live: [String: Weak] = [:]
@@ -88,6 +90,14 @@ final class UploadQueue {
             pending.append(.still(id))
         }
         kick()
+    }
+
+    /// Takes a still back before it is posted (a better photo of the same view replaced it). False when it is
+    /// already posted or on its way: then it stays.
+    func withdrawStill(_ id: String) -> Bool {
+        guard !state.stillsPosted.contains(id), inFlight != .still(id), let i = pending.firstIndex(of: .still(id)) else { return false }
+        pending.remove(at: i)
+        return true
     }
 
     func enqueueStill(_ id: String) {
@@ -137,6 +147,8 @@ final class UploadQueue {
                 var tries = 0
                 while true {
                     do {
+                        inFlight = item
+                        defer { inFlight = nil }
                         try await upload(item)
                         if let j = pending.firstIndex(of: item) { pending.remove(at: j) }
                         break
@@ -192,7 +204,7 @@ final class UploadQueue {
     }
 
     static func words(_ error: Error) -> String {
-        if error is URLError { return "Can't reach your Mac: is it on and on the same Wi-Fi?" }
+        if error is URLError { return "Can't reach the lea server: check the connection in Settings." }
         return error.localizedDescription
     }
 

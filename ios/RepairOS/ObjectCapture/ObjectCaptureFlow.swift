@@ -191,8 +191,9 @@ final class ObjectCaptureFlow {
     private func noteCue() {
         let c = cue
         if c != lastCue {
+            // One warning buzz when a problem starts, not on every change between problem cues.
+            if c != nil && lastCue == nil { cueChanges += 1 }
             lastCue = c
-            if c != nil { cueChanges += 1 }
         }
     }
 

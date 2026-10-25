@@ -42,9 +42,10 @@
       "enum": [
         "looks_good",
         "potential_issues",
-        "insufficient_evidence"
+        "insufficient_evidence",
+        "no_problems_seen"
       ],
-      "description": "Picked in code (repairos.report.verdict truth table), never by a model."
+      "description": "Picked in code (repairos.report.verdict truth table), never by a model. no_problems_seen (V8): nothing judged shows an issue and the capture covered the object well (config/verdict.yaml), but some regions were not checked: they are listed in verdict_reason.caveat."
     },
     "verdict_reason": {
       "type": "object",
@@ -62,9 +63,10 @@
             "all_inspected_ok",
             "no_regions",
             "nothing_inspected",
-            "some_not_inspected"
+            "some_not_inspected",
+            "nothing_seen_wrong"
           ],
-          "description": "issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged."
+          "description": "issues_found: at least one region shows a potential issue (or a meter reading confirmed one). all_inspected_ok: every region was judged and none shows an issue. no_regions: nothing was captured or detected to judge. nothing_inspected: regions exist but no model could judge any. some_not_inspected: nothing judged shows an issue, but some regions were not inspected or could not be judged (coverage poor). nothing_seen_wrong: the same, with the object covered well (V8)."
         },
         "rule": {
           "type": "string",
@@ -75,6 +77,11 @@
           "type": "string",
           "minLength": 1,
           "description": "Why, in plain words (no numbers; it is sent to the summary writer)."
+        },
+        "caveat": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What was not checked, with counts, e.g. 'Nothing looked wrong in the 2 areas Lea could see clearly. 3 areas need a closer photo.' Shown with the verdict as its caveat list; not sent to the summary writer."
         }
       }
     },
@@ -216,6 +223,25 @@
         "minLength": 1
       }
     },
+    "bottom_not_placed": {
+      "type": "array",
+      "title": "Bottom (not placed on the model)",
+      "description": "Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the backend could not line up with the main scan: they are real findings, listed in their buckets as usual, but have no 3D point on the model. Each comes with its crop so the app can show it as a photo. Absent when every such segment was aligned or the scan has none. Why a segment was not aligned: capture.segments[].why_not.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "segment", "photo", "reason"],
+        "properties": {
+          "finding_id": { "type": "string", "minLength": 1, "description": "The report row (in findings, cosmetic or insufficient_evidence)." },
+          "segment": { "type": "integer", "minimum": 1 },
+          "subject": { "$ref": "#/$defs/subject" },
+          "part_class": { "type": "string" },
+          "issue": { "type": "string", "description": "The row's issue (findings and cosmetic rows); absent for insufficient_evidence rows." },
+          "photo": { "$ref": "#/$defs/photo", "description": "The still and crop box the finding was seen in." },
+          "reason": { "type": "string", "minLength": 1, "description": "Why it has no 3D point." }
+        }
+      }
+    },
     "capture": {
       "type": "object",
       "additionalProperties": false,
@@ -257,6 +283,39 @@
           "type": "string",
           "minLength": 1,
           "description": "The phone's coverage hint in words, or 'not measured'."
+        },
+        "views": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cells", "cells_total", "sectors", "sectors_total", "share"],
+          "description": "Where the camera was (keyframes and stills) on the view dome around the object box (repairos.report.coverage): cells of 3 rings x 12 sectors seen, distinct sectors, and the share of cells. Absent when no box or pose is known.",
+          "properties": {
+            "cells": { "type": "integer", "minimum": 0 },
+            "cells_total": { "type": "integer", "minimum": 1 },
+            "sectors": { "type": "integer", "minimum": 0 },
+            "sectors_total": { "type": "integer", "minimum": 1 },
+            "share": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "segments": {
+          "type": "array",
+          "description": "Capture segments where the object was moved (the flipped mini-scan of the bottom) and how the backend registered each to the main scan by shape (repairos.recon.segment_align). An aligned segment's findings are placed on the same model; an unaligned one's are listed in findings_not_placed with no 3D point. Absent when the scan has no such segment.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["segment", "reason", "object_moved", "aligned", "findings_not_placed"],
+            "properties": {
+              "segment": { "type": "integer", "minimum": 1 },
+              "reason": { "type": "string", "minLength": 1, "description": "The scan package's segment reason (flipped)." },
+              "object_moved": { "type": "boolean" },
+              "aligned": { "type": "boolean", "description": "True when the backend registered the segment to segment 0 and placed its photos in segment 0's frame." },
+              "fitness": { "type": "number", "minimum": 0, "maximum": 1, "description": "Share of the segment's object points within 1.5 voxels of segment 0's after registration." },
+              "rmse_mm": { "type": "number", "minimum": 0, "description": "RMS distance of those matched points, millimetres." },
+              "method": { "type": "string", "minLength": 1 },
+              "why_not": { "type": "string", "minLength": 1, "description": "Why the segment was not registered (aligned false)." },
+              "findings_not_placed": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Findings from this segment's photos that have no 3D point because the segment is not aligned (empty when aligned)." }
+            }
+          }
         }
       }
     },
@@ -306,6 +365,104 @@
     "grain": {
       "const": "not called",
       "description": "Phase 1 makes no Grain calls."
+    },
+    "object": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "confidence_word", "label_visible"],
+      "description": "What the object is, from the first photos (one vision-model call; a label photo is read). Brand and model only as printed or recognised beyond doubt, else absent.",
+      "properties": {
+        "category": { "type": "string", "minLength": 1, "description": "A short generic kind of product, or unknown." },
+        "brand": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "confidence_word": { "type": "string", "enum": ["low", "medium", "high"] },
+        "label_visible": { "type": "boolean", "description": "A model label, rating plate or printed name was readable." },
+        "label_text": { "type": "string", "minLength": 1, "description": "That printed text, as read." },
+        "from_still_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 }
+      }
+    },
+    "mesh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "rev", "format", "frame"],
+      "description": "The scan's 3D mesh for the 3D view: LiDAR TSDF, decimated, vertex-coloured, in the frame of every finding's location (pins sit on it as they are).",
+      "properties": {
+        "url": { "type": "string", "minLength": 1, "description": "Gateway path: GET it with the device token (/v1/scans/{scan_id}/mesh?rev=N)." },
+        "rev": { "type": "integer", "minimum": 1, "description": "Goes up when the mesh is rebuilt (more photos added to the scan)." },
+        "format": { "type": "string", "enum": ["ply"], "description": "Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists." },
+        "frame": { "const": "arkit_world" },
+        "triangles": { "type": "integer", "minimum": 1 },
+        "cloud_url": { "type": "string", "minLength": 1, "description": "The object's part of the phone's LiDAR cloud, coloured points (binary PLY: float x y z, uchar red green blue), same frame (/v1/scans/{scan_id}/cloud?rev=N)." },
+        "cloud_points": { "type": "integer", "minimum": 0 },
+        "hero": { "type": "string", "enum": ["points", "mesh", "photos"], "description": "What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is too small or too little was captured for 3D to read as the object." },
+        "hero_reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "reference_hints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hints"],
+      "description": "Optional: where to look first, from public references about the identified product (web search titles and descriptions only; no third-party image or page is kept). Never evidence: a hint never makes a finding.",
+      "properties": {
+        "hints": { "type": "array", "items": { "type": "string", "minLength": 1 }, "maxItems": 3 },
+        "sources": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["link"],
+            "properties": { "title": { "type": "string" }, "link": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    },
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["part", "options", "searched_at"],
+      "description": "Optional \"Fix it\": where to buy the part of the top finding, from a public shopping search (repairos.references.parts). Only title, displayed price, seller and link are kept; no page, text or image. Added when the search is ready; never evidence and never delays the report.",
+      "properties": {
+        "part": { "type": "string", "minLength": 1, "description": "The part searched for, in generic words (the top finding's part class)." },
+        "options": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title", "seller", "link"],
+            "dependentRequired": { "price": ["currency"], "currency": ["price"] },
+            "properties": {
+              "title": { "type": "string", "minLength": 1 },
+              "price": { "type": "number", "exclusiveMinimum": 0, "description": "The displayed price; absent when the result showed none (a web result, not a shopping one)." },
+              "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+              "seller": { "type": "string", "minLength": 1 },
+              "link": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "guide_link": { "type": "string", "minLength": 1, "description": "A public replacement guide for that part, when the search found one." },
+        "searched_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "user_lead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["said", "checked", "evidence_finding_ids", "note"],
+      "description": "Optional: what the person said they suspected and what the photos showed about it (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only ordered the inspection; this section cites findings and never adds or changes one.",
+      "properties": {
+        "said": { "type": "string", "minLength": 1, "maxLength": 300, "description": "The person's own words (typed or spoken)." },
+        "suspect": { "type": "string", "minLength": 1, "description": "The part or area they suspected, in their generic words." },
+        "checked": { "type": "string", "enum": ["confirmed", "not_seen", "could_not_check"], "description": "confirmed = a judged region of that area has an issue; not_seen = regions of that area were judged with no visible issue; could_not_check = no photo of it was judged (or no area was named)." },
+        "evidence_finding_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true, "description": "The report rows this is based on (any section)." },
+        "note": { "type": "string", "minLength": 1, "description": "One or two plain sentences, written in code from the rows cited." },
+        "sources": {
+          "type": "array",
+          "maxItems": 5,
+          "items": { "type": "object", "additionalProperties": false, "required": ["link"], "properties": { "title": { "type": "string" }, "link": { "type": "string", "minLength": 1 } } }
+        }
+      }
     }
   },
   "allOf": [
@@ -407,6 +564,28 @@
             }
           }
         ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "verdict": {
+            "const": "no_problems_seen"
+          }
+        },
+        "required": [
+          "verdict"
+        ]
+      },
+      "then": {
+        "description": "No problems seen only when at least one region was judged and none shows an unresolved functional or safety issue; unchecked regions may remain (listed in the caveat).",
+        "properties": {
+          "verdict_reason": { "properties": { "code": { "const": "nothing_seen_wrong" } } },
+          "findings": {
+            "items": { "anyOf": [ { "properties": { "issue": { "const": "none" } } }, { "properties": { "proof": { "properties": { "status": { "const": "ruled_out_by_meter" } } } } } ] }
+          }
+        },
+        "anyOf": [ { "properties": { "findings": { "minItems": 1 } } }, { "required": ["cosmetic"], "properties": { "cosmetic": { "minItems": 1 } } } ]
       }
     },
     {

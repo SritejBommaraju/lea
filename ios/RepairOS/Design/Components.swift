@@ -163,7 +163,7 @@ struct StatusPill: View {
             Text(text).lineLimit(1)
         }
         .font(.pillLabel)
-        .foregroundStyle(onCamera ? Color.white : (tone == .neutral ? Color.secondary : tone.color))
+        .foregroundStyle(onCamera ? Color.white : (tone == .neutral ? Color.secondary : tone.text))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(onCamera ? Color.black.opacity(0.5) : tone.wash, in: Capsule())
@@ -196,7 +196,7 @@ struct ProgressPill: View {
             Text(text).lineLimit(1).monospacedDigit()
         }
         .font(.pillLabel)
-        .foregroundStyle(onCamera ? Color.white : tone.color)
+        .foregroundStyle(onCamera ? Color.white : tone.text)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(onCamera ? Color.black.opacity(0.5) : tone.wash, in: Capsule())

@@ -25,7 +25,7 @@ from typing import Any
 
 from repairos.fusion import words
 from repairos.report.safety import limits, safety_notes
-from repairos.report.verdict import decide, facts_of
+from repairos.report.verdict import caveat, decide, facts_of
 from repairos.slots.blob import REF_PREFIX
 from repairos.vision.generic_classes import GENERIC_CLASSES
 from repairos.vision.ranking import MERGE_IOU
@@ -109,6 +109,10 @@ def capture_summary(scan: Mapping[str, Any] | None, stills: list[Mapping[str, An
     }
     if scan and scan.get("point_count") is not None:
         out["scan_points"] = int(scan["point_count"])
+    from repairos.report.coverage import view_coverage
+
+    if (views := view_coverage(scan, stills)) is not None:
+        out["views"] = views
     return out
 
 
@@ -263,17 +267,52 @@ def _is_issue(e: Mapping[str, Any]) -> bool:
     return e["issue"] != "none" and e["proof"]["status"] != "ruled_out_by_meter"
 
 
+def bottom_not_placed(report: Mapping[str, Any], segments: list[Mapping[str, Any]],
+                      locations: Mapping[str, Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The "Bottom (not placed on the model)" list: report rows (findings, cosmetic, insufficient_evidence) built
+    from findings of a flipped segment that was not aligned, each with its photo crop and why it has no 3D point."""
+    want = {fid: int(sg["segment"]) for sg in segments if not sg.get("aligned")
+            for fid in sg.get("findings_not_placed") or []}
+    if not want:
+        return []
+    out = []
+    for bucket in ("findings", "cosmetic", "insufficient_evidence"):
+        for row in report.get(bucket) or []:
+            ids = [row.get("finding_id"), *(row.get("finding_ids") or [])]
+            hit = next((i for i in ids if i in want), None)
+            photo = row.get("crop") or row.get("photo")
+            if hit is None or not photo:
+                continue
+            loc = locations.get(hit) or {}
+            e = {"finding_id": row["finding_id"], "segment": want[hit],
+                 "photo": {k: photo[k] for k in ("still_id", "box_px", "crop_ref") if k in photo},
+                 "reason": str(loc.get("reason") or "the flipped segment was not lined up with the main scan")}
+            if row.get("subject"):
+                e["subject"] = row["subject"]
+            if row.get("part_class"):
+                e["part_class"] = row["part_class"]
+            if row.get("issue"):
+                e["issue"] = row["issue"]
+            out.append(e)
+    return out
+
+
 def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], findings: list[Mapping[str, Any]],
                  suspects: list[Mapping[str, Any]], next_action: Mapping[str, Any] | None,
                  regions: Mapping[str, Mapping[str, Any]], locations: Mapping[str, Mapping[str, Any]],
                  models: Mapping[str, str], now: datetime | None = None,
                  explains: Mapping[tuple[str, str], str] | None = None,
-                 previous: Mapping[str, Any] | None = None) -> dict[str, Any]:
+                 previous: Mapping[str, Any] | None = None, identity: Mapping[str, Any] | None = None,
+                 mesh: Mapping[str, Any] | None = None, hints: Mapping[str, Any] | None = None,
+                 segments: list[Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """The report without `summary` (repairos.report.summary adds it). `regions[finding_id]` gives the region's
     `part_class` and `inspected_by` (the stages that looked); `locations[finding_id]` its report location;
     `explains[(kind, ref)]` Jev's banded "explains the symptom" judgment (yes | unsettled | no) per subject.
     `previous`: the scan's report before this one (more photos were added): its row ids are kept for the same place
-    (collapse_rows, merge_undecided), so the app sees the same finding again, updated, not a duplicate."""
+    (collapse_rows, merge_undecided), so the app sees the same finding again, updated, not a duplicate.
+    `segments`: the flipped segments' registration (shown as `capture.segments`).
+    `identity`, `mesh`, `hints`: the run row's records (pipeline/run.py), shown as `object`, `mesh` and
+    `reference_hints` when they are done."""
     explains = explains or {}
     by_finding: dict[str, Mapping[str, Any]] = {}
     for s in suspects:
@@ -354,9 +393,29 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
         "models": dict(models),
         "grain": "not called",
     }
+    if segments:   # flipped segments and how they were registered (pipeline/segments.py report_segments)
+        report["capture"]["segments"] = [dict(x) for x in segments]
+        if (bottom := bottom_not_placed(report, segments, locations)):
+            report["bottom_not_placed"] = bottom
     v = decide(facts_of(report))
     report["verdict"] = v.verdict
     report["verdict_reason"] = v.as_reason()
+    if v.verdict in ("no_problems_seen", "insufficient_evidence") and (c := caveat(report)):
+        report["verdict_reason"]["caveat"] = c   # what was not checked: the caveat list, never the headline
+    if (obj := object_header(identity)):
+        report["object"] = obj
+    if mesh and mesh.get("status") == "done":
+        report["mesh"] = {"url": mesh_url(scan["scan_id"], int(mesh["rev"])), "rev": int(mesh["rev"]),
+                          "format": mesh["format"], "frame": "arkit_world", "triangles": int(mesh["triangles"])}
+        if mesh.get("cloud_ref"):
+            report["mesh"].update(cloud_url=cloud_url(scan["scan_id"], int(mesh["rev"])),
+                                  cloud_points=int(mesh.get("cloud_points") or 0))
+        if mesh.get("hero"):
+            report["mesh"].update(hero=mesh["hero"], hero_reason=mesh.get("hero_reason") or mesh["hero"])
+    if hints and hints.get("status") == "done" and hints.get("hints"):
+        report["reference_hints"] = {"hints": list(hints["hints"])[:3],
+                                     "sources": [{"title": x.get("title", ""), "link": x["link"]}
+                                                 for x in (hints.get("sources") or [])[:5] if x.get("link")]}
     report["safety"] = safety_notes(judged, cosmetic, undecided)
     report["limits"] = limits(scan.get("symptom"), judged, unmerged_photos=across)
     if next_action:
@@ -366,6 +425,29 @@ def build_report(*, scan: Mapping[str, Any], stills: list[Mapping[str, Any]], fi
             step["reason"] = next_action["reason"]
         report["next_step"] = step
     return report
+
+
+def mesh_url(scan_id: str, rev: int) -> str:
+    return f"/v1/scans/{scan_id}/mesh?rev={rev}"
+
+
+def cloud_url(scan_id: str, rev: int) -> str:
+    return f"/v1/scans/{scan_id}/cloud?rev={rev}"
+
+
+def object_header(identity: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The report's `object` from the run row's identity (vision model's answer), or None before one is done."""
+    if not identity or identity.get("status") != "done":
+        return None
+    out: dict[str, Any] = {"category": identity.get("category") or "unknown",
+                           "confidence_word": identity.get("confidence") or "low",
+                           "label_visible": bool(identity.get("label_visible"))}
+    for k in ("brand", "model", "label_text"):
+        if identity.get(k):
+            out[k] = identity[k]
+    if identity.get("from_still_ids"):
+        out["from_still_ids"] = list(identity["from_still_ids"])
+    return out
 
 
 def _why(f: Mapping[str, Any]) -> str:

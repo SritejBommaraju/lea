@@ -35,9 +35,14 @@ final class Torch {
         diag.log("torch_battery_answer", ["use": yes])
     }
 
-    func update(time: TimeInterval, ambient: Double?, meanLuma: Double, saturated: Double, isoHigh: Bool = false) {
+    /// The level the torch reaches when nothing holds it back (full up close, else the far level).
+    func top(near: Bool) -> Float { near ? TorchRule.nearLevel : TorchRule.levels[0] }
+
+    func update(time: TimeInterval, ambient: Double?, meanLuma: Double, saturated: Double, isoHigh: Bool = false,
+                near: Bool = false, noisy: Bool = false) {
         let hot = ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
-        var level = rule.update(time: time, ambient: ambient, meanLuma: meanLuma, saturated: saturated, hot: hot, isoHigh: isoHigh)
+        var level = rule.update(time: time, ambient: ambient, meanLuma: meanLuma, saturated: saturated, hot: hot, isoHigh: isoHigh,
+                                near: near, noisy: noisy)
         if level > 0, rule.mode == .auto {
             let battery = UIDevice.current.batteryLevel
             if battery >= 0, battery < 0.15, UIDevice.current.batteryState != .charging {
@@ -68,7 +73,7 @@ final class Torch {
             }
             device.unlockForConfiguration()
             applied = level
-            diag.log("torch", ["level": level, "reason": reason ?? rule.mode.rawValue, "ambient": ambient ?? -1,
+            diag.log("torch", ["level": level, "reason": reason ?? rule.mode.rawValue, "ambient": ambient ?? -1, "cap": rule.cap,
                                "luma": luma ?? -1, "saturated": saturated ?? -1, "torch_active": device.isTorchActive])
         } catch {
             unavailable = error.localizedDescription

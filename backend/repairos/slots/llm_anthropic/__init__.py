@@ -6,12 +6,14 @@ output uses `output_config.format` and is validated again with jsonschema; one r
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from typing import Any
 
 import jsonschema
 
+from repairos import spend
 from repairos.config import get_settings
 from repairos.registry import register
 from repairos.slots.llm import Message, StructuredOutputError, Tool, Transcript
@@ -47,9 +49,19 @@ class AnthropicTextModel:
 
     def _create(self, system: str, messages: list[Message], cache_hint: str | None, **extra):
         output_config = {"effort": self.effort, **extra.pop("output_config", {})}
-        return self.client.messages.create(model=self.model, max_tokens=self.max_tokens,
-                                           system=self._system(system, cache_hint), messages=messages,
-                                           output_config=output_config, **extra)
+        sys_blocks = self._system(system, cache_hint)
+        # Spend guard first (repairos.spend): refused before anything is spent; key = the whole request.
+        est = spend.estimate_usd("anthropic")
+        spend.charge("anthropic", usd=est, key=hashlib.sha256(json.dumps(
+            [self.model, sys_blocks, messages], sort_keys=True, default=str).encode()).hexdigest()[:32])
+        resp = self.client.messages.create(model=self.model, max_tokens=self.max_tokens, system=sys_blocks,
+                                           messages=messages, output_config=output_config, **extra)
+        u = getattr(resp, "usage", None)
+        usd = spend.anthropic_usd(self.model, {k: getattr(u, k, 0) or 0 for k in (
+            "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")}) if u else None
+        if usd is not None:
+            spend.record_cost("anthropic", usd, estimate=est)
+        return resp
 
     @staticmethod
     def _text(resp) -> str:

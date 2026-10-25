@@ -12,6 +12,8 @@ struct ModelPin: Identifiable, Sendable, Equatable {
     var number: Int?
     var point: SIMD3<Float>
     var tone: Tone
+    /// A circled "look closer" area (Report/Stage/InspectTarget): drawn as a dashed ring of this radius (metres).
+    var ringRadius: Float? = nil
 }
 
 /// Points to draw (already capped), metres, the scan's ARKit frame, Y up.
@@ -20,21 +22,57 @@ struct ScanCloud: Sendable {
     var colors: [SIMD3<Float>]?
 }
 
+extension ScanCloud {
+    /// The bulk of the cloud: the per-axis median and the 80th-percentile distance from it, so stray points (the
+    /// table edge, a far wall) never shrink the object on screen.
+    var bulk: (center: SIMD3<Float>, radius: Float) {
+        guard !positions.isEmpty else { return (.zero, 0.1) }
+        let step = max(1, positions.count / 20_000)
+        let sample = stride(from: 0, to: positions.count, by: step).map { positions[$0] }
+        var c = SIMD3<Float>()
+        for axis in 0..<3 { let v = sample.map { $0[axis] }.sorted(); c[axis] = v[v.count / 2] }
+        let d = sample.map { simd_distance($0, c) }.sorted()
+        return (c, max(0.03, d[Int(Double(d.count - 1) * 0.8)]))
+    }
+}
+
 /// Where the 3D geometry comes from.
 enum ModelSource: Sendable {
     case none
     case pointCloud(URL)
     case mesh(URL)
+    /// A binary PLY triangle mesh in the scan's ARKit frame (the gateway's `GET /v1/scans/{id}/mesh`), cropped to the
+    /// scan's locked box when there is one (the mesh can include the table and walls around the object).
+    case meshPLY(URL, crop: ObjectBox?)
     case points(ScanCloud)
+    /// The backend says photos read better than 3D (a small object): the photo hero.
+    case photos
 
-    /// The session's own files: the PLY the locator ray-casts against (same frame as `location.point_m`), else the
-    /// photogrammetry mesh. A later segment's own cloud (`points_segmentN_…`, an unaligned continuation) is in
-    /// another frame, so it is never the one drawn under the pins.
+    /// The backend mesh and cleaned cloud, cached next to the scan once fetched.
+    static let backendMeshName = "mesh_gateway.ply"
+    static let backendCloudName = "cloud_gateway.ply"
+    static let gatewayFiles: Set<String> = [backendMeshName, backendCloudName]
+
+    /// What the hero shows, following the backend's choice (`hero`: points, mesh, photos) once it has made one; until
+    /// then the gateway mesh if fetched, else the phone's own cloud as a placeholder.
+    static func find(in scanDir: URL, hero: String?) -> ModelSource {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: scanDir.path)) ?? []
+        switch hero {
+        case "photos": return .photos
+        case "points" where names.contains(backendCloudName): return .pointCloud(scanDir.appending(path: backendCloudName))
+        case "mesh" where names.contains(backendMeshName):
+            return .meshPLY(scanDir.appending(path: backendMeshName), crop: cropBox(in: scanDir))
+        default: return find(in: scanDir)
+        }
+    }
+
+    /// The session's own files: the gateway's mesh (same frame as `location.point_m`) when it has been fetched, else
+    /// the PLY cloud the locator ray-casts against (ownCloud), else a photogrammetry mesh.
     static func find(in scanDir: URL) -> ModelSource {
         let fm = FileManager.default
         let names = ((try? fm.contentsOfDirectory(atPath: scanDir.path)) ?? []).sorted()
-        let main = "points_arkit_world.ply"
-        if let ply = names.contains(main) ? main : names.first(where: { $0.hasSuffix(".ply") && !$0.hasPrefix("points_segment") }) {
+        if names.contains(backendMeshName) { return .meshPLY(scanDir.appending(path: backendMeshName), crop: cropBox(in: scanDir)) }
+        if let ply = ownCloud(in: names) {
             return .pointCloud(scanDir.appending(path: ply))
         }
         if let mesh = names.first(where: { $0.hasSuffix(".usdz") || $0.hasSuffix(".obj") }) { return .mesh(scanDir.appending(path: mesh)) }
@@ -42,6 +80,62 @@ enum ModelSource: Sendable {
     }
 
     var isNone: Bool { if case .none = self { true } else { false } }
+
+    /// The scan package's `crop_box` (the locked object) as a box.
+    static func cropBox(in scanDir: URL) -> ObjectBox? {
+        guard let data = try? Data(contentsOf: scanDir.appending(path: "scan_package.json")),
+              let pkg = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cb = pkg["crop_box"] as? [String: Any],
+              let c = (cb["center_m"] as? [NSNumber])?.map(\.floatValue), c.count == 3,
+              let e = (cb["extent_m"] as? [NSNumber])?.map(\.floatValue), e.count == 3 else { return nil }
+        let q = (cb["quaternion_xyzw"] as? [NSNumber])?.map(\.floatValue) ?? [0, 0, 0, 1]
+        let yaw = q.count == 4 ? 2 * atan2(q[1], q[3]) : 0
+        return ObjectBox(center: SIMD3(c[0], c[1], c[2]), size: SIMD3(e[0], e[1], e[2]), yaw: yaw)
+    }
+
+    /// The scan's own PLY cloud (the frame the locator ray-casts against): `points_arkit_world.ply` when present, else
+    /// the first other PLY that is neither a gateway file nor a later segment's own cloud (`points_segmentN_…`, an
+    /// unaligned continuation in another frame, so never the one drawn under the pins). `names` sorted.
+    static func ownCloud(in names: [String]) -> String? {
+        let main = "points_arkit_world.ply"
+        if names.contains(main) { return main }
+        return names.first(where: { $0.hasSuffix(".ply") && !gatewayFiles.contains($0) && !$0.hasPrefix("points_segment") })
+    }
+
+    /// The point cloud to fall back to when a mesh cannot be read.
+    static func cloudFallback(in scanDir: URL) -> URL? {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: scanDir.path)) ?? []).sorted()
+        return ownCloud(in: names).map { scanDir.appending(path: $0) }
+    }
+}
+
+/// A triangle mesh to draw: positions, optional colours, normals (computed), triangle indices.
+struct ScanMesh: Sendable {
+    var positions: [SIMD3<Float>]
+    var colors: [SIMD3<Float>]?
+    var normals: [SIMD3<Float>]
+    var indices: [UInt32]
+
+    /// Triangles with every corner inside `box` (+ `margin`) and above its floor (the support plane + `floor`), with
+    /// unused vertices dropped: the object without the table or the room.
+    func cropped(to box: ObjectBox, margin: Float, floor: Float) -> ScanMesh {
+        let keep = positions.map { box.contains($0, margin: margin) && $0.y > box.planeY + floor }
+        var remap = [Int32](repeating: -1, count: positions.count)
+        var p: [SIMD3<Float>] = [], n: [SIMD3<Float>] = [], c: [SIMD3<Float>] = [], idx: [UInt32] = []
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            let tri = [Int(indices[t]), Int(indices[t + 1]), Int(indices[t + 2])]
+            guard tri.allSatisfy({ keep[$0] }) else { continue }
+            for v in tri {
+                if remap[v] < 0 {
+                    remap[v] = Int32(p.count)
+                    p.append(positions[v]); n.append(normals[v])
+                    if let colors { c.append(colors[v]) }
+                }
+                idx.append(UInt32(remap[v]))
+            }
+        }
+        return ScanMesh(positions: p, colors: colors == nil ? nil : c, normals: n, indices: idx)
+    }
 }
 
 // MARK: - PLY
@@ -99,60 +193,176 @@ enum PLYReader {
     private static let sizes: [String: Int] = ["char": 1, "uchar": 1, "int8": 1, "uint8": 1, "short": 2, "ushort": 2,
                                                "int16": 2, "uint16": 2, "int": 4, "uint": 4, "int32": 4, "uint32": 4,
                                                "float": 4, "float32": 4, "double": 8, "float64": 8]
+
+    /// A binary little-endian triangle mesh: the vertex element (x, y, z, optional uchar red/green/blue), then a face
+    /// element with a `list uchar int|uint vertex_indices` property (triangles; larger polygons are fanned). Nil when
+    /// the file has no faces or more than `maxFaces` (the caller then draws the vertices as points).
+    static func readMesh(_ data: Data, maxFaces: Int = 400_000) throws -> ScanMesh? {
+        guard let end = data.range(of: Data("end_header\n".utf8)) else { throw Failure.notPLY }
+        let header = String(decoding: data[..<end.lowerBound], as: UTF8.self).split(separator: "\n").map(String.init)
+        guard header.first == "ply", header.contains(where: { $0.hasPrefix("format binary_little_endian") }) else { throw Failure.notPLY }
+        var element = "", vCount = 0, fCount = 0, vStride = 0
+        var fields: [String: (offset: Int, type: String)] = [:]
+        var faceList: (count: String, index: String)?
+        var faceExtra = 0
+        for line in header {
+            let w = line.split(separator: " ").map(String.init)
+            if w.first == "element", w.count > 2 {
+                element = w[1]
+                if element == "vertex" { vCount = Int(w[2]) ?? 0 }
+                if element == "face" { fCount = Int(w[2]) ?? 0 }
+            } else if w.first == "property", element == "vertex", w.count == 3 {
+                guard let size = sizes[w[1]] else { throw Failure.unsupported(w[1]) }
+                fields[w[2]] = (vStride, w[1])
+                vStride += size
+            } else if w.first == "property", element == "face" {
+                if w.count == 5, w[1] == "list" { faceList = (w[2], w[3]) } else if w.count == 3 { faceExtra += sizes[w[1]] ?? 0 }
+            }
+        }
+        guard let x = fields["x"], let y = fields["y"], let z = fields["z"], vCount > 0 else { throw Failure.unsupported("no xyz") }
+        guard let list = faceList, fCount > 0, fCount <= maxFaces, let countSize = sizes[list.count], let indexSize = sizes[list.index],
+              indexSize == 4, faceExtra == 0 else { return nil }
+        let start = end.upperBound - data.startIndex
+        guard data.count >= start + vCount * vStride else { throw Failure.unsupported("truncated") }
+        let rgb = [fields["red"], fields["green"], fields["blue"]]
+        let hasColor = rgb.allSatisfy { $0?.type == "uchar" || $0?.type == "uint8" }
+        var positions = [SIMD3<Float>](), colors = [SIMD3<Float>](), indices = [UInt32]()
+        positions.reserveCapacity(vCount)
+        indices.reserveCapacity(fCount * 3)
+        var ok = true
+        data.withUnsafeBytes { raw in
+            func float(_ base: Int, _ f: (offset: Int, type: String)) -> Float {
+                f.type == "double" || f.type == "float64"
+                    ? Float(raw.loadUnaligned(fromByteOffset: base + f.offset, as: Double.self))
+                    : raw.loadUnaligned(fromByteOffset: base + f.offset, as: Float.self)
+            }
+            for i in 0..<vCount {
+                let base = start + i * vStride
+                positions.append(SIMD3(float(base, x), float(base, y), float(base, z)))
+                if hasColor { colors.append(SIMD3(rgb.map { Float(raw[base + $0!.offset]) / 255 })) }
+            }
+            var o = start + vCount * vStride
+            for _ in 0..<fCount {
+                guard o + countSize <= raw.count else { ok = false; return }
+                let n = countSize == 1 ? Int(raw[o]) : Int(raw.loadUnaligned(fromByteOffset: o, as: UInt32.self))
+                o += countSize
+                guard n >= 3, o + n * 4 <= raw.count else { ok = false; return }
+                let first = raw.loadUnaligned(fromByteOffset: o, as: UInt32.self)
+                for k in 1..<(n - 1) {
+                    let b = raw.loadUnaligned(fromByteOffset: o + k * 4, as: UInt32.self)
+                    let c = raw.loadUnaligned(fromByteOffset: o + (k + 1) * 4, as: UInt32.self)
+                    if first < vCount, b < vCount, c < vCount { indices.append(contentsOf: [first, b, c]) }
+                }
+                o += n * 4
+            }
+        }
+        guard ok, !indices.isEmpty else { return nil }
+        // Smooth vertex normals (area-weighted face normals).
+        var normals = [SIMD3<Float>](repeating: .zero, count: vCount)
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            let a = Int(indices[t]), b = Int(indices[t + 1]), c = Int(indices[t + 2])
+            let n = simd_cross(positions[b] - positions[a], positions[c] - positions[a])
+            normals[a] += n; normals[b] += n; normals[c] += n
+        }
+        for i in 0..<vCount { normals[i] = simd_length(normals[i]) > 1e-12 ? simd_normalize(normals[i]) : SIMD3(0, 1, 0) }
+        return ScanMesh(positions: positions, colors: hasColor ? colors : nil, normals: normals, indices: indices)
+    }
 }
 
 // MARK: - View
 
-/// The 3D card: drag to turn, pinch to zoom, tap a pin. Setting `focus` flies the camera to that pin.
+/// The 3D card: drag to turn, pinch to zoom, tap a marker. Setting `focus` flies the camera to that marker.
+/// `spin` turns the object slowly until the first touch (the report's hero); it pauses while off screen.
 struct ModelView: View {
     let source: ModelSource
     let pins: [ModelPin]
     var focus: String?
+    var spin = false
+    var showHint = true
+    /// On the report's dark stage (Report/Stage): no well behind the scan (the stage shows through), glass controls,
+    /// markers that never overlap and that pop in one by one.
+    var stage = false
+    /// Called once the scan is on screen (or there is nothing to show), so a caller can time the landing to it.
+    var onLoaded: (() -> Void)? = nil
+    /// Lets a circle drawn over the view be turned into a spot on the scan (circle to inspect).
+    var probe: StageProbe? = nil
+    /// The recenter control (off where the view is only to look at, like the waiting stage).
+    var controls = true
     let onPinTap: (String) -> Void
 
     @State private var loaded: Loaded?
     @State private var failed = false
     @State private var recenter = 0
+    @State private var visible = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    enum Loaded { case cloud(ScanCloud), mesh(URL), nothing }
+    enum Loaded { case cloud(ScanCloud), mesh(URL), triangles(ScanMesh), nothing }
 
     var body: some View {
         ZStack {
-            Palette.well
+            if !stage { Palette.well }
             if let loaded {
-                SceneHost(content: loaded, pins: pins, focus: focus, recenter: recenter, animate: !reduceMotion, onPinTap: onPinTap)
+                SceneHost(content: loaded, pins: pins, focus: focus, recenter: recenter, animate: !reduceMotion,
+                          spin: spin && !reduceMotion, active: visible, stage: stage, probe: probe, onPinTap: onPinTap)
+                    .id(Self.loadedID(loaded))
                     .transition(.opacity)
             } else if !failed {
-                ProgressView()
+                ProgressView().tint(stage ? .white : nil)
             }
             if failed || (loaded.map { if case .nothing = $0 { true } else { false } } ?? false) && pins.isEmpty {
                 Label("No 3D scan for this report", systemImage: "cube.transparent")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .font(.footnote).foregroundStyle(stage ? AnyShapeStyle(Color.white.opacity(0.6)) : AnyShapeStyle(.secondary))
             }
         }
         .overlay(alignment: .topTrailing) {
-            Button { recenter += 1 } label: { Image(systemName: "scope") }
-                .buttonStyle(RoundIconButtonStyle())
-                .padding(Spacing.s)
-                .accessibilityLabel("Show the whole object")
+            if !stage {
+                Button { recenter += 1 } label: { Image(systemName: "scope") }
+                    .buttonStyle(RoundIconButtonStyle())
+                    .padding(Spacing.s)
+                    .accessibilityLabel("Show the whole object")
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            // On the stage the recenter control sits low, clear of the navigation bar drawn over the stage's top.
+            if stage && controls {
+                Button { recenter += 1 } label: { Image(systemName: "scope") }
+                    .buttonStyle(StageIconButtonStyle())
+                    .padding(Spacing.m)
+                    .accessibilityLabel("Show the whole object")
+            }
         }
         .overlay(alignment: .bottomLeading) {
-            StatusPill(text: "Drag to turn · pinch to zoom", symbol: "rotate.3d")
-                .dynamicTypeSize(...DynamicTypeSize.xxLarge)
-                .background(Palette.surface.opacity(0.9), in: Capsule())
-                .padding(Spacing.m).allowsHitTesting(false)
+            if showHint && !stage {
+                StatusPill(text: "Drag to turn · pinch to zoom", symbol: "rotate.3d")
+                    .dynamicTypeSize(...DynamicTypeSize.xxLarge)
+                    .background(Palette.surface.opacity(0.9), in: Capsule())
+                    .padding(Spacing.m).allowsHitTesting(false)
+            }
         }
-        .task(id: Self.key(source)) { await load() }
+        .onScrollVisibilityChange(threshold: 0.05) { visible = $0 }
+        .task(id: Self.key(source)) { await load(); onLoaded?() }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("3D view of the scanned object with \(pins.count) problem pins")
+        .accessibilityLabel("3D view of the scanned object with \(pins.count) numbered problems")
     }
 
     private func load() async {
         switch source {
-        case .none: loaded = .nothing
+        case .none, .photos: loaded = .nothing
         case .points(let cloud): loaded = .cloud(cloud)
         case .mesh(let url): loaded = .mesh(url)
+        case .meshPLY(let url, let crop):
+            if let mesh = await Self.readMesh(url, crop: crop) {
+                withAnimation(Motion.fade) { loaded = .triangles(mesh) }
+            } else if let cloud = await Self.readCloud(url) {
+                // Too big (or no faces) for triangles: its vertices as a cloud, capped like any cloud.
+                withAnimation(Motion.fade) { loaded = .cloud(cloud) }
+            } else if let fallback = ModelSource.cloudFallback(in: url.deletingLastPathComponent()),
+                      let cloud = await Self.readCloud(fallback) {
+                withAnimation(Motion.fade) { loaded = .cloud(cloud) }
+            } else {
+                failed = true
+                loaded = .nothing
+            }
         case .pointCloud(let url):
             if let cloud = await Self.readCloud(url) {
                 withAnimation(Motion.fade) { loaded = .cloud(cloud) }
@@ -169,10 +379,34 @@ struct ModelView: View {
         return try? PLYReader.read(data)
     }
 
+    /// The mesh, cropped to the object's box; nil when too little of it is left there (the cloud is shown instead).
+    @concurrent
+    private static func readMesh(_ url: URL, crop: ObjectBox?) async -> ScanMesh? {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let mesh = (try? PLYReader.readMesh(data)) ?? nil else { return nil }
+        guard let crop else { return mesh }
+        let cropped = mesh.cropped(to: crop, margin: 0.015, floor: 0.004)
+        return cropped.indices.count / 3 >= minTriangles ? cropped : nil
+    }
+
+    /// Fewer triangles than this on the object: the mesh is not worth showing over the cloud.
+    nonisolated static let minTriangles = 800
+
+    /// A new geometry (the gateway mesh replacing the cloud) builds a new scene.
+    private static func loadedID(_ l: Loaded) -> String {
+        switch l {
+        case .cloud(let c): "cloud:\(c.positions.count)"
+        case .mesh(let u): "mesh:\(u.path)"
+        case .triangles(let m): "tri:\(m.indices.count)"
+        case .nothing: "nothing"
+        }
+    }
+
     private static func key(_ s: ModelSource) -> String {
         switch s {
         case .none: "none"
-        case .pointCloud(let u), .mesh(let u): u.path
+        case .photos: "photos"
+        case .pointCloud(let u), .mesh(let u), .meshPLY(let u, _): u.path
         case .points(let c): "points:\(c.positions.count)"
         }
     }
@@ -184,6 +418,10 @@ private struct SceneHost: UIViewRepresentable {
     let focus: String?
     let recenter: Int
     let animate: Bool
+    let spin: Bool
+    let active: Bool
+    var stage = false
+    var probe: StageProbe?
     let onPinTap: (String) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -199,8 +437,20 @@ private struct SceneHost: UIViewRepresentable {
         view.defaultCameraController.inertiaEnabled = true
         view.scene = SCNScene()
         view.addGestureRecognizer(UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:))))
+        // Any touch stops the hero spin (recognised alongside the camera controller's own gestures).
+        let touch = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.touched(_:)))
+        touch.minimumPressDuration = 0
+        touch.cancelsTouchesInView = false
+        touch.delegate = context.coordinator
+        view.addGestureRecognizer(touch)
         context.coordinator.view = view
+        context.coordinator.stage = stage
+        context.coordinator.animateIn = stage && animate
+        if stage { view.delegate = context.coordinator.separator }
+        let coordinator = context.coordinator
+        probe?.resolve = { [weak coordinator] center, radius in coordinator?.resolve(center, radius) }
         context.coordinator.build(content, pins: pins, traits: view.traitCollection)
+        if spin { context.coordinator.startSpin() }
         return view
     }
 
@@ -213,39 +463,91 @@ private struct SceneHost: UIViewRepresentable {
         }
         if c.focus != focus {
             c.focus = focus
-            if let focus { c.fly(to: focus, animate: animate) }
+            if let focus { c.stopSpin(); c.fly(to: focus, animate: animate) }
         }
         if c.recenter != recenter {
             c.recenter = recenter
+            c.stopSpin()
             c.frameAll(animate: animate)
         }
+        c.setActive(active)
     }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
         weak var view: SCNView?
         var pins: [ModelPin] = []
         var focus: String?
         var recenter = 0
         var onPinTap: (String) -> Void = { _ in }
+        /// The report stage (RedesignFlags.reportStage): larger points on black, markers kept apart on screen.
+        var stage = false
+        /// Pop the markers in one by one the first time they are placed (off under Reduce Motion).
+        var animateIn = false
+        let separator = MarkerSeparator()
+        /// Up to 30k of the scan's points (scan frame) for circle to inspect.
+        private var sample: [SIMD3<Float>] = []
+
+        static func thin(_ p: [SIMD3<Float>]) -> [SIMD3<Float>] {
+            let step = max(1, p.count / 30_000)
+            return stride(from: 0, to: p.count, by: step).map { p[$0] }
+        }
+
+        /// A circle on screen → the spot on the scan inside it: the centroid of the nearer half (by depth) of the
+        /// scan points that project inside, and the circle's radius at that depth. nil when no points fall inside.
+        func resolve(_ center: CGPoint, _ r: CGFloat) -> (point: SIMD3<Float>, radius: Float)? {
+            guard let view, !sample.isEmpty else { return nil }
+            let space = content.presentation
+            var inside: [(p: SIMD3<Float>, z: Float)] = []
+            for p in sample {
+                let s = view.projectPoint(SCNVector3(space.simdConvertPosition(p, to: nil)))
+                guard s.z > 0, s.z < 1 else { continue }
+                let dx = CGFloat(s.x) - center.x, dy = CGFloat(s.y) - center.y
+                if dx * dx + dy * dy <= r * r { inside.append((p, s.z)) }
+            }
+            guard inside.count >= 3 else { return nil }
+            inside.sort { $0.z < $1.z }
+            let front = inside.prefix(max(3, inside.count / 2))
+            let c = front.reduce(SIMD3<Float>()) { $0 + $1.p } / Float(front.count)
+            let z = front[front.startIndex + front.count / 2].z
+            let a = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x), Float(center.y), z)))
+            let b = SIMD3<Float>(view.unprojectPoint(SCNVector3(Float(center.x + r), Float(center.y), z)))
+            return (c, max(0.01, simd_distance(a, b)))
+        }
+        /// Turns about the model's centre (the hero spin); `content` sits inside it, offset by −centre.
+        private let pivot = SCNNode()
+        private let content = SCNNode()
         private let modelNode = SCNNode()
         private let pinRoot = SCNNode()
         private let cameraNode = SCNNode()
         private var center = SIMD3<Float>(0, 0, 0)
         private var radius: Float = 0.1
+        private var spinning = false
+        /// For a cloud: frame its bulk rather than its bounding box.
+        private var bulk: (center: SIMD3<Float>, radius: Float)?
+        private var active = true
 
-        func build(_ content: ModelView.Loaded, pins: [ModelPin], traits: UITraitCollection) {
+        func build(_ loaded: ModelView.Loaded, pins: [ModelPin], traits: UITraitCollection) {
             guard let scene = view?.scene else { return }
             self.pins = pins
-            switch content {
-            case .cloud(let cloud): modelNode.geometry = Self.geometry(cloud)
+            switch loaded {
+            case .cloud(let cloud):
+                modelNode.geometry = Self.geometry(cloud, stage: stage)
+                sample = Self.thin(cloud.positions)
+                bulk = cloud.bulk
+            case .triangles(let mesh):
+                modelNode.geometry = Self.geometry(mesh)
+                sample = Self.thin(mesh.positions)
+                view?.autoenablesDefaultLighting = true
             case .mesh(let url):
                 if let mesh = try? SCNScene(url: url) { mesh.rootNode.childNodes.forEach { modelNode.addChildNode($0) } }
                 view?.autoenablesDefaultLighting = true
             case .nothing: break
             }
-            scene.rootNode.addChildNode(modelNode)
-            scene.rootNode.addChildNode(pinRoot)
+            content.addChildNode(modelNode)
+            content.addChildNode(pinRoot)
+            pivot.addChildNode(content)
+            scene.rootNode.addChildNode(pivot)
             let camera = SCNCamera()
             camera.fieldOfView = 38
             camera.zNear = 0.001
@@ -254,6 +556,8 @@ private struct SceneHost: UIViewRepresentable {
             scene.rootNode.addChildNode(cameraNode)
             view?.pointOfView = cameraNode
             measure()
+            pivot.simdPosition = center
+            content.simdPosition = -center
             placePins(traits: traits)
             frameAll(animate: false)
         }
@@ -270,12 +574,51 @@ private struct SceneHost: UIViewRepresentable {
             guard mn.x.isFinite, mx.x >= mn.x else { return }
             center = (mn + mx) / 2
             radius = max(0.03, simd_length(mx - mn) / 2)
+            if let bulk {
+                // The cloud's bulk, widened just enough to keep every marker in view.
+                center = bulk.center
+                radius = pins.reduce(bulk.radius) { max($0, simd_distance($1.point, bulk.center)) }
+            }
         }
+
+        // MARK: Spin
+
+        func startSpin() {
+            guard !spinning else { return }
+            spinning = true
+            pivot.runAction(.repeatForever(.rotateBy(x: 0, y: -2 * .pi, z: 0, duration: 40)), forKey: "spin")
+            pivot.isPaused = !active
+            view?.isPlaying = active
+        }
+
+        func stopSpin() {
+            guard spinning else { return }
+            spinning = false
+            pivot.removeAction(forKey: "spin")
+            view?.isPlaying = false
+        }
+
+        /// Off screen: the spin pauses and nothing draws.
+        func setActive(_ on: Bool) {
+            guard on != active else { return }
+            active = on
+            guard spinning else { return }
+            pivot.isPaused = !on
+            view?.isPlaying = on
+        }
+
+        @objc func touched(_ g: UILongPressGestureRecognizer) {
+            if g.state == .began { stopSpin() }
+        }
+
+        nonisolated func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+
+        // MARK: Pins
 
         func placePins(traits: UITraitCollection) {
             pinRoot.childNodes.forEach { $0.removeFromParentNode() }
             for pin in pins {
-                let size = CGFloat(radius) * (pin.number == nil ? 0.07 : 0.16)
+                let size = pin.ringRadius.map { CGFloat($0 * 2) } ?? CGFloat(radius) * (pin.number == nil ? 0.05 : 0.16)
                 let plane = SCNPlane(width: size, height: size)
                 let m = SCNMaterial()
                 m.diffuse.contents = Self.badge(pin, traits: traits)
@@ -285,35 +628,69 @@ private struct SceneHost: UIViewRepresentable {
                 m.writesToDepthBuffer = false
                 plane.materials = [m]
                 let node = SCNNode(geometry: plane)
-                node.name = "pin:\(pin.id)"
+                node.name = "marker:\(pin.id)"
                 node.simdPosition = pin.point
-                node.renderingOrder = pin.number == nil ? 10 : 20 + (pin.number ?? 0)
+                // The top problem draws over the others where they overlap.
+                node.renderingOrder = pin.number == nil ? 10 : 30 - (pin.number ?? 0)
                 node.constraints = [SCNBillboardConstraint()]
                 pinRoot.addChildNode(node)
             }
+            if stage {
+                let ranked = pins.enumerated().filter { $0.element.ringRadius == nil }.sorted { ($0.element.number ?? 99, $0.offset) < ($1.element.number ?? 99, $1.offset) }
+                separator.set(ranked.compactMap { i, pin in
+                    pinRoot.childNodes.first { $0.name == "marker:\(pin.id)" }
+                        .map { ($0, Float(radius) * (pin.number == nil ? 0.05 : 0.16)) }
+                })
+            }
             highlight()
+            if animateIn && !pins.isEmpty {
+                // Markers arrive 1, 2, 3: from 0.6 scale and clear, Motion.stagger apart (never from scale 0).
+                animateIn = false
+                for (i, node) in pinRoot.childNodes.enumerated() {
+                    let rest = node.simdScale, opacity = node.opacity
+                    node.simdScale = rest * 0.6
+                    node.opacity = 0
+                    let grow = SCNAction.group([.scale(to: CGFloat(rest.x), duration: 0.32), .fadeOpacity(to: opacity, duration: 0.2)])
+                    grow.timingMode = .easeOut
+                    node.runAction(.sequence([.wait(duration: 0.15 + Motion.stagger * Double(i)), grow]))
+                }
+                // Actions only advance while the view plays; keep it playing for the pop, then back to on-demand.
+                view?.isPlaying = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                    guard let self, !self.spinning else { return }
+                    self.view?.isPlaying = false
+                }
+            }
         }
 
         func frameAll(animate: Bool) {
             focus = nil
-            move(target: center, distance: radius * 2.6, keepDirection: false, animate: animate)
+            move(target: center, distance: radius * 3.5, keepDirection: false, animate: animate)
             highlight()
         }
 
         func fly(to id: String, animate: Bool) {
-            guard let pin = pins.first(where: { $0.id == id }) else { return }
-            move(target: pin.point, distance: radius * 1.5, keepDirection: true, animate: animate)
+            guard let node = pinRoot.childNodes.first(where: { $0.name == "marker:\(id)" }) else { return }
+            // World position: the pivot may have turned the model.
+            let target = node.presentation.simdWorldPosition
+            // Come in from the side the marker faces (away from the model's centre), so it is not hidden behind it.
+            var dir = target - center
+            dir.y = max(dir.y, 0) + 0.5 * simd_length(SIMD2(dir.x, dir.z))
+            let from = simd_length(dir) > 1e-4 ? simd_normalize(dir) : simd_normalize(cameraNode.simdWorldPosition - target)
+            // On the stage the markers are already large on black; stop a little further out.
+            move(target: target, distance: radius * (stage ? 2.2 : 1.5), direction: from, animate: animate)
             highlight()
         }
 
-        private func move(target: SIMD3<Float>, distance: Float, keepDirection: Bool, animate: Bool) {
-            var dir = simd_normalize(SIMD3<Float>(0.35, 0.55, 1))
+        private func move(target: SIMD3<Float>, distance: Float, keepDirection: Bool = false, direction: SIMD3<Float>? = nil,
+                          animate: Bool) {
+            var dir = direction ?? simd_normalize(SIMD3<Float>(0.35, 0.55, 1))
             if keepDirection {
                 let d = cameraNode.simdWorldPosition - target
                 if simd_length(d) > 1e-4 { dir = simd_normalize(d) }
             }
             SCNTransaction.begin()
-            SCNTransaction.animationDuration = animate ? 0.6 : 0
+            SCNTransaction.animationDuration = animate ? 0.7 : 0
             SCNTransaction.animationTimingFunction = CAMediaTimingFunction(controlPoints: 0.32, 0.72, 0, 1)
             cameraNode.simdWorldPosition = target + dir * distance
             cameraNode.simdLook(at: target, up: SIMD3(0, 1, 0), localFront: SIMD3(0, 0, -1))
@@ -323,11 +700,12 @@ private struct SceneHost: UIViewRepresentable {
 
         private func highlight() {
             for node in pinRoot.childNodes {
-                let on = node.name == focus.map { "pin:\($0)" }
+                let on = node.name == focus.map { "marker:\($0)" }
                 SCNTransaction.begin()
                 SCNTransaction.animationDuration = 0.2
                 node.simdScale = SIMD3(repeating: on ? 1.35 : 1)
-                node.opacity = focus == nil || on ? 1 : 0.55
+                let rest: CGFloat = node.renderingOrder == 10 ? 0.75 : 1
+                node.opacity = focus == nil || on ? rest : 0.45
                 SCNTransaction.commit()
             }
         }
@@ -336,12 +714,12 @@ private struct SceneHost: UIViewRepresentable {
             guard let view else { return }
             let hits = view.hitTest(g.location(in: view), options: [.searchMode: SCNHitTestSearchMode.all.rawValue,
                                                                      .ignoreHiddenNodes: true, .rootNode: pinRoot])
-            if let name = hits.lazy.compactMap(\.node.name).first(where: { $0.hasPrefix("pin:") }) {
-                onPinTap(String(name.dropFirst(4)))
+            if let name = hits.lazy.compactMap(\.node.name).first(where: { $0.hasPrefix("marker:") }) {
+                onPinTap(String(name.dropFirst("marker:".count)))
             }
         }
 
-        private static func geometry(_ cloud: ScanCloud) -> SCNGeometry {
+        private static func geometry(_ cloud: ScanCloud, stage: Bool = false) -> SCNGeometry {
             let n = cloud.positions.count
             let vertices = cloud.positions.withUnsafeBufferPointer { Data(buffer: $0) }
             let vsrc = SCNGeometrySource(data: vertices, semantic: .vertex, vectorCount: n, usesFloatComponents: true,
@@ -358,7 +736,8 @@ private struct SceneHost: UIViewRepresentable {
             let element = SCNGeometryElement(data: indices, primitiveType: .point, primitiveCount: n, bytesPerIndex: 4)
             element.pointSize = 3
             element.minimumPointScreenSpaceRadius = 1.2
-            element.maximumPointScreenSpaceRadius = 3.5
+            // On the dark stage slightly larger points read as a solid object rather than dust.
+            element.maximumPointScreenSpaceRadius = stage ? 4.5 : 3.5
             let g = SCNGeometry(sources: sources, elements: [element])
             let m = SCNMaterial()
             m.lightingModel = .constant
@@ -367,8 +746,29 @@ private struct SceneHost: UIViewRepresentable {
             return g
         }
 
+        private static func geometry(_ mesh: ScanMesh) -> SCNGeometry {
+            let n = mesh.positions.count
+            func source(_ v: [SIMD3<Float>], _ semantic: SCNGeometrySource.Semantic) -> SCNGeometrySource {
+                SCNGeometrySource(data: v.withUnsafeBufferPointer { Data(buffer: $0) }, semantic: semantic, vectorCount: n,
+                                  usesFloatComponents: true, componentsPerVector: 3, bytesPerComponent: 4, dataOffset: 0,
+                                  dataStride: MemoryLayout<SIMD3<Float>>.stride)
+            }
+            var sources = [source(mesh.positions, .vertex), source(mesh.normals, .normal)]
+            if let colors = mesh.colors, colors.count == n { sources.append(source(colors, .color)) }
+            let element = SCNGeometryElement(data: mesh.indices.withUnsafeBufferPointer { Data(buffer: $0) },
+                                             primitiveType: .triangles, primitiveCount: mesh.indices.count / 3, bytesPerIndex: 4)
+            let g = SCNGeometry(sources: sources, elements: [element])
+            let m = SCNMaterial()
+            m.lightingModel = .lambert
+            m.isDoubleSided = true
+            m.diffuse.contents = mesh.colors == nil ? UIColor(light: 0xA9A9B4, dark: 0xB4B4C0) : UIColor.white
+            g.materials = [m]
+            return g
+        }
+
         /// A round severity-coloured badge with the number (or a small dot), drawn once per pin.
         private static func badge(_ pin: ModelPin, traits: UITraitCollection) -> UIImage {
+            if pin.ringRadius != nil { return ring(traits: traits) }
             let side: CGFloat = pin.number == nil ? 48 : 96
             let colour = UIColor(pin.tone.color).resolvedColor(with: traits)
             return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
@@ -384,6 +784,23 @@ private struct SceneHost: UIViewRepresentable {
                 let size = text.size(withAttributes: attrs)
                 text.draw(at: CGPoint(x: (side - size.width) / 2, y: (side - size.height) / 2), withAttributes: attrs)
             }
+        }
+    }
+}
+
+private extension SceneHost.Coordinator {
+    /// A circled target: a dashed accent ring with a faint fill (Report/Stage/InspectTarget).
+    static func ring(traits: UITraitCollection) -> UIImage {
+        let side: CGFloat = 128
+        let colour = UIColor(Palette.cameraAccent).resolvedColor(with: traits)
+        return UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { ctx in
+            let rect = CGRect(x: 0, y: 0, width: side, height: side).insetBy(dx: 4, dy: 4)
+            colour.withAlphaComponent(0.14).setFill()
+            ctx.cgContext.fillEllipse(in: rect)
+            colour.setStroke()
+            ctx.cgContext.setLineWidth(5)
+            ctx.cgContext.setLineDash(phase: 0, lengths: [12, 9])
+            ctx.cgContext.strokeEllipse(in: rect)
         }
     }
 }

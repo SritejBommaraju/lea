@@ -173,7 +173,7 @@ def _finding_words(f: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any
 
 def build_state(scan_id: str, findings: list[Any], readings: list[Any] = (), symptom: str | None = None,
                 actions: dict[str, dict[str, Any]] | None = None,
-                still_words: dict[str, str] | None = None) -> FusionState:
+                still_words: dict[str, str] | None = None, hints: list[str] | None = None) -> FusionState:
     """The word state for one scan. `findings` are Finding objects or dicts (validated against the contract),
     `readings` MeterReading objects or dicts, `actions` the NextActions already issued (by action_id), used to tie
     a reading to the harness row it answered. `still_words` ({still_id: "photo 3"}) gives each subject the plain
@@ -248,5 +248,10 @@ def build_state(scan_id: str, findings: list[Any], readings: list[Any] = (), sym
                            f"{words.MEASURED} marks a number kept in code; the words beside it carry its meaning."),
         "subjects": state_subjects,
     }
+    if hints:   # public-reference notes on where this kind of product often fails: never evidence (demo, optional)
+        state["reference_notes"] = {
+            "rule": ("Notes from public references about where this kind of product often has problems. They are "
+                     "never evidence: judge each subject only from its findings and meter readings."),
+            "notes": [scrub(h, allowed) for h in hints]}
     assert_words_only(state)
     return FusionState(scan_id, state, dict(sorted(subjects.items())), design_trust, fs, rs)

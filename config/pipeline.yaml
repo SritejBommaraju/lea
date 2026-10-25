@@ -17,6 +17,9 @@ max_crops_per_still: 6
 # Detector tile size in full-resolution pixels for pipeline runs (larger = fewer views, faster; parts smaller than
 # about a centimetre at arm's length are left to close-ups, which the honesty gate asks for anyway).
 detector_tile_px: 2400
+# Detector in float16 on the GPU (MPS): 3.1 -> 2.2 s per 12 MP still, the same boxes within one or two per still
+# (measured 2026-10-24 on three air-fryer stills). Ignored on the CPU.
+detector_half: true
 # A scan whose report exists and that got new stills (Continue scanning) but no POST .../complete for this many
 # seconds is closed: the latest report stays the report, the new stills keep their inspections and are folded in on
 # the next complete.
@@ -24,3 +27,101 @@ continuation_timeout_s: 600
 # A region seen in two stills is judged once when their 3D centres are this close (metres) or within half the
 # smaller region's size, whichever is larger, and the regions are of similar size.
 same_region_m: 0.02
+# The 3D view: the scan's LiDAR mesh is decimated to at most this many triangles (GET /v1/scans/{id}/mesh).
+mesh_max_triangles: 80000
+# The photo-real recreation (backend/repairos/recreation, GET /v1/scans/{id}/recreation, live `recreation_ready`):
+# engine textured_mesh (any CPU: the LiDAR surface textured from the stills, a USDZ, seconds), splat (a Gaussian
+# splat trained on the GPU pod; falls back to the textured mesh without CUDA + gsplat) or off. Bounded: at most
+# max_stills stills (sharpest first) and max_keyframes keyframes, an atlas_px square texture, timeout_s between stages.
+recreation:
+  engine: textured_mesh
+  atlas_px: 4096
+  max_stills: 60
+  max_keyframes: 80
+  timeout_s: 120
+  splat_steps: 4000
+  splat_max_gaussians: 600000
+
+# Spend guards (backend/repairos/spend.py): hard caps per paid service, checked BEFORE every call. A cap that trips
+# opens that service's breaker for `breaker_cooldown_s` (longer if the 24 h window needs longer to free up): every call
+# is refused at once, the work degrades (regions not_inspected "paused: usage limit reached", hints, voice, the live
+# view skipped) and a `SPEND ALERT` is logged and sent to the phone. Windows roll: per_minute = last 60 s, per_day and
+# usd_per_day = last 24 h. repeat_per_minute: the same request (prompt + images) more than this often in 60 s is a
+# loop, not work (null = off). usd_per_call: the estimate before the first measured cost (null = USD not tracked).
+# Status: `python -m repairos.spend status`; reopen a breaker by hand: `python -m repairos.spend reset <service>`.
+spend:
+  # Warn (ERROR log + live event) the first time a service passes this share of a daily cap.
+  alert_at: 0.8
+  anthropic:
+    label: Claude
+    # Normal load: about 60 Claude calls per scan (crops, identity, hints, summary), at most about 30 scans an hour
+    # in a busy demo = about 1,800 an hour. Crop calls are bounded by vlm_calls_at_once (6 in flight at about
+    # 2-3 s each = about 150 a minute per worker): 400 a minute is room for two workers plus the voice answers, and
+    # a runaway loop is stopped within a minute.
+    per_minute: 400
+    # About 65 scans' worth in 24 h: a long demo day; anything more is a loop.
+    per_day: 4000
+    # Measured: about 0.0057 USD per Sonnet crop with the cached checklist (eval/defects/QUICKWINS.md), about
+    # 0.35 USD per 60-call scan, so 25 USD is about 70 scans; a runaway on long prompts stops here first.
+    usd_per_day: 25
+    # The same crop, prompt and model sent again: a job retry asks each crop once more (attempt limit 3); more than
+    # 5 in a minute is a loop.
+    repeat_per_minute: 5
+    breaker_cooldown_s: 300
+    usd_per_call: 0.006
+    # List prices per million tokens (Claude API, 2026-10); the cost of each answer is computed from its usage.
+    usd_per_mtok:
+      claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_write: 2.50, cache_read: 0.20}
+      claude-haiku-5-5: {input: 0.10, output: 0.50, cache_write: 0.125, cache_read: 0.01}
+  typesafe:
+    label: Jev
+    # One to a few Jev requests per scan report (fusion batches) plus one retry each on 429/5xx: 60 a minute is
+    # ten reports a minute; 1,500 a day is about 300 reports.
+    per_minute: 60
+    per_day: 1500
+    usd_per_day: null          # no published per-request price in our plan: counted, not priced
+    # The same request: one POST plus its one retry, for each of the queue's three job attempts = 6; a loop hits 8
+    # within seconds.
+    repeat_per_minute: 8
+    breaker_cooldown_s: 300
+    usd_per_call: null
+  brightdata:
+    label: Web search
+    # Per scan: one hints search plus up to three "Fix it" part searches (each up to three queries), all cached
+    # for 24 h, so a busy demo needs a few a minute; 30 a minute and 500 a day stop a loop early.
+    per_minute: 30
+    per_day: 500
+    usd_per_day: null          # priced by the Bright Data plan; counted here, set usd_per_call to track USD
+    # Every query is cached for 24 h, so the same query twice in a minute means the cache is bypassed.
+    repeat_per_minute: 3
+    breaker_cooldown_s: 600
+    usd_per_call: null
+  cartesia:
+    label: Voice
+    # TTS lines and STT turns: about one a second while Lea talks; cached lines never reach Cartesia.
+    per_minute: 60
+    per_day: 2000
+    usd_per_day: null          # priced by the Cartesia plan (characters / seconds); counted here
+    repeat_per_minute: 5       # the same line synthesised again and again: the voice cache is bypassed
+    breaker_cooldown_s: 120
+    usd_per_call: null
+  spacetime:
+    label: Live view
+    # SpacetimeDB reducer calls from the live bridge (energy credits). The bridge coalesces writes per row and paces
+    # them to per_minute / 60 = 50 a second; a scan writes a few hundred rows, a heartbeat goes every 10 s.
+    per_minute: 3000
+    # About 30 scans an hour for a whole day plus heartbeats is under 150,000; more is a loop in the bridge.
+    per_day: 150000
+    usd_per_day: null
+    repeat_per_minute: null    # the same row is rewritten often (progress) by design; coalesced, not spam
+    breaker_cooldown_s: 30
+    usd_per_call: null
+  default:
+    # Any paid service not named above (a new integration that calls charge() with its own name).
+    label: Other
+    per_minute: 60
+    per_day: 1000
+    usd_per_day: null
+    repeat_per_minute: 5
+    breaker_cooldown_s: 300
+    usd_per_call: null

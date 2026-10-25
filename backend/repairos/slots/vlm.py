@@ -79,11 +79,13 @@ class VisionJudge(Protocol):
     models: tuple[str, ...]  # escalation ladder, small first
 
     def inspect_crop(self, crop: Any, context: Any | None = None, part_hint: str | None = None,
-                     family: str | None = None, view: str = "part", px_per_mm: float | None = None) -> CropState:
+                     family: str | None = None, hints: Sequence[str] | None = None, view: str = "part",
+                     px_per_mm: float | None = None) -> CropState:
         """`crop`: PIL image cut from the full-resolution still. `context`: optional downsized whole still with the
         crop's box outlined. `part_hint`: the detector's label (data, not instruction). `family`: the part family
         whose failure checklist to apply (vision/checklists.py; `unknown_part` = the general checks only), None =
-        the family the label suggests. `view`: "part" (a crop around one detected region) or "tile" (one close tile of
+        the family the label suggests. `hints`: optional public-reference notes (untrusted data, never evidence).
+        `view`: "part" (a crop around one detected region) or "tile" (one close tile of
         a larger object). Either way the whole crop is judged: a fault anywhere in it is the answer, with `where`.
         `px_per_mm`: how finely the crop resolves the surface (from depth), stated in the request so claims about
         details too small for the view are cannot_tell (`too_small`); None without a scale."""

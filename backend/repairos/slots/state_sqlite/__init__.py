@@ -26,7 +26,7 @@ from repairos import contracts
 from repairos.config import ROOT
 from repairos.registry import register
 from repairos.slots.state import (ID_FIELDS, INTERNAL_KINDS, TRANSITIONS, AlreadyClaimed, InvariantViolation, Job,
-                                  NotFound, RevConflict, Row, RowEvent, StateError)
+                                  NotFound, RevConflict, Row, RowEvent, StaleReport, StateError)
 from repairos.slots.state_sqlite import rules
 
 T = TypeVar("T")
@@ -90,6 +90,15 @@ def _job(r: sqlite3.Row) -> Job:
                inputs=json.loads(r["inputs"]), status=r["status"], attempts=r["attempts"], worker=r["worker"],
                result=json.loads(r["result"]) if r["result"] else None, error=r["error"],
                created_at=r["created_at"], heartbeat_at=r["heartbeat_at"])
+
+
+def _report_stills(report: dict) -> int:
+    """How many stills a report was built from (capture.stills): stills are only added to a scan, so a larger count is
+    a newer set of inputs."""
+    try:
+        return int((report.get("capture") or {}).get("stills") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 class SqliteState:
@@ -157,7 +166,7 @@ class SqliteState:
         session_id = data.get("session_id")
         if session_id is None and scan_id:
             scan = self._get(c, "scan-package", scan_id)
-            session_id = scan.session_id if scan else None
+            session_id = scan.session_id if scan else self._pending_session(c, scan_id)
         if kind == "session":
             session_id = id
         rev, ts = actual + 1, now()
@@ -171,6 +180,14 @@ class SqliteState:
             c.execute("INSERT INTO events (session_id,kind,id,op,rev,json,at) VALUES (?,?,?,?,?,?,?)",
                       (session_id, kind, id, "update" if prev else "insert", rev, blob, ts))
         return Row(kind, id, rev, session_id, data, ts, status)
+
+    @staticmethod
+    def _pending_session(c: sqlite3.Connection, scan_id: str) -> str | None:
+        """A pending scan (stills before the scan package): its session from a still or the pipeline-run row of the
+        same scan_id, so the rows written meanwhile (findings) and their live events carry the session."""
+        r = c.execute("SELECT session_id FROM rows WHERE kind IN ('still', 'pipeline-run') AND scan_id=? AND "
+                      "session_id IS NOT NULL LIMIT 1", (scan_id,)).fetchone()
+        return r["session_id"] if r else None
 
     async def put(self, kind: str, data: Mapping[str, Any], *, expect_rev: int | None = None) -> int:
         return (await self._run(lambda c: self._write(c, kind, data, expect_rev), write=True)).rev
@@ -228,6 +245,10 @@ class SqliteState:
         if action == "report.publish":   # a re-run replaces the scan's report (new rev, one event)
             prev = self._get(c, kind, id)
             p.setdefault("report_id", id)
+            if prev is not None:   # compare-and-set inside this transaction: an older draft never replaces a newer one
+                have, mine = _report_stills(prev.data), _report_stills(p)
+                if mine < have:
+                    raise StaleReport(id, mine, have)
             return self._write(c, kind, p, prev.rev if prev else 0)
         row = self._existing(c, kind, id) if action != "suspect.update_from_fusion" else self._get(c, kind, id)
         if action == "scan.update":   # the scan package posted again (more photos of the same object, A: continue)
@@ -280,7 +301,9 @@ class SqliteState:
                                  holds the running claim (a released or taken-over claim is never written over);
           pipeline.release_still {still_id, expect | worker}: back to pending (the entry removed), only if the
                                  claim is still exactly `expect`, or (with `worker`) still that worker's running
-                                 claim."""
+                                 claim.
+        `announce` (a named live event: identified, progress, mesh_ready) is kept only on the write that sets it, so
+        each event is sent once."""
         prev = self._get(c, "pipeline-run", id)
         base = prev.data if prev else {"run_id": id, "scan_id": p.get("scan_id"), "session_id": p.get("session_id"),
                                        "status": "inspecting", "attempt": 0, "stages": {}, "stills": {}}
@@ -323,6 +346,8 @@ class SqliteState:
             else:
                 raise StateError(f"transition {action} not implemented")
         data["run_id"] = id
+        if not (action == "pipeline.update" and "announce" in p):
+            data.pop("announce", None)   # a live-event marker lives for the one write that sets it
         return self._write(c, "pipeline-run", data, prev.rev if prev else 0, status=data.get("status"))
 
     # ------------------------------------------------------------------ jobs
@@ -386,6 +411,19 @@ class SqliteState:
                              op=r["op"], rev=r["rev"], row=json.loads(r["json"]), at=r["at"])
                     for r in c.execute("SELECT * FROM events WHERE session_id=? AND event_id>? ORDER BY event_id "
                                        "LIMIT ?", (session_id, after, limit))]
+        return await self._run(fn)
+
+    async def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Sessions, the most recently active first (their newest live event): {session_id, created_at,
+        last_event_id, last_event_at}."""
+        def fn(c):
+            rows = c.execute(
+                "SELECT r.id, json_extract(r.json, '$.created_at') created, e.event_id, e.at FROM rows r "
+                "LEFT JOIN events e ON e.event_id = (SELECT MAX(event_id) FROM events WHERE session_id = r.id) "
+                "WHERE r.kind = 'session' ORDER BY COALESCE(e.event_id, 0) DESC, r.updated_at DESC LIMIT ?",
+                (limit,)).fetchall()
+            return [{"session_id": r[0], "created_at": r[1], "last_event_id": r[2] or 0, "last_event_at": r[3]}
+                    for r in rows]
         return await self._run(fn)
 
     async def subscribe(self, session_id: str, after: int = 0) -> AsyncIterator[RowEvent]:

@@ -6,6 +6,9 @@ import Foundation
 struct ReportModel: Sendable {
     enum Verdict: Sendable, Equatable {
         case potentialIssues, looksGood, insufficientEvidence
+        /// V8: nothing judged shows an issue and the capture covered the object well, but some regions were not
+        /// checked (listed in `verdict_reason.caveat`). Good news, said with its caveat; not "insufficient".
+        case noProblemsSeen
         case other(String)
 
         init(_ raw: String) {
@@ -13,15 +16,17 @@ struct ReportModel: Sendable {
             case "potential_issues": self = .potentialIssues
             case "looks_good": self = .looksGood
             case "insufficient_evidence": self = .insufficientEvidence
+            case "no_problems_seen": self = .noProblemsSeen
             default: self = .other(raw)
             }
         }
 
         var words: String {
             switch self {
-            case .potentialIssues: "Possible problems found"
-            case .looksGood: "No visible problems"
-            case .insufficientEvidence: "Not enough to tell"
+            case .potentialIssues: "Likely problems found"
+            case .looksGood: "Nothing looked wrong"
+            case .insufficientEvidence: "Not enough to call it yet"
+            case .noProblemsSeen: "No problems seen"
             case .other(let raw): raw.replacingOccurrences(of: "_", with: " ").capitalizedFirst
             }
         }
@@ -65,6 +70,9 @@ struct ReportModel: Sendable {
         /// Where it is on the scan (metres, the scan's ARKit frame, Y up), when the locator computed it.
         var point: SIMD3<Float>?
         var proved: Bool
+        /// The main crop's photo and its box there (pixels of the full still, sensor orientation).
+        var cropStill: String? = nil
+        var cropBox: [Double]? = nil
     }
 
     /// A region nobody looked at (not_inspected) or that could not be judged (insufficient_evidence).
@@ -125,6 +133,8 @@ struct ReportModel: Sendable {
 
     var verdict: Verdict
     var verdictReason: String?
+    /// `verdict_reason.caveat` (no_problems_seen): what could not be checked, in the backend's words.
+    var verdictCaveat: String?
     var summary: String?
     var safety: [SafetyNote]
     var mostLikely: [Problem]
@@ -139,10 +149,20 @@ struct ReportModel: Sendable {
     var photosInspected: Int
     var coverageWords: String?
     var createdAt: Date?
+    /// What the object is (report `object`): "Category · Brand Model", or the category alone; nil when unknown.
+    var objectWords: String?
+    /// The backend's choice for the hero (report `mesh.hero`): points, mesh or photos; and the mesh revision.
+    var hero: String?
+    var meshRev: Int?
+    /// "Fix it" (report `fix`): where to buy the top finding's part, when the backend's search found offers.
+    var fix: FixIt?
+    /// The person's own guess and what the photos showed about it (report `user_lead`).
+    var userLead: GuessCheck?
 
     init(json r: [String: Any]) {
         verdict = Verdict(r["verdict"] as? String ?? "")
         verdictReason = (r["verdict_reason"] as? [String: Any])?["text"] as? String
+        verdictCaveat = ((r["verdict_reason"] as? [String: Any])?["caveat"] as? String)?.trimmedOrNil
         summary = (r["summary"] as? [String: Any])?["text"] as? String
         safety = (r["safety"] as? [[String: Any]] ?? []).compactMap { s in
             (s["text"] as? String).map { SafetyNote(code: s["code"] as? String ?? "", text: $0) }
@@ -171,6 +191,27 @@ struct ReportModel: Sendable {
         photosInspected = capture["stills_inspected"] as? Int ?? 0
         coverageWords = (capture["coverage_words"] as? String).flatMap { $0 == "not measured" ? nil : $0 }
         createdAt = (r["created_at"] as? String).flatMap { try? Date($0, strategy: .iso8601) }
+        objectWords = Self.objectWords(r["object"] as? [String: Any])
+        hero = (r["mesh"] as? [String: Any])?["hero"] as? String
+        meshRev = (r["mesh"] as? [String: Any])?["rev"] as? Int
+        fix = FixIt(json: r["fix"] as? [String: Any])
+        userLead = GuessCheck(json: r["user_lead"] as? [String: Any])
+    }
+
+    /// Every crop the report shows (problems, cosmetic, gaps), for saving them on the phone.
+    var cropSHAs: [String] {
+        var out: [String] = []
+        for sha in (mostLikely + otherIssues + cosmetic).flatMap(\.crops) + (notInspected + insufficient).compactMap(\.crop)
+        where !out.contains(sha) { out.append(sha) }
+        return out
+    }
+
+    /// The backend's own generic words: the category, then brand and model when it gave them.
+    static func objectWords(_ o: [String: Any]?) -> String? {
+        guard let o, let category = (o["category"] as? String)?.trimmedOrNil, category != "unknown" else { return nil }
+        let named = [o["brand"] as? String, o["model"] as? String].compactMap { $0?.trimmedOrNil }.joined(separator: " ")
+        let kind = category.replacingOccurrences(of: "_", with: " ").capitalizedFirst
+        return named.isEmpty ? kind : "\(kind) · \(named)"
     }
 
     /// Rows to show from a report section after a rebuild: a row that another row names in `superseded_ids` (a
@@ -226,7 +267,9 @@ struct ReportModel: Sendable {
             regions: f["regions"] as? Int ?? 1,
             locationNote: location?["status"] as? String == "computed" ? nil : location?["reason"] as? String,
             point: Self.point(location),
-            proved: ((f["proof"] as? [String: Any])?["status"] as? String).map { $0 != "not_measured" } ?? false)
+            proved: ((f["proof"] as? [String: Any])?["status"] as? String).map { $0 != "not_measured" } ?? false,
+            cropStill: (f["crop"] as? [String: Any])?["still_id"] as? String,
+            cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue))
     }
 
     private static func gap(_ g: [String: Any]) -> Gap {
@@ -271,9 +314,10 @@ struct ReportModel: Sendable {
         return text.isEmpty ? nil : text
     }
 
-    /// "s8" → "Photo 8"; any other id is shown as is.
+    /// "s8" or "scan_ab12_s8" → "Photo 8"; any other id is shown as is.
     static func photoLabel(_ stillID: String) -> String {
-        if stillID.hasPrefix("s"), let n = Int(stillID.dropFirst()) { return "Photo \(n)" }
+        let tail = stillID.split(separator: "_").last.map(String.init) ?? stillID
+        if tail.hasPrefix("s"), let n = Int(tail.dropFirst()) { return "Photo \(n)" }
         return "Photo \(stillID)"
     }
 

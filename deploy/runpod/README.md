@@ -1,16 +1,27 @@
 # LEA backend on a Runpod GPU Pod
 
-This runs the gateway and the pipeline worker in one container on Runpod, so the iPhone app works without the
-laptop. It is one pod: one GPU, one volume for `REPAIROS_DATA_DIR` (SQLite plus files), and port 8000 behind
-Runpod's HTTPS proxy.
+This runs the gateway, the pipeline worker and (when `SPACETIME_DB` is set) the SpacetimeDB live mirror in one
+container on Runpod, so the iPhone app and the big screen work without the laptop. It is one pod: one GPU, one volume
+for `REPAIROS_DATA_DIR` (SQLite plus files), and ports 8000 (gateway) and 8790 (live-mirror media) behind Runpod's
+HTTPS proxy. What runs where, end to end: [`deploy/MANIFEST.md`](../MANIFEST.md).
 
 Two routes: **Route A** builds our own image (Steps 0-2 below). **Route B** needs no image build: an official Runpod
 PyTorch pod runs `deploy/runpod/bootstrap.sh` from the repo (next section).
 
+## Ports
+
+| Port | Proxy URL | What | When |
+|---|---|---|---|
+| `8000/http` | `https://<pod_id>-8000.proxy.runpod.net` | the gateway (phone API, SSE live events, `/healthz`) | always |
+| `8790/http` | `https://<pod_id>-8790.proxy.runpod.net` | the bridge's media: still thumbnails and the scan mesh at signed, expiring URLs (HMAC); a URL without a valid signature gets 403 | `SPACETIME_DB` set |
+
+`create_pod.sh` exposes both. In the console form, put `8000,8790` in **Expose HTTP ports**. start.sh sets
+`SPACETIME_MEDIA_BASE` from `RUNPOD_POD_ID` (Runpod sets it in every pod), so the viewer gets the proxy URLs.
+
 | File | What |
 |---|---|
 | `deploy/runpod/Dockerfile` | the image. It holds pinned deps, the OWLv2 weights baked in, and the gateway plus the worker |
-| `deploy/runpod/start.sh` | a tiny supervisor. It starts both processes, restarts one that crashes, prefixes its logs and stops cleanly |
+| `deploy/runpod/start.sh` | a tiny supervisor. It starts the gateway, the worker and (with `SPACETIME_DB`) the live-mirror bridge, restarts one that crashes, prefixes its logs and stops cleanly |
 | `deploy/runpod/requirements.linux.lock` | hash-pinned Linux x86_64 deps (torch cu126 plus CUDA wheels, open3d). Regenerate it with `lock.sh` |
 | `deploy/runpod/create_pod.sh` | creates the pod through the Runpod REST API (the API-key route) and waits for `/healthz` |
 | `.dockerignore` (repo root) | an allowlist. Only the files the image copies are sent to the builder, so `.env`, `private/` and `data/` never are |
@@ -176,7 +187,8 @@ third boot worked.
    - **A teammate logged into the console.** They follow steps 1 to 3 by hand, about 10 minutes.
    - Either way, the account needs about $5 of credit.
 2. **The secret values,** typed into Runpod by whoever holds them: `ANTHROPIC_API_KEY`, `TYPESAFE_KEY` and
-   `REPAIROS_PAIRING_CODE`. Optionally also `BRIGHTDATA_API_KEY` and `BRIGHTDATA_SERP_ZONE`.
+   `REPAIROS_PAIRING_CODE`. Optionally also `BRIGHTDATA_API_KEY`, `BRIGHTDATA_SERP_ZONE`, `CARTESIA_API_KEY` and
+   `SPACETIME_TOKEN` (the full list is in step 1).
    - Use a **new, long, random pairing code** for the cloud: `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`.
      The proxy URL is public, and the pairing code is the only gate on pairing a device.
 3. **A built image in a registry** (step 0). This can happen tonight, before anyone has Runpod access.
@@ -223,8 +235,24 @@ value again after you save it.
 | `anthropic_api_key` | `ANTHROPIC_API_KEY` | yes. VLM and LLM slots (Claude) |
 | `typesafe_key` | `TYPESAFE_KEY` | yes. FUSION=jev has no fallback, so Jev down is a blocker |
 | `repairos_pairing_code` | `REPAIROS_PAIRING_CODE` | yes. The phone pairs with it. Use a new long random one |
-| `brightdata_api_key` | `BRIGHTDATA_API_KEY` | optional. Reference hints stay off without it |
-| `brightdata_serp_zone` | `BRIGHTDATA_SERP_ZONE` | optional. Needed together with the key |
+| `brightdata_api_key` | `BRIGHTDATA_API_KEY` | optional. Reference hints and "Fix it" (parts and prices) stay off without it |
+| `brightdata_serp_zone` | `BRIGHTDATA_SERP_ZONE` | optional. The SERP zone name (ours: `serp_api1`); needed together with the key |
+| `cartesia_api_key` | `CARTESIA_API_KEY` | optional. Voice; without it the phone uses its own voice and speech recognition |
+| `spacetime_token` | `SPACETIME_TOKEN` | with `SPACETIME_DB`. The bridge identity's token (the `token` field of the file `--mint-identity` wrote, e.g. `~/.config/lea/stdb-maincloud.json`); the module was published with that identity as `WRITER_IDENTITY` |
+
+Plain env (not secrets), only for the live mirror:
+
+| Env var | Value | Note |
+|---|---|---|
+| `SPACETIME_DB` | `lea-calhacks` | the Maincloud database; unset = no bridge process |
+| `SPACETIME_HOST` | `https://maincloud.spacetimedb.com` | start.sh's default when `SPACETIME_DB` is set |
+| `SPACETIME_MEDIA_PORT` | `8790` | default |
+| `SPACETIME_MEDIA_BASE` | `https://<pod_id>-8790.proxy.runpod.net` | derived from `RUNPOD_POD_ID` when unset |
+
+The bridge pairs itself with the gateway once (device `spacetime-bridge`, with `REPAIROS_PAIRING_CODE`) and keeps
+the token in `/workspace/lea-data/live/`. start.sh warns by name about every unset optional key and every
+unresolved `{{ RUNPOD_SECRET_... }}` reference, never a value.
+
 
 The pod env then references each secret as `{{ RUNPOD_SECRET_<name> }}`. Example:
 `ANTHROPIC_API_KEY={{ RUNPOD_SECRET_anthropic_api_key }}`. In the pod form, the key icon next to an env var picks a
@@ -262,7 +290,7 @@ Runpod.
    - Container image: `ghcr.io/sritejbommaraju/lea-backend:demo`, plus the registry credential from step 0.
    - Container disk: **30 GB**.
    - Volume disk: **20 GB**, mount path **`/workspace`**.
-   - Expose HTTP ports: **`8000`**. Expose TCP ports: leave empty. No SSH or Jupyter is needed.
+   - Expose HTTP ports: **`8000,8790`**. Expose TCP ports: leave empty. No SSH or Jupyter is needed.
    - Environment variables, keys only, values from the secrets:
      ```
      ANTHROPIC_API_KEY      = {{ RUNPOD_SECRET_anthropic_api_key }}
@@ -272,6 +300,11 @@ Runpod.
      # optional:
      BRIGHTDATA_API_KEY     = {{ RUNPOD_SECRET_brightdata_api_key }}
      BRIGHTDATA_SERP_ZONE   = {{ RUNPOD_SECRET_brightdata_serp_zone }}
+     CARTESIA_API_KEY       = {{ RUNPOD_SECRET_cartesia_api_key }}
+     # the big screen (live mirror):
+     SPACETIME_DB           = lea-calhacks
+     SPACETIME_HOST         = https://maincloud.spacetimedb.com
+     SPACETIME_TOKEN        = {{ RUNPOD_SECRET_spacetime_token }}
      ```
    - Leave the start command empty. The image's CMD runs `start.sh`.
 3. Click **Deploy On-Demand**, not spot or interruptible.
@@ -282,8 +315,10 @@ Runpod.
 **API route** (needs an API key and the secrets from step 1; no extra tools beyond curl and python3):
 ```
 export RUNPOD_API_KEY=...            # never echoed by the script
-deploy/runpod/create_pod.sh --image ghcr.io/sritejbommaraju/lea-backend:demo --registry-auth <registry-auth-id>
-# --dry-run prints the request body (secret references only); --community, --gpus "...", --brightdata, --cpu
+deploy/runpod/create_pod.sh --image ghcr.io/sritejbommaraju/lea-backend:demo --registry-auth <registry-auth-id> \
+  --all --spacetime lea-calhacks
+# --all = --brightdata --cartesia; --spacetime DB adds the live mirror (SPACETIME_TOKEN from the secret)
+# --dry-run prints the request body (secret references only); --community, --gpus "...", --cpu
 ```
 The script prints the pod id and the proxy URL, then waits until `/healthz` answers. If the API rejects the secret
 references (they are documented for templates and the pod form), save a template in the console with those env vars
@@ -324,7 +359,7 @@ The script:
   This needs a scan in the pod's STATE: any phone scan made against the pod, or a laptop `data/` copied to
   `/workspace/lea-data`.
 
-Logs are under Pods > the pod > **Logs**. Lines are prefixed `[start]`, `[gateway]` and `[worker]`.
+Logs are under Pods > the pod > **Logs**. Lines are prefixed `[start]`, `[gateway]`, `[worker]` and `[bridge]`.
 - `[start]` reports the GPU torch sees.
 - It warns, by name only, about any key that is unset or an unresolved `RUNPOD_SECRET` reference.
 
@@ -370,6 +405,31 @@ This assumes step 0 (the image build) was done beforehand.
   without gaps.
 - The URL is public. Anyone with the pairing code can pair, so keep the code long and stop the pod after the demo.
 
+## Spend guards
+
+Every paid call is checked by `backend/repairos/spend.py` before it is made: Claude (crop checks, identity, hints,
+summaries, voice answers), Jev, Bright Data, Cartesia and the SpacetimeDB live mirror. Runpod pod hours are not in
+code: stop the pod after the demo.
+- **Caps** are in `config/pipeline.yaml` under `spend:`, per service: `per_minute` (last 60 s), `per_day` and
+  `usd_per_day` (last 24 h), `repeat_per_minute` (the same request again and again) and `breaker_cooldown_s`. The
+  defaults and the reasoning for each are in comments there (Claude: 400 a minute, 4,000 a day, about 25 USD a day).
+- **Breaker.** A cap that trips pauses that service for its cooldown: every call is refused at once. The scan goes
+  on: regions not yet checked are `not_inspected` with "paused: usage limit reached", the report still builds and
+  says so, and hints, voice and the live mirror are skipped until the pause ends.
+- **Alerts.** A trip, or a service passing 80 % of a daily cap, logs one `SPEND ALERT` line at ERROR, and the phone
+  shows a banner (live event `spend_alert`, on the session streams and `GET /v1/events`). Watch for it with
+  `grep "SPEND ALERT"` on the pod log.
+- **Status.** `GET /v1/usage` (a paired device token) returns per-service counts, estimated USD and breakers; the
+  app shows it in Settings > Usage. On the pod: `python -m repairos.spend status`, and
+  `python -m repairos.spend reset <service>` reopens a paused service once the cause is fixed.
+- **Counters** are one SQLite file shared by the gateway, the worker and the bridge, so a restart does not reset
+  them: `$REPAIROS_DATA_DIR/spend.sqlite3` (`/workspace/lea-data` on the pod, on the volume).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REPAIROS_SPEND_DB` | `$REPAIROS_DATA_DIR/spend.sqlite3` | where the counters live (every process must use the same file) |
+| `REPAIROS_PIPELINE_CONFIG` | `config/pipeline.yaml` | the file the caps are read from (`spend:` section) |
+
 ## CPU fallback
 
 The same image runs on a CPU pod. torch sees no GPU and the detector runs on the CPU, so each still costs seconds
@@ -396,6 +456,8 @@ GPUs. For Blackwell cards:
   - the base image pinned by digest;
   - weights cached from the slot's own `MODEL_REVISION`, with `HF_HUB_OFFLINE=1` at runtime;
   - repo layout matching `repairos.config.ROOT`.
+- **Lock unchanged by the 2026-10-24 Fix it / bridge work:** both use only the standard library (and Pillow, already
+  locked), so no dependency was added.
 - **Lock resolved.** `requirements.linux.lock` resolves 114 packages for x86_64 manylinux_2_35, with the same
   versions as `backend/requirements.lock`.
 - **Layout and supervisor tested on the Mac** with the image's file layout:

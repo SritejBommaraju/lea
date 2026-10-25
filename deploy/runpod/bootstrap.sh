@@ -62,6 +62,9 @@ URL="https://github.com/$LEA_REPO.git"
 if [ -d "$LEA_CHECKOUT/.git" ]; then
   git -C "$LEA_CHECKOUT" remote set-url origin "$URL"   # a plain URL, whatever was there before
   if [ "$LEA_UPDATE" = 1 ]; then
+    # Nothing else runs git at boot: a lock left by a fetch the last stop interrupted is stale (it blocked the
+    # update and kept an old checkout running, 2026-10-24).
+    find "$LEA_CHECKOUT/.git" -maxdepth 1 -name '*.lock' -print -delete 2>/dev/null | sed 's/^/[bootstrap] removed stale /'
     git_auth_on
     if git -C "$LEA_CHECKOUT" fetch --quiet --depth 1 origin "$LEA_REF" 2>"$LEA_HOME/.git-fetch.err"; then
       git -C "$LEA_CHECKOUT" checkout --quiet --force --detach FETCH_HEAD
@@ -94,15 +97,27 @@ fi
 took "repo" "$T"
 
 # ------------------------------------------------------------------ 2. system libraries open3d loads (container disk)
+# open3d (the scan mesh, the textured recreation) loads libGL, libEGL (its headless rendering module; the pod's
+# recreation failed with "libEGL.so.1: cannot open shared object file", 2026-10-24) and libgomp at import. Each library
+# missing from the loader cache is installed once per container start (the container disk is fresh on every start);
+# nothing runs when they are all there. After the venv, any library open3d still cannot resolve is logged (step 3).
 T=$SECONDS
-if command -v ldconfig >/dev/null && ! ldconfig -p | grep -q 'libGL.so.1'; then
+want_libs=("libGL.so.1:libgl1" "libEGL.so.1:libegl1" "libgomp.so.1:libgomp1")
+missing_pkgs=()
+if command -v ldconfig >/dev/null; then
+  cache="$(ldconfig -p)"
+  for pair in "${want_libs[@]}"; do
+    grep -q "${pair%%:*}" <<<"$cache" || missing_pkgs+=("${pair##*:}")
+  done
+fi
+if [ "${#missing_pkgs[@]}" -gt 0 ]; then
   if [ "$(id -u)" = 0 ] && command -v apt-get >/dev/null; then
-    log "installing libgl1 libgomp1 for open3d (the container disk is fresh on every start)"
+    log "installing ${missing_pkgs[*]} for open3d"
     DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null \
-      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends libgl1 libgomp1 >/dev/null \
-      || log "WARNING: apt-get failed; the 3D scan mesh will report 'failed' until libGL is present"
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing_pkgs[@]}" >/dev/null \
+      || log "WARNING: apt-get failed; the 3D scan mesh and the textured recreation will report 'failed' until ${missing_pkgs[*]} are present"
   else
-    log "WARNING: libGL.so.1 missing and no root apt-get; the 3D scan mesh will be unavailable"
+    log "WARNING: ${missing_pkgs[*]} missing and no root apt-get; the 3D scan mesh and the textured recreation will be unavailable"
   fi
 fi
 took "system libraries" "$T"
@@ -171,6 +186,10 @@ else
   echo "$WANT" > "$LEA_VENV/.lea-lock-sha256"   # written last: an interrupted install is redone on the next boot
 fi
 took "venv" "$T"
+# open3d's mesh module must import (a missing system library fails here, by name); its optional ML ops are not needed
+if ! O3D_OUT="$("$LEA_VENV/bin/python" -c 'import open3d; open3d.geometry.TriangleMesh()' 2>&1)"; then
+  log "WARNING: open3d does not load ($(tail -n 1 <<<"$O3D_OUT")); the 3D scan mesh and the textured recreation will fail (add its package to step 2)"
+fi
 
 export PATH="$LEA_VENV/bin:$PATH" PYTHONPATH="$LEA_CHECKOUT/backend" PYTHONUNBUFFERED=1 HF_HUB_DISABLE_TELEMETRY=1
 

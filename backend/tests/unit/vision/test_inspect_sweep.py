@@ -320,3 +320,46 @@ def test_the_classifier_path_applies_the_same_resolution_gate():
     assert cls.seen == []                                              # nothing scored on pixels this coarse
     f = next(x for x in res.findings if x.subject.ref == "still_a/det0")
     assert f.state.value == "insufficient_evidence" and "too few pixels per millimetre" in f.evidence[0]
+
+
+# ------------------------------------------------------------------- spend pause on tiles and strips (merge, PR #13)
+def test_a_spend_pause_leaves_tiles_and_strips_not_inspected_never_ok_or_failed():
+    """The Claude cap trips mid-still (repairos.spend raises SpendLimit before the call): a close tile it stops is
+    not_inspected with the pause reason, as a part crop is (I3); the regions inside it are not judged either; a strip
+    it stops adds nothing and each look-alike keeps its own answer. The still still finishes."""
+    from PIL import Image
+
+    from repairos import spend
+
+    class Paused:
+        def __init__(self):
+            self.hints = []
+
+        def inspect_crop(self, crop, context=None, part_hint=None, family=None, view="part", px_per_mm=None,
+                         hints=None):
+            self.hints.append(hints)
+            if view == "tile":
+                raise spend.SpendLimit("anthropic", "per_minute", 30.0)
+            return CropState(part_class="pin", state="ok", evidence_text="looks intact", confidence_word="medium",
+                             model="m", latency_ms=1, visibility="clear")
+
+        def compare_parts(self, *a, **k):
+            raise spend.SpendLimit("anthropic", "per_minute", 30.0)
+
+    judge = Paused()
+    board = det((40, 40, 360, 260), "circuit board", 0.6)            # large: swept with tiles
+    inside = det((100, 100, 140, 140), "resistor", 0.5)               # covered by a tile
+    res = insp.inspect_still(Image.new("RGB", (400, 300)), still_id="s1", scan_id="sc", detector=object(),
+                             judge=judge, classifier=False, detections=[board, inside], hints=["check the pins"])
+    tiles = [f for f in res.findings if "/tile" in f.subject.ref]
+    assert tiles and all(f.state.value == "not_inspected" and spend.PAUSED in f.evidence[0] for f in tiles)
+    assert all(f.state.value == "not_inspected" for f in res.findings)       # nothing is ok, nothing failed
+    assert judge.hints and all(h == ["check the pins"] for h in judge.hints)  # hints reach tile requests too
+
+    pins = [det((100 + 200 * k, 100, 200 + 200 * k, 200), "pin") for k in range(3)]   # look-alikes: strip + crops
+    res = insp.inspect_still(Image.new("RGB", (W, H)), still_id="s2", scan_id="sc", detector=object(),
+                             judge=Paused(), classifier=False, detections=pins)
+    assert res.strip and res.comparison is None                             # the strip was stopped: no answer
+    assert [f.state.value for f in res.findings if "/det" in f.subject.ref] == ["ok"] * 3   # own crops stand
+    for f in res.findings:
+        validate("finding", f.model_dump(mode="json", exclude_none=True))

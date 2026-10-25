@@ -125,11 +125,18 @@ struct ParticleOut {
     half4 color;
 };
 
+// The "Done" moment: x = progress 0…1 (0 = live). Points outside the box fly into its centre and fade; points in
+// the box draw in a little and take on the accent, so the cloud visibly gathers into the object.
+struct FinishUniforms {
+    float4 params;         // x = progress, yzw unused
+};
+
 vertex ParticleOut particleVertex(uint vid [[ vertex_id ]],
                                   const device Particle *particles [[ buffer(0) ]],
                                   constant float4x4 &viewProjection [[ buffer(1) ]],
                                   constant BoxUniforms &box [[ buffer(2) ]],
-                                  constant float &pointScale [[ buffer(3) ]])
+                                  constant float &pointScale [[ buffer(3) ]],
+                                  constant FinishUniforms &finish [[ buffer(4) ]])
 {
     ParticleOut out;
     Particle p = particles[vid];
@@ -139,11 +146,30 @@ vertex ParticleOut particleVertex(uint vid [[ vertex_id ]],
         out.color = half4(0);
         return out;
     }
-    float4 clip = viewProjection * float4(p.positionConf.xyz, 1.0f);
+    float3 world = p.positionConf.xyz;
+    bool locked = box.center.w > 0.5f;
+    bool dim = locked && !insideBox(world, box, 0.01f);
+    float t = finish.params.x;
+    float alpha = dim ? 0.25f : 1.0f;
+    float grow = 1.0f;
+    float3 rgb = p.color.rgb;
+    if (t > 0.0f && locked) {
+        if (dim) {
+            float k = smoothstep(0.0f, 0.75f, t);
+            world = mix(world, box.center.xyz, k * k);
+            alpha *= 1.0f - k;
+        } else {
+            float k = smoothstep(0.15f, 1.0f, t);
+            world = mix(world, box.center.xyz, 0.16f * k);
+            rgb = mix(rgb, float3(0.61f, 0.58f, 1.0f), 0.45f * k);
+            grow = 1.0f + 0.35f * k;
+        }
+    }
+    float4 clip = viewProjection * float4(world, 1.0f);
     out.position = clip;
-    bool dim = box.center.w > 0.5f && !insideBox(p.positionConf.xyz, box, 0.01f);
-    out.pointSize = clamp(pointScale / max(clip.w, 0.05f), 1.5f, 12.0f) * (dim ? 0.6f : 1.0f);
-    out.color = half4(half3(p.color.rgb), dim ? 0.25h : 1.0h);
+    out.pointSize = clamp(pointScale / max(clip.w, 0.05f), 1.5f, 12.0f) * (dim ? 0.6f : 1.0f) * grow;
+    out.color = half4(half3(rgb), half(alpha));
+    if (alpha <= 0.003f) { out.position = float4(2, 2, 2, 1); out.pointSize = 0; }
     return out;
 }
 
@@ -169,8 +195,58 @@ vertex CameraOut cameraVertex(uint vid [[ vertex_id ]], constant float4 *quad [[
 
 fragment half4 cameraFragment(CameraOut in [[ stage_in ]],
                               texture2d<half> colorY [[ texture(0) ]],
-                              texture2d<half> colorCbCr [[ texture(1) ]])
+                              texture2d<half> colorCbCr [[ texture(1) ]],
+                              constant FinishUniforms &finish [[ buffer(0) ]])
 {
     constexpr sampler s(mag_filter::linear, min_filter::linear);
-    return half4(clamp(ycbcrToRGB(colorY.sample(s, in.uv).r, colorCbCr.sample(s, in.uv).rg), 0.0h, 1.0h), 1.0h);
+    half3 rgb = clamp(ycbcrToRGB(colorY.sample(s, in.uv).r, colorCbCr.sample(s, in.uv).rg), 0.0h, 1.0h);
+    // The camera picture dims during the Done moment so the gathered cloud reads.
+    return half4(rgb * half(1.0f - 0.6f * smoothstep(0.0f, 0.8f, finish.params.x)), 1.0h);
+}
+
+// The close-up target: a marker anchored on the spot to move closer to (world point), a constant size on screen,
+// drawn over everything: a solid centre dot, a ring, and a soft ring that pulses outward.
+struct MarkerUniforms {
+    float4 point;          // xyz world, w = 1 when shown
+    float4 params;         // x = time (s), y = size (px), z = viewport w (px), w = viewport h (px)
+};
+
+struct MarkerOut {
+    float4 position [[position]];
+    float2 local;          // -1…1 across the quad
+};
+
+vertex MarkerOut markerVertex(uint vid [[ vertex_id ]],
+                              constant float4x4 &viewProjection [[ buffer(0) ]],
+                              constant MarkerUniforms &marker [[ buffer(1) ]])
+{
+    float2 corner = float2((vid & 1u) ? 1.0f : -1.0f, (vid & 2u) ? 1.0f : -1.0f);
+    float4 clip = viewProjection * float4(marker.point.xyz, 1.0f);
+    MarkerOut out;
+    if (marker.point.w < 0.5f || clip.w <= 0.0f) {
+        out.position = float4(2, 2, 2, 1);
+        out.local = corner;
+        return out;
+    }
+    float2 half_ndc = marker.params.y / marker.params.zw;   // half the quad, in NDC units (size is the full side)
+    clip.xy += corner * half_ndc * clip.w;
+    out.position = float4(clip.xy, 0.0f, clip.w);
+    out.local = corner;
+    return out;
+}
+
+fragment half4 markerFragment(MarkerOut in [[ stage_in ]], constant MarkerUniforms &marker [[ buffer(0) ]])
+{
+    float r = length(in.local);
+    float px = 2.0f / marker.params.y;                      // one pixel in local units (antialiasing)
+    float t = fract(marker.params.x / 1.4f);
+    float dot_ = 1.0f - smoothstep(0.14f - px, 0.14f + px, r);
+    float ring = 1.0f - smoothstep(0.035f - px, 0.035f + px, abs(r - 0.42f));
+    float pr = mix(0.42f, 0.95f, t);
+    float pulse = (1.0f - smoothstep(0.03f - px, 0.03f + px, abs(r - pr))) * (1.0f - t) * 0.8f;
+    float a = max(max(dot_, ring), pulse);
+    if (a <= 0.002f) discard_fragment();
+    float3 accent = float3(0.612f, 0.580f, 1.0f);
+    float3 c = mix(accent, float3(1.0f), dot_);
+    return half4(half3(c), half(a));
 }

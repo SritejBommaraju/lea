@@ -23,6 +23,8 @@ final class AppState {
     let launchedAt = Date()
     /// Set by the `--autostart-scan` developer flag: open a new scan straight away (smoke tests over USB).
     private(set) var autostart = false
+    /// Set by `--open-session <id>` (developer flag): the saved scan to open at launch.
+    var openSessionID: String?
 
     /// Free space for the scan images and reconstruction; Object Capture needs room for ~100+ HEICs plus a checkpoint.
     static let minimumFreeBytes: Int64 = 1 << 30
@@ -50,6 +52,14 @@ final class AppState {
         }
         if args.contains("--run-still-probe") { await runStillProbe() }
         autostart = args.contains("--autostart-scan")
+        // `--open-session <id>`: open that saved scan at launch (its report); `--show-on-object` then opens the AR view.
+        openSessionID = value("--open-session")
+        // `--demo-replay-session <id>`: turn Demo replay on for that saved scan (and show the Settings section).
+        if let id = value("--demo-replay-session") {
+            UserDefaults.standard.set(true, forKey: DemoReplay.enabledKey)
+            UserDefaults.standard.set(true, forKey: DemoReplay.unlockedKey)
+            UserDefaults.standard.set(id, forKey: DemoReplay.sessionKey)
+        }
         if args.contains("--object-capture") { UserDefaults.standard.set(true, forKey: "useObjectCapture") }
         if args.contains("--no-object-capture") { UserDefaults.standard.set(false, forKey: "useObjectCapture") }
         capabilities = DeviceCapabilities.current()
@@ -101,6 +111,7 @@ final class AppState {
         guard let gateway else { throw GatewayError.message("Set the gateway address first.") }
         let token = try await gateway.pair(code: code, name: capabilities.model)
         try Keychain.setToken(token)
+        Task { await LeaVoice.shared.refresh() }
     }
 
     func unpair() { Keychain.deleteToken() }

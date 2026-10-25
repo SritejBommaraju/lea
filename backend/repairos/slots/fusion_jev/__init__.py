@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from repairos import spend
 from repairos.config import ROOT, get_settings
 from repairos.registry import register
 from repairos.slots.fusion import (Answers, ContextLimits, FusionBadAnswer, FusionError, FusionUnavailable,
@@ -99,8 +100,13 @@ class JevEngine:
         payload = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         log.debug("Jev request %s", payload.decode("utf-8"))
         attempt, t0 = 0, time.perf_counter()
+        key = hashlib.sha256(payload).hexdigest()[:32]
         while True:
             attempt += 1
+            try:   # spend guard before every POST (a retry is a call too); never turned into an answer
+                spend.charge("typesafe", key=key)
+            except spend.SpendLimit as e:
+                raise FusionUnavailable(f"Jev {spend.PAUSED} ({e.reason}): {e}") from e
             status, text, err = self._post(payload)
             if err is None and status == 200:
                 break

@@ -160,7 +160,7 @@ struct Reconstruction: Sendable {
                         cameraDesign: nil, capturedAt: s.date, confidenceFile: nil, depthFile: nil, depthGapMS: nil, exposureS: nil, heightPx: h,
                         imageFile: "stills/\(id).jpg",
                         intrinsics: StillIntrinsics(cx: s.k.cx * sx, cy: s.k.cy * sy, fx: s.k.fx * sx, fy: s.k.fy * sy), iso: nil,
-                        kind: .unguided, lowLight: nil, poseReliable: nil, scanID: record.scanID, segment: nil, sessionID: record.id, sharpness: nil,
+                        kind: .unguided, lowLight: nil, poseQuality: nil, poseReliable: nil, poseSource: nil, scanID: record.scanID, segment: nil, sessionID: record.id, sharpness: nil,
                         stillID: id, targets: [], torchLevel: nil, torchOn: nil, trackingState: .unknown, userSkipped: nil, viewCell: nil, widthPx: w)
                     try JSON.encoder.encode(still).write(to: stillsDir.appending(path: "\(id).json"), options: .atomic)
                     stillIDs.append(id)
@@ -174,7 +174,7 @@ struct Reconstruction: Sendable {
                         imageFile: "scans/\(record.scanID)/\(id).jpg",
                         intrinsics: KeyframeIntrinsics(cx: s.k.cx * sx, cy: s.k.cy * sy, fx: s.k.fx * sx, fy: s.k.fy * sy,
                                                        heightPx: h, widthPx: w),
-                        keyframeID: id, segment: nil, sharpness: nil, timestampS: max(0, s.date.timeIntervalSince(startedAt)),
+                        keyframeID: id, poseQuality: nil, poseSource: nil, segment: nil, sharpness: nil, timestampS: max(0, s.date.timeIntervalSince(startedAt)),
                         trackingState: .unknown))
                 }
                 if i % 10 == 0 { progress("Writing the scan…", Double(i) / Double(samples.count)) }

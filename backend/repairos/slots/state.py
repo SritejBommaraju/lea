@@ -27,7 +27,8 @@ ID_FIELDS: dict[str, str] = {
 }
 # internal kinds (no contract schema): id field
 # pipeline-run: one per scan, the Phase 1 pipeline's stage results and error state (task B10, repairos.pipeline)
-INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha256", "pipeline-run": "run_id"}
+INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha256", "pipeline-run": "run_id",
+                                  "story": "session_id"}   # story: what the person said is wrong (pipeline/story.py)
 
 TRANSITIONS = (
     "session.create", "device.pair",
@@ -68,6 +69,17 @@ class AlreadyClaimed(StateError):
     def __init__(self, still_id: str, status: str, worker: str | None):
         self.still_id, self.status, self.worker = still_id, status, worker
         super().__init__(f"still {still_id} is {status} (worker {worker})")
+
+
+class StaleReport(StateError):
+    """report.publish of a draft built from fewer stills than the report already published for the scan: a run that
+    started before more stills arrived finished after the run that used them. Stills are only ever added to a scan,
+    so the still count orders the drafts; the newer report stands and nothing is written."""
+
+    def __init__(self, report_id: str, draft_stills: int, published_stills: int):
+        self.report_id, self.draft_stills, self.published_stills = report_id, draft_stills, published_stills
+        super().__init__(f"report {report_id}: this draft used {draft_stills} still(s), the published report "
+                         f"{published_stills}; the newer report stands")
 
 
 class InvariantViolation(StateError, ValueError):
@@ -146,5 +158,6 @@ class JobQueue(Protocol):
 @runtime_checkable
 class LiveEvents(Protocol):
     async def events_since(self, session_id: str, after: int = 0, limit: int = 500) -> list[RowEvent]: ...
+    async def recent_sessions(self, limit: int = 20) -> list[dict[str, Any]]: ...
     def subscribe(self, session_id: str, after: int = 0) -> AsyncIterator[RowEvent]:
         """Row changes for one session, oldest first, from event id `after` (exclusive), then live."""

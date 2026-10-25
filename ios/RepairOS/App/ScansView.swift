@@ -112,7 +112,7 @@ private struct ConfirmDeleteScan: ViewModifier {
             }
             Button("Cancel", role: .cancel) { record = nil }
         } message: { r in
-            Text("\(r.stillIDs.count) photos and the report are removed from this phone. The copy on your Mac stays.")
+            Text("\(r.stillIDs.count) photos and the report are removed from this phone. The copy on the server stays.")
         }
     }
 }
@@ -143,12 +143,15 @@ struct SessionRow: View {
                 Text(record.symptom ?? "Scan").font(.body.weight(.semibold)).foregroundStyle(.primary).lineLimit(2)
                 Text("\(record.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute())) · \(record.stillIDs.count) photos")
                     .font(.footnote).foregroundStyle(.secondary)
+                // A reported scan shows its verdict in the verdict's colour (amber for problems, never green);
+                // anything else shows where it is on the way to a report.
+                let status: (words: String, tone: Tone) = summary?.verdict.map { ($0.words, verdictTone($0)) } ?? (look.words, look.tone)
                 HStack(spacing: 5) {
-                    Circle().fill(look.tone.color).frame(width: 7, height: 7)
-                    Text(summary?.verdict.map { "\(look.words) · \($0.words)" } ?? look.words)
+                    Circle().fill(status.tone.color).frame(width: 7, height: 7)
+                    Text(status.words)
                 }
                 .font(.footnote.weight(.semibold))
-                .foregroundStyle(look.tone == .neutral ? Color.secondary : look.tone.color)
+                .foregroundStyle(status.tone == .neutral ? Color.secondary : status.tone.text)
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
@@ -164,7 +167,7 @@ struct SessionRow: View {
     private func verdictTone(_ v: ReportModel.Verdict) -> Tone {
         switch v {
         case .potentialIssues: .caution
-        case .looksGood: .good
+        case .looksGood, .noProblemsSeen: .good
         default: .neutral
         }
     }

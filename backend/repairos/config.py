@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     typesafe_key: SecretStr | None = None
     # LLM / VLM slots
     anthropic_api_key: SecretStr | None = None
+    # Reference hints (optional; no key = off): Bright Data SERP API (repairos.references)
+    brightdata_api_key: SecretStr | None = None
+    brightdata_serp_zone: str | None = None
+    # Lea's voice (optional; no key = the phone's own voice): Cartesia TTS/STT (repairos.voice)
+    cartesia_api_key: SecretStr | None = None
     # RepairOS runtime
     repairos_pairing_code: SecretStr | None = None  # the phone pairs with this code (gateway, B5)
     repairos_release: bool = False

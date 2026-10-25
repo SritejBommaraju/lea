@@ -7,6 +7,8 @@ Jobs (queued by the gateway, repairos.api.app):
            its scan kept so far) and inspect it now, while the scan goes on, also before the scan package exists
   ocr      on a label still: the inspect stage (label stills are not_inspected until OCR exists, M8)
   pipeline on `POST /v1/scans/{scan_id}/complete` (the upload is complete): the whole run, then the report
+  story    on `POST /v1/sessions/{id}/story`: the person's guess -> a hypothesis and live `lead` events
+           (pipeline/story.py; a lead orders the inspection, never makes a finding)
 Every SWEEP_S the worker also closes continuations nobody finished (run.close_abandoned).
 Shutdown (SIGTERM from the pod, SIGINT): no new job is claimed and no new model call starts; running jobs get GRACE_S
 to end; what is still running is cancelled, its still claims are released to pending (their stills queued again) and
@@ -35,7 +37,7 @@ from repairos.pipeline.run import (Context, PipelineFailed, close_abandoned, ins
 from repairos.pipeline.stopping import is_stopping
 from repairos.slots.state import Job
 
-KINDS = ["detect", "ocr", "pipeline"]
+KINDS = ["detect", "ocr", "pipeline", "story"]
 HEARTBEAT_S = 30.0
 SWEEP_S = 30.0
 GRACE_S = 20.0   # on SIGTERM / SIGINT: how long running jobs may finish before their claims are released   # how often an idle or busy worker closes continuations nobody finished (close_abandoned)
@@ -45,7 +47,13 @@ log = logging.getLogger("repairos.pipeline.worker")
 def transient(e: BaseException) -> bool:
     """Worth retrying: the service was unreachable or busy, not our request or our data."""
     from repairos.slots.fusion import FusionUnavailable
+    from repairos.spend import SpendLimit
 
+    link: BaseException | None = e
+    while link is not None:   # a spend cap is never retried: it would only be refused again
+        if isinstance(link, SpendLimit):
+            return False
+        link = link.__cause__
     cause = e.__cause__ or e
     if isinstance(cause, (FusionUnavailable, TimeoutError, ConnectionError)):
         return True
@@ -63,6 +71,9 @@ async def handle(ctx: Context, job: Job) -> dict[str, Any]:
         return {"stage": "inspect", "still_id": inputs["id"], "findings": len(stage.get("finding_ids", []))}
     if kind == "detect" and inputs.get("kind") == "scan-package":
         return await record_capture(ctx, inputs["id"])
+    if kind == "story":
+        from repairos.pipeline.story import run_story
+        return await run_story(ctx, inputs.get("id") or job.session_id)
     if kind == "pipeline":
         report = await run_scan(ctx, inputs.get("scan_id") or job.scan_id)
         return {"stage": "report", "report_id": report["report_id"], "verdict": report["verdict"]}
@@ -122,6 +133,7 @@ class Worker:
         done = []
         while (job := await self.run_once()) is not None:
             done.append(job)
+        await self.ctx.settle()   # background side work (identity, mesh) of the jobs run
         return done
 
     async def run_forever(self, stop: asyncio.Event | None = None, grace_s: float = GRACE_S) -> None:
@@ -172,6 +184,10 @@ class Worker:
         released = await release_claims(self.ctx, worker=self.name)
         if released:
             log.info("released %d still claim(s) on shutdown", len(released))
+        try:   # background side work (identity, mesh) of the jobs run, within the same grace
+            await asyncio.wait_for(self.ctx.settle(), timeout=grace_s)
+        except TimeoutError:
+            log.info("stopping: background side work did not finish in %.0f s; dropped", grace_s)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -2,16 +2,32 @@ import ARKit
 import AVFoundation
 
 /// Fast shutter for sharp stills while walking: a custom exposure on the AR camera
-/// (`configurableCaptureDeviceForPrimaryCamera`) capped at `maxDuration`, with ISO steered from the camera's own
-/// metering offset (`exposureTargetOffset`, in EV) a few times a second. Auto exposure is restored on exit. Every
-/// change and every refusal goes to diag, so what ARKit really allows is measured, not assumed.
+/// (`configurableCaptureDeviceForPrimaryCamera`) at `maxDuration` while the phone moves, with ISO steered from the
+/// camera's own metering offset (`exposureTargetOffset`, in EV) a few times a second. When the phone is nearly
+/// still, `adapt` lengthens the shutter up to `steadyMaxDuration` (as far as the measured motion keeps the blur
+/// under `blurBudgetPx`) and lowers ISO by the same factor, so the brightness stays and the noise drops (1/100 s =
+/// ISO ÷ 2.5). Auto exposure is restored on exit. Every change and every refusal goes to diag, so what ARKit really
+/// allows is measured, not assumed.
 @MainActor
 final class ExposureControl {
     static let maxDuration = CMTime(value: 1, timescale: 250)
+    /// The longest shutter while the phone is nearly still.
+    static let steadyMaxDuration = CMTime(value: 1, timescale: 100)
+    /// Predicted motion blur (still pixels) the steady shutter may add.
+    static let blurBudgetPx = 1.5
+    /// A new shutter is in the frames after this long (a few frames at 30 fps).
+    static let settleTime: TimeInterval = 0.12
+    /// No longer shutter once ISO is already this clean (nothing to gain, only blur to risk).
+    static let cleanISO: Float = 200
+    /// ISO above this is noisy enough that light close to the object is worth it.
+    static let noisyISO: Float = 800
     /// ISO above this share of the sensor's maximum counts as "high": the torch should help.
     static let highISOShare: Float = 0.6
     static let deadband: Float = 0.25          // EV
     static let interval: TimeInterval = 0.3
+    /// When the shutter last changed (frame time); stills wait `settleTime` after it.
+    private(set) var changedAt: TimeInterval = -.infinity
+    private(set) var steady = false
 
     private(set) var iso: Float = 0
     private(set) var duration: Double = 0
@@ -23,6 +39,36 @@ final class ExposureControl {
     init(diag: Diag) { self.diag = diag }
 
     var isoHigh: Bool { active && maxISO > 0 && iso >= maxISO * Self.highISOShare }
+    var noisy: Bool { active && iso > Self.noisyISO }
+
+    /// The shutter in use has reached the frames.
+    func settled(_ t: TimeInterval) -> Bool { t - changedAt >= Self.settleTime }
+
+    /// Picks the shutter for this moment: `maxDuration` while moving; when nearly still, as long as the blur budget
+    /// allows (`blurRate` = predicted image motion in still pixels per second), up to `steadyMaxDuration`, and only
+    /// while ISO is above `cleanISO`. ISO changes by the inverse factor (same brightness). Call at ~10 Hz.
+    func adapt(time t: TimeInterval, steady still: Bool, blurRate: Double?) {
+        guard active, let d = device, duration > 0 else { return }
+        let f = d.activeFormat
+        let fast = max(f.minExposureDuration.seconds, min(Self.maxDuration.seconds, f.maxExposureDuration.seconds))
+        var want = fast
+        if still {
+            let longest = min(Self.steadyMaxDuration.seconds, f.maxExposureDuration.seconds)
+            let byBlur = blurRate.map { $0 > 0 ? Self.blurBudgetPx / $0 : longest } ?? longest
+            want = max(fast, min(longest, byBlur))
+            // Stop lengthening once ISO would fall under the clean level.
+            let isoThere = iso * Float(duration / want)
+            if isoThere < Self.cleanISO { want = max(fast, min(want, duration * Double(iso / Self.cleanISO))) }
+        }
+        steady = still
+        guard abs(want - duration) / duration > 0.15 else { return }
+        // Shorter at once (the phone moves); longer at most every `interval` (no hunting on a noisy motion reading).
+        if want > duration, t - changedAt < Self.interval { return }
+        let ratio = Float(duration / want)
+        set(duration: CMTime(seconds: want, preferredTimescale: 1_000_000), iso: iso * ratio, why: still ? "steady" : "moving",
+            extra: ["blur_rate_px_s": blurRate.map { ($0 * 10).rounded() / 10 } ?? -1])
+        changedAt = t
+    }
 
     private var device: AVCaptureDevice? { ARWorldTrackingConfiguration.configurableCaptureDeviceForPrimaryCamera }
 

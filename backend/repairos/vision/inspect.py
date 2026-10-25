@@ -49,6 +49,7 @@ from typing import Any
 from repairos.contracts import validate
 from repairos.slots.classifier import (ABSTAIN, FLAGGED, OK, UNSURE, DefectScore, confidence_word, evidence_words,
                                       route)
+from repairos.spend import PAUSED, SpendLimit
 from repairos.vision.checklists import UNKNOWN_PART, WEAK_LABEL_BELOW, crop_family
 from repairos.vision.crops import context_view, crop_region, cut, load_still, outline
 from repairos.vision.generic_classes import DEFECT_TO_CROP_STATE, WIRE_CLASSES
@@ -480,6 +481,18 @@ def region_cap(budget: int, max_regions: int | None = None) -> int:
     return max(MAX_REGIONS if max_regions is None else max_regions, budget)
 
 
+def prioritise(ordered: Sequence[int], dets: Sequence[Any], focus: Sequence[str] | None) -> list[int]:
+    """The same regions, those whose detector label shares a word with a lead's area first (stable otherwise):
+    the person's guess and research leads change only the order (which regions fit the crop budget), never a
+    state. No focus: the order is unchanged."""
+    if not focus:
+        return list(ordered)
+    from repairos.references.leads import matches
+
+    hit = [i for i in ordered if any(matches(a, dets[i].label) for a in focus)]
+    return hit + [i for i in ordered if i not in set(hit)]
+
+
 def too_small(box: Sequence[float], width: int, height: int, min_box_side: float, px_per_mm_of=None,
               min_box_mm: float = MIN_BOX_MM) -> bool:
     """A box too small to keep: under `min_box_mm` (sqrt of its area) where the still has a scale there, else under
@@ -493,12 +506,12 @@ def too_small(box: Sequence[float], width: int, height: int, min_box_side: float
 
 def select_regions(dets: Sequence[Any], width: int, height: int, *, budget: int, min_box_side: float = MIN_BOX_SIDE,
                    max_regions: int | None = None, by: str = RANK_BY,
-                   merge_iou: float | None = MERGE_IOU, px_per_mm_of=None,
+                   merge_iou: float | None = MERGE_IOU, focus: Sequence[str] | None = None, px_per_mm_of=None,
                    min_box_mm: float = MIN_BOX_MM) -> RegionSelection:
     """Which detections become regions, before any crop is cut. Scene-sized boxes are set aside; boxes too small
     (too_small: millimetres with a scale, else `min_box_side`) are dropped; the rest are ranked and merged
-    (vision/ranking.py) and only the first region_cap(budget, max_regions) are kept. A region merged into a dropped one
-    is dropped with it."""
+    (vision/ranking.py), lead areas (`focus`) first (prioritise), and only the first region_cap(budget, max_regions)
+    are kept. A region merged into a dropped one is dropped with it."""
     area = width * height
     scene, cand, tiny = [], [], []
     for i in order_for_inspection(dets):
@@ -511,6 +524,7 @@ def select_regions(dets: Sequence[Any], width: int, height: int, *, budget: int,
             cand.append(i)
     regions = {i: crop_region(dets[i].box, width, height) for i in cand}
     ordered, merged = rank_regions(dets, cand, regions, by=by, merge_iou=merge_iou)
+    ordered = prioritise(ordered, dets, focus)   # leads: looked at first, before the region cap
     cap = region_cap(budget, max_regions)
     beyond = set(ordered[cap:])
     beyond |= {i for i, into in merged.items() if into in beyond}
@@ -572,6 +586,25 @@ def finding_from_tile(*, scan_id: str, still_id: str, k: int, n_tiles: int, crop
     return f
 
 
+def finding_tile_not_inspected(*, scan_id: str, still_id: str, k: int, n_tiles: int, region: Sequence[float],
+                               reason: str) -> dict:
+    """A close tile that was not looked at (e.g. a spend cap paused Claude): not_inspected with the reason (I3)."""
+    return {
+        "finding_id": _fid(scan_id, still_id, TILE_REF, k, tuple(region)),
+        "scan_id": scan_id,
+        "subject": {"kind": "part", "ref": tile_ref(still_id, k)},
+        "state": "not_inspected",
+        "source": "repairos.vision",
+        "confidence": 0.0,
+        "is_proof": False,
+        "evidence": [f"close tile {k + 1} of {n_tiles} over the largest object in still {still_id} was not "
+                     f"inspected: {reason}"],
+        "evidence_refs": {"still_ids": [still_id], "crop_box_px": [max(0, int(v)) for v in region]},
+        "design_trust": "low",
+        "created_at": _now(),
+    }
+
+
 def finding_covered(tile_f: dict, *, scan_id: str, still_id: str, index: int, det, k: int) -> dict:
     """A detector region inside close tile `k` (not judged on its own): the tile's ok or could-not-judge applies to
     everything in it; a fault the tile reports is the tile's finding, so this region is not_inspected with that reason
@@ -585,6 +618,9 @@ def finding_covered(tile_f: dict, *, scan_id: str, still_id: str, index: int, de
         f = dict(tile_f)
         f["evidence"] = [f"could not judge the region labelled '{label}' in still {still_id}: its close tile "
                          f"{k + 1} could not be judged"] + list(tile_f["evidence"][1:])
+    elif tile_f["state"] == "not_inspected":
+        return finding_not_inspected(scan_id=scan_id, still_id=still_id, index=index, det=det,
+                                     reason=f"it lies in close tile {k + 1}, which was not inspected either")
     else:
         return finding_not_inspected(scan_id=scan_id, still_id=still_id, index=index, det=det,
                                      reason=f"it lies in close tile {k + 1}, where a fault is reported for the tile; "
@@ -682,6 +718,7 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
                   sharpness: float | None = None, classifier: Any = None, max_classified: int = 48,
                   min_box_side: float = MIN_BOX_SIDE, max_regions: int | None = None,
                   detections: Sequence[Any] | None = None, pool: Any = None, share: Any = None,
+                  hints: Sequence[str] | None = None, focus: Sequence[str] | None = None,
                   stop: Any = None, scale: PixelScale | None = None, sweep: bool = True,
                   min_px_per_mm: float = MIN_PX_PER_MM) -> Inspection:
     """Run detect -> crops -> [defect classifier] -> VLM on one full-resolution still (PIL image, array or path).
@@ -707,7 +744,12 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     already sends to the VLM is not sent again, its answer is reused (finding_from_other_still), and reused regions do
     not use this still's crop budget. `share` applies to part crops without a classifier only. `stop` (a
     threading.Event): when set, no further VLM call starts (part crop, tile or strip; the worker is shutting down) and
-    the inspection raises pipeline.stopping.WorkerStopping (release, not fail)."""
+    the inspection raises pipeline.stopping.WorkerStopping (release, not fail). `hints`: short public-reference
+    notes on where to look (repairos.references), given to the VLM (part crops and tiles) as untrusted data: they can
+    make it look closer, never make a finding (the state still comes from the image and passes honest_crop_state).
+    `focus`: lead areas (the person's guess, research leads; pipeline/story.py): matching regions are inspected first
+    (prioritise); the focus is never sent to the vision model. A spend cap that trips mid-still (SpendLimit) leaves
+    the part crop or tile it stopped not_inspected with PAUSED (I3), and a strip it stopped adds nothing."""
     from repairos.registry import slot
 
     detector = detector or slot("DET")
@@ -731,7 +773,7 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
     sweep_on = bool(sweep) and classifier is None
     budget = max_classified if classifier is not None else max_crops
     sel = select_regions(dets, W, H, budget=budget, min_box_side=min_box_side, max_regions=max_regions,
-                         px_per_mm_of=px_of)
+                         focus=focus, px_per_mm_of=px_of)
     raw: dict[int, dict] = {}
     for i in sel.scene:
         raw[i] = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=dets[i],
@@ -876,6 +918,8 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
 
             raise WorkerStopping("the worker is stopping: no further vision-model call")
 
+    hint_kw = {"hints": list(hints)} if hints else {}
+
     def scale_kw(box: Sequence[float], crop_scale: float) -> dict:
         s = px_of(box) if px_of else None
         return {"px_per_mm": round(s * crop_scale, 1)} if s else {}
@@ -885,12 +929,16 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         try:
             stop_check()
             ctx = outline(context_base, d.box, cscale) if context_base is not None else None
-            state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
-                                       family=crop_family(d.label, d.score, abstained(i)),
-                                       **scale_kw(d.box, crops[i].scale))
-            f = finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crops[i],
-                                  crop_state=state, crop_file=save(i), sharpness=sharpness,
-                                  defect_score=out.defect_scores.get(i))
+            try:
+                state = judge.inspect_crop(crops[i].image, ctx, part_hint=d.label,
+                                           family=crop_family(d.label, d.score, abstained(i)),
+                                           **hint_kw, **scale_kw(d.box, crops[i].scale))
+            except SpendLimit:   # the Claude cap tripped mid-scan: this region was not looked at (I3), never ok
+                f = finding_not_inspected(scan_id=scan_id, still_id=still_id, index=i, det=d, reason=PAUSED)
+            else:
+                f = finding_from_crop(scan_id=scan_id, still_id=still_id, index=i, det=d, crop=crops[i],
+                                      crop_state=state, crop_file=save(i), sharpness=sharpness,
+                                      defect_score=out.defect_scores.get(i))
         except BaseException as e:
             if i in owned:
                 owned[i].fail(e)
@@ -903,8 +951,12 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         stop_check()
         c = tile_crops[k]
         ctx = outline(context_base, c.region_px, cscale) if context_base is not None else None
-        state = judge.inspect_crop(c.image, ctx, part_hint=None, family=UNKNOWN_PART, view="tile",
-                                   **scale_kw(c.region_px, c.scale))
+        try:
+            state = judge.inspect_crop(c.image, ctx, part_hint=None, family=UNKNOWN_PART, view="tile",
+                                       **hint_kw, **scale_kw(c.region_px, c.scale))
+        except SpendLimit:   # the Claude cap tripped: this tile was not looked at (I3), never ok
+            return k, finding_tile_not_inspected(scan_id=scan_id, still_id=still_id, k=k, n_tiles=len(tile_crops),
+                                                 region=c.region_px, reason=PAUSED)
         path = None
         if crop_dir:
             path = str(crop_dir / f"{still_id}_{TILE_REF}{k}.jpg")
@@ -923,8 +975,11 @@ def inspect_still(image: Any, *, still_id: str, scan_id: str, detector: Any = No
         ctx = outline(context_base, (ux0, uy0, ux1, uy1), cscale) if context_base is not None else None
         res_px = [px_of(dets[i].box) * cell_scales[k] for k, i in enumerate(strip_members)
                   if px_of and px_of(dets[i].box)]
-        comp = judge.compare_parts(img, ctx, len(strip_members), part_hint=strip_label,
-                                   **({"px_per_mm": round(min(res_px), 1)} if res_px else {}))
+        try:
+            comp = judge.compare_parts(img, ctx, len(strip_members), part_hint=strip_label,
+                                       **({"px_per_mm": round(min(res_px), 1)} if res_px else {}))
+        except SpendLimit:   # the cap tripped: no comparison; each member keeps its own finding
+            return {}
         out.comparison = comp
         if comp.state not in ("ok", "cannot_tell") and not names_difference(comp.evidence_text):
             out.comparison_rejected = True   # a claimed difference with no words for it is not evidence

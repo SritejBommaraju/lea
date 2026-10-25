@@ -9,7 +9,11 @@
 #   --gpus "A,B,..."         GPU type ids in priority order (default: the cheapest adequate first, see README)
 #   --community              Community Cloud (cheaper, less reliable); default Secure Cloud
 #   --cpu                    CPU pod instead (fallback: no GPU free; detector on the CPU, a still takes seconds longer)
-#   --brightdata             also pass BRIGHTDATA_API_KEY / BRIGHTDATA_SERP_ZONE from Runpod secrets
+#   --brightdata             also pass BRIGHTDATA_API_KEY / BRIGHTDATA_SERP_ZONE from Runpod secrets ("Fix it", hints)
+#   --cartesia               also pass CARTESIA_API_KEY from a Runpod secret (voice)
+#   --spacetime DB           run the live mirror to Maincloud database DB (SPACETIME_TOKEN from a Runpod secret);
+#                            its media is https://<pod_id>-8790.proxy.runpod.net (port 8790 is always exposed)
+#   --all                    --brightdata --cartesia (add --spacetime DB for the big screen)
 #   --name NAME              pod name (default lea-demo)
 #   --dry-run                print the request body and stop (it holds only secret REFERENCES, never values)
 #
@@ -17,7 +21,7 @@
 # fills in at start (README step 1 creates the secrets). RUNPOD_API_KEY is read from the environment, never printed.
 set -euo pipefail
 
-IMAGE=""; AUTH_ID=""; CLOUD=SECURE; NAME=lea-demo; DRY=0; BRIGHT=0; CPU=0
+IMAGE=""; AUTH_ID=""; CLOUD=SECURE; NAME=lea-demo; DRY=0; BRIGHT=0; CPU=0; CARTESIA=0; STDB=""
 GPUS="NVIDIA RTX A5000,NVIDIA GeForce RTX 3090,NVIDIA RTX A6000,NVIDIA A40,NVIDIA L4,NVIDIA GeForce RTX 4090"
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -27,15 +31,18 @@ while [ $# -gt 0 ]; do
     --community) CLOUD=COMMUNITY; shift;;
     --cpu) CPU=1; shift;;
     --brightdata) BRIGHT=1; shift;;
+    --cartesia) CARTESIA=1; shift;;
+    --spacetime) STDB="$2"; shift 2;;
+    --all) BRIGHT=1; CARTESIA=1; shift;;
     --name) NAME="$2"; shift 2;;
     --dry-run) DRY=1; shift;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
     *) echo "unknown argument $1"; exit 2;;
   esac
 done
 [ -n "$IMAGE" ] || { echo "--image is required"; exit 2; }
 
-BODY="$(IMAGE="$IMAGE" AUTH_ID="$AUTH_ID" CLOUD="$CLOUD" NAME="$NAME" GPUS="$GPUS" BRIGHT="$BRIGHT" CPU="$CPU" python3 - <<'EOF'
+BODY="$(IMAGE="$IMAGE" AUTH_ID="$AUTH_ID" CLOUD="$CLOUD" NAME="$NAME" GPUS="$GPUS" BRIGHT="$BRIGHT" CPU="$CPU" CARTESIA="$CARTESIA" STDB="$STDB" python3 - <<'EOF'
 import json, os
 ref = lambda name: "{{ RUNPOD_SECRET_%s }}" % name
 env = {
@@ -47,6 +54,12 @@ env = {
 if os.environ["BRIGHT"] == "1":
     env["BRIGHTDATA_API_KEY"] = ref("brightdata_api_key")
     env["BRIGHTDATA_SERP_ZONE"] = ref("brightdata_serp_zone")
+if os.environ["CARTESIA"] == "1":
+    env["CARTESIA_API_KEY"] = ref("cartesia_api_key")
+if os.environ["STDB"]:
+    env["SPACETIME_DB"] = os.environ["STDB"]
+    env["SPACETIME_HOST"] = "https://maincloud.spacetimedb.com"
+    env["SPACETIME_TOKEN"] = ref("spacetime_token")
 body = {
     "name": os.environ["NAME"],
     "imageName": os.environ["IMAGE"],
@@ -58,7 +71,7 @@ body = {
     "containerDiskInGb": 30,
     "volumeInGb": 20,
     "volumeMountPath": "/workspace",
-    "ports": ["8000/http"],
+    "ports": ["8000/http", "8790/http"],   # gateway; live-mirror media (thumbnails + mesh, signed URLs)
     "env": env,
     # torch cu126 runs on any 12.x+ driver; hosts that report 12.6 or newer avoid old-driver surprises
     "allowedCudaVersions": ["12.6", "12.8", "12.9", "13.0"],
