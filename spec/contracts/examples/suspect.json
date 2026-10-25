@@ -1,0 +1,29 @@
+{
+  "suspect_id": "sus_001",
+  "scan_id": "scan_7f3a",
+  "subject": { "kind": "wire", "ref": "WIRE_A", "pins": ["J1.1", "LOAD1.1"] },
+  "p_fault": 0.78,
+  "p_fault_word": "likely",
+  "rank": 1,
+  "fault_kind": {
+    "choice": "unplugged",
+    "probabilities": {
+      "unplugged": 0.66,
+      "wrong_pin_or_colour_order": 0.04,
+      "broken_or_missing": 0.09,
+      "damaged_insulation": 0.03,
+      "ok": 0.10,
+      "not_enough_evidence": 0.08
+    },
+    "option_order_seed": 4127
+  },
+  "verdict": "suspect",
+  "proof_reading_id": null,
+  "finding_ids": ["f_0012", "f_0013"],
+  "on_symptom_power_path": true,
+  "fusion_source": "jev",
+  "jev_model": "jev-1.14.0",
+  "design_trust": "low",
+  "calibration_validated": false,
+  "updated_at": "2026-10-23T18:14:03Z"
+}

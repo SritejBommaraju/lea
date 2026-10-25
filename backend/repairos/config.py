@@ -3,7 +3,7 @@
 One typed Settings object, loaded from the environment and backend/.env (environment wins). Keys are SecretStr:
 they never show in repr, logs or errors. A missing key stays missing; `require()` names it and stops.
 
-Release lockout: with REPAIROS_RELEASE=1 the dev-only providers are refused (GRAIN=replay, HOST=local_mac) and so
+Release lockout: with REPAIROS_RELEASE=1 the dev-only providers are refused (HOST=local_mac) and so
 are REPAIROS_SLOT_* overrides (GEN3). The phase1 profile uses HOST=local_mac, so it can never run as a release.
 """
 from __future__ import annotations
@@ -33,11 +33,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True,
                                       case_sensitive=False)
 
-    # Grain (GRAIN slot, Phase 2)
-    grain_url: str | None = None
-    grain_key: SecretStr | None = None
-    grain_test_project: str | None = None
-    grain_interface_version: str | None = None
     # Jev / TypeSafe (FUSION=jev)
     typesafe_key: SecretStr | None = None
     # LLM / VLM slots
@@ -53,7 +48,7 @@ class Settings(BaseSettings):
     repairos_providers_path: Path = PROVIDERS_FILE
 
     def require(self, key: str, why: str = "") -> str:
-        """The value of `key` (e.g. "GRAIN_KEY"), or MissingSettingError naming the key."""
+        """The value of `key` (e.g. "TYPESAFE_KEY"), or MissingSettingError naming the key."""
         value = getattr(self, key.lower())
         if value is None or (isinstance(value, SecretStr) and not value.get_secret_value()) or value == "":
             raise MissingSettingError(key.upper(), why)
@@ -77,8 +72,6 @@ def release_problems(slots: Mapping[str, str], environ: Mapping[str, str] | None
     """Why these resolved slots may not run in a release build ([] = allowed)."""
     environ = os.environ if environ is None else environ
     problems = []
-    if slots.get("GRAIN") == "replay":
-        problems.append("GRAIN=replay serves recorded responses; dev and CI only")
     if slots.get("HOST") == "local_mac":
         problems.append("HOST=local_mac is the dev laptop runtime; dev only")
     overrides = sorted(k for k in environ if k.startswith("REPAIROS_SLOT_"))

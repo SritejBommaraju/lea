@@ -1,0 +1,2 @@
+{ "schema": "scan-package", "why": "depth_source none means no fused cloud: points_file and point_count are absent",
+  "base": "scan-package.json", "patch": { "depth_source": "none", "alignment": null } }

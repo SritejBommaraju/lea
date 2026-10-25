@@ -1,0 +1,72 @@
+# Build the Runpod image (deploy/runpod/Dockerfile) and push it to GHCR. Manual only (Actions tab > "Runpod image" >
+# Run workflow, or `gh workflow run build-runpod-image.yml --ref <branch> -f tag=demo`). It never deploys and never
+# sees an app secret: ANTHROPIC_API_KEY, TYPESAFE_KEY, REPAIROS_PAIRING_CODE and BRIGHTDATA_* live in Runpod secrets
+# (deploy/runpod/README.md). The only credential used is the run's own GITHUB_TOKEN, to push to GHCR.
+# Why Actions: the image is ~4.5 GB compressed and x86_64; a GitHub runner builds it natively and pushes it fast,
+# where a Mac would build it under emulation and upload it over home broadband.
+# GitHub only offers workflow_dispatch for workflows that exist on the default branch (main).
+name: Runpod image
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (also tagged with the commit sha)"
+        required: true
+        default: demo
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: runpod-image
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Free runner disk (the CUDA layers need ~15 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Proprietary guard (no private files)
+        run: python3 -I tools/guard_proprietary.py --tracked
+
+      - name: Image name
+        id: img
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/lea-backend" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1 (Apache-2.0)
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6  # v4.7.0 (Apache-2.0)
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0 (Apache-2.0)
+        with:
+          context: .
+          file: deploy/runpod/Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.img.outputs.name }}:${{ inputs.tag }}
+            ${{ steps.img.outputs.name }}:${{ github.sha }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Runpod image pushed"
+            echo ""
+            echo "\`${{ steps.img.outputs.name }}:${{ inputs.tag }}\` (also \`:${{ github.sha }}\`)"
+            echo ""
+            echo "Next: deploy/runpod/README.md, step 3 (create the pod)."
+          } >> "$GITHUB_STEP_SUMMARY"

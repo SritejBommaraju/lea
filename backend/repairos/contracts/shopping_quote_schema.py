@@ -21,10 +21,10 @@ class Budget(BaseModel):
 
 class PriceSource(StrEnum):
     """
-    grain_bom prices are treated as current.
+    reference_bom prices are treated as current.
     """
 
-    grain_bom = 'grain_bom'
+    reference_bom = 'reference_bom'
     supplier_page = 'supplier_page'
     search_snippet = 'search_snippet'
 
@@ -55,7 +55,7 @@ class FoundBy(StrEnum):
     How the candidate entered the list. AI may add candidates; it cannot pick one.
     """
 
-    grain_bom = 'grain_bom'
+    reference_bom = 'reference_bom'
     deterministic_search = 'deterministic_search'
     ai_discovery = 'ai_discovery'
 
@@ -74,7 +74,7 @@ class Candidate(BaseModel):
     in_stock: bool | None = None
     lead_days: int | None = Field(None, ge=0)
     price_source: PriceSource = Field(
-        ..., description='grain_bom prices are treated as current.'
+        ..., description='reference_bom prices are treated as current.'
     )
     spec_match: SpecMatch = Field(
         ...,
@@ -113,18 +113,17 @@ class AiAssist(BaseModel):
 
 class EstCostSource(StrEnum):
     """
-    Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain is kept for a future priced made[] row.
+    pilot_estimate = a rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price').
     """
 
-    grain_pilot_estimate = 'grain_pilot_estimate'
-    grain = 'grain'
+    pilot_estimate = 'pilot_estimate'
     repairos_estimate = 'repairos_estimate'
     unknown = 'unknown'
 
 
 class MadeAlternative(BaseModel):
     """
-    Print-it option from Grain's made[] / model.step, when one exists.
+    Print-it option from the reference model, when one exists.
     """
 
     model_config = ConfigDict(
@@ -133,14 +132,13 @@ class MadeAlternative(BaseModel):
     process: str | None = None
     material: str | None = None
     file: str | None = Field(
-        None,
-        description="STEP or STL path from the reference cache: Grain's made[].file (today the whole out/model.step; the part is its node) or a pilot export.",
+        None, description='STEP or STL path for the part, or a pilot export.'
     )
     mass_g: float | None = Field(None, ge=0.0)
     est_cost: float | None = Field(None, ge=0.0)
     est_cost_source: EstCostSource | None = Field(
         None,
-        description="Q-G2: grain_pilot_estimate = the pilot's rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price'). grain is kept for a future priced made[] row.",
+        description="pilot_estimate = a rough print estimate (PLA grams, minutes, material $; not sliced) for simple printed parts; otherwise unknown ('no price').",
     )
     printer_available: bool | None = Field(
         None, description='True when the user has a 3D printer.'
@@ -149,7 +147,7 @@ class MadeAlternative(BaseModel):
 
 class ShoppingQuote(BaseModel):
     """
-    Sourcing decision for one part to buy. Selection and budget enforcement are deterministic (A5): the chosen candidate is the one selection_rule picks from the candidates, and total never exceeds budget.cap. AI may only discover candidates and extract datasheet fields; ai_assist records where it was used. Grain BOM prices are treated as current (owner decision 2026-10-23).
+    Sourcing decision for one part to buy. Selection and budget enforcement are deterministic (A5): the chosen candidate is the one selection_rule picks from the candidates, and total never exceeds budget.cap. AI may only discover candidates and extract datasheet fields; ai_assist records where it was used.
     """
 
     model_config = ConfigDict(
@@ -178,7 +176,6 @@ class ShoppingQuote(BaseModel):
     )
     ai_assist: AiAssist
     made_alternative: MadeAlternative | None = Field(
-        None,
-        description="Print-it option from Grain's made[] / model.step, when one exists.",
+        None, description='Print-it option from the reference model, when one exists.'
     )
     created_at: AwareDatetime

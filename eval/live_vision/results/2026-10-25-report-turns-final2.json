@@ -1,0 +1,238 @@
+[
+ {
+  "id": "xbox_xb_here",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "owner",
+  "question": "the X button and the B button are here.",
+  "spoken": "Good, that's the right cluster. The blue X sits to the right of the face buttons, and the red B is on the left. The scan found no problems with the controller's parts. What's not working: is it a button that doesn't register, a stick, or the controller not connecting?",
+  "raw": "Good, that's the right cluster. The <show part=\"ix_3\"/>blue X sits to the right of the face buttons, and the <show part=\"ix_2\"/>red B is on the left. The scan found no problems with the controller's parts. What's not working: is it a button that doesn't register, a stick, or the controller not connecting?",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   },
+   {
+    "type": "show",
+    "part": "ix_2"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xb_here_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "B button",
+    "point": [
+     -0.0258,
+     -0.4047,
+     -0.1074
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xb_here_2.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.28,
+  "first_sentence_s": 4.75,
+  "searches": 0,
+  "usd": 0.0010711
+ },
+ {
+  "id": "xbox_xyba",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "general",
+  "question": "What does the X, Y, B, and A button do in this device?",
+  "spoken": "On this Xbox controller the four face buttons do the basic menu and game actions. A is the green one at the bottom, and it confirms or selects. B is the red one on the right, and it goes back or cancels. X is the blue one on the left, and Y is the yellow one at the top. In most games X and Y are used for actions like reload, interact, or switching items, and the exact job depends on the game. A is the green one at the bottom. B is the red one on the right, and X is the blue one on the left. Y is the yellow one at the top. If one of them has stopped responding, tell me which one and how it behaves, and we can narrow it down.",
+  "raw": "On this Xbox controller the four face buttons do the basic menu and game actions. A is the green one at the bottom, and it confirms or selects. B is the red one on the right, and it goes back or cancels. X is the blue one on the left, and Y is the yellow one at the top. In most games X and Y are used for actions like reload, interact, or switching items, and the exact job depends on the game.\n\n<show part=\"ix_1\"/>A is the green one at the bottom. <show part=\"ix_2\"/>B is the red one on the right, and <show part=\"ix_3\"/>X is the blue one on the left. <show part=\"ix_4\"/>Y is the yellow one at the top.\n\nIf one of them has stopped responding, tell me which one and how it behaves, and we can narrow it down.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_1"
+   },
+   {
+    "type": "show",
+    "part": "ix_2"
+   },
+   {
+    "type": "show",
+    "part": "ix_3"
+   },
+   {
+    "type": "show",
+    "part": "ix_4"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_1"
+    },
+    "label": "A button",
+    "point": [
+     -0.0155,
+     -0.4027,
+     -0.0966
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_1.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "B button",
+    "point": [
+     -0.0258,
+     -0.4047,
+     -0.1074
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_2.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_3.jpg"
+   },
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_4"
+    },
+    "label": "Y button",
+    "point": [
+     -0.0328,
+     -0.4032,
+     -0.0871
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_xyba_4.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.0,
+  "first_sentence_s": 1.08,
+  "searches": 0,
+  "usd": 0.0009659000000000001
+ },
+ {
+  "id": "xbox_where_x",
+  "scan": "scan_75033ad756b7f972",
+  "mode": "after",
+  "kind": "locate_non_finding",
+  "question": "where's the X button",
+  "spoken": "The X button is the blue one with an X on it, among the four colored face buttons. It's the one to the right of the red B in this photo: . Its position follows the controller's orientation, so the letter printed on the button is the reliable way to find it.",
+  "raw": "The X button is the blue one with an X on it, among the four colored face buttons. It's the one to the right of the red B in this photo: <show part=\"ix_3\"/>. Its position follows the controller's orientation, so the letter printed on the button is the reliable way to find it.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_3"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_3"
+    },
+    "label": "X button",
+    "point": [
+     -0.0168,
+     -0.3779,
+     -0.0814
+    ],
+    "photo": "scan_75033ad756b7f972_s3",
+    "shot": "xbox_where_x_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s2",
+   "s3",
+   "v1"
+  ],
+  "prep_s": 0.0,
+  "first_sentence_s": 5.34,
+  "searches": 0,
+  "usd": 0.0012511
+ },
+ {
+  "id": "toaster_red_wire",
+  "scan": "scan_799d9ab8d44e0e2b",
+  "mode": "after",
+  "kind": "wire",
+  "question": "what is this red wire doing",
+  "spoken": "That red wire runs from the control panel down to the fan motor, and its end is crimped to a spade terminal on the motor coil. It's carrying power or switching for the fan, so it's one of the live-circuit wires. In the photos, that spade end looks like it may be sitting loose rather than pushed onto its tab, but these photos can't confirm that. With the unit unplugged, gently check whether the terminal is firmly on the tab, and trace the other end back to the switch to see where it attaches. Don't touch the wiring while it's plugged in, and remember the capacitors can hold a charge after unplugging.",
+  "raw": "That red wire runs from the control panel down to the fan motor, and its end is crimped to a spade terminal on the motor coil. It's carrying power or switching for the fan, so it's one of the live-circuit wires. <show part=\"ix_2\"/>In the photos, that spade end looks like it may be sitting loose rather than pushed onto its tab, but these photos can't confirm that. With the unit unplugged, gently check whether the terminal is firmly on the tab, and trace the other end back to the switch to see where it attaches. Don't touch the wiring while it's plugged in, and remember the capacitors can hold a charge after unplugging.",
+  "moves": [
+   {
+    "type": "show",
+    "part": "ix_2"
+   }
+  ],
+  "points": [
+   {
+    "marker": {
+     "type": "show",
+     "part": "ix_2"
+    },
+    "label": "motor red wire end",
+    "point": [
+     -0.0082,
+     -0.2962,
+     -0.2721
+    ],
+    "photo": "scan_799d9ab8d44e0e2b_s2",
+    "shot": "toaster_red_wire_1.jpg"
+   }
+  ],
+  "heldout_error_mm": null,
+  "views": [
+   "s21",
+   "s11",
+   "v1"
+  ],
+  "prep_s": 1.04,
+  "first_sentence_s": 2.4,
+  "searches": 0,
+  "usd": 0.0013621000000000002
+ }
+]

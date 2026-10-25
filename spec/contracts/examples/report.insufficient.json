@@ -1,0 +1,37 @@
+{
+  "report_id": "rep_scan_example",
+  "scan_id": "scan_example",
+  "session_id": "sess_example",
+  "created_at": "2026-10-24T12:00:00Z",
+  "verdict": "insufficient_evidence",
+  "verdict_reason": {
+    "code": "no_regions",
+    "rule": "V0",
+    "text": "No close-up photos were received, so nothing could be inspected."
+  },
+  "summary": {
+    "text": "Nothing could be inspected because no close-up photos arrived. Take close-ups and try again.",
+    "written_by": "<llm model id>",
+    "from_words_only": true
+  },
+  "findings": [],
+  "not_inspected": [],
+  "insufficient_evidence": [],
+  "capture": {
+    "depth_source": "lidar",
+    "stills": 0,
+    "stills_inspected": 0,
+    "keyframes": 2,
+    "scan_points": 1000,
+    "coverage_words": "partly covered"
+  },
+  "models": {
+    "detector": "<detector model id>",
+    "classifier": "not selected (CLS=none)",
+    "vlm": "<vlm model ladder>",
+    "ocr": "not selected (OCRB=none)",
+    "summary_writer": "<llm model id>",
+    "jev": "not called (nothing to judge)",
+    "locate": "not available"
+  }
+}

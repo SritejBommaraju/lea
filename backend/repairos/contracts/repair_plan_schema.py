@@ -41,7 +41,7 @@ class Source(StrEnum):
     unresolved = 'unresolved'
 
 
-class Verdict5(StrEnum):
+class Verdict3(StrEnum):
     yes = 'yes'
     yes_with_changes = 'yes_with_changes'
     no = 'no'
@@ -58,7 +58,7 @@ class Substitute(BaseModel):
         extra='forbid',
     )
     candidate: str
-    verdict: Verdict5
+    verdict: Verdict3
     basis: Basis
     reasons: list[str]
     datasheet_url: str | None = None
@@ -130,44 +130,6 @@ class CostToBuy(BaseModel):
     currency: str = Field(..., pattern='^[A-Z]{3}$')
 
 
-class DesignTrust(StrEnum):
-    high = 'high'
-    low = 'low'
-    none = 'none'
-
-
-class CrossCheck(StrEnum):
-    """
-    Whether Grain diagnose and /call ran for this plan.
-    """
-
-    done = 'done'
-    skipped = 'skipped'
-    failed = 'failed'
-
-
-class Grain(BaseModel):
-    model_config = ConfigDict(
-        extra='forbid',
-    )
-    project_id: str | None = None
-    build_hash: str | None = Field(
-        None,
-        description='ReferenceDesign.build_hash: Grain last_build.hash (target T11); null until then.',
-    )
-    design_trust: DesignTrust
-    cross_check: CrossCheck = Field(
-        ..., description='Whether Grain diagnose and /call ran for this plan.'
-    )
-    call_version: str | None = Field(
-        None,
-        description='GrainCallResponse.version (target T10); null until Grain sends one.',
-    )
-    disagreements: list[str] | None = Field(
-        None, description="Where Grain's verdict differed from ours, in words."
-    )
-
-
 class Fusion(StrEnum):
     jev = 'jev'
 
@@ -188,7 +150,7 @@ class Kind(StrEnum):
 
 class Subject(BaseModel):
     """
-    Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name or net name.
+    Same as Finding.subject: ref is the part name (reference model node), harness wire name or net name.
     """
 
     model_config = ConfigDict(
@@ -257,6 +219,5 @@ class RepairPlan(BaseModel):
     steps: list[Step] = Field(..., min_length=1)
     confirm: Confirm
     cost_to_buy: CostToBuy | None = None
-    grain: Grain
     generated_by: GeneratedBy | None = None
     created_at: AwareDatetime

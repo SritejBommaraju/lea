@@ -1,0 +1,344 @@
+# LEA task registry: the machine twin of PLAN.md §6-§7. Read by build/next.py, build/status.py, build/doctor.py.
+#
+# Format: strict YAML subset (build/_lib.py parses it, stdlib only): two-space indent, `key: value`, flow lists
+# `[a, b]`, strings with ':' or '#' double-quoted, no multi-line scalars.
+#
+# Task fields: id, title, stream (app | modeling | build), phase (1), status (todo | doing | done | blocked),
+#   branch (for doing: where the work lives),
+#   depends_on, owns, human (ids from human_steps), slots (["SLOT=impl"] the task implements; the conformance
+#   runner reads it), done_when.
+# A task whose id leads a commit subject on main counts as done (squash-merge keeps the PR title).
+# Phase 2 has no tasks yet: PLAN.md §9.
+
+streams:
+  - id: app
+    name: "App (iOS)"
+    file: areas/app.md
+  - id: modeling
+    name: "Modeling + benchmark"
+    file: areas/modeling-benchmark.md
+  - id: build
+    name: "Build execution (Rohan + agents)"
+    file: areas/build-execution.md
+
+human_steps:
+  - id: dev_tools
+    what: "Python 3.12+, git, gh and Node 22+ on this machine"
+    how: "brew install python@3.12 git gh node; then make bootstrap"
+    check: tools_core
+  - id: repo_access
+    what: "gh logged in with access to the repo"
+    how: "gh auth login"
+    check: gh_auth
+  - id: jev_key
+    what: "TYPESAFE_KEY in backend/.env (Jev fusion)"
+    how: "Owner creates the key in the TypeSafe console; put TYPESAFE_KEY=... in backend/.env"
+    check: env_jev
+  - id: anthropic_key
+    what: "ANTHROPIC_API_KEY in backend/.env (VLM, LLM, report text)"
+    how: "Owner creates the key; put ANTHROPIC_API_KEY=... in backend/.env"
+    check: env_anthropic
+  - id: xcode
+    what: "Xcode 26 with Swift 6 on a Mac"
+    how: "Install Xcode from the App Store, open it once, then xcode-select -s /Applications/Xcode.app"
+    check: xcode
+  - id: iphone
+    what: "A LiDAR iPhone (16 Pro or Pro Max) connected, in developer mode"
+    how: "Connect by cable, trust the Mac, turn on Settings > Privacy & Security > Developer Mode"
+    check: device
+  - id: apple_signing
+    what: "ios/Config/Signing.xcconfig with DEVELOPMENT_TEAM (gitignored)"
+    how: "A free Apple ID works; write DEVELOPMENT_TEAM = <team id> into ios/Config/Signing.xcconfig"
+    check: signing
+  - id: test_products
+    what: "Real hardware to scan: several product kinds, some known good, some with known faults"
+    how: "Collect them; keep a few products aside as held-out (never used for tuning)"
+    check: none
+  - id: multimeter
+    what: "A multimeter for optional meter evidence"
+    how: "Any DMM with continuity and DC volts"
+    check: none
+  - id: train_compute
+    what: "Owner decision: where the defect classifier trains and on what budget"
+    how: "Owner answers the PLAN.md §11 question"
+    check: none
+
+milestones:
+  - id: MS1
+    title: "Replay to report"
+    requires: [B9, B10, B11]
+  - id: MS2
+    title: "Capture on device"
+    requires: [A1, A2, A3, A4]
+  - id: MS3
+    title: "Report on the phone"
+    requires: [A5, A6, B11]
+  - id: MS4
+    title: "Benchmark baseline"
+    requires: [M4, M5]
+  - id: MS5
+    title: "Classifier earns its slot"
+    requires: [M6, M7]
+  - id: MS6
+    title: "Phase 1 done"
+    requires: [A1, A2, A3, A4, A5, A6, A7, M1, M2, M3, M4, M5, M6, M7, M8, M9, B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, B15]
+
+tasks:
+  # ---------------------------------------------------------------- App (iOS)
+  - id: A1
+    title: "App shell, device probe, pairing"
+    stream: app
+    phase: 1
+    owns: [ios/RepairOS/App/**, ios/RepairOSTests/**]
+    human: [xcode, iphone, apple_signing]
+    done_when: "Builds and runs on a LiDAR iPhone; probes at startup whether 48 MP stills work inside the AR session; pairs with the gateway"
+  - id: A2
+    title: "LiDAR scan: own ARKit pipeline, mesh overlay, coverage heat map, keyframes, on-phone drift correction, coaching cues"
+    stream: app
+    phase: 1
+    depends_on: [A1]
+    owns: [ios/RepairOS/Capture/**]
+    human: [iphone, test_products]
+    done_when: "Any table-top object exports a valid scan-package (binary PLY in metres, poses, intrinsics, keyframe depth) with live coverage shown"
+  - id: A3
+    title: "Guided close-ups via captureHighResolutionFrame in the same AR session (48 MP when allowed, else 12 MP)"
+    stream: app
+    phase: 1
+    depends_on: [A2]
+    owns: [ios/RepairOS/Closeups/**]
+    human: [iphone]
+    done_when: "Every still is a valid still at full resolution with pose and intrinsics, linked to the scan; uncovered regions are shown"
+  - id: A4
+    title: "Upload: chunked, content-hashed, resumable"
+    stream: app
+    phase: 1
+    depends_on: [A1]
+    owns: [ios/RepairOS/Upload/**]
+    done_when: "An upload cut mid-way finishes without re-sending done chunks; the gateway session passes make sessions-check"
+  - id: A5
+    title: "Report screen (live via SSE)"
+    stream: app
+    phase: 1
+    depends_on: [A4, B11]
+    owns: [ios/RepairOS/Report/**]
+    done_when: "Renders verdict, findings with crops and confidence words, not_inspected, insufficient_evidence reasons; no probability numbers"
+  - id: A6
+    title: "Optional meter reading entry"
+    stream: app
+    phase: 1
+    depends_on: [A5]
+    owns: [ios/RepairOS/Meter/**]
+    human: [multimeter]
+    done_when: "Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out"
+  - id: A7
+    title: "First-run usability pass"
+    stream: app
+    phase: 1
+    depends_on: [A5]
+    owns: [ios/RepairOS/**]
+    human: [test_products]
+    done_when: "People new to the app go from scan to report without help; what they hit is fixed or filed"
+  - id: A8
+    title: "No-LiDAR mode for any ARKit iPhone: world-tracking poses + guided stills; backend geometry when needed"
+    stream: app
+    phase: 1
+    depends_on: [A2]
+    owns: [ios/RepairOS/Capture/NoLidar/**]
+    human: [iphone, test_products]
+    done_when: "On a non-LiDAR iPhone a real object goes from scan to report; the report states what it cannot claim without depth"
+
+  # ---------------------------------------------------------------- Modeling + benchmark
+  - id: M1
+    title: "Detector slot: OWLv2 default, Grounding DINO alternative, generic vocabulary, prompts, tiling"
+    stream: modeling
+    phase: 1
+    status: done
+    owns: [backend/repairos/slots/detector.py, backend/repairos/slots/det_*/**, backend/repairos/vision/generic_classes.py, backend/repairos/vision/prompts.py, backend/repairos/vision/tiling.py, backend/tests/conformance/det/**]
+    slots: [DET=owlv2, DET=gdino]
+    done_when: "Built"
+  - id: M2
+    title: "Full-res crops from detector boxes"
+    stream: modeling
+    phase: 1
+    status: done
+    depends_on: [M1]
+    owns: [backend/repairos/vision/crops.py]
+    done_when: "Built"
+  - id: M3
+    title: "VLM crop checks and per-still inspection into findings"
+    stream: modeling
+    phase: 1
+    status: done
+    depends_on: [M2]
+    owns: [backend/repairos/slots/vlm.py, backend/repairos/slots/vlm_*/**, backend/repairos/vision/inspect.py, backend/tests/conformance/vlm/**]
+    human: [anthropic_key]
+    slots: [VLM=anthropic]
+    done_when: "Built"
+  - id: M4
+    title: "Benchmark data: labelled real sessions, known-good units, held-out products"
+    stream: modeling
+    phase: 1
+    owns: [samples/sessions/**]
+    human: [test_products, iphone]
+    done_when: "make sessions-check passes; held-out products are never used for tuning or training"
+  - id: M5
+    title: "Benchmark runner make eval"
+    stream: modeling
+    phase: 1
+    depends_on: [M4, B10]
+    owns: [eval/**]
+    done_when: "Per-split precision and recall by defect type, verdict accuracy, honesty violations, calibration, latency per stage; one results file per run"
+  - id: M6
+    title: "Defect dataset: licence-clean public data plus our labelled crops"
+    stream: modeling
+    phase: 1
+    depends_on: [M4]
+    owns: [training/data/**, licenses/datasets.json]
+    done_when: "Every source passes L2; no held-out product in training data"
+  - id: M7
+    title: "Defect classifier, CLS slot: frozen DINOv2 + trained head, licence-clean data, benchmarked against Claude"
+    stream: modeling
+    phase: 1
+    status: doing
+    branch: rohan/defect-classifier
+    depends_on: [M5, M6]
+    owns: [backend/repairos/slots/classifier.py, backend/repairos/slots/cls_*/**, backend/tests/conformance/cls/**, training/models/**]
+    human: [train_compute]
+    done_when: "Conformance passes on real crops; make eval reports it against the Claude VLM-only baseline (MS5 decides)"
+  - id: M8
+    title: "OCR of labels and markings on crops"
+    stream: modeling
+    phase: 1
+    depends_on: [M2]
+    owns: [backend/repairos/slots/ocr.py, backend/repairos/slots/ocrb_*/**, backend/tests/conformance/ocrb/**]
+    done_when: "Conformance on real label crops; text reaches findings and the report as state (A9)"
+  - id: M9
+    title: "Detector choice measured on the benchmark"
+    stream: modeling
+    phase: 1
+    depends_on: [M5]
+    owns: [eval/results/detector/**]
+    done_when: "OWLv2 vs Grounding DINO on recall and latency; the DET default in config follows the numbers"
+
+  # ---------------------------------------------------------------- Build execution
+  - id: B1
+    title: "Scaffold, Makefile, guard and hook, build tools"
+    stream: build
+    phase: 1
+    status: done
+    owns: [Makefile, build/**, tools/guard_proprietary.py, tools/hooks/**]
+    human: [dev_tools, repo_access]
+    done_when: "Built"
+  - id: B2
+    title: "Contracts, codegen (Pydantic, Swift), check.py"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B1]
+    owns: [spec/contracts/**, tools/codegen/**, backend/repairos/contracts/**, ios/RepairOS/Contracts/**]
+    done_when: "Built"
+  - id: B3
+    title: "Config, secrets, provider registry, release lockout"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B1]
+    owns: [backend/repairos/config.py, backend/repairos/registry.py, config/**, backend/.env.example]
+    done_when: "Built"
+  - id: B4
+    title: "State (SQLite, invariant row rules) and blobs (local, content-addressed)"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B3]
+    owns: [backend/repairos/slots/state.py, backend/repairos/slots/state_sqlite/**, backend/repairos/slots/blob.py, backend/repairos/slots/blob_local/**]
+    slots: [STATE=sqlite, BLOB=local]
+    done_when: "Built"
+  - id: B5
+    title: "Gateway: pairing, resumable uploads, ingestion, reads, SSE"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B2, B4]
+    owns: [backend/repairos/api/**, backend/repairos/main.py]
+    done_when: "Built"
+  - id: B6
+    title: "Recorded sessions and replay"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B5]
+    owns: [backend/repairos/sessions/**, tools/replay.py, samples/README.md, samples/session.schema.json]
+    done_when: "Built"
+  - id: B7
+    title: "Fusion via Jev: word state, questions, suspects, next action in code, meter override"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B2]
+    owns: [backend/repairos/fusion/**, backend/repairos/slots/fusion.py, backend/repairos/slots/fusion_jev/**, tools/jev_smoke.py]
+    human: [jev_key]
+    slots: [FUSION=jev]
+    done_when: "Built"
+  - id: B8
+    title: "LLM slot (Claude Sonnet)"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B3]
+    owns: [backend/repairos/slots/llm.py, backend/repairos/slots/llm_anthropic/**]
+    human: [anthropic_key]
+    slots: [LLM=anthropic]
+    done_when: "Built"
+  - id: B9
+    title: "report contract: verdict, findings with crop refs and confidence words, not_inspected, reasons"
+    stream: build
+    phase: 1
+    depends_on: [B2]
+    owns: [spec/contracts/report.schema.json, spec/contracts/examples/report*.json, spec/contracts/examples/invalid/report-*.json]
+    done_when: "make contracts and make codegen-check pass; invalid examples show an uninspected region cannot be ok and insufficient_evidence needs a reason"
+  - id: B10
+    title: "Phase 1 pipeline orchestrator"
+    stream: build
+    phase: 1
+    depends_on: [B9]
+    owns: [backend/repairos/pipeline/**, backend/tests/unit/test_pipeline.py]
+    human: [jev_key, anthropic_key]
+    done_when: "MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default"
+  - id: B11
+    title: "Report generation: verdict in code, plain words by Claude, report route and SSE event"
+    stream: build
+    phase: 1
+    depends_on: [B9, B10]
+    owns: [backend/repairos/report/**, backend/tests/unit/test_report.py]
+    human: [anthropic_key]
+    done_when: "The report validates; the verdict rule is a tested truth table; A5 renders it"
+  - id: B12
+    title: "Import fallback: Stray Scanner first; 3D Scanner App after a terms check"
+    stream: build
+    phase: 1
+    depends_on: [B6]
+    owns: [tools/import_capture.py, backend/tests/unit/test_import_capture.py]
+    human: [test_products]
+    done_when: "A real Stray Scanner export imports into a session that passes make sessions-check; no closed third-party app captures are used for training or benchmarking"
+  - id: B13
+    title: "Backend pose-graph refinement (loop closure) with Open3D and OpenCV, if on-phone drift correction falls short"
+    stream: build
+    phase: 1
+    depends_on: [B6]
+    owns: [backend/repairos/recon/**, backend/tests/unit/test_recon.py]
+    done_when: "Loop-closure residual and point-to-plane error are reported per session and are lower than with raw ARKit poses"
+  - id: B14
+    title: "CI: make check on every PR"
+    stream: build
+    phase: 1
+    depends_on: [B1]
+    owns: [.github/workflows/**]
+    done_when: "Every PR shows the check; red blocks merge"
+  - id: B15
+    title: "Licence check of dependencies and weights against the L2 allowlist"
+    stream: build
+    phase: 1
+    depends_on: [B14]
+    owns: [tools/licence_check.py, licenses/weights.json]
+    done_when: "Part of make check; fails on a disallowed licence"

@@ -1,0 +1,3 @@
+{ "schema": "still", "why": "a still may leave out its camera pose only when pose_reliable is false (a plain photo); otherwise a missing pose would read as a usable one",
+  "base": "still.unguided.json",
+  "patch": { "camera": null } }

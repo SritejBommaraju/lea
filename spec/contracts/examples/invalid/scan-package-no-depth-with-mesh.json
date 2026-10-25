@@ -1,0 +1,2 @@
+{ "schema": "scan-package", "why": "depth_source none means no fused geometry: no mesh_file either",
+  "base": "scan-package.no-lidar.json", "patch": { "mesh_file": "scans/scan_9c41/mesh_arkit_world.ply" } }

@@ -1,0 +1,2 @@
+{ "schema": "scan-package", "why": "boxes with *_m fields are ARKit world only; the design frame is mm",
+  "base": "scan-package.json", "patch": { "crop_box": { "frame": "design" } } }

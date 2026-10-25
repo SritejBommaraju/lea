@@ -4,11 +4,9 @@
 
 from __future__ import annotations
 
-from enum import Enum, StrEnum
+from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel
-
-from . import grain_electrical_check_response_schema
 
 
 class Kind(StrEnum):
@@ -28,7 +26,7 @@ class PowerState(StrEnum):
 
 class Condition(StrEnum):
     """
-    Operating condition when read. RepairOS-side only: Grain's electrical check has no condition input today; we use it to pick which part of the SPICE [min, max] applies.
+    Operating condition when read. We use it to pick which part of the SPICE [min, max] applies.
     """
 
     idle = 'idle'
@@ -38,7 +36,6 @@ class Condition(StrEnum):
 
 
 class Source(StrEnum):
-    grain_electrical = 'grain_electrical'
     report_json_minmax = 'report_json_minmax'
     repairos_derived = 'repairos_derived'
     datasheet = 'datasheet'
@@ -46,7 +43,7 @@ class Source(StrEnum):
 
 class Expected(BaseModel):
     """
-    What RepairOS judged against. volts_min/volts_max come from Grain's expected{min, max} (never from expected.volts alone; G2).
+    What RepairOS judged against. volts_min/volts_max come from the reference's expected {min, max}, never from a single expected value.
     """
 
     model_config = ConfigDict(
@@ -61,7 +58,7 @@ class Expected(BaseModel):
 
 class Verdict(StrEnum):
     """
-    RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts). Ours wins over Grain's for a rail while G2 is open.
+    RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts).
     """
 
     agrees = 'agrees'
@@ -69,21 +66,7 @@ class Verdict(StrEnum):
     unknown = 'unknown'
 
 
-class GrainVerdict(Enum):
-    """
-    Grain's row verdict (GrainElectricalCheckResponse readings[].verdict). Grain sends only ok|off today; the other values are T2 and, until then, derived by RepairOS (grain_verdict_derived true): continuity false + wire = open, known false = unknown_net, expected null = no_expected, a 'not on net' finding = pin_not_on_net. null when Grain has not been asked or gave nothing to derive from.
-    """
-
-    ok = 'ok'
-    off = 'off'
-    open = 'open'
-    pin_not_on_net = 'pin_not_on_net'
-    unknown_net = 'unknown_net'
-    no_expected = 'no_expected'
-    NoneType_None = None
-
-
-class Source3(StrEnum):
+class Source2(StrEnum):
     typed = 'typed'
     voice = 'voice'
 
@@ -113,29 +96,25 @@ class ValueOhms(BaseModel):
 
 class MeterReading(BaseModel):
     """
-    One multimeter reading typed or spoken by the user in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent to Grain /electrical/check as {net, volts} | {net, pins, continuity} | {net, pins, ohms} (GrainElectricalCheckRequest) and into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's own verdict (`verdict`, judged against [min, max]) is kept apart from Grain's (`grain_verdict`, plus the raw row).
+    One multimeter reading typed or spoken by the user in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.
     """
 
     model_config = ConfigDict(
         extra='forbid',
     )
-    reading_id: str = Field(
-        ...,
-        description="Sent to Grain as the reading's id once T2 lands.",
-        min_length=1,
-    )
+    reading_id: str = Field(..., min_length=1)
     scan_id: str = Field(..., min_length=1)
     session_id: str = Field(..., min_length=1)
     action_id: str | None = Field(None, description='The NextAction this answers.')
     kind: Kind
     net: str = Field(
         ...,
-        description='Grain net name (GET /electrical nets[].name). Not a harness wire name.',
+        description="Net name from the design's electrical reference. Not a harness wire name.",
         min_length=1,
     )
     pins: list[Pin] | None = Field(
         None,
-        description="REF.PIN ids probed, in Grain's net naming (e.g. J1.1), not harness end names. Required for continuity and resistance; optional for voltage_dc ([probe +, probe -]).",
+        description="REF.PIN ids probed, in the design's net naming (e.g. J1.1), not harness end names. Required for continuity and resistance; optional for voltage_dc ([probe +, probe -]).",
         max_length=2,
         min_length=2,
     )
@@ -145,35 +124,17 @@ class MeterReading(BaseModel):
     power_state: PowerState
     condition: Condition | None = Field(
         None,
-        description="Operating condition when read. RepairOS-side only: Grain's electrical check has no condition input today; we use it to pick which part of the SPICE [min, max] applies.",
+        description='Operating condition when read. We use it to pick which part of the SPICE [min, max] applies.',
     )
     expected: Expected | None = Field(
         None,
-        description="What RepairOS judged against. volts_min/volts_max come from Grain's expected{min, max} (never from expected.volts alone; G2).",
+        description="What RepairOS judged against. volts_min/volts_max come from the reference's expected {min, max}, never from a single expected value.",
     )
     verdict: Verdict | None = Field(
         None,
-        description="RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts). Ours wins over Grain's for a rail while G2 is open.",
+        description="RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts).",
     )
-    grain_verdict: GrainVerdict | None = Field(
-        None,
-        description="Grain's row verdict (GrainElectricalCheckResponse readings[].verdict). Grain sends only ok|off today; the other values are T2 and, until then, derived by RepairOS (grain_verdict_derived true): continuity false + wire = open, known false = unknown_net, expected null = no_expected, a 'not on net' finding = pin_not_on_net. null when Grain has not been asked or gave nothing to derive from.",
-    )
-    grain_verdict_derived: bool | None = Field(
-        None,
-        description='True when grain_verdict was derived by RepairOS (G22 fallback), not sent by Grain.',
-    )
-    grain_row: grain_electrical_check_response_schema.Row | None = Field(
-        None, description='The raw Grain row for this reading, as returned.'
-    )
-    grain_findings: list[grain_electrical_check_response_schema.Finding] | None = Field(
-        None,
-        description='Grain findings about this reading (matched by text until T2 adds finding.reading).',
-    )
-    grain_remake_wire: str | None = Field(
-        None, description='grain_row.wire.name for an open on a harness wire, if any.'
-    )
-    source: Source3
+    source: Source2
     raw_text: str | None = Field(
         None, description='What the user said or typed, before parsing.'
     )

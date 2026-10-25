@@ -43,22 +43,6 @@
     "jev_model": { "type": "string", "description": "e.g. jev-1.14.0." },
     "design_trust": { "type": "string", "enum": ["high", "low"] },
     "calibration_validated": { "type": "boolean", "description": "True only after a reliability diagram on our labelled scans for this product class. Until then the UI shows p_fault_word only." },
-    "grain_verdict": {
-      "type": ["string", "null"],
-      "enum": ["ok", "partly", "shifted", "damaged", "not_seen", "not_visible", null],
-      "description": "Grain diagnose verdict for the same part (GrainDiagnoseResponse parts[].verdict, joined on parts[].name = subject.ref), if any. Kept separate; advisory when design_trust is low. null when Grain has no row for it."
-    },
-    "grain_fix": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["action", "confidence"],
-      "description": "The Grain /call fix merged into this suspect, if any (joined by part name, wire name or net name until T3 adds fixes[].subject).",
-      "properties": {
-        "action": { "type": "string", "enum": ["buy", "remake", "reseat", "rescan", "fix_design", "check", "rewire"] },
-        "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
-        "part": { "type": ["string", "null"], "description": "Grain's display string, as sent." }
-      }
-    },
     "updated_at": { "type": "string", "format": "date-time" }
   },
   "$defs": {
@@ -66,7 +50,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "ref"],
-      "description": "Same as Finding.subject: ref is the Grain part name (model.glb node), harness wire name or net name.",
+      "description": "Same as Finding.subject: ref is the part name (reference model node), harness wire name or net name.",
       "properties": {
         "kind": { "type": "string", "enum": ["part", "wire", "net"] },
         "ref": { "type": "string", "minLength": 1 },

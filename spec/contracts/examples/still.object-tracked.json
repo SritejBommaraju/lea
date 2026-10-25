@@ -1,0 +1,21 @@
+{
+  "still_id": "scan_hh01_s4",
+  "scan_id": "scan_hh01",
+  "session_id": "sess_2026-10-24_hh",
+  "kind": "unguided",
+  "captured_at": "2026-10-24T15:02:20Z",
+  "image_file": "stills/scan_hh01_s4.jpg",
+  "width_px": 4032,
+  "height_px": 3024,
+  "camera": { "frame": "arkit_world", "position_m": [-0.05, 0.52, -0.21], "quaternion_xyzw": [0.6, 0.1, -0.05, 0.79] },
+  "pose_reliable": true,
+  "pose_source": "object_tracked",
+  "pose_quality": 0.88,
+  "intrinsics": { "fx": 3036.2, "fy": 3036.2, "cx": 2016.0, "cy": 1512.0 },
+  "depth_file": "stills/scan_hh01_s4_depth.png",
+  "confidence_file": "stills/scan_hh01_s4_conf.png",
+  "targets": [],
+  "tracking_state": "normal",
+  "view_cell": "b1s03",
+  "auto_fired": true
+}

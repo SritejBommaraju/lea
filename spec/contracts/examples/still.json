@@ -1,0 +1,24 @@
+{
+  "still_id": "s7",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "kind": "guided",
+  "captured_at": "2026-10-23T18:13:40Z",
+  "image_file": "stills/s7.jpg",
+  "width_px": 4032,
+  "height_px": 3024,
+  "camera": { "frame": "arkit_world", "position_m": [0.21, 0.18, -0.12], "quaternion_xyzw": [0.1, 0.7, -0.1, 0.69] },
+  "camera_design": { "frame": "design", "position_mm": [190.0, -330.0, 70.0], "quaternion_xyzw": [0.56, 0.44, 0.43, 0.56] },
+  "pose_reliable": true,
+  "intrinsics": { "fx": 3036.2, "fy": 3036.2, "cx": 2016.0, "cy": 1512.0 },
+  "depth_file": "stills/s7_depth.png",
+  "confidence_file": "stills/s7_conf.png",
+  "targets": [
+    { "target_id": "t_J1", "part_refs": ["J1", "LOAD1"], "harness_rows": ["WIRE_A", "WIRE_B"], "box_mm": { "min": [-42.0, 12.5, 18.0], "max": [-30.5, 20.0, 26.0] }, "reason": "connector" }
+  ],
+  "tracking_state": "normal",
+  "sharpness": 603.2,
+  "torch_on": true,
+  "auto_fired": true,
+  "user_skipped": false
+}

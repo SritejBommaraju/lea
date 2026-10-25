@@ -1,0 +1,20 @@
+{
+  "still_id": "s1",
+  "scan_id": "scan_5e2b91c0",
+  "session_id": "sess_20261024_photos",
+  "kind": "unguided",
+  "captured_at": "2026-10-24T09:14:03Z",
+  "image_file": "stills/s1.jpg",
+  "width_px": 4032,
+  "height_px": 3024,
+  "pose_reliable": false,
+  "intrinsics": {
+    "fx": 2795.39,
+    "fy": 2795.39,
+    "cx": 2016.0,
+    "cy": 1512.0
+  },
+  "targets": [],
+  "tracking_state": "unknown",
+  "sharpness": 211.4
+}

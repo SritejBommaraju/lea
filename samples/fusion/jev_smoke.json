@@ -1,0 +1,70 @@
+{
+ "recorded_at": "2026-10-24T09:24:41.871153Z",
+ "url": "https://api.typesafe.ai/v1/systemone",
+ "latency_ms": 92,
+ "request": {
+  "model": "jev-latest",
+  "state": {
+   "symptom": "The product does not power on when the switch is pressed.",
+   "design_trust": "low: the reference design may be wrong; what the photos show takes precedence",
+   "subjects": {
+    "part J1": {
+     "kind": "part",
+     "ref": "J1",
+     "on_symptom_power_path": "yes",
+     "meter": "not tested",
+     "findings": [
+      {
+       "from": "photo inspection",
+       "says": "connector not fully seated",
+       "connector_gap": "a clear gap",
+       "scan": "partly covered",
+       "focus": "sharp",
+       "views": "seen in two views"
+      }
+     ]
+    }
+   }
+  },
+  "questions": {
+   "j1_problem": {
+    "type": "noul",
+    "instructions": "Do the findings in `subjects[\"part J1\"]` show a problem with the part J1?"
+   },
+   "j1_kind": {
+    "type": "choice",
+    "instructions": "Which kind of problem do the findings in `subjects[\"part J1\"]` describe?",
+    "criteria": {
+     "broken_or_damaged": "The part is cracked, broken, burnt or otherwise damaged.",
+     "unseated_or_loose": "The part or its connector is not fully seated, unplugged or loose.",
+     "missing": "The part is not there."
+    }
+   }
+  }
+ },
+ "response": {
+  "model": "jev-1.14.0",
+  "answers": {
+   "j1_problem": {
+    "type": "noul",
+    "noul": 0.96
+   },
+   "j1_kind": {
+    "type": "choice",
+    "choice": "unseated_or_loose",
+    "confidence": 1.0,
+    "probabilities": {
+     "broken_or_damaged": 0.0,
+     "unseated_or_loose": 1.0,
+     "missing": 0.0
+    }
+   }
+  },
+  "usage": {
+   "input_tokens": 564,
+   "output_tokens": 72
+  }
+ },
+ "error": null,
+ "label": "recorded real Jev exchange (GEN3)"
+}

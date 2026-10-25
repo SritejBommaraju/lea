@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "scan-package.schema.json",
   "title": "ScanPackage",
-  "description": "Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (Grain's model.glb) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.",
+  "description": "Output of a Mode A wide scan from the phone: a cropped point cloud in ARKit's world frame plus keyframes with poses. The backend adds 'alignment' after ICP. Units are metres, Y up (ARKit) unless a field name says otherwise. The design frame (the reference model) is millimetres, Z up; alignment maps one to the other, including the Y-up -> Z-up turn.",
   "type": "object",
   "additionalProperties": false,
   "required": ["scan_id", "product_id", "session_id", "captured_at", "device", "frame", "units", "gravity_arkit_world", "keyframes"],
@@ -177,9 +177,8 @@
         "gate_passed": { "type": "boolean", "description": "False means no part verdicts are made from this scan (fit gate)." },
         "gate_threshold_fitness": { "type": "number", "minimum": 0, "maximum": 1 },
         "computed_at": { "type": "string", "format": "date-time" },
-        "design_points_file": { "type": "string", "description": "The same cloud in the design frame's axes (Z up), written in design_points_units; uploaded to Grain with name=<scan_id>.ply, units=<design_points_units>, then diagnose with align=none, crop=false." },
-        "design_points_units": { "type": "string", "enum": ["m", "mm"], "description": "m: design axes in metres (Grain converts to mm on upload with units=m; handshake H2). mm: already design-frame millimetres (upload with units=mm)." },
-        "grain_scan_id": { "type": "string", "description": "The id Grain made for the upload (GrainScanRecord.id); Grain's ids are not ours." }
+        "design_points_file": { "type": "string", "description": "The same cloud in the design frame's axes (Z up), written in design_points_units." },
+        "design_points_units": { "type": "string", "enum": ["m", "mm"], "description": "m: design axes in metres. mm: design-frame millimetres." }
       }
     },
     "flip_cut": { "title": "FlipCut", "type": "object", "additionalProperties": false, "description": "How the phone cut one cloud to the object before aligning it (FlipIsolation): the table it fitted and the tight box round the object.", "properties": { "input_points": { "type": "integer", "minimum": 0 }, "object_points": { "type": "integer", "minimum": 0 }, "table_y_m": { "type": "number", "description": "The fitted table's height under the object, in this cloud's ARKit world." }, "table_tilt_deg": { "type": "number", "minimum": 0 }, "cut_mm": { "type": "number", "minimum": 0, "description": "Cut above the table: its noise below its plane, mirrored." }, "floor_to_table_mm": { "type": "number", "description": "How far the locked box's floor sat below the fitted table." }, "box_extent_m": { "type": "array", "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 } } },

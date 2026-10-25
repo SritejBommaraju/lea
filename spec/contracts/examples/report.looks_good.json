@@ -1,0 +1,93 @@
+{
+  "report_id": "rep_scan_example",
+  "scan_id": "scan_example",
+  "session_id": "sess_example",
+  "created_at": "2026-10-24T12:00:00Z",
+  "verdict": "looks_good",
+  "verdict_reason": {
+    "code": "all_inspected_ok",
+    "rule": "V4",
+    "text": "Every detected region was inspected and none shows an issue."
+  },
+  "summary": {
+    "text": "The inspected capacitor looks fine in the photo. Photos show suspicions only, never proof.",
+    "written_by": "<llm model id>",
+    "from_words_only": true
+  },
+  "findings": [
+    {
+      "finding_id": "f_example_b",
+      "subject": {
+        "kind": "part",
+        "ref": "s1/det1"
+      },
+      "part_class": "capacitor",
+      "issue": "none",
+      "confidence_word": "high",
+      "evidence": [
+        "capacitor in still s1 looks ok",
+        "vision suspect, not proof"
+      ],
+      "inspected_by": [
+        "detector",
+        "vlm"
+      ],
+      "crop": {
+        "still_id": "s1",
+        "box_px": [
+          700,
+          200,
+          956,
+          456
+        ]
+      },
+      "location": {
+        "status": "computed",
+        "frame": "arkit_world",
+        "point_m": [
+          0.1,
+          0.02,
+          -0.3
+        ],
+        "region_min_m": [
+          0.095,
+          0.015,
+          -0.305
+        ],
+        "region_max_m": [
+          0.105,
+          0.025,
+          -0.295
+        ],
+        "distance_m": 0.25,
+        "confidence_word": "medium",
+        "method": "ray_cast_point_cloud",
+        "notes": [
+          "ARKit tracking was limited when the still was taken"
+        ]
+      },
+      "proof": {
+        "status": "not_measured"
+      }
+    }
+  ],
+  "not_inspected": [],
+  "insufficient_evidence": [],
+  "capture": {
+    "depth_source": "lidar",
+    "stills": 1,
+    "stills_inspected": 1,
+    "keyframes": 2,
+    "scan_points": 1000,
+    "coverage_words": "partly covered"
+  },
+  "models": {
+    "detector": "<detector model id>",
+    "classifier": "not selected (CLS=none)",
+    "vlm": "<vlm model ladder>",
+    "ocr": "not selected (OCRB=none)",
+    "summary_writer": "<llm model id>",
+    "jev": "<jev model version>",
+    "locate": "not available"
+  }
+}

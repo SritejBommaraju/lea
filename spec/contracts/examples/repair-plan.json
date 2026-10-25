@@ -1,0 +1,53 @@
+{
+  "plan_id": "plan_0001",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "product_id": "prod_example_0001",
+  "symptom": "no output when switched on",
+  "summary": "The connector J1 is unseated. The continuity check on NET_A failed, which proves the open. Reseat the plug. The mounting bracket BRKT1 is missing from the scan and can be printed.",
+  "confidence_statement": "Proven by the meter: NET_A is open at J1. Suspected only: nothing else. Not inspected: the inside of the switch housing.",
+  "root_causes": [
+    {
+      "suspect_id": "sus_001",
+      "subject": { "kind": "wire", "ref": "WIRE_A", "pins": ["J1.1", "LOAD1.1"] },
+      "verdict": "confirmed",
+      "proof_reading_id": "rd_0003",
+      "p_fault_word": "very_likely",
+      "fix": "reseat",
+      "evidence_summary": ["housing gap ~2 mm at J1 (still s7)", "no continuity J1.1 to LOAD1.1 with power off"]
+    },
+    {
+      "suspect_id": "sus_004",
+      "subject": { "kind": "part", "ref": "BRKT1" },
+      "verdict": "confirmed",
+      "proof_reading_id": null,
+      "p_fault_word": "very_likely",
+      "fix": "replace_part",
+      "evidence_summary": ["coverage 0.03 in our scan"]
+    }
+  ],
+  "not_inspected": ["SW1 internals"],
+  "insufficient_evidence": [],
+  "safety": [
+    "Unplug the power adapter before you start.",
+    "This product has no large capacitors or lithium cells; still, never probe with power on unless a step says so.",
+    "Never identify + and - by wire colour. If a step connects a supply, measure polarity with the meter first."
+  ],
+  "tools": ["multimeter", "small flat screwdriver"],
+  "parts": [
+    { "part_ref": "BRKT1", "mpn": null, "description": "mounting bracket", "source": "print", "print_file": "cache/proj_example/out/model.step", "cost": 0, "currency": "USD" },
+    { "part_ref": "F1", "mpn": "EXAMPLE-PF-5A", "description": "5 A polyfuse (spare, optional)", "source": "buy", "shopping_quote_id": "q_0007", "cost": 5.61, "currency": "USD",
+      "substitute": { "candidate": "3 A blade fuse (on hand)", "verdict": "no", "basis": "quick_check", "reasons": ["protective part: trip time, I2t and breaking capacity not confirmed"] } }
+  ],
+  "steps": [
+    { "n": 1, "text": "Unplug the adapter.", "power_state": "off", "on_power_path": true, "safety_gate": true },
+    { "n": 2, "text": "Push the J1 plug (AR label: J1 plug) firmly onto its header until the latch clicks.", "part_refs": ["J1"], "ar_labels": ["J1 plug"], "power_state": "off", "on_power_path": true, "safety_gate": true },
+    { "n": 3, "text": "Re-run the continuity check between the J1 plug's left pin and the red LOAD1 terminal. Expect a beep.", "part_refs": ["J1", "LOAD1"], "ar_labels": ["J1 plug, pin 1", "LOAD1 terminal, pin 1"], "power_state": "off", "on_power_path": true, "safety_gate": true },
+    { "n": 4, "text": "Print BRKT1 (its node in the model's STEP file) and fit it to the housing.", "part_refs": ["BRKT1"], "power_state": "off", "on_power_path": false },
+    { "n": 5, "text": "Plug the adapter back in and switch on. The product should run.", "power_state": "on", "safety_gate": true }
+  ],
+  "confirm": { "method": "both", "rerun_reading_ids": ["rd_0003"], "expected": "NET_A reads continuity; rescan shows BRKT1 ok" },
+  "cost_to_buy": { "amount": 5.61, "currency": "USD" },
+  "generated_by": { "llm": "claude-sonnet-5-5", "fusion": "jev" },
+  "created_at": "2026-10-23T18:25:00Z"
+}

@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "checks": 1153,
+  "failures": [],
+  "minTextContrast": 4.79,
+  "descendantCounts": {
+    "TEXT": 71,
+    "FRAME": 26,
+    "INSTANCE": 72,
+    "VECTOR": 66
+  },
+  "limits": [
+    "Figma only: no VoiceOver, physical touch-target or user task-completion validation.",
+    "200% font specimens test reflow, not native Dynamic Type behavior.",
+    "Motion guidance is specified on the board; no application animation was implemented."
+  ],
+  "passedChecks": 1153,
+  "figmaFileKey": "acZpRbLDyuavWtoJIqyj1u",
+  "boardNodeId": "86:157",
+  "sessionId": "3b57e849-5b09-43cc-b430-095ed95de79a"
+}

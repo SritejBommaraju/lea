@@ -1,0 +1,17 @@
+{
+  "reading_id": "rd_0003",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "action_id": "act_0005",
+  "kind": "continuity",
+  "net": "NET_A",
+  "pins": ["J1.1", "LOAD1.1"],
+  "value": { "continuity": false },
+  "power_state": "off",
+  "condition": "idle",
+  "expected": { "continuity": true, "ohms_max": 1.0, "source": "repairos_derived" },
+  "verdict": "disagrees",
+  "source": "voice",
+  "raw_text": "no beep",
+  "recorded_at": "2026-10-23T18:15:30Z"
+}
