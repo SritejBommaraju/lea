@@ -12,6 +12,29 @@ SwiftUI + ARKit + Metal, any ARKit iPhone (LiDAR used when present). Capture des
   removes that trust again.
 - The phone holds no keys; it talks only to the backend gateway (A6).
 
+## Working from Windows (no Mac)
+
+You can write, build, test and install this app without owning a Mac.
+
+- **Edit** in VS Code with the Swift extension. You get syntax colouring and SourceKit for plain Swift only; the iOS
+  frameworks (SwiftUI, ARKit, CoreBluetooth, Metal) do not resolve on Windows, so red squiggles on them are normal.
+  The compiler is the CI.
+- **New files need no project edits.** The project uses a synchronized root group: any `.swift` file under
+  `ios/RepairOS/` or `ios/RepairOSTests/` is in the target as soon as it exists.
+- **Build and test:** push a branch. The `iOS` workflow (`.github/workflows/ios.yml`) builds the app for the
+  simulator and runs the unit tests on GitHub's macOS runner (free for this public repo). Watch it with
+  `gh run watch`; the `.xcresult` bundle and the full log are kept as an artifact for 14 days.
+  CI_NOTE
+- **Install on your phone:** run the workflow by hand (Actions > iOS > Run workflow, tick `archive`). It needs four
+  repository secrets: `APPLE_CERT_P12_BASE64` (a signing certificate exported as .p12, base64), `APPLE_CERT_PASSWORD`,
+  `APPLE_PROVISIONING_PROFILE_BASE64` (a profile that lists your phone) and `APPLE_TEAM_ID`. The job uploads an `.ipa`;
+  install it from Windows with Sideloadly or AltServer. A free Apple ID gives a 7-day certificate and 3 apps; a paid
+  Apple Developer account allows TestFlight and 90-day builds. Turn on Developer Mode on the phone (Settings > Privacy
+  and Security).
+- **Logs:** `devicectl` needs a Mac. Instead open the Files app on the phone > RepairOS > `sessions/<id>/` and share
+  `diag.jsonl` (the folder is visible there, see "Capture layout").
+- **Fallback:** for Instruments or a step-through debugger, rent an hourly cloud Mac mini and use the commands above.
+
 ## Build and run
 
 ```

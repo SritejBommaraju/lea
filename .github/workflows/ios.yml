@@ -1,0 +1,162 @@
+# Build and unit-test the iOS app on GitHub's macOS runner, so nobody needs a Mac to know whether a change compiles.
+# `test` runs on every pull request and push touching ios/**. `archive` is manual (Actions tab > "iOS" > Run workflow,
+# tick "archive") and needs the four Apple signing secrets; it produces an .ipa to install from Windows (ios/README.md,
+# "Working from Windows (no Mac)"). Nothing here prints a secret; the temporary keychain is deleted at the end.
+name: iOS
+
+on:
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios.yml"
+  workflow_dispatch:
+    inputs:
+      archive:
+        description: "Also build a signed .ipa (needs the APPLE_* repository secrets)"
+        type: boolean
+        default: false
+      export_method:
+        description: "Export method for the .ipa"
+        type: choice
+        options: [ad-hoc, app-store-connect, development]
+        default: ad-hoc
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Select the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Metal toolchain (the app has .metal shaders)
+        run: xcodebuild -downloadComponent MetalToolchain || echo "::warning::MetalToolchain download failed; continuing in case the image has it"
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          xcrun simctl list devices available
+          UDID=$(xcrun simctl list devices available | grep -E '^ +iPhone' | tail -1 | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
+          test -n "$UDID" || { echo "no iPhone simulator on this image"; exit 1; }
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
+      - name: Build and test
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/RepairOS.xcodeproj -scheme RepairOS \
+            -destination "id=${{ steps.sim.outputs.udid }}" -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            -resultBundlePath "$RUNNER_TEMP/RepairOS.xcresult" \
+            build test 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
+
+      - name: Keep the result bundle and log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 (MIT)
+        with:
+          name: ios-test-results
+          path: |
+            ${{ runner.temp }}/RepairOS.xcresult
+            ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  archive:
+    if: github.event_name == 'workflow_dispatch' && inputs.archive
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      APPLE_CERT_P12_BASE64: ${{ secrets.APPLE_CERT_P12_BASE64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Signing secrets present
+        run: |
+          for n in APPLE_CERT_P12_BASE64 APPLE_CERT_PASSWORD APPLE_PROVISIONING_PROFILE_BASE64 APPLE_TEAM_ID; do
+            if [ -z "${!n}" ]; then echo "::error::repository secret $n is not set; see ios/README.md"; exit 1; fi
+          done
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Select the newest Xcode
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+
+      - name: Metal toolchain
+        run: xcodebuild -downloadComponent MetalToolchain || echo "::warning::MetalToolchain download failed; continuing"
+
+      - name: Import certificate and profile into a temporary keychain
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW=$(uuidgen)
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "$APPLE_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "$APPLE_CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          echo "$APPLE_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print UUID' "$RUNNER_TEMP/profile.plist")
+          NAME=$(/usr/libexec/PlistBuddy -c 'Print Name' "$RUNNER_TEMP/profile.plist")
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$UUID.mobileprovision"
+          echo "PROFILE_NAME=$NAME" >> "$GITHUB_ENV"
+
+      - name: Archive (Release, generic iOS device)
+        run: |
+          set -o pipefail
+          xcodebuild archive -project ios/RepairOS.xcodeproj -scheme RepairOS -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/RepairOS.xcarchive" \
+            CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="$APPLE_TEAM_ID" PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            2>&1 | tee "$RUNNER_TEMP/archive.log"
+
+      - name: Export the .ipa
+        run: |
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleIdentifier' "$RUNNER_TEMP/RepairOS.xcarchive/Info.plist")
+          /usr/libexec/PlistBuddy \
+            -c 'Add :method string ${{ inputs.export_method }}' \
+            -c "Add :teamID string $APPLE_TEAM_ID" \
+            -c 'Add :signingStyle string manual' \
+            -c 'Add :provisioningProfiles dict' \
+            -c "Add :provisioningProfiles:$BUNDLE_ID string $PROFILE_NAME" \
+            "$RUNNER_TEMP/ExportOptions.plist"
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/RepairOS.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" -exportPath "$RUNNER_TEMP/export"
+
+      - name: Keep the .ipa
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 (MIT)
+        with:
+          name: RepairOS-ipa
+          path: ${{ runner.temp }}/export/*.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Delete the temporary keychain and profile
+        if: always()
+        run: |
+          if [ -n "$KEYCHAIN" ]; then security delete-keychain "$KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/profile.mobileprovision" "$RUNNER_TEMP/profile.plist"
+          rm -rf "$HOME/Library/MobileDevice/Provisioning Profiles"
