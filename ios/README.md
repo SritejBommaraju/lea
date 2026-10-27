@@ -24,7 +24,9 @@ You can write, build, test and install this app without owning a Mac.
 - **Build and test:** push a branch. The `iOS` workflow (`.github/workflows/ios.yml`) builds the app for the
   simulator and runs the unit tests on GitHub's macOS runner (free for this public repo). Watch it with
   `gh run watch`; the `.xcresult` bundle and the full log are kept as an artifact for 14 days.
-  CI_NOTE
+  The CI uses the `xcode-27` runner label (Xcode 27.2, 27B48, the same as above; the newest Xcode on the image is
+  selected and Metal toolchain downloaded) and the newest iPhone simulator on it. First green run: about 20 minutes
+  (19 minutes build and test; 273 tests in 72 suites, 11.5 minutes of them the tests themselves).
 - **Install on your phone:** run the workflow by hand (Actions > iOS > Run workflow, tick `archive`). It needs four
   repository secrets: `APPLE_CERT_P12_BASE64` (a signing certificate exported as .p12, base64), `APPLE_CERT_PASSWORD`,
   `APPLE_PROVISIONING_PROFILE_BASE64` (a profile that lists your phone) and `APPLE_TEAM_ID`. The job uploads an `.ipa`;
