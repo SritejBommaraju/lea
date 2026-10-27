@@ -25,7 +25,7 @@ struct ProblemDetailView: View {
     init(problems: [ReportModel.Problem], index: Int = 0, stillsDir: URL? = nil, numbers: [String: Int] = [:],
          onDone: (() -> Void)? = nil) {
         self.problems = problems
-        _index = State(initialValue: min(max(0, index), max(0, problems.count - 1)))
+        _index = SwiftUI.State(initialValue: min(max(0, index), max(0, problems.count - 1)))
         self.stillsDir = stillsDir
         self.numbers = numbers
         self.onDone = onDone

@@ -217,7 +217,7 @@ struct ConversationPanel: View {
         c.afterTurn = afterTurn
         c.onStage = onStage
         c.acceptOffer = onAction   // "yes" to the offer on screen is the same as tapping it
-        _convo = State(initialValue: c)
+        _convo = SwiftUI.State(initialValue: c)
         self.compact = compact
         self.skin = skin
         self.feed = feed
@@ -652,7 +652,7 @@ struct ScanTalkBar: View {
         c.sessionID = sessionID
         c.live = live
         c.eyes = eyes
-        _convo = State(initialValue: c)
+        _convo = SwiftUI.State(initialValue: c)
     }
 
     var body: some View {
