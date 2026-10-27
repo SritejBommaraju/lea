@@ -946,16 +946,20 @@ enum SyntheticScan {
     static let points: [SIMD3<Float>] = [SIMD3(-0.012, 0.094, 0), SIMD3(0.012, 0.096, 0.002), SIMD3(0.03, 0.02, 0.006)]
 }
 
-#Preview("3D model") {
-    @Previewable @State var focus: String?
-    let pins = zip(["a", "b", "c"], SyntheticScan.points).enumerated().map { i, e in
+private struct ModelViewPreviewHost: View {
+    @State private var focus: String?
+    private let pins = zip(["a", "b", "c"], SyntheticScan.points).enumerated().map { i, e in
         ModelPin(id: e.0, number: i + 1, point: e.1, tone: i == 2 ? .caution : .danger)
     }
-    VStack {
-        ModelView(source: .points(SyntheticScan.cloud), pins: pins, focus: focus) { focus = $0 }
-            .frame(height: 320).clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        HStack { ForEach(pins) { p in Button("\(p.number ?? 0)") { focus = p.id } } }
+    var body: some View {
+        VStack {
+            ModelView(source: .points(SyntheticScan.cloud), pins: pins, focus: focus) { focus = $0 }
+                .frame(height: 320).clipShape(RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
+            HStack { ForEach(pins) { p in Button("\(p.number ?? 0)") { focus = p.id } } }
+        }
+        .padding()
     }
-    .padding()
 }
+
+#Preview("3D model") { ModelViewPreviewHost() }
 #endif
