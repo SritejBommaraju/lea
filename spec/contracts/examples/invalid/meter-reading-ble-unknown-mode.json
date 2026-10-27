@@ -1,0 +1,6 @@
+{
+  "schema": "meter-reading",
+  "why": "meter.mode is one of the eight modes the app can set; anything else is refused",
+  "base": "meter-reading.ble.json",
+  "patch": { "meter": { "mode": "capacitance" } }
+}

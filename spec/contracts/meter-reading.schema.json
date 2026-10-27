@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "meter-reading.schema.json",
   "title": "MeterReading",
-  "description": "One multimeter reading typed or spoken by the user in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.",
+  "description": "One multimeter reading typed or spoken by the user, or read by the app from a Bluetooth meter, in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.",
   "type": "object",
   "additionalProperties": false,
   "required": ["reading_id", "scan_id", "session_id", "kind", "net", "value", "power_state", "source", "recorded_at"],
@@ -40,7 +40,21 @@
       "enum": ["agrees", "disagrees", "unknown"],
       "description": "RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts)."
     },
-    "source": { "type": "string", "enum": ["typed", "voice"] },
+    "source": { "type": "string", "enum": ["typed", "voice", "ble"], "description": "`ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it. Then `meter` says which meter and how it was set." },
+    "meter": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for typed and voice readings.",
+      "properties": {
+        "model": { "type": "string", "description": "Model string the meter reports." },
+        "firmware": { "type": "string", "description": "Firmware revision the meter reports." },
+        "mode": { "type": "string", "enum": ["dc_voltage", "ac_voltage", "dc_current", "ac_current", "resistance", "diode", "continuity", "temperature"], "description": "The mode the meter was in when the value was read." },
+        "range": { "type": "string", "description": "The meter's own range label, or \"auto\"." },
+        "interval_ms": { "type": "integer", "minimum": 0, "description": "Update interval the app asked the meter for, in milliseconds." },
+        "battery_v": { "type": "number", "description": "The meter's battery voltage when read." },
+        "read_at": { "type": "string", "format": "date-time", "description": "When the app received the value from the meter." }
+      }
+    },
     "raw_text": { "type": "string", "description": "What the user said or typed, before parsing." },
     "recorded_at": { "type": "string", "format": "date-time" }
   },

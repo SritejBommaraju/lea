@@ -292,11 +292,11 @@ public enum VlmAnswer: String, Codable, Sendable {
     case unplugged = "unplugged"
 }
 
-/// One multimeter reading typed or spoken by the user in response to a NextAction. The only
-/// kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape
-/// of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required;
-/// resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against
-/// [min, max] in code.
+/// One multimeter reading typed or spoken by the user, or read by the app from a Bluetooth
+/// meter, in response to a NextAction. The only kind of evidence that counts as proof (I1,
+/// I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts};
+/// continuity -> {continuity} and pins required; resistance -> {ohms} and pins required.
+/// RepairOS's verdict (`verdict`) is judged against [min, max] in code.
 // MARK: - MeterReading
 public struct MeterReading: Codable, Sendable {
     /// The NextAction this answers.
@@ -308,6 +308,9 @@ public struct MeterReading: Codable, Sendable {
     /// {min, max}, never from a single expected value.
     public let expected: MeterReadingExpected?
     public let kind: MeterReadingKind
+    /// The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for
+    /// typed and voice readings.
+    public let meter: Meter?
     /// Net name from the design's electrical reference. Not a harness wire name.
     public let net: String
     /// REF.PIN ids probed, in the design's net naming (e.g. J1.1), not harness end names.
@@ -320,6 +323,8 @@ public struct MeterReading: Codable, Sendable {
     public let recordedAt: Date
     public let scanID: String
     public let sessionID: String
+    /// `ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it.
+    /// Then `meter` says which meter and how it was set.
     public let source: MeterReadingSource
     /// Exactly the field that matches kind (see allOf).
     public let value: Value
@@ -332,6 +337,7 @@ public struct MeterReading: Codable, Sendable {
         case condition = "condition"
         case expected = "expected"
         case kind = "kind"
+        case meter = "meter"
         case net = "net"
         case pins = "pins"
         case powerState = "power_state"
@@ -345,11 +351,12 @@ public struct MeterReading: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(actionID: String?, condition: Condition?, expected: MeterReadingExpected?, kind: MeterReadingKind, net: String, pins: [String]?, powerState: MeterReadingPowerState, rawText: String?, readingID: String, recordedAt: Date, scanID: String, sessionID: String, source: MeterReadingSource, value: Value, verdict: MeterReadingVerdict?) {
+    public init(actionID: String?, condition: Condition?, expected: MeterReadingExpected?, kind: MeterReadingKind, meter: Meter?, net: String, pins: [String]?, powerState: MeterReadingPowerState, rawText: String?, readingID: String, recordedAt: Date, scanID: String, sessionID: String, source: MeterReadingSource, value: Value, verdict: MeterReadingVerdict?) {
         self.actionID = actionID
         self.condition = condition
         self.expected = expected
         self.kind = kind
+        self.meter = meter
         self.net = net
         self.pins = pins
         self.powerState = powerState
@@ -414,12 +421,67 @@ public enum MeterReadingKind: String, Codable, Sendable {
     case voltageDc = "voltage_dc"
 }
 
+/// The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for
+/// typed and voice readings.
+// MARK: - Meter
+public struct Meter: Codable, Sendable {
+    /// The meter's battery voltage when read.
+    public let batteryV: Double?
+    /// Firmware revision the meter reports.
+    public let firmware: String?
+    /// Update interval the app asked the meter for, in milliseconds.
+    public let intervalMS: Int?
+    /// The mode the meter was in when the value was read.
+    public let mode: Mode?
+    /// Model string the meter reports.
+    public let model: String?
+    /// The meter's own range label, or "auto".
+    public let range: String?
+    /// When the app received the value from the meter.
+    public let readAt: Date?
+
+    public enum CodingKeys: String, CodingKey {
+        case batteryV = "battery_v"
+        case firmware = "firmware"
+        case intervalMS = "interval_ms"
+        case mode = "mode"
+        case model = "model"
+        case range = "range"
+        case readAt = "read_at"
+    }
+
+    public init(batteryV: Double?, firmware: String?, intervalMS: Int?, mode: Mode?, model: String?, range: String?, readAt: Date?) {
+        self.batteryV = batteryV
+        self.firmware = firmware
+        self.intervalMS = intervalMS
+        self.mode = mode
+        self.model = model
+        self.range = range
+        self.readAt = readAt
+    }
+}
+
+/// The mode the meter was in when the value was read.
+public enum Mode: String, Codable, Sendable {
+    case acCurrent = "ac_current"
+    case acVoltage = "ac_voltage"
+    case continuity = "continuity"
+    case dcCurrent = "dc_current"
+    case dcVoltage = "dc_voltage"
+    case diode = "diode"
+    case resistance = "resistance"
+    case temperature = "temperature"
+}
+
 public enum MeterReadingPowerState: String, Codable, Sendable {
     case off = "off"
     case on = "on"
 }
 
+/// `ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it.
+/// Then `meter` says which meter and how it was set.
 public enum MeterReadingSource: String, Codable, Sendable {
+    case ble = "ble"
     case typed = "typed"
     case voice = "voice"
 }

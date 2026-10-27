@@ -67,8 +67,59 @@ class Verdict(StrEnum):
 
 
 class Source2(StrEnum):
+    """
+    `ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it. Then `meter` says which meter and how it was set.
+    """
+
     typed = 'typed'
     voice = 'voice'
+    ble = 'ble'
+
+
+class Mode(StrEnum):
+    """
+    The mode the meter was in when the value was read.
+    """
+
+    dc_voltage = 'dc_voltage'
+    ac_voltage = 'ac_voltage'
+    dc_current = 'dc_current'
+    ac_current = 'ac_current'
+    resistance = 'resistance'
+    diode = 'diode'
+    continuity = 'continuity'
+    temperature = 'temperature'
+
+
+class Meter(BaseModel):
+    """
+    The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for typed and voice readings.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    model: str | None = Field(None, description='Model string the meter reports.')
+    firmware: str | None = Field(
+        None, description='Firmware revision the meter reports.'
+    )
+    mode: Mode | None = Field(
+        None, description='The mode the meter was in when the value was read.'
+    )
+    range: str | None = Field(
+        None, description='The meter\'s own range label, or "auto".'
+    )
+    interval_ms: int | None = Field(
+        None,
+        description='Update interval the app asked the meter for, in milliseconds.',
+        ge=0,
+    )
+    battery_v: float | None = Field(
+        None, description="The meter's battery voltage when read."
+    )
+    read_at: AwareDatetime | None = Field(
+        None, description='When the app received the value from the meter.'
+    )
 
 
 class ValueVolts(BaseModel):
@@ -96,7 +147,7 @@ class ValueOhms(BaseModel):
 
 class MeterReading(BaseModel):
     """
-    One multimeter reading typed or spoken by the user in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.
+    One multimeter reading typed or spoken by the user, or read by the app from a Bluetooth meter, in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.
     """
 
     model_config = ConfigDict(
@@ -134,7 +185,14 @@ class MeterReading(BaseModel):
         None,
         description="RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts).",
     )
-    source: Source2
+    source: Source2 = Field(
+        ...,
+        description='`ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it. Then `meter` says which meter and how it was set.',
+    )
+    meter: Meter | None = Field(
+        None,
+        description='The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for typed and voice readings.',
+    )
     raw_text: str | None = Field(
         None, description='What the user said or typed, before parsing.'
     )

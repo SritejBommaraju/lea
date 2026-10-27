@@ -1,0 +1,23 @@
+{
+  "reading_id": "rd_0004",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "action_id": "act_0006",
+  "kind": "voltage_dc",
+  "net": "VBUS",
+  "pins": ["J1.A4", "J1.A1"],
+  "value": { "volts": 4.98 },
+  "power_state": "on",
+  "condition": "idle",
+  "source": "ble",
+  "meter": {
+    "model": "Pokit Meter",
+    "firmware": "1.0.0",
+    "mode": "dc_voltage",
+    "range": "auto",
+    "interval_ms": 500,
+    "battery_v": 3.1,
+    "read_at": "2026-10-23T18:16:02Z"
+  },
+  "recorded_at": "2026-10-23T18:16:03Z"
+}
