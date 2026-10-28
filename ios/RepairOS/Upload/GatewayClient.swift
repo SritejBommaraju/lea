@@ -223,7 +223,7 @@ struct GatewayClient: Sendable {
         }
     }
 
-    /// A JPEG in memory uploaded as a blob (the label photo, Lea's look photo): the ref to send.
+    /// A JPEG in memory uploaded as a blob (Lea's look photo): the ref to send.
     func uploadJPEG(_ jpeg: Data) async throws -> String {
         let file = URL.temporaryDirectory.appending(path: "lea-\(UUID().uuidString).jpg")
         try jpeg.write(to: file)

@@ -517,10 +517,8 @@ struct WakeIndicator: View {
 }
 
 /// The home screen's conversation, before any scan: opened by "Hey Lea" or the Talk button (already listening). Lea
-/// works out what the object is (what the person says, plus an optional photo of the label), says what public sources
-/// report about it, and the scan then starts in the same session (Voice/PreScan), so the conversation carries on at
-/// the report. DESIGN §7.7: the brief as a card, the label photo as a quiet button that becomes a status line, Start
-/// scan in blue, captions inline, Lea's mark at the bottom.
+/// hears what is wrong, and the scan then starts in the same session (Voice/PreScan), so the conversation carries on at
+/// the report. DESIGN §7.7: Start scan in blue, captions inline, Lea's mark at the bottom.
 struct HomeConversationSheet: View {
     let gateway: GatewayClient
     /// Opened by the Talk button: Lea is listening at once (the talk button's recording; a tap on her mark sends).
@@ -528,30 +526,21 @@ struct HomeConversationSheet: View {
     let startScan: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var pre = PreScan.shared
-    @State private var camera = false
-    @State private var spokenIdentity: String?
-    @State private var spokenBrief: ProductBrief?
-    @State private var saidLookingUp = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: Spacing.m) {
                 VStack(alignment: .leading, spacing: Spacing.m) {
-                    Text("Tell Lea what it is and what's wrong. She'll work out the exact product before you scan.")
+                    Text("Tell Lea what's wrong. The scan is judged against the product's design (Settings, Product).")
                         .font(.subheadline).foregroundStyle(Palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    if let brief = pre.live?.brief { briefCard(brief) }
-                    labelControl
-                    if case .failed(let m) = pre.label {
-                        Text(m).font(.footnote).foregroundStyle(Palette.caution)
-                    }
                     Button { begin() } label: { Label("Start scan", systemImage: Symbol.scan) }
                         .buttonStyle(.primary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Spacing.gutter)
                 ConversationPanel(scanID: pre.scanID, gateway: gateway, diag: WakeListener.diag,
-                                  sessionID: { PreScan.shared.sessionID }, afterTurn: lookingUp, listenOnOpen: listenOnOpen) { kind in
+                                  sessionID: { PreScan.shared.sessionID }, listenOnOpen: listenOnOpen) { kind in
                     if kind == "start_scan" { begin() }
                 }
                 .id(pre.scanID)
@@ -560,73 +549,14 @@ struct HomeConversationSheet: View {
             .background(Palette.canvas.ignoresSafeArea())
             .navigationTitle("Lea").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) } }
-            .fullScreenCover(isPresented: $camera) {
-                CameraPicker { image in
-                    camera = false
-                    if let image { Task { await pre.sendLabel(image, gateway: gateway) } }
-                }
-                .ignoresSafeArea()
-            }
             .task {
                 await pre.begin(gateway: gateway)
                 // Opened by "Hey Siri, hey lea": Lea speaks first, then listens (hands-free).
                 if IntentInbox.shared.takeGreeting() { LeaConversation.active?.leaSays("Hey, what's up?", listenAfter: true) }
             }
-            // What the backend works out is said once, in Lea's voice, and shown in the conversation.
-            .onChange(of: pre.live?.identity?.words) { _, words in
-                guard let words, words != spokenIdentity, pre.live?.brief == nil else { return }
-                spokenIdentity = words
-                LeaConversation.active?.leaSays("This looks like \(words).")
-            }
-            .onChange(of: pre.live?.brief) { _, brief in
-                guard let brief, brief != spokenBrief else { return }
-                spokenBrief = brief
-                LeaConversation.active?.leaSays(brief.spoken)
-            }
         }
         .tint(Palette.accent)
         .presentationDetents([.large])
-    }
-
-    /// After the first answer, while the brief is being researched (about half a minute): say so, once.
-    private func lookingUp() {
-        guard !saidLookingUp, pre.live?.brief == nil, pre.sessionID != nil else { return }
-        saidLookingUp = true
-        LeaConversation.active?.leaSays("Let me look that up while we talk. It takes about half a minute.")
-    }
-
-    /// "Show me the label" while it can be sent; a spinner while sending; once sent, a plain status line (a status is
-    /// never a button).
-    @ViewBuilder private var labelControl: some View {
-        if pre.label == .sent {
-            Label("Label photo sent", systemImage: "checkmark")
-                .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.secondary)
-                .frame(minHeight: 44)
-        } else {
-            Button { camera = true } label: {
-                if pre.label == .sending {
-                    HStack(spacing: Spacing.s) { ProgressView().tint(Palette.ink); Text("Sending…") }
-                } else {
-                    Label("Show me the label", systemImage: "camera.viewfinder")
-                }
-            }
-            .buttonStyle(.primary(.quiet))
-            .disabled(pre.sessionID == nil || pre.label == .sending)
-        }
-    }
-
-    /// The product brief: the product as the title, then ruled rows for the known issues and the sources.
-    private func briefCard(_ b: ProductBrief) -> some View {
-        var rows = b.knownIssues.prefix(3).map { RuledRows.Row("Known issue", $0) }
-        if !b.sources.isEmpty { rows.append(RuledRows.Row("From", b.sources.prefix(3).joined(separator: ", "))) }
-        return VStack(alignment: .leading, spacing: Spacing.s) {
-            Text([b.brand, b.model, b.name].compactMap { $0 }.joined(separator: " ")).display(.card).foregroundStyle(Palette.ink)
-            if !rows.isEmpty { RuledRows(rows: rows) }
-        }
-        .padding(Spacing.l)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glass(.card, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 
     private func begin() {

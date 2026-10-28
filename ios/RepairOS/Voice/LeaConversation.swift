@@ -77,7 +77,7 @@ final class LeaConversation {
     private(set) var action: (kind: String, label: String)?
     /// Hands-free: after Lea answers, listen for the next turn without the wake word.
     var handsFree = true
-    /// Called after each of Lea's answers (the home sheet: "Let me look that up…" while the brief is coming).
+    /// Called after each of Lea's answers.
     @ObservationIgnored var afterTurn: (@MainActor () -> Void)?
 
     @ObservationIgnored private var task: Task<Void, Never>?

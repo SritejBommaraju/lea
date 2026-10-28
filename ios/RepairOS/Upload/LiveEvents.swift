@@ -35,8 +35,6 @@ final class LiveEvents {
     /// spend cap: "not available right now").
     private(set) var fixEnded: String?
     private(set) var connected = false
-    /// The latest `product_brief`: the product and its known issues, from public sources.
-    private(set) var brief: ProductBrief?
     /// The latest lead (`lead` event): an area worth a close look because of what the person said is wrong.
     private(set) var lead: Lead?
 
@@ -155,8 +153,6 @@ final class LiveEvents {
             if let rev = obj["mesh_rev"] as? Int, rev != meshRev { meshRev = rev }
         case "report_ready":
             if let rev = obj["rev"] as? Int { reportRev = rev }
-        case "product_brief":   // what the object is, from public sources (Voice/PreScan says it before the scan)
-            if let b = ProductBrief(json: obj), b != brief { brief = b }
         case "lead":   // the person's guess, researched by the backend (Voice/ says it during the scan)
             if let area = (obj["area"] as? String)?.trimmingCharacters(in: .whitespaces), !area.isEmpty {
                 let next = Lead(area: area, why: obj["why"] as? String, sourceTitle: obj["source_title"] as? String,
