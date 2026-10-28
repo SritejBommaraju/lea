@@ -81,6 +81,8 @@ struct SettingsView: View {
     @State private var showPairing = false
     @State private var showProductCode = false
     @State private var showConsent = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 28
     @State private var health: Result<Void, Error>?
     @State private var checking = false
     @State private var used: Int64?
@@ -94,13 +96,13 @@ struct SettingsView: View {
             Form {
                 Group {
                     Section {
-                        HStack(spacing: Spacing.m) {
+                        HStack(alignment: .top, spacing: Spacing.m) {
                             Image(systemName: Symbol.mac).foregroundStyle(app.isPaired ? Palette.good : Palette.caution)
-                                .frame(width: 28).accessibilityHidden(true)
+                                .frame(width: iconWidth).accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(app.isPaired ? "Connected" : "Not connected").font(.body.weight(.semibold)).foregroundStyle(Palette.ink)
                                 Text(app.gatewayURL.isEmpty ? "No server address yet" : app.gatewayURL)
-                                    .font(.footnote).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+                                    .font(.footnote).foregroundStyle(Palette.secondary).lineLimit(typeSize.isAccessibilitySize ? 4 : 1).truncationMode(.middle)
                             }
                             Spacer(minLength: 0)
                             if let health { healthPill(health) }
@@ -258,11 +260,12 @@ private struct SettingsRow: View {
     let tone: Tone
     let title: String
     var detail: String?
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 28
 
     var body: some View {
         HStack(spacing: Spacing.m) {
             Image(systemName: symbol).foregroundStyle(tone == .neutral ? Palette.secondary : tone.color)
-                .frame(width: 28).accessibilityHidden(true)
+                .frame(width: iconWidth).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).foregroundStyle(Palette.ink)
                 if let detail { Text(detail).font(.footnote).foregroundStyle(Palette.secondary) }
