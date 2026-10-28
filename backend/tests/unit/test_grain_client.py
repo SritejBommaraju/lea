@@ -258,8 +258,10 @@ def test_complete_uploads_the_session_judges_it_and_publishes_the_report(tmp_pat
         report, rev = report_rev(c, pkg["scan_id"], 1)
         assert report["design"] == {"engine": "grain", "project": "demo_product"} and report["verdict"] == "potential_issues"
         assert report["next_step"]["action_id"] == "chk_vin"
-        status, run, _ = c.req("GET", f"/v1/scans/{pkg['scan_id']}/pipeline")
-        assert run["status"] == "done" and run["report_id"] == report["report_id"]
+        # the report is visible a moment before the run is marked done
+        run = wait_for(lambda: (lambda r: r if r["status"] == "done" else None)(
+            c.req("GET", f"/v1/scans/{pkg['scan_id']}/pipeline")[1]), "the run to be done")
+        assert run["report_id"] == report["report_id"]
 
         (up,) = t.of("POST", "/projects/demo_product/scans")
         assert up.headers["authorization"] == "Bearer grain_secret" and dict(up.url.params)["name"] == f"{pkg['scan_id']}.zip"

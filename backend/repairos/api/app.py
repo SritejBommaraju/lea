@@ -150,6 +150,13 @@ class FixRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000, description="The customer's own words.")
 
 
+class OutcomeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    row_id: str = Field(min_length=1, max_length=200, description="The report row (finding_id) the answer is about.")
+    outcome: Literal["fixed", "not_fixed", "not_tried"]
+    note: str | None = Field(default=None, max_length=500)
+
+
 class Pair(BaseModel):
     model_config = ConfigDict(extra="forbid")
     code: str
@@ -186,6 +193,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
     app.state.recordings = recordings
     app.state.grain = grain                  # None: built from GRAIN_URL / GRAIN_API_KEY / GRAIN_PROJECT on first use
     app.state.grain_tasks = set()            # background judgements (kept so a task is never garbage collected)
+    app.state.outcome_locks = {}             # scan_id -> asyncio.Lock: one send of a scan's outcomes at a time
     app.state.grain_locks = {}               # scan_id -> asyncio.Lock: one judgement of a scan at a time
 
     def store(request: Request):
@@ -556,6 +564,10 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                 return
             await _run_patch(scan_id, sid, {"status": "done", "report_id": report["report_id"],
                                             "finished_at": _now(), "stages": {"design_engine": {"status": "done"}}})
+        if await asyncio.to_thread(grain_service.load_outcomes, root, sid, scan_id):
+            _spawn(_flush_outcomes(scan_id))   # answers saved before the scan was uploaded go now
+        if reading_id is None and readings:
+            _spawn(_grain_publish(scan_id, reading_id=readings[-1]["reading_id"]))   # readings taken before the upload
 
     @app.post("/v1/scans/{scan_id}/fix")
     async def fix_scan(scan_id: str, body: FixRequest, request: Request, _d: Device):
@@ -581,7 +593,137 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             answer = await asyncio.to_thread(client.chat, project, message, scan_id=scan_id, record_to=gdir)
         except GrainError as e:
             raise HTTPException(502, {"error": "design_engine", "message": str(e)}) from e
-        return grain_service.chat_result(answer)
+        result = grain_service.chat_result(answer)
+        if result["build"] == "ok":   # the design changed: its old pictures are stale
+            await asyncio.to_thread(grain_service.clear_design_views, recordings_root(), project)
+        return result
+
+    # ------------------------------------------------- what the person did next (outcome, design picture, part file)
+    def _outcome_lock(scan_id: str) -> asyncio.Lock:
+        return app.state.outcome_locks.setdefault(scan_id, asyncio.Lock())
+
+    async def _flush_outcomes(scan_id: str) -> dict[str, str]:
+        """Send every saved answer of the scan that the design engine has not received yet. {row key: sent | waiting |
+        failed | not_applicable}. A design engine that is down leaves the answer saved and unsent; the next flush tries
+        again (after the next answer, after a report is made, when a report is read)."""
+        client, root = design_engine(), recordings_root()
+        if not client.enabled:
+            return {}
+        st = app.state.store
+        scan = (await st.get("scan-package", scan_id)).data
+        sid = scan["session_id"]
+        out: dict[str, str] = {}
+        async with _outcome_lock(scan_id):
+            todo = await asyncio.to_thread(grain_service.load_outcomes, root, sid, scan_id)
+            session = (await st.get("session", sid)).data
+            for key, entry in todo.items():
+                if entry.get("sent"):   # another request got there first: it is sent, or never needed sending
+                    out[key] = "not_applicable" if entry.get("state") == "not_tried" else "sent"
+                    continue
+                try:
+                    got = await asyncio.to_thread(grain_service.forward_outcome, client, root=root, session=session,
+                                                  scan=scan, entry=entry)
+                except GrainError as e:
+                    log.error("design engine, outcome for scan %s: %s", scan_id, e)
+                    out[key] = "failed"
+                    continue
+                out[key] = got
+                if got in ("sent", "not_applicable"):
+                    await asyncio.to_thread(grain_service.mark_sent, root, sid, scan_id, key)
+        return out
+
+    @app.post("/v1/scans/{scan_id}/outcome")
+    async def post_outcome(scan_id: str, body: OutcomeRequest, request: Request, _d: Device):
+        """What the person found after trying a fix: `{row_id, outcome: fixed | not_fixed | not_tried, note?}`. The
+        answer is saved with the session first (a newer answer for the same row replaces the older one, so the same
+        request twice is harmless), then sent to the design engine as a person-confirmed label. 404 for a row the
+        scan's report does not have. Returns `{row_id, outcome, saved: true, forwarded}`; forwarded is sent | waiting
+        (the scan is not uploaded yet) | failed (the design engine is down; it is sent later) | not_applicable
+        (not_tried says nothing about the part) | off (no design engine configured)."""
+        report, _rev, _view = await _report(request, scan_id)
+        row = grain_service.find_row(report, body.row_id)
+        if row is None:
+            raise HTTPException(404, f"the report for scan {scan_id} has no row {body.row_id}")
+        scan = await _get(request, "scan-package", scan_id)
+        entry = grain_service.outcome_entry(row, body.outcome, body.note)
+        async with _outcome_lock(scan_id):
+            await asyncio.to_thread(grain_service.save_outcome, recordings_root(), scan["session_id"], scan_id, row, entry)
+        got = await _flush_outcomes(scan_id) if design_engine().enabled else {}
+        return {"row_id": body.row_id, "outcome": body.outcome, "saved": True,
+                "forwarded": got.get(grain_service.row_key(row), "off" if not design_engine().enabled else "waiting")}
+
+    async def _design_view(project: str | None, view: str) -> Response:
+        client = design_engine()
+        if not client.enabled:
+            raise HTTPException(409, "no design engine configured (GRAIN_URL)")
+        if project is None:
+            raise HTTPException(409, "the design is unknown: name the product when the session is created")
+        try:
+            data, ctype = await asyncio.to_thread(grain_service.design_view, client, root=recordings_root(),
+                                                  project=project, view=view)
+        except GrainError as e:
+            raise HTTPException(404 if e.status == 404 else 502, {"error": "design_engine", "message": str(e)}) from e
+        return Response(content=data, media_type=ctype, headers={"Cache-Control": "private, max-age=3600"})
+
+    @app.get("/v1/scans/{scan_id}/design-view", responses={200: {"content": {"image/png": {}}}})
+    async def scan_design_view(scan_id: str, request: Request, _d: Device,
+                               view: Annotated[Literal["iso", "front", "right", "top", "sheet"], Query()] = "iso"):
+        """The design's own picture of the product this scan is judged against (iso by default; sheet is the contact
+        sheet), fetched by the gateway and cached per design. 404 when the design engine has no such picture."""
+        scan = await _get(request, "scan-package", scan_id)
+        session = (await _session(request, scan["session_id"])).data
+        return await _design_view(grain_service.project_for(session, design_engine()), view)
+
+    @app.get("/v1/products/{product}/view", responses={200: {"content": {"image/png": {}}}})
+    async def product_view(product: str, _d: Device,
+                           view: Annotated[Literal["iso", "front", "right", "top", "sheet"], Query()] = "iso"):
+        """The same picture by product code, for the capture screen before any scan exists."""
+        if not product.strip() or len(product) > 200:
+            raise HTTPException(400, "the product code is 1 to 200 characters")
+        return await _design_view(product.strip(), view)
+
+    @app.get("/v1/scans/{scan_id}/fixes/{row_id}/file")
+    async def fix_file(scan_id: str, row_id: str, request: Request, _d: Device,
+                       format: Annotated[Literal["stl", "step"], Query()] = "stl"):
+        """The file of the part a `remake` fix names (the row's `fix_plan.part_file`), from the design engine. The phone
+        never holds the design engine's address or key."""
+        report, _rev, _view = await _report(request, scan_id)
+        row = grain_service.find_row(report, row_id)
+        plan = (row or {}).get("fix_plan") or {}
+        if row is None or not (plan.get("part_file") or {}).get("formats"):
+            raise HTTPException(404, f"row {row_id} of scan {scan_id} has no part file")
+        if format not in plan["part_file"]["formats"]:
+            raise HTTPException(404, f"row {row_id} has no {format} file")
+        client = design_engine()
+        scan = await _get(request, "scan-package", scan_id)
+        session = (await _session(request, scan["session_id"])).data
+        project = grain_service.project_for(session, client)
+        if not client.enabled or project is None:
+            raise HTTPException(409, "no design engine configured, or the design is unknown")
+        name = str(row["subject"]["ref"])
+        try:
+            data, ctype = await asyncio.to_thread(client.part_file, project, name, format)
+        except GrainError as e:
+            raise HTTPException(404 if e.status == 404 else 502, {"error": "design_engine", "message": str(e)}) from e
+        fname = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("_") or "part"
+        return Response(content=data, media_type=ctype or "application/octet-stream",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.{format}"'})
+
+    @app.get("/v1/readings/{reading_id}")
+    async def get_reading(reading_id: str, request: Request, _d: Device):
+        """One stored reading with the design engine's verdict on it: `{reading, verdict}`. verdict.state is `pending`
+        until the judgement comes back, then `judged` (verdict.verdict ok | off | open | wrong_pin | unknown_net |
+        no_expected | invalid, verdict.notes in the design engine's words), `unjudged` (the judgement came back with nothing
+        for this reading) or `failed` when the last judgement failed."""
+        reading = await _get(request, "meter-reading", reading_id)
+        base: dict[str, Any] = {"reading": reading}
+        if not design_engine().enabled:
+            return {**base, "verdict": {"state": "unavailable"}}
+        got = await asyncio.to_thread(grain_service.reading_view, recordings_root(), reading["session_id"], reading_id)
+        if got is not None:
+            return {**base, "verdict": {"state": "judged" if got.get("verdict") else "unjudged", **got}}
+        run = await _run(request, reading["scan_id"])
+        return {**base, "verdict": {"state": "failed" if (run or {}).get("status") == "failed" else "pending"}}
 
     # ------------------------------------------------------------ the run and the report
     @app.post("/v1/scans/{scan_id}/complete", status_code=202)
@@ -663,6 +805,12 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         photos) and `X-Report-Rebuilding: 1` while a newer one is pending (0 otherwise). 404 only when no report was
         ever finished (with the pipeline status); 409 when the first run failed (with the stage and the error)."""
         report, rev, view = await _report(request, scan_id)
+        scan = await _get(request, "scan-package", scan_id)
+        saved = await asyncio.to_thread(grain_service.load_outcomes, recordings_root(), scan["session_id"], scan_id)
+        if any(isinstance(e, dict) and not e.get("sent") and e.get("state") != "not_tried" for e in saved.values()) \
+                and design_engine().enabled:
+            _spawn(_flush_outcomes(scan_id))   # an answer the design engine has not received yet is sent again
+        report = grain_service.with_outcomes(report, saved)
         return JSONResponse(content=finite_json(report), headers={"X-Report-Rev": str(rev),
                                                      "X-Report-Rebuilding": "1" if view.get("rebuilding") else "0"})
 

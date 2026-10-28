@@ -8,6 +8,9 @@ Only its HTTP surface is used (base URL and key from GRAIN_URL / GRAIN_API_KEY, 
     GET  /projects/{project}/electrical/plan                 which meter checks to ask for (404: not available yet)
     GET  /projects/{project}/bom/{ref}                       one BOM row (404: no such row)
     POST /projects/{project}/chat                            ask it to change the design (wait + queue)
+    POST /projects/{project}/scans/{id}/outcome              what the person said after trying a fix
+    GET  /projects/{project}/files/out/views/{name}.png      a rendered view of the design (iso, front, right, top, sheet)
+    GET  /projects/{project}/bom/part/{name}/file            one made part as STL or STEP
 
 Every answer body is saved under the session folder as `grain/<kind>-<scan_id>-<timestamp>.json`, so a real run can
 be read back and replayed. Nothing here invents an answer: a missing URL means `enabled` is False and nothing is called.
@@ -30,6 +33,10 @@ CALL_TIMEOUT_S = 600.0
 CHAT_TIMEOUT_S = 900.0
 PLAN_TIMEOUT_S = 60.0
 BOM_TIMEOUT_S = 30.0
+OUTCOME_TIMEOUT_S = 30.0
+FILE_TIMEOUT_S = 120.0
+VIEWS = ("iso", "front", "right", "top", "sheet")
+FILE_FORMATS = ("stl", "step")
 GRAIN_DIR = "grain"
 
 
@@ -49,6 +56,11 @@ def _detail(resp: httpx2.Response) -> str:
         return resp.text[:300] or resp.reason_phrase
     d = body.get("detail", body) if isinstance(body, dict) else body
     return (d if isinstance(d, str) else json.dumps(d))[:300]
+
+
+def safe_name(name: str) -> bool:
+    """A body name that is one path segment: never empty, never a dot segment, never a slash."""
+    return bool(name) and name not in (".", "..") and "/" not in name and "\\" not in name and "\x00" not in name
 
 
 def stamp(now: datetime | None = None) -> str:
@@ -104,6 +116,20 @@ class GrainClient:
             return resp.json()
         except ValueError as e:
             raise GrainError(what, resp.status_code, "the answer was not JSON") from e
+
+    def _fetch(self, path: str, *, timeout: float, what: str, params: Mapping[str, Any] | None = None
+               ) -> tuple[bytes, str]:
+        """GET a file: (bytes, content type). Errors are GrainError exactly as for a JSON answer."""
+        if not self.enabled:
+            raise GrainError(what, None, "no design engine configured (GRAIN_URL is not set)")
+        try:
+            with httpx2.Client(timeout=timeout, transport=self._transport) as c:
+                resp = c.get(self.url + path, params=params, headers=self._headers())
+        except httpx2.HTTPError as e:
+            raise GrainError(what, None, f"{type(e).__name__}: {e}"[:300]) from e
+        if resp.status_code >= 300:
+            raise GrainError(what, resp.status_code, _detail(resp))
+        return resp.content, resp.headers.get("content-type", "application/octet-stream")
 
     @staticmethod
     def record(directory: Path | None, kind: str, scan_id: str, body: Any, now: datetime | None = None) -> Path | None:
@@ -164,9 +190,31 @@ class GrainClient:
         self.record(record_to, f"bom-{ref}", scan_id, out)
         return out if isinstance(out, dict) else None
 
-    def part_file_url(self, project: str, name: str, fmt: str = "stl") -> str:
-        """Where one made part's file is (the design engine's own URL; opening it needs the key)."""
-        return f"{self.url}{self._p(project)}/bom/part/{quote(name, safe='')}/file?format={fmt}"
+    def part_file(self, project: str, name: str, fmt: str = "stl") -> tuple[bytes, str]:
+        """One made part's file (STL or STEP) as bytes. The name is the body name the design engine gave."""
+        if fmt not in FILE_FORMATS or not safe_name(name):
+            raise GrainError("get the part file", None, "not a part name or format the design engine serves")
+        return self._fetch(f"{self._p(project)}/bom/part/{quote(name, safe='')}/file", timeout=FILE_TIMEOUT_S,
+                           what="get the part file", params={"format": fmt})
+
+    def design_view(self, project: str, view: str = "iso") -> tuple[bytes, str]:
+        """One rendered view of the design as a PNG (iso is the one to show a customer; sheet is the contact sheet)."""
+        if view not in VIEWS:
+            raise GrainError("get the design view", None, "not a view the design engine renders")
+        return self._fetch(f"{self._p(project)}/files/out/views/{view}.png", timeout=BOM_TIMEOUT_S,
+                           what="get the design view")
+
+    def outcome(self, project: str, grain_scan_id: str, *, part: str, state: str, note: str | None, scan_id: str,
+                record_to: Path | None = None) -> dict:
+        """Tell the design engine what the person found after trying a fix. `state` is what the person confirmed about
+        the part: ok | missing | shifted | damaged | worn | loose."""
+        body: dict[str, Any] = {"part": part, "state": state, "confirmed_by": "person"}
+        if note:
+            body["note"] = note
+        out = self._request("POST", f"{self._p(project)}/scans/{quote(grain_scan_id, safe='')}/outcome",
+                            timeout=OUTCOME_TIMEOUT_S, what="send the outcome", json_body=body)
+        self.record(record_to, "outcome", scan_id, out)
+        return out
 
     def chat(self, project: str, message: str, *, scan_id: str, record_to: Path | None = None) -> dict:
         """One message to the design engine's agent; returns when its turn ends. Waits for a running turn."""
