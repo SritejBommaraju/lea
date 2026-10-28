@@ -38,6 +38,7 @@ MODEL_CANNOT_EXPRESS = {
     "report-looks-good-with-uninspected-region.json",
     "report-meter-proof-without-reading.json",
     "report-ok-without-a-judge.json",
+    "report-design-engine-row-without-a-judge.json",   # same rule, a row with no photo
 }
 
 

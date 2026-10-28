@@ -109,8 +109,8 @@
           "description": "Model id that wrote the text."
         },
         "from_words_only": {
-          "const": true,
-          "description": "The writer received words only (S5); checked in code before the call."
+          "type": "boolean",
+          "description": "true when the writer received words only (S5), checked in code before the call. false when the text came from the design engine, which judged the scan against the product's own design."
         }
       }
     },
@@ -194,7 +194,31 @@
         },
         "reason": {
           "type": "string"
-        }
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What the step is about, so the app can open the meter sheet filled in. Same fields as next-action `target`.",
+          "properties": {
+            "part_refs": { "type": "array", "items": { "type": "string" } },
+            "net": { "type": "string", "minLength": 1, "description": "Net name from the product's design." },
+            "pins": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "REF.PIN ids to probe." }
+          }
+        },
+        "power_state": { "type": "string", "enum": ["off", "on", "n/a"], "description": "off for continuity and resistance; on for voltage (S4)." },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What a good reading looks like, compared in code (S5).",
+          "properties": {
+            "continuity": { "type": "boolean" },
+            "ohms_max": { "type": "number", "minimum": 0 },
+            "volts_min": { "type": "number" },
+            "volts_max": { "type": "number" },
+            "source": { "type": "string", "enum": ["report_json_minmax", "repairos_derived", "datasheet", "design_engine"] }
+          }
+        },
+        "safety_notes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Shown before the step." }
       }
     },
     "safety": {
@@ -402,6 +426,16 @@
         "cloud_points": { "type": "integer", "minimum": 0 },
         "hero": { "type": "string", "enum": ["points", "mesh", "photos"], "description": "What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is too small or too little was captured for 3D to read as the object." },
         "hero_reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "design": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "project"],
+      "description": "Present when the design engine judged this scan against the product's own design. `project` is the design the scan was judged against.",
+      "properties": {
+        "engine": { "const": "grain" },
+        "project": { "type": "string", "minLength": 1 }
       }
     },
     "reference_hints": {
@@ -898,7 +932,6 @@
         "confidence_word",
         "evidence",
         "inspected_by",
-        "crop",
         "location",
         "proof"
       ],
@@ -913,7 +946,7 @@
         "part_class": {
           "type": "string",
           "minLength": 1,
-          "description": "Generic class (vision/generic_classes.py), never a product name."
+          "description": "Generic class (vision/generic_classes.py), never a product name. For a row judged by the design engine: the design's own name for the part."
         },
         "issue": {
           "type": "string",
@@ -963,15 +996,17 @@
               "classifier",
               "vlm",
               "ocr",
-              "meter"
+              "meter",
+              "grain"
             ]
           },
           "minItems": 1,
           "uniqueItems": true,
-          "description": "Stages that looked at this region. A judged region always includes a state judge (vlm, classifier or meter)."
+          "description": "Stages that looked at this region. A judged region always includes a state judge (vlm, classifier, meter or grain). grain: the design engine judged it against the product's own design (scan measurements, photos, readings)."
         },
         "crop": {
-          "$ref": "#/$defs/crop"
+          "$ref": "#/$defs/crop",
+          "description": "The photo and box the region was seen in. Absent for a row the design engine judged from the scan's measurements, not from a photo."
         },
         "location": {
           "$ref": "#/$defs/location"
@@ -1059,7 +1094,8 @@
                 "enum": [
                   "vlm",
                   "classifier",
-                  "meter"
+                  "meter",
+                  "grain"
                 ]
               }
             }
@@ -1159,7 +1195,8 @@
               "classifier",
               "vlm",
               "ocr",
-              "meter"
+              "meter",
+              "grain"
             ]
           },
           "minItems": 1,
