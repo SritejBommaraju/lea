@@ -3,8 +3,8 @@ import Foundation
 import Observation
 
 /// The phone's side of a Bluetooth multimeter: find it, connect, choose what it measures, publish what it reads.
-/// Everything runs on the main actor; CoreBluetooth calls back on the main queue (`queue: .main`), which is what
-/// makes `MainActor.assumeIsolated` in the delegate methods true by construction, not a way to silence the compiler.
+/// Everything runs on the main actor; CoreBluetooth calls back on the main queue (`queue: .main`), so the delegate
+/// conformances are `@preconcurrency`: the compiler checks at run time that each callback really is on the main actor.
 /// The radio is only touched by `start`, so the Bluetooth permission prompt appears when the person asks for a meter.
 @MainActor @Observable
 final class MeterLink: NSObject {
@@ -159,107 +159,89 @@ final class MeterLink: NSObject {
 
 // MARK: - CoreBluetooth
 
-extension MeterLink: CBCentralManagerDelegate {
-    nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        MainActor.assumeIsolated {
-            switch central.state {
-            case .poweredOn:
-                if phase == .scanning { beginScan() }
-            case .poweredOff:
-                fail("Bluetooth is switched off. Turn it on in Control Centre.")
-            case .unauthorized:
-                fail("Bluetooth is off for this app. Turn it on in Settings > Privacy & Security > Bluetooth.")
-            case .unsupported:
-                fail("This phone cannot use Bluetooth meters.")
-            default: break
-            }
+extension MeterLink: @preconcurrency CBCentralManagerDelegate {
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        switch central.state {
+        case .poweredOn:
+            if phase == .scanning { beginScan() }
+        case .poweredOff:
+            fail("Bluetooth is switched off. Turn it on in Control Centre.")
+        case .unauthorized:
+            fail("Bluetooth is off for this app. Turn it on in Settings > Privacy & Security > Bluetooth.")
+        case .unsupported:
+            fail("This phone cannot use Bluetooth meters.")
+        default: break
         }
     }
 
-    nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
-                                    advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        MainActor.assumeIsolated {
-            guard phase == .scanning, self.peripheral == nil else { return }
-            scanTimeout?.cancel()
-            central.stopScan()
-            self.peripheral = peripheral
-            deviceName = peripheral.name
-            peripheral.delegate = self
-            phase = .connecting
-            central.connect(peripheral)
-        }
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        guard phase == .scanning, self.peripheral == nil else { return }
+        scanTimeout?.cancel()
+        central.stopScan()
+        self.peripheral = peripheral
+        deviceName = peripheral.name
+        peripheral.delegate = self
+        phase = .connecting
+        central.connect(peripheral)
     }
 
-    nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        MainActor.assumeIsolated {
-            var services = profile.scanServices + [Self.deviceInformation]
-            if let b = profile.batteryLocation { services.append(b.service) }
-            peripheral.discoverServices(services)
-        }
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        var services = profile.scanServices + [Self.deviceInformation]
+        if let b = profile.batteryLocation { services.append(b.service) }
+        peripheral.discoverServices(services)
     }
 
-    nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated {
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        self.peripheral = nil
+        fail("Could not connect to the \(profile.displayName). Switch it off and on, then try again.")
+    }
+
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        if stopping {
+            finishDisconnect()
+        } else {
+            peripheral.delegate = nil
             self.peripheral = nil
-            fail("Could not connect to the \(profile.displayName). Switch it off and on, then try again.")
-        }
-    }
-
-    nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        MainActor.assumeIsolated {
-            if stopping {
-                finishDisconnect()
-            } else {
-                peripheral.delegate = nil
-                self.peripheral = nil
-                characteristics = [:]
-                configured = false
-                phase = .lost
-                message = "The \(profile.displayName) disconnected. Switch it on and tap Connect again."
-            }
+            characteristics = [:]
+            configured = false
+            phase = .lost
+            message = "The \(profile.displayName) disconnected. Switch it on and tap Connect again."
         }
     }
 }
 
-extension MeterLink: CBPeripheralDelegate {
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        MainActor.assumeIsolated {
-            for s in peripheral.services ?? [] { peripheral.discoverCharacteristics(nil, for: s) }
-        }
+extension MeterLink: @preconcurrency CBPeripheralDelegate {
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        for s in peripheral.services ?? [] { peripheral.discoverCharacteristics(nil, for: s) }
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
-        MainActor.assumeIsolated {
-            for c in service.characteristics ?? [] { characteristics[c.uuid] = c }
-            configureIfComplete()
-        }
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        for c in service.characteristics ?? [] { characteristics[c.uuid] = c }
+        configureIfComplete()
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        MainActor.assumeIsolated {
-            guard error == nil, let data = characteristic.value else { return }
-            let id = characteristic.uuid
-            if id == profile.readingCharacteristic {
-                if let s = profile.parseReading(data, at: Date()) {
-                    sample = s
-                    if phase == .ready { phase = .measuring }
-                }
-            } else if id == Self.modelNumber {
-                model = String(data: data, encoding: .utf8)
-            } else if id == Self.firmwareRevision {
-                firmware = String(data: data, encoding: .utf8)
-            } else if id == profile.batteryLocation?.characteristic {
-                batteryV = profile.parseBattery(data)
+    func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard error == nil, let data = characteristic.value else { return }
+        let id = characteristic.uuid
+        if id == profile.readingCharacteristic {
+            if let s = profile.parseReading(data, at: Date()) {
+                sample = s
+                if phase == .ready { phase = .measuring }
             }
+        } else if id == Self.modelNumber {
+            model = String(data: data, encoding: .utf8)
+        } else if id == Self.firmwareRevision {
+            firmware = String(data: data, encoding: .utf8)
+        } else if id == profile.batteryLocation?.characteristic {
+            batteryV = profile.parseBattery(data)
         }
     }
 
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        MainActor.assumeIsolated {
-            if let error {
-                message = "The meter did not accept the setting: \(error.localizedDescription)"
-            }
-            if stopping { disconnectNow() }
+    func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error {
+            message = "The meter did not accept the setting: \(error.localizedDescription)"
         }
+        if stopping { disconnectNow() }
     }
 }
