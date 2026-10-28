@@ -77,7 +77,7 @@ struct ReportView: View {
                                     identity: Self.identity(corrected: record.objectName, report: report.objectWords,
                                                             live: live?.identity?.words),
                                     addMeterReading: gateway == nil ? nil : {
-                                        meterContext = report.nextStep.map { MeterReadingContext(step: $0) } ?? MeterReadingContext()
+                                        meterContext = report.meterContext
                                     },
                                     askDesign: gateway == nil || report.design == nil ? nil : { showFixWithGrain = true },
                                     meterReadingsSent: meterReadingsSent,
@@ -168,9 +168,9 @@ struct ReportView: View {
         guard let gateway else { return nil }
         return CustomerContext(scanID: record.scanID, gateway: gateway, outcomes: outcomes, designRevision: designRevision) { id in
             if let step = report?.nextStep, id == nil || step.actionID == id {
-                meterContext = MeterReadingContext(step: step)
+                meterContext = MeterReadingContext(step: step, selfTest: report?.selfTest)
             } else {
-                meterContext = MeterReadingContext()
+                meterContext = MeterReadingContext(selfTest: report?.selfTest)
             }
         }
     }

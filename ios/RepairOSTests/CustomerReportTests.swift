@@ -291,7 +291,7 @@ struct CustomerReportTests {
         let ctx = MeterReadingContext(step: try #require(r.nextStep))
         let value = try #require(MeterReadingDraft.value(typed: "4,98", kind: .voltageDc, beeps: true))
         let reading = MeterReadingDraft.reading(context: ctx, kind: ctx.kind, net: ctx.net, pinA: ctx.pins[0], pinB: ctx.pins[1],
-                                                scanID: "scan_x", sessionID: "sess_x", value: value, meter: nil, rawText: "4,98",
+                                                scanID: "scan_x", sessionID: "sess_x", value: value, rawText: "4,98",
                                                 now: Self.t0, id: "rd_hand")
         let json = try #require(try JSONSerialization.jsonObject(with: JSON.encoder.encode(reading)) as? [String: Any])
         #expect(json["source"] as? String == "typed" && json["action_id"] as? String == "chk_power_in")

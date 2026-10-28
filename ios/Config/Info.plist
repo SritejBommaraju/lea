@@ -11,7 +11,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>lea</string>
 	<key>NSCameraUsageDescription</key>
-	<string>RepairOS uses the camera (and LiDAR when the phone has it) to scan the object and take close-up photos for the report.</string>
+	<string>RepairOS uses the camera (and LiDAR when the phone has it) to scan the object and take close-up photos for the report. The phone checks (reading a status light, measuring flicker) look at the camera picture without saving it; scan photos are saved and sent for the report.</string>
 	<key>INAlternativeAppNames</key>
 	<array>
 		<dict>
@@ -34,9 +34,9 @@
 		</dict>
 	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>RepairOS connects to your Bluetooth multimeter to read its measurement, so you do not have to type it.</string>
+	<string>RepairOS connects to your product over Bluetooth only when you tap its self-test, so the product can tell the phone what it found.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Hold the mic button to ask lea a question or to say what's wrong; nothing is recorded otherwise.</string>
+	<string>Hold the mic button to ask lea a question or to say what's wrong. The motor and fan check listens for a tone when you tap it; nothing is recorded or kept.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>lea turns what you say into text on this phone when your Mac has no voice service.</string>
 	<key>NSLocalNetworkUsageDescription</key>

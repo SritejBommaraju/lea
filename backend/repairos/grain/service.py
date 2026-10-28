@@ -51,28 +51,79 @@ def project_for(session: Mapping[str, Any], client: GrainClient) -> str | None:
 
 
 def readings_payload(readings: list[Mapping[str, Any]]) -> list[dict]:
-    """LEA meter readings in the shape POST /call takes: {net, volts} | {net, pins, continuity} | {net, pins, ohms},
-    plus the reading's id, power state, meter and the plan check it answers."""
+    """LEA readings in the shape POST /call takes. A multimeter reading is {net, volts} | {net, pins, continuity} |
+    {net, pins, ohms}. The product's self-test and the phone's sensors go through unchanged and flat:
+    {kind: selftest, index, net, value_mv?, state?, ok, transport}, {kind: magnetometer, part, delta_uT, state},
+    {kind: audio, part, hz}, {kind: flicker, part, hz, depth}, {kind: light, part, state}, {kind: led, part, state, color?}.
+    Every reading also carries its id, power state and the plan check it answers. A reading of a shape this does not
+    know is left out, never guessed."""
     out = []
     for r in readings:
         v, kind = r.get("value") or {}, r.get("kind")
-        d: dict[str, Any] = {"net": r["net"], "id": r["reading_id"], "power_state": r["power_state"]}
-        if r.get("pins"):
-            d["pins"] = list(r["pins"])
-        if kind == "voltage_dc" and "volts" in v:
-            d["volts"] = v["volts"]
-        elif kind == "continuity" and "continuity" in v:
-            d["continuity"] = v["continuity"]
-        elif kind == "resistance" and "ohms" in v:
-            d["ohms"] = v["ohms"]
+        d: dict[str, Any] = {"id": r["reading_id"], "power_state": r["power_state"]}
+        if kind in PHONE_KINDS:
+            part = _part(r)
+            if part is None or not _phone_value(kind, v, d):
+                continue
+            d["kind"], d["part"] = kind, part
+        elif kind == "selftest":
+            if not r.get("net") or not _selftest_value(v, d):
+                continue
+            d["kind"], d["net"] = "selftest", r["net"]
         else:
-            continue
+            if not r.get("net"):
+                continue
+            d["net"] = r["net"]
+            if r.get("pins"):
+                d["pins"] = list(r["pins"])
+            if kind == "voltage_dc" and "volts" in v:
+                d["volts"] = v["volts"]
+            elif kind == "continuity" and "continuity" in v:
+                d["continuity"] = v["continuity"]
+            elif kind == "resistance" and "ohms" in v:
+                d["ohms"] = v["ohms"]
+            else:
+                continue
         if r.get("meter"):
             d["meter"] = r["meter"]
         if r.get("action_id"):
             d["check"] = r["action_id"]
         out.append(d)
     return out
+
+
+# phone-sensor reading kind -> (the fields of its `value` that go to the design engine and must be there, the optional ones)
+PHONE_KINDS = {
+    "magnetometer": (("delta_uT", "state"), ()),
+    "audio": (("hz",), ()),
+    "flicker": (("hz", "depth"), ()),
+    "light": (("state",), ()),
+    "led": (("state",), ("color",)),
+}
+
+
+def _part(r: Mapping[str, Any]) -> str | None:
+    part = r.get("part")
+    return part.strip() if isinstance(part, str) and part.strip() else None
+
+
+def _phone_value(kind: str, v: Mapping[str, Any], d: dict[str, Any]) -> bool:
+    required, optional = PHONE_KINDS[kind]
+    if any(k not in v for k in required):
+        return False
+    for k in (*required, *optional):
+        if k in v:
+            d[k] = v[k]
+    return True
+
+
+def _selftest_value(v: Mapping[str, Any], d: dict[str, Any]) -> bool:
+    if any(k not in v for k in ("index", "ok", "transport")):
+        return False
+    for k in ("index", "value_mv", "state", "ok", "transport"):
+        if k in v:
+            d[k] = v[k]
+    return True
 
 
 def _flagged(call: Mapping[str, Any]) -> list[str]:
@@ -174,7 +225,7 @@ def fix_message(*, project: str, session: Mapping[str, Any], scan: Mapping[str, 
     elif diag.get("parts"):
         lines.append("The phone scan flagged no part against the design.")
     if readings:
-        lines.append("Meter readings the customer took, with the design engine's verdict on each:")
+        lines.append("Readings the customer took (meter, the product's self-test, phone sensors), with the design engine's verdict on each:")
         for r, entry in from_grain.pair_readings(call, readings):
             lines.append(f"- {_cut(_reading_words(r), 160)}: {(entry or {}).get('verdict', 'not judged yet')}")
     fixes = from_grain.fix_rows(call)
@@ -187,7 +238,13 @@ def fix_message(*, project: str, session: Mapping[str, Any], scan: Mapping[str, 
 
 
 def _reading_words(r: Mapping[str, Any]) -> str:
-    v = r.get("value") or {}
+    v, kind = r.get("value") or {}, r.get("kind")
+    if kind == "selftest":
+        what = f"{v['value_mv'] / 1000:g} V" if "value_mv" in v else (f"output {v['state']}" if "state" in v else "no value")
+        return f"{r.get('net')} self-test via {v.get('transport')}: {what}, the product says {v.get('ok')}"
+    if kind in PHONE_KINDS:
+        what = ", ".join(f"{k} {v[k]}" for k in (*PHONE_KINDS[kind][0], *PHONE_KINDS[kind][1]) if k in v)
+        return f"{r.get('part')} {kind} (measured by the phone): {what}"
     pins = f" between {r['pins'][0]} and {r['pins'][1]}" if len(r.get("pins") or []) == 2 else ""
     if "volts" in v:
         what = f"{v['volts']:g} V"
