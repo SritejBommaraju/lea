@@ -4,8 +4,8 @@ import XCTest
 /// simulators, in light and dark, and once at the largest accessibility text size, and uploads the pictures as the
 /// `screens` artifact (ios/README.md, "Seeing the app from Windows").
 ///
-/// The app is launched once with `-screens walk` (ios/RepairOS/App/ScreensGallery.swift): it shows each screen in turn,
-/// and a button in the status bar strip (`screens.next`) moves on; the button's label is the name of the screen on show.
+/// The app is launched once with `-screens walk` (ios/RepairOS/App/ScreensGallery.swift): it shows each screen in turn
+/// and moves on by itself; the label of an invisible marker (`screens.next`) is the name of the screen on show.
 ///
 /// The picture is named `<screen>-<device>-<appearance>-<textsize>.png`; the job passes the last three through
 /// `TEST_RUNNER_SCREENS_DEVICE`, `_APPEARANCE` and `_TEXT` (the simulator is set up with `simctl ui` before the run).
@@ -23,26 +23,36 @@ final class ScreenshotTests: XCTestCase {
         let appearance = env["SCREENS_APPEARANCE"] ?? "light"
         let text = env["SCREENS_TEXT"] ?? "default"
 
+        let audit = env["SCREENS_AUDIT"] == "1"
         let app = XCUIApplication()
-        app.launchArguments = ["-screens", "walk"]
+        // Each screen stays up for the dwell, then the app moves on by itself: long enough to settle, shoot, and (with
+        // the audit, which takes seconds) to audit.
+        app.launchArguments = ["-screens", "walk", "-screens-dwell", audit ? "20" : "4", "-screens-start-delay", "12"]
         app.launch()
-        let next = app.buttons["screens.next"]
-        XCTAssertTrue(next.waitForExistence(timeout: 30), "the screens button never appeared")
+        let current = app.buttons["screens.next"]
+        XCTAssertTrue(current.waitForExistence(timeout: 30), "the screens marker never appeared")
+
+        // The app asks for the microphone and speech recognition as soon as it opens (a finding in itself). Allow both, so the
+        // alerts do not sit over every picture.
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for _ in 0..<2 {
+            let allow = springboard.alerts.buttons["Allow"]
+            if allow.waitForExistence(timeout: 4) { allow.tap() }
+        }
 
         var taken: [String] = []
-        for _ in 0..<40 {
-            // The first label is "start" until the walk has prepared its first screen.
-            let deadline = Date().addingTimeInterval(15)
-            while next.label == "start", Date() < deadline { Thread.sleep(forTimeInterval: 0.3) }
-            let screen = next.label
-            if screen == "done" || screen == "start" { break }
+        var last = "start"
+        var lastChange = Date()
+        while Date().timeIntervalSince(lastChange) < 40 {
+            let screen = current.label
+            if screen == "done" { break }
+            if screen == last || screen == "start" { Thread.sleep(forTimeInterval: 0.25); continue }
+            last = screen
+            lastChange = Date()
             Thread.sleep(forTimeInterval: settle[screen] ?? 1.5)
             XCTAssertTrue(app.state == .runningForeground, "\(screen): the app is no longer running")
-            shoot(app, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: env["SCREENS_AUDIT"] == "1")
+            shoot(app, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: audit)
             taken.append(screen)
-            next.tap()
-            let wait = Date().addingTimeInterval(10)
-            while next.label == screen, Date() < wait { Thread.sleep(forTimeInterval: 0.3) }
         }
         XCTAssertEqual(taken.count, 14, "screens taken: \(taken)")
     }

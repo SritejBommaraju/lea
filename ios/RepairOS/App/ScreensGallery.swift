@@ -151,9 +151,10 @@ enum ScreensGallery {
     """#
 }
 
-/// `-screens walk`: shows every screen in `walkOrder`, one after another. A button in the top corner (invisible, in the
-/// status bar's strip) moves to the next; its accessibility label is the name of the screen on show, so the UI test knows
-/// which picture it is taking, and "done" after the last.
+/// `-screens walk [-screens-dwell <seconds>]`: shows every screen in `walkOrder`, one after another, each for the dwell
+/// (4 s, plus 3 s for the report) then moves on by itself. A button in the status bar's strip is invisible but exists for
+/// the UI test: its accessibility label is the name of the screen on show, "start" before the first and "done" after the
+/// last. (The test reads the label; it never taps it, since a tap in the status strip has no hit point.)
 struct ScreensWalk: View {
     @EnvironmentObject private var app: AppState
     @State private var index = -1
@@ -167,20 +168,26 @@ struct ScreensWalk: View {
             } else {
                 Palette.canvas.ignoresSafeArea()
             }
-            Button { advance() } label: { Color.white.opacity(0.01).frame(width: 40, height: 14) }
+            Button {} label: { Color.white.opacity(0.01).frame(width: 40, height: 14) }
                 .accessibilityIdentifier("screens.next")
                 .accessibilityLabel(name)
+                .allowsHitTesting(false)
                 .ignoresSafeArea()
         }
-        .task { advance() }
+        .task { await walk() }
     }
 
-    private func advance() {
-        let next = index + 1
-        guard next < ScreensGallery.walkOrder.count else { index = next; return }
-        ScreensGallery.prepare(ScreensGallery.walkOrder[next])
-        app.screensReload()
-        index = next
+    private func walk() async {
+        let dwell = UIGallery.value("-screens-dwell").flatMap(Double.init) ?? 4
+        // Time for the test to answer the system's permission alerts before the first screen is shown.
+        try? await Task.sleep(for: .seconds(UIGallery.value("-screens-start-delay").flatMap(Double.init) ?? 0))
+        for (i, screen) in ScreensGallery.walkOrder.enumerated() {
+            ScreensGallery.prepare(screen)
+            app.screensReload()
+            index = i
+            try? await Task.sleep(for: .seconds(dwell + (screen == "report" ? 3 : 0)))
+        }
+        index = ScreensGallery.walkOrder.count
     }
 }
 #endif
