@@ -24,7 +24,7 @@ struct ProductCodeView: View {
 
     init(replacing: Bool = false) {
         self.replacing = replacing
-        _entering = State(initialValue: replacing || Keychain.product() == nil)
+        _entering = SwiftUI.State(initialValue: replacing || Keychain.product() == nil)
     }
 
     /// The code the app holds right now; set once a code was read and saved.
