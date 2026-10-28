@@ -50,7 +50,8 @@ public struct Finding: Codable, Sendable {
     /// working or working right; safety = could hurt someone. Absent = not judged (treated as
     /// functional).
     public let severity: Severity?
-    /// Which stage produced it.
+    /// Which stage produced it. `grain`: the design engine judged it against the product's own
+    /// design (scan measurements, photos); a meter reading it compared stays `repairos.meter`.
     public let source: FindingSource
     /// Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing
     /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
@@ -212,8 +213,10 @@ public enum Severity: String, Codable, Sendable {
     case safety = "safety"
 }
 
-/// Which stage produced it.
+/// Which stage produced it. `grain`: the design engine judged it against the product's own
+/// design (scan measurements, photos); a meter reading it compared stays `repairos.meter`.
 public enum FindingSource: String, Codable, Sendable {
+    case grain = "grain"
     case repairosMeter = "repairos.meter"
     case repairosOcr = "repairos.ocr"
     case repairosScan = "repairos.scan"
