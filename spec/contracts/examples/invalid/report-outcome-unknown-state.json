@@ -1,0 +1,53 @@
+{
+  "schema": "report",
+  "why": "an outcome state is fixed, not_fixed or not_tried; nothing else is a label",
+  "base": "report.design_engine_fix_plan.json",
+  "patch": {
+    "findings": [
+      {
+        "finding_id": "g_cover",
+        "subject": {
+          "kind": "part",
+          "ref": "cover"
+        },
+        "part_class": "cover",
+        "issue": "missing",
+        "confidence_word": "high",
+        "evidence": [
+          "The scan has no points where the design puts the cover.",
+          "design engine verdict: not seen"
+        ],
+        "inspected_by": [
+          "grain"
+        ],
+        "location": {
+          "status": "not_computed",
+          "reason": "The design engine names the part; it gives no point in this scan's frame."
+        },
+        "proof": {
+          "status": "not_measured"
+        },
+        "fix": "Order a replacement cover (listed under Fix it).",
+        "fix_plan": {
+          "action": "buy",
+          "summary": "Order a replacement cover.",
+          "options": [
+            {
+              "title": "Cover, grey ABS",
+              "seller": "example-parts.test",
+              "link": "https://example-parts.test/cover",
+              "price": 4.5,
+              "currency": "USD"
+            }
+          ]
+        },
+        "outcome": {
+          "state": "maybe",
+          "recorded_at": "2026-10-28T12:00:00Z",
+          "confirmed_by": "person",
+          "note": "New cover clipped on."
+        }
+      }
+    ]
+  }
+}
