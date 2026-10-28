@@ -10,13 +10,23 @@ import SwiftUI
 /// Each launch wipes the app's saved scans, token and settings first, then seeds only what the screen needs. The one
 /// report used is the contract example in `spec/contracts/examples` (a test fixture, never shipped: this file is not
 /// in Release builds). Nothing here talks to a server.
-enum ScreensHarness {
+enum ScreensGallery {
     static var screen: String? { UIGallery.value("-screens") }
 
     /// Resets the app to a known state. Called once, before the app's state object reads anything.
+    /// The order `-screens walk` shows them in: one launch, every screen, so a run costs one app start instead of fourteen.
+    static let walkOrder = ["consent", "home-empty", "home-scans", "settings", "pairing", "product-code", "product-pairing",
+                            "report", "meter", "capture", "capture-locked", "camera-permission", "progress-error", "failures"]
+
     @MainActor
     static func prepare() {
-        guard let name = screen else { return }
+        guard let name = screen, name != "walk" else { return }
+        prepare(name)
+    }
+
+    /// Resets the app to the state one screen needs.
+    @MainActor
+    static func prepare(_ name: String) {
         try? FileManager.default.removeItem(at: ScanStorage().root)
         let storage = ScanStorage()   // recreates the empty folder
         Keychain.deleteToken()
@@ -67,6 +77,7 @@ enum ScreensHarness {
                                                                safetyNotes: ["Switch the product off and unplug it first."]),
                                   scanID: "scan_example", sessionID: "sess_example", gateway: nil, sent: {})
             }
+        case "walk": ScreensWalk()
         case "capture": CaptureOverlayPreview(backdrop: nil)
         case "capture-locked": CaptureOverlayPreview(backdrop: nil, locked: true)
         case "camera-permission": CameraPermissionView { _ in }
@@ -139,5 +150,38 @@ enum ScreensHarness {
        "reason":"The evidence about the part is not clear enough to judge it."},
      "capture":{"depth_source":"lidar","stills":1,"stills_inspected":1,"keyframes":2,"scan_points":1000,"coverage_words":"partly covered"}}
     """#
+}
+
+/// `-screens walk`: shows every screen in `walkOrder`, one after another. A button in the top corner (invisible, in the
+/// status bar's strip) moves to the next; its accessibility label is the name of the screen on show, so the UI test knows
+/// which picture it is taking, and "done" after the last.
+struct ScreensWalk: View {
+    @EnvironmentObject private var app: AppState
+    @State private var index = -1
+
+    private var name: String { index >= 0 && index < ScreensGallery.walkOrder.count ? ScreensGallery.walkOrder[index] : (index < 0 ? "start" : "done") }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if index >= 0, index < ScreensGallery.walkOrder.count {
+                ScreensGallery.root(ScreensGallery.walkOrder[index], app: app).id(index)
+            } else {
+                Palette.canvas.ignoresSafeArea()
+            }
+            Button { advance() } label: { Color.white.opacity(0.01).frame(width: 40, height: 14) }
+                .accessibilityIdentifier("screens.next")
+                .accessibilityLabel(name)
+                .ignoresSafeArea()
+        }
+        .task { advance() }
+    }
+
+    private func advance() {
+        let next = index + 1
+        guard next < ScreensGallery.walkOrder.count else { index = next; return }
+        ScreensGallery.prepare(ScreensGallery.walkOrder[next])
+        app.screensReload()
+        index = next
+    }
 }
 #endif

@@ -6,7 +6,7 @@ struct RepairOSApp: App {
 
     init() {
         #if DEBUG
-        ScreensHarness.prepare()   // `-screens <name>`: a fixed state for screenshots (ios/RepairOSUITests)
+        ScreensGallery.prepare()   // `-screens <name>`: a fixed state for screenshots (ios/RepairOSUITests)
         #endif
     }
 
@@ -26,7 +26,7 @@ struct RepairOSApp: App {
 
     @ViewBuilder private var root: some View {
         #if DEBUG
-        if let screen = ScreensHarness.screen { ScreensHarness.root(screen, app: app) }
+        if let screen = ScreensGallery.screen { ScreensGallery.root(screen, app: app) }
         else if let screen = UIGallery.screen { UIGallery.root(screen, app: app) }
         else { RootView() }
         #else

@@ -19,6 +19,9 @@ enum Keychain {
 
     static func deleteToken() {
         SecItemDelete(base(tokenAccount) as CFDictionary)
+        #if DEBUG
+        unsigned.set(nil, tokenAccount)
+        #endif
     }
 
     /// The saved product code, or nil when none was added or the saved bytes do not read back.
@@ -32,6 +35,9 @@ enum Keychain {
 
     static func deleteProduct() {
         SecItemDelete(base(productAccount) as CFDictionary)
+        #if DEBUG
+        unsigned.set(nil, productAccount)
+        #endif
     }
 
     private static func read(_ account: String) -> Data? {
@@ -39,16 +45,39 @@ enum Keychain {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var out: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        #if DEBUG
+        if status == errSecMissingEntitlement { return unsigned.value[account] }
+        #endif
+        guard status == errSecSuccess else { return nil }
         return out as? Data
     }
 
+    #if DEBUG
+    /// An unsigned simulator build (CI) has no Keychain access group, so every Keychain call fails with
+    /// errSecMissingEntitlement. Debug builds then keep the value in memory so the app and the screenshot tests still work.
+    /// Release builds never do this.
+    private final class Unsigned: @unchecked Sendable {
+        private let lock = NSLock()
+        private var store: [String: Data] = [:]
+        var value: [String: Data] { lock.lock(); defer { lock.unlock() }; return store }
+        func set(_ data: Data?, _ account: String) { lock.lock(); store[account] = data; lock.unlock() }
+    }
+    private static let unsigned = Unsigned()
+    #endif
+
     private static func write(_ data: Data, account: String) throws {
         SecItemDelete(base(account) as CFDictionary)
+        #if DEBUG
+        unsigned.set(nil, account)
+        #endif
         var item = base(account)
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         let status = SecItemAdd(item as CFDictionary, nil)
+        #if DEBUG
+        if status == errSecMissingEntitlement { unsigned.set(data, account); return }
+        #endif
         guard status == errSecSuccess else { throw GatewayError.message("The phone could not save this (Keychain error \(status)).") }
     }
 

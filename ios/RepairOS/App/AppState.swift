@@ -131,6 +131,16 @@ final class AppState: ObservableObject {
         if isPaired { unpair() }
     }
 
+    #if DEBUG
+    /// The screens harness changed the Keychain, settings and saved scans under the running app: read them again.
+    func screensReload() {
+        isPaired = Keychain.token() != nil
+        product = ProductCode.stored()
+        gatewayURL = UserDefaults.standard.string(forKey: "gatewayURL") ?? ""
+        reloadSessions()
+    }
+    #endif
+
     /// Forgets the product code (the server and the pairing stay).
     func clearProduct() {
         Keychain.deleteProduct()

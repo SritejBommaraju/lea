@@ -152,23 +152,27 @@ private struct ConfirmDeleteScan: ViewModifier {
 struct SessionRow: View {
     let record: SessionRecord
     @EnvironmentObject private var app: AppState
+    @Environment(\.dynamicTypeSize) private var typeSize
     @State private var summary: Summary?
 
     struct Summary: Sendable { var verdict: ReportModel.Verdict?; var safety = false; var thumb: UIImage? }
 
     var body: some View {
         HStack(spacing: Spacing.m) {
-            ZStack {
-                Palette.well
-                if let thumb = summary?.thumb {
-                    Image(uiImage: thumb).resizable().scaledToFill().transition(.opacity)
-                } else {
-                    Image(systemName: Symbol.photo).foregroundStyle(Palette.secondary)
+            // At accessibility text sizes the words need the width more than the thumbnail does.
+            if !typeSize.isAccessibilitySize {
+                ZStack {
+                    Palette.well
+                    if let thumb = summary?.thumb {
+                        Image(uiImage: thumb).resizable().scaledToFill().transition(.opacity)
+                    } else {
+                        Image(systemName: Symbol.photo).foregroundStyle(Palette.secondary)
+                    }
                 }
+                .frame(width: 48, height: 48)
+                .clipShape(RoundedRectangle(cornerRadius: Radius.thumb, style: .continuous))
+                .accessibilityHidden(true)
             }
-            .frame(width: 48, height: 48)
-            .clipShape(RoundedRectangle(cornerRadius: Radius.thumb, style: .continuous))
-            .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text(record.symptom ?? "Scan").font(.body.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(2)
                     .multilineTextAlignment(.leading)

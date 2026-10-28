@@ -103,7 +103,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/screens"; echo "$LIST" > "$RUNNER_TEMP/screens/devices.txt"
           uuid() { grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1; }
           BIG=""
-          for n in "iPhone 17 Pro" "iPhone 17" "iPhone 16 Pro" "iPhone 16" "iPhone 15 Pro"; do
+          for n in "iPhone 18 Pro" "iPhone 17 Pro" "iPhone 18" "iPhone 17" "iPhone 16 Pro"; do
             BIG=$(echo "$LIST" | grep -F " $n (" | uuid || true); [ -n "$BIG" ] && BIG_NAME="$n" && break
           done
           if [ -z "$BIG" ]; then BIG=$(echo "$LIST" | grep -E '^ +iPhone' | tail -1 | uuid || true); BIG_NAME="iPhone"; fi

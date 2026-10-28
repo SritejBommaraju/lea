@@ -151,7 +151,7 @@ struct RootView: View {
     private var startBar: some View {
         GlassBar {
             FieldWell(symbol: "text.bubble") {
-                TextField(app.product == nil ? "What is it, and what went wrong? (optional)" : "What's wrong? (optional)", text: $symptom)
+                TextField(app.product == nil ? "Describe it (optional)" : "What's wrong? (optional)", text: $symptom)
                     .focused($symptomFocused)
                     .submitLabel(.go)
                     .onSubmit(newScan)
@@ -187,6 +187,8 @@ struct RootView: View {
                     .frame(minHeight: 44)
             }
         }
+        // The bar stays usable at the largest text sizes: past this size it would fill the screen and hide the scans.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .contentShape(Rectangle())
         // Swipe up stays as an accelerator for the labelled Talk to Lea.
         .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkToLea() } })
@@ -460,34 +462,43 @@ struct CameraPermissionView: View {
     private var denied: Bool { AVCaptureDevice.authorizationStatus(for: .video) == .denied }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.l) {
-            Spacer()
-            Image(systemName: "camera.viewfinder").font(.largeTitle).foregroundStyle(Palette.secondary)
-                .accessibilityHidden(true)
-            Text(denied ? "Camera is off for lea" : "lea needs the camera").display(.screen).foregroundStyle(Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityAddTraits(.isHeader)
-            Text(denied ? "lea scans with the camera. Turn Camera on for lea in Settings, then come back."
-                        : "lea looks at your product through the camera, with LiDAR if the phone has it, and takes close-ups for the report.")
-                .font(.body).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button {
-                if denied {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-                    done(false)
-                } else {
-                    Task { done(await AVCaptureDevice.requestAccess(for: .video)) }
-                }
-            } label: {
-                Text(denied ? "Open Settings" : "Allow camera")
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.l) {
+                Image(systemName: "camera.viewfinder").font(.largeTitle).foregroundStyle(Palette.secondary)
+                    .accessibilityHidden(true)
+                Text(denied ? "Camera is off for lea" : "lea needs the camera").display(.screen).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                Text(denied ? "lea scans with the camera. Turn Camera on for lea in Settings, then come back."
+                            : "lea looks at your product through the camera, with LiDAR if the phone has it, and takes close-ups for the report.")
+                    .font(.body).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.primary)
-            Button("Not now") { done(false) }
-                .buttonStyle(.textAction)
-                .frame(maxWidth: .infinity)
+            .padding(.horizontal, Spacing.gutter + 4)
+            .padding(.top, Spacing.xxl * 2)
+            .padding(.bottom, Spacing.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, Spacing.gutter + 4)
-        .padding(.bottom, Spacing.s)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: Spacing.s) {
+                Button {
+                    if denied {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        done(false)
+                    } else {
+                        Task { done(await AVCaptureDevice.requestAccess(for: .video)) }
+                    }
+                } label: {
+                    Text(denied ? "Open Settings" : "Allow camera")
+                }
+                .buttonStyle(.primary)
+                Button("Not now") { done(false) }
+                    .buttonStyle(.textAction)
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, Spacing.gutter + 4)
+            .padding(.bottom, Spacing.s)
+            .background(Palette.canvas)
+        }
         .background(Palette.canvas.ignoresSafeArea())
         .presentationDetents([.large])
     }
