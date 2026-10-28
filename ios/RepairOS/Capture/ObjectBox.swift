@@ -122,6 +122,44 @@ enum BoxFitter {
         return box(around: cluster, planeY: planeY)
     }
 
+    /// A phone without LiDAR has no depth cloud, so `fit` finds nothing. ARKit's sparse feature points still land on
+    /// textured objects: the ones within `sparseRadius` of the tap and above the support are the object's footprint.
+    /// With too few of them (a plain, glossy or dark object) the box is a default one centred on the tap, and the
+    /// result says so (`measured` false): the person can tap the object to move it, and the session notes that the
+    /// size was assumed.
+    static let sparseRadius: Float = 0.20
+    static let sparseMinPoints = 6
+    /// The default footprint and height (m) of an object ARKit gave no points for: about a hand-held gadget.
+    static let assumedSize = SIMD3<Float>(0.15, 0.10, 0.15)
+
+    struct SparseFit: Equatable, Sendable {
+        var box: ObjectBox
+        /// The box came from feature points (true) or is the default (false).
+        var measured: Bool
+        var pointsUsed: Int
+    }
+
+    static func fitSparse(featurePoints: [SIMD3<Float>], tap: SIMD3<Float>, planeY: Float) -> SparseFit {
+        let near = featurePoints.filter { p in
+            let above = p.y - planeY
+            let dx = p.x - tap.x, dz = p.z - tap.z
+            return above >= 0.01 && above <= maxAbovePlane && dx * dx + dz * dz <= sparseRadius * sparseRadius
+        }
+        if near.count >= sparseMinPoints {
+            // Drop strays: a feature point on the wall behind or a cable beside it. Keep what lies within twice the
+            // median distance from the tap (at least 6 cm).
+            let distances = near.map { hypot($0.x - tap.x, $0.z - tap.z) }.sorted()
+            let keep = max(0.06, 2 * distances[distances.count / 2])
+            let core = near.filter { hypot($0.x - tap.x, $0.z - tap.z) <= keep }
+            if core.count >= sparseMinPoints, let fitted = box(around: core, planeY: planeY) {
+                return SparseFit(box: fitted, measured: true, pointsUsed: core.count)
+            }
+        }
+        let size = assumedSize
+        let fallback = ObjectBox(center: SIMD3(tap.x, planeY + size.y / 2, tap.z), size: size, yaw: 0)
+        return SparseFit(box: fallback, measured: false, pointsUsed: near.count)
+    }
+
     /// The support under the tap: the lowest dense layer within ±15 cm of the estimate (5 mm bins, "dense" = at least
     /// half the busiest bin), measured on a ring 8–35 cm from the tap so the object itself does not count. Returns
     /// the layer's mean height and its noise (σ).
