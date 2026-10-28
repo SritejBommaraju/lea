@@ -265,19 +265,21 @@ struct MeterReadingSheet: View {
         }
     }
 
-    /// Asks the gateway for the verdict every two seconds for two minutes; after that the report is where it appears.
+    /// Asks the gateway for the verdict while the sheet is open: every two seconds for the first minute, then every
+    /// five (the design engine may take minutes). Closing the sheet ends it; the report shows the answer either way.
     private func waitForVerdict() async {
         guard let id = savedID, let gateway else { return }
         verdict = ReadingVerdict(state: "pending")
         slow = false
-        for round in 0..<60 {
+        var round = 0
+        while !Task.isCancelled {
             if let v = try? await gateway.readingVerdict(id: id) {
                 verdict = v
                 if v.isFinal { return }
             }
-            if round == 15 { slow = true }
-            try? await Task.sleep(for: .seconds(2))
-            if Task.isCancelled { return }
+            round += 1
+            if round >= 15 { slow = true }
+            try? await Task.sleep(for: .seconds(round < 30 ? 2 : 5))
         }
     }
 

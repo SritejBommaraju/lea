@@ -9,6 +9,9 @@ import Foundation
 struct OutcomeOutbox: Codable, Equatable, Sendable {
     struct Entry: Codable, Equatable, Sendable {
         var rowID: String
+        /// What the row is about (`kind:ref`), which stays the same when the report is made again and the row gets a
+        /// new id. Older files have none.
+        var key: String?
         var choice: OutcomeChoice
         var note: String?
         var at: Date
@@ -19,8 +22,21 @@ struct OutcomeOutbox: Codable, Equatable, Sendable {
     /// One entry per report row: a newer answer replaces the older.
     var entries: [String: Entry] = [:]
 
-    mutating func record(rowID: String, choice: OutcomeChoice, note: String? = nil, at: Date = Date()) {
-        entries[rowID] = Entry(rowID: rowID, choice: choice, note: note?.trimmedOrNil, at: at, sent: false)
+    mutating func record(rowID: String, key: String? = nil, choice: OutcomeChoice, note: String? = nil, at: Date = Date()) {
+        if let key { entries = entries.filter { $0.value.key != key || $0.key == rowID } }   // one answer per part
+        entries[rowID] = Entry(rowID: rowID, key: key, choice: choice, note: note?.trimmedOrNil, at: at, sent: false)
+    }
+
+    /// The report was made again and this part's row has a new id: the saved answer moves to it (and is sent under it).
+    /// Returns true when an answer moved.
+    @discardableResult
+    mutating func adopt(rowID: String, key: String) -> Bool {
+        guard entries[rowID] == nil, let old = entries.values.first(where: { $0.key == key }) else { return false }
+        entries[old.rowID] = nil
+        var moved = old
+        moved.rowID = rowID
+        entries[rowID] = moved
+        return true
     }
 
     /// Marks an answer sent, but only if it is still the one that was sent: the person may have changed it meanwhile.
@@ -90,9 +106,18 @@ final class OutcomeBoard: ObservableObject {
         outbox.entries[rowID]?.choice ?? server?.choice
     }
 
+    /// A row on screen: if the phone holds an answer for the same part under an older row id (the report was made again
+    /// since), the answer moves to this row, so it shows here and is sent to a row the gateway still has.
+    func adopt(rowID: String, key: String) {
+        guard outbox.adopt(rowID: rowID, key: key) else { return }
+        status[rowID] = outbox.entries[rowID]?.sent == true ? .saved : .queued
+        persist()
+        Task { await flush() }
+    }
+
     /// Records the answer and sends it. A changed answer replaces the earlier one.
-    func set(_ choice: OutcomeChoice, rowID: String, note: String? = nil) {
-        outbox.record(rowID: rowID, choice: choice, note: note)
+    func set(_ choice: OutcomeChoice, rowID: String, key: String? = nil, note: String? = nil) {
+        outbox.record(rowID: rowID, key: key, choice: choice, note: note)
         status[rowID] = .sending
         persist()
         Task { await flush() }

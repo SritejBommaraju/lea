@@ -91,6 +91,8 @@ struct ReportModel: Sendable {
         var fixPlan: FixPlan? = nil
         /// What the person said after trying the fix (report `outcome`).
         var outcome: OutcomeAnswer? = nil
+        /// What the row is about (`kind:ref`), stable when the report is made again.
+        var subjectKey: String? = nil
     }
 
     /// A region nobody looked at (not_inspected) or that could not be judged (insufficient_evidence).
@@ -342,7 +344,8 @@ struct ReportModel: Sendable {
             issueCode: f["issue"] as? String ?? "",
             confidenceWord: f["confidence_word"] as? String,
             fixPlan: FixPlan(json: f["fix_plan"] as? [String: Any]),
-            outcome: OutcomeAnswer(json: f["outcome"] as? [String: Any]))
+            outcome: OutcomeAnswer(json: f["outcome"] as? [String: Any]),
+            subjectKey: Self.subjectKey(f["subject"] as? [String: Any]))
     }
 
     private static func gap(_ g: [String: Any]) -> Gap {
@@ -410,6 +413,12 @@ struct ReportModel: Sendable {
               let hi = (location?["region_max_m"] as? [Any])?.compactMap({ ($0 as? NSNumber)?.floatValue }), hi.count == 3
         else { return nil }
         return simd_distance(SIMD3(lo[0], lo[1], lo[2]), SIMD3(hi[0], hi[1], hi[2])) / 2
+    }
+
+    /// "part:rear_wheel": what a row is about, the same key the gateway keeps outcomes under.
+    static func subjectKey(_ subject: [String: Any]?) -> String? {
+        guard let kind = subject?["kind"] as? String, let ref = subject?["ref"] as? String else { return nil }
+        return "\(kind):\(ref)"
     }
 
     static func sha(_ ref: Any?) -> String? {

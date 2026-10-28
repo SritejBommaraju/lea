@@ -50,6 +50,8 @@ struct ReportView: View {
     @StateObject private var outcomes = OutcomeBoard()
     /// When the scan finished uploading: how long Grain has been looking at it (ReportArrival).
     @State private var waitingSince: Date?
+    /// Bumped when "Fix it with Grain" rebuilt the design: the design's picture is fetched again.
+    @State private var designRevision = 0
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -123,7 +125,7 @@ struct ReportView: View {
             .sheet(isPresented: $showFixWithGrain) {
                 FixWithGrainSheet(scanID: record.scanID, symptom: record.symptom,
                                   context: report.map { CustomerWords.fixContext($0, symptom: record.symptom, readingsSent: meterReadingsSent) } ?? [],
-                                  gateway: gateway)
+                                  gateway: gateway, onBuilt: { designRevision += 1 })
             }
             .sheet(item: $meterContext) { ctx in
                 MeterReadingSheet(context: ctx, scanID: record.scanID,
@@ -164,7 +166,7 @@ struct ReportView: View {
     /// with a gateway to fetch from and send to.
     private var customerContext: CustomerContext? {
         guard let gateway else { return nil }
-        return CustomerContext(scanID: record.scanID, gateway: gateway, outcomes: outcomes) { id in
+        return CustomerContext(scanID: record.scanID, gateway: gateway, outcomes: outcomes, designRevision: designRevision) { id in
             if let step = report?.nextStep, id == nil || step.actionID == id {
                 meterContext = MeterReadingContext(step: step)
             } else {

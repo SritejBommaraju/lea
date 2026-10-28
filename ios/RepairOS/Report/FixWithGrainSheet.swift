@@ -38,13 +38,16 @@ struct FixWithGrainSheet: View {
     /// What Grain is told besides the customer's words, one plain line each (CustomerWords.fixContext).
     let context: [String]
     let gateway: GatewayClient?
+    /// Called when the design was rebuilt and every check passed (its picture has changed).
+    var onBuilt: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var message: String
     @State private var sending = false
     @State private var reply: FixReply?
     @State private var error: String?
 
-    init(scanID: String, symptom: String?, context: [String] = [], gateway: GatewayClient?) {
+    init(scanID: String, symptom: String?, context: [String] = [], gateway: GatewayClient?, onBuilt: @escaping () -> Void = {}) {
+        self.onBuilt = onBuilt
         self.scanID = scanID
         self.context = context
         self.gateway = gateway
@@ -119,7 +122,9 @@ struct FixWithGrainSheet: View {
         error = nil
         defer { sending = false }
         do {
-            reply = try await gateway.fix(scanID: scanID, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+            let answer = try await gateway.fix(scanID: scanID, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+            reply = answer
+            if answer.build == "ok" { onBuilt() }
         } catch {
             self.error = error.localizedDescription
         }

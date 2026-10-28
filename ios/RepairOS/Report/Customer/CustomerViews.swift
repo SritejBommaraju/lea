@@ -7,6 +7,8 @@ struct CustomerContext {
     let scanID: String
     let gateway: GatewayClient?
     let outcomes: OutcomeBoard
+    /// Bumped each time the design is rebuilt, so its picture is fetched again.
+    var designRevision = 0
     /// Opens the meter sheet for the check with this action id (nil: not tied to a check).
     let openMeter: (String?) -> Void
 }
@@ -19,6 +21,8 @@ struct CustomerContext {
 struct DesignPicture: View {
     let scanID: String
     let gateway: GatewayClient?
+    /// Bumped when the design was changed ("Fix it with Grain" rebuilt it): the picture is fetched again.
+    var revision = 0
     @State private var image: UIImage?
 
     var body: some View {
@@ -39,22 +43,12 @@ struct DesignPicture: View {
                 .transition(.opacity)
             }
         }
-        .task(id: scanID) {
-            guard let gateway, image == nil else { return }
-            if let hit = DesignPictureCache.shared.image(for: scanID) { image = hit; return }
+        .task(id: "\(scanID)#\(revision)") {
+            guard let gateway else { return }
             guard let data = try? await gateway.designView(scanID: scanID), let loaded = UIImage(data: data) else { return }
-            DesignPictureCache.shared.store(loaded, for: scanID)
             withAnimation(Motion.fade) { image = loaded }
         }
     }
-}
-
-/// Pictures already fetched in this run of the app (the gateway caches them too).
-final class DesignPictureCache: @unchecked Sendable {
-    static let shared = DesignPictureCache()
-    private let cache = NSCache<NSString, UIImage>()
-    func image(for scan: String) -> UIImage? { cache.object(forKey: scan as NSString) }
-    func store(_ image: UIImage, for scan: String) { cache.setObject(image, forKey: scan as NSString) }
 }
 
 // MARK: - One flagged part: what we saw, what to do, did it work
@@ -83,7 +77,8 @@ struct FixPlanCard: View {
                 .accessibilityAddTraits(.isHeader)
             sawBlock
             fixBlock
-            OutcomeBar(rowID: problem.id, part: CustomerWords.thePart(problem), server: problem.outcome, board: outcomes)
+            OutcomeBar(rowID: problem.id, key: problem.subjectKey, part: CustomerWords.thePart(problem),
+                       server: problem.outcome, board: outcomes)
         }
         .card(padding: 14)
         .sheet(item: $shared) { file in ShareSheet(url: file.url) }
@@ -245,6 +240,8 @@ struct ShareSheet: UIViewControllerRepresentable {
 /// confirmation, and the line under them says whether it is saved, waiting for the network, or refused.
 struct OutcomeBar: View {
     let rowID: String
+    /// What the row is about: an answer saved under an older id of the same part moves to this row.
+    var key: String? = nil
     /// "the rear wheel", for the confirmation and for VoiceOver.
     let part: String
     let server: OutcomeAnswer?
@@ -263,9 +260,10 @@ struct OutcomeBar: View {
             statusLine
         }
         .padding(.top, Spacing.xs)
+        .onAppear { if let key { board.adopt(rowID: rowID, key: key) } }
         .confirmationDialog("Change your answer?", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }),
                             titleVisibility: .visible, presenting: asking) { choice in
-            Button("Change to \u{201C}\(choice.button)\u{201D}") { board.set(choice, rowID: rowID) }
+            Button("Change to \u{201C}\(choice.button)\u{201D}") { board.set(choice, rowID: rowID, key: key) }
             Button("Keep my answer", role: .cancel) {}
         } message: { choice in
             Text("You said \u{201C}\((current ?? choice).button)\u{201D}. Change it to \u{201C}\(choice.button)\u{201D}?")
@@ -309,7 +307,7 @@ struct OutcomeBar: View {
     }
 
     private func tap(_ choice: OutcomeChoice) {
-        guard let existing = current else { board.set(choice, rowID: rowID); return }
+        guard let existing = current else { board.set(choice, rowID: rowID, key: key); return }
         if existing != choice { asking = choice }
     }
 }

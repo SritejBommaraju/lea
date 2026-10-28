@@ -203,6 +203,68 @@ struct CustomerReportTests {
         reopened.stop()
     }
 
+    @Test func anAnswerFollowsItsPartWhenTheReportIsMadeAgain() {
+        var box = OutcomeOutbox()
+        box.record(rowID: "g_wheel_old", key: "part:rear_wheel", choice: .fixed, at: Self.t0)
+        #expect(!box.adopt(rowID: "g_wheel_old", key: "part:rear_wheel"))   // same id: nothing moves
+        #expect(!box.adopt(rowID: "g_other", key: "part:cover"))             // another part: nothing moves
+        #expect(box.adopt(rowID: "g_wheel_new", key: "part:rear_wheel"))
+        #expect(box.entries["g_wheel_old"] == nil && box.entries["g_wheel_new"]?.choice == .fixed)
+        #expect(box.unsent.map(\.rowID) == ["g_wheel_new"])   // it is sent under the row the gateway has now
+        // a newer answer for the same part under a new id replaces the older one
+        box.record(rowID: "g_wheel_3", key: "part:rear_wheel", choice: .notFixed, at: Self.t0.addingTimeInterval(9))
+        #expect(box.entries.count == 1 && box.entries["g_wheel_3"]?.choice == .notFixed)
+        // an outbox written before keys existed still reads
+        let old = try? JSON.decoder.decode(OutcomeOutbox.self, from: Data(
+            #"{"entries":{"r":{"rowID":"r","choice":"fixed","at":"2027-01-15T08:00:00Z","sent":false}}}"#.utf8))
+        #expect(old?.entries["r"]?.key == nil)
+    }
+
+    @MainActor
+    @Test func aRowThatMovedShowsTheAnswerGivenBeforeItMoved() async throws {
+        let board = OutcomeBoard()
+        board.configure(scanID: "scan_x", directory: nil, gateway: nil)
+        board.set(.fixed, rowID: "old", key: "part:cover")
+        board.adopt(rowID: "new", key: "part:cover")
+        #expect(board.answer(rowID: "new", server: nil) == .fixed && board.answer(rowID: "old", server: nil) == nil)
+        board.stop()
+    }
+
+    @Test func everyFlaggedRowKeepsItsFixNotOnlyTheTopThree() throws {
+        let plan: [String: Any] = ["action": "reseat", "summary": "Press it down."]
+        let rows = (1...4).map { i -> [String: Any] in
+            var r = Self.row("r\(i)", "part\(i)", "loose")
+            r["fix_plan"] = plan
+            return r
+        }
+        let r = Self.report(rows, top: ["r1", "r2", "r3"])
+        #expect(r.otherIssues.count == 1)
+        #expect((r.mostLikely + r.otherIssues).allSatisfy { $0.fixPlan?.action == .reseat })
+        #expect(r.otherIssues[0].subjectKey == "part:part4")
+    }
+
+    @Test func aSuspectNobodyMeasuredIsNeverSaidAsAFact() {
+        let open = Self.report([Self.row("a", "wire", "open", confidence: "medium")])
+        #expect(CustomerWords.verdictSentence(open) == "The wire may have a broken connection. Everything else matches the design.")
+        let unsure = Self.report([Self.row("a", "rear_wheel", "missing", confidence: "low")])
+        #expect(CustomerWords.verdictSentence(unsure) == "The rear wheel may be missing. Everything else matches the design.")
+        var proved = Self.row("a", "wire", "open")
+        proved["proof"] = ["status": "confirmed_by_meter", "reading_id": "rd"]
+        #expect(CustomerWords.verdictSentence(Self.report([proved])) == "The wire has a broken connection. Everything else matches the design.")
+    }
+
+    @Test func aCheckThatCouldNotBeSettledIsNotCalledAMatch() {
+        var json: [String: Any] = ["verdict": "potential_issues", "design": ["engine": "grain", "project": "demo"],
+                                   "findings": [Self.row("a", "rear_wheel", "missing")], "most_likely": ["a"],
+                                   "insufficient_evidence": [["finding_id": "i", "part_class": "net", "reason": "no expected value",
+                                                              "subject": ["kind": "net", "ref": "VIN"]]]]
+        #expect(CustomerWords.verdictSentence(ReportModel(json: json)) == "The rear wheel is missing. 1 check could not be completed.")
+        json["verdict"] = "no_problems_seen"
+        json["findings"] = [[String: Any]]()
+        json["most_likely"] = [String]()
+        #expect(CustomerWords.verdictSentence(ReportModel(json: json)) == "Nothing looked wrong, but 1 check could not be completed.")
+    }
+
     @Test func theChoicesAreTheContractsStatesInWords() {
         #expect(OutcomeChoice.allCases.map(\.rawValue) == ["fixed", "not_fixed", "not_tried"])
         #expect(OutcomeChoice.allCases.map(\.button) == ["Yes", "No", "Haven't tried"])

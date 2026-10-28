@@ -123,9 +123,27 @@ enum CustomerWords {
         }
     }
 
-    /// "The rear wheel is missing"
+    /// "The rear wheel is missing". An electrical suspect nobody measured, or any row the design engine is unsure of,
+    /// is "may": only a fact the scan or a meter showed is said flat.
     static func statement(_ p: ReportModel.Problem) -> String {
-        "\(thePart(p)) \(predicate(p.issueCode))".capitalizedFirst
+        "\(thePart(p)) \(sentencePredicate(p))".capitalizedFirst
+    }
+
+    static let electrical: Set<String> = ["open", "short", "out_of_range", "wrong_pin"]
+
+    static func sentencePredicate(_ p: ReportModel.Problem) -> String {
+        let plain = predicate(p.issueCode)
+        guard !p.proved else { return plain }
+        if electrical.contains(p.issueCode) {
+            switch p.issueCode {
+            case "open": return "may have a broken connection"
+            case "out_of_range": return "may be reading out of range"
+            case "wrong_pin": return "may be on the wrong pin"
+            default: return plain   // "may be shorted" already hedges
+            }
+        }
+        if p.confidenceWord == "low", plain.hasPrefix("is ") { return "may be " + plain.dropFirst(3) }
+        return plain
     }
 
     // MARK: The verdict
@@ -135,7 +153,9 @@ enum CustomerWords {
     /// when there is no plain way to say it (setup rows, not enough evidence).
     static func verdictSentence(_ r: ReportModel) -> String? {
         guard r.design != nil else { return nil }
-        let unseen = r.notInspected.count + r.insufficient.count
+        let unseen = r.notInspected.count      // parts the scan could not see from outside
+        let unsettled = r.insufficient.count   // checks the design engine could not decide
+        let open = unsettled == 1 ? "1 check could not be completed." : "\(unsettled) checks could not be completed."
         switch r.verdict {
         case .potentialIssues:
             let top = r.mostLikely
@@ -152,6 +172,8 @@ enum CustomerWords {
             if !r.otherIssues.isEmpty {
                 let n = r.otherIssues.count
                 lead += " " + (n == 1 ? "1 more thing is worth a look." : "\(n) more things are worth a look.")
+            } else if unsettled > 0 {
+                lead += " " + open   // never "everything else matches" while a check is undecided
             } else if unseen > 0 {
                 lead += " Everything else we could see matches the design."
             } else {
@@ -160,6 +182,7 @@ enum CustomerWords {
             return lead
         case .looksGood, .noProblemsSeen:
             guard r.setup.isEmpty else { return nil }
+            if unsettled > 0 { return "Nothing looked wrong, but " + lowerFirst(open) }
             var s = unseen > 0 ? "Everything we could see matches the design." : "Everything matches the design."
             if unseen > 0 { s += unseen == 1 ? " 1 part could not be seen from outside." : " \(unseen) parts could not be seen from outside." }
             return s

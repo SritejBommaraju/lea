@@ -160,7 +160,8 @@ struct ReportStageView: View {
             .ignoresSafeArea(edges: .top)
             .navigationDestination(for: String.self) { id in
                 if let p = all.first(where: { $0.id == id }) {
-                    ProblemDetailView(problems: [p], stillsDir: sessionDir?.appending(path: "stills"), numbers: markerNumbers)
+                    ProblemDetailView(problems: [p], stillsDir: sessionDir?.appending(path: "stills"), numbers: markerNumbers,
+                                      customer: customer)
                 }
             }
         }
@@ -219,7 +220,7 @@ struct ReportStageView: View {
             NavigationStack {
                 ProblemDetailView(problems: list, index: list.firstIndex { $0.id == p.id } ?? 0,
                                   stillsDir: sessionDir?.appending(path: "stills"), numbers: markerNumbers,
-                                  onDone: { sheet = nil })
+                                  onDone: { sheet = nil }, customer: customer)
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -562,8 +563,8 @@ struct ReportStageView: View {
                 .offset(y: phase >= 2 || reduceMotion ? 0 : 24)
             // Safety is never delayed, faded or moved (M13).
             if !report.safety.isEmpty { StageSafetyCard(notes: report.safety) }
-            if let customer, report.design != nil, !report.mostLikely.isEmpty {
-                DesignPicture(scanID: customer.scanID, gateway: customer.gateway)
+            if let customer, report.design != nil {
+                DesignPicture(scanID: customer.scanID, gateway: customer.gateway, revision: customer.designRevision)
             }
             VStack(alignment: .leading, spacing: Spacing.xl) {
                 if !report.mostLikely.isEmpty {
