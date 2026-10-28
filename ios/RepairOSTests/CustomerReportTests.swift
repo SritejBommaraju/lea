@@ -318,6 +318,7 @@ struct CustomerReportTests {
         #expect(ExpectedReading(continuity: true).words == "the meter should beep (a connection)")
         #expect(ExpectedReading(json: ["source": "design_engine"]) == nil)
         #expect(ExpectedReading.number(0.1 + 0.2) == "0.3" && ExpectedReading.number(5) == "5")
+        #expect(ExpectedReading(voltsMin: 0.0001, voltsMax: 0.0004).words == "between 0.0001 and 0.0004 V")
     }
 
     @Test func theVerdictIsPassFailOrNeitherAndNeverGuessed() {
@@ -345,7 +346,7 @@ struct CustomerReportTests {
         #expect(A.state(step: .upload, uploaded: 0, pending: 0, waited: 0, error: nil).title == "Sending your scan")
         let looking = A.state(step: .judge, uploaded: 6, pending: 0, waited: 30, error: nil)
         #expect(looking.phase == .looking && looking.title == "Uploaded. Grain is looking at it.")
-        #expect(looking.detail?.contains("leave this screen") == true)
+        #expect(looking.detail?.contains("Keep this screen open") == true)
         let slow = A.state(step: .judge, uploaded: 6, pending: 0, waited: 6 * 60 + 10, error: nil)
         #expect(slow.phase == .slow && slow.title == "Taking longer than usual" && slow.detail?.contains("6 minutes") == true)
         #expect(A.state(step: .judge, uploaded: 6, pending: 0, waited: A.slowAfter - 1, error: nil).phase == .looking)

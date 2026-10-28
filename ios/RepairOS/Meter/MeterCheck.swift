@@ -40,10 +40,10 @@ struct ExpectedReading: Equatable, Sendable {
         return nil
     }
 
-    /// 4.75 -> "4.75", 5.0 -> "5", 0.30000000000000004 -> "0.3".
+    /// 4.75 -> "4.75", 5.0 -> "5", 0.30000000000000004 -> "0.3", 0.0001 -> "0.0001": six significant digits, so a
+    /// small target is never shown as zero.
     static func number(_ x: Double) -> String {
-        let rounded = (x * 1000).rounded() / 1000
-        return rounded == rounded.rounded() ? String(Int(rounded)) : String(rounded)
+        String(format: "%.6g", x)
     }
 }
 

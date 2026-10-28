@@ -58,7 +58,7 @@ struct ReportArrival: Equatable {
             return ReportArrival(phase: .sending, title: total > 0 ? "Sending your scan: \(min(uploaded + 1, total)) of \(total)" : "Sending your scan",
                                  detail: nil)
         }
-        let leave = "You can leave this screen. The report appears in Scans when it is ready."
+        let leave = "Keep this screen open until it is ready."
         if waited >= slowAfter {
             let minutes = Int(waited / 60)
             return ReportArrival(phase: .slow, title: "Taking longer than usual",

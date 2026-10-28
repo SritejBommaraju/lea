@@ -119,7 +119,11 @@ final class OutcomeBoard: ObservableObject {
     func set(_ choice: OutcomeChoice, rowID: String, key: String? = nil, note: String? = nil) {
         outbox.record(rowID: rowID, key: key, choice: choice, note: note)
         status[rowID] = .sending
-        persist()
+        guard persist() else {
+            // Not on the phone: never say it will be sent later.
+            status[rowID] = .failed("it could not be saved on this phone (is the storage full?)")
+            return
+        }
         Task { await flush() }
     }
 
@@ -167,8 +171,16 @@ final class OutcomeBoard: ObservableObject {
 
     func stop() { retry?.cancel() }
 
-    private func persist() {
-        guard let file, let data = try? JSON.encoder.encode(outbox) else { return }
-        try? data.write(to: file, options: .atomic)
+    /// Writes the outbox beside the session. false when it could not be written; true also when there is no folder
+    /// (a demo replay keeps answers in memory only).
+    @discardableResult
+    private func persist() -> Bool {
+        guard let file else { return true }
+        do {
+            try JSON.encoder.encode(outbox).write(to: file, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 }
