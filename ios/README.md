@@ -56,7 +56,7 @@ picture of every screen:
   accessibility audit also runs on every screen (contrast, tap target size, clipped
   text, missing labels) and its findings are saved as `<screen>-...-audit.txt`; the audit never fails the job.
 - The pictures are the `screens` artifact (14 days): `gh run download <run id> -n screens`. Names are
-  `<screen>-<device>-<appearance>-<textsize>.png`. `raw/` holds the same attachments exported from each `.xcresult`.
+  `<screen>-<device>-<appearance>-<textsize>.png`.
 - To open one screen by hand on a Mac: `xcrun simctl launch booted com.rohankilaru.repairos -screens settings`.
 - ARKit, the camera, Bluetooth and the microphone do not run on the simulator, so the live scanner, the Show on object
   view and a meter reading from a real meter are not in these pictures. The capture screens show the overlay only.

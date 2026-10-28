@@ -159,11 +159,6 @@ jobs:
             run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large "$AUDIT" ) &
           wait
           for f in "$RES"/*.log; do echo "::group::$(basename "$f")"; grep -E "Test Case .*(passed|failed)|error:|Executed|TEST (SUCCEEDED|FAILED)" "$f" | tail -40; echo "::endgroup::"; done
-          # Backup copy of the attachments straight from the result bundles (Xcode 16 and later).
-          for r in "$RES"/*.xcresult; do
-            n=$(basename "$r" .xcresult); mkdir -p "$OUT/raw/$n"
-            xcrun xcresulttool export attachments --path "$r" --output-path "$OUT/raw/$n" || echo "xcresulttool export attachments failed for $n"
-          done
           echo "Screenshots: $(ls "$OUT"/*.png | wc -l)"
           xcrun simctl shutdown all || true
           ls "$RES"/*.failed >/dev/null 2>&1 && { echo "::error::some screens failed, see the logs above"; exit 1; }
