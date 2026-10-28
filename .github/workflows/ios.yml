@@ -140,11 +140,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       - name: Take the screenshots
+        timeout-minutes: 28
         env:
           AUDIT: ${{ inputs.audit && '1' || '0' }}
         run: |
           OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
           mkdir -p "$OUT" "$RES"
+          # Keep this step's own output next to the pictures, so a slow run can be read afterwards.
+          exec > >(tee "$RES/job.log") 2>&1
           # udid device-label appearance text-size-name simctl-size audit
           run_config() {
             local udid="$1" label="$2" appearance="$3" text="$4" size="$5" audit="$6"
@@ -178,11 +181,25 @@ jobs:
             run_config "$SMALL" "$SMALL_LABEL" dark default large 0
             run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large "$AUDIT" ) &
           wait
+          echo "[$(date +%T)] all configurations done"
+
+      - name: Check the pictures
+        if: always()
+        timeout-minutes: 3
+        run: |
+          OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
           for f in "$RES"/*.log; do echo "::group::$(basename "$f")"; grep -E "Test Case .*(passed|failed)|error:|Executed|TEST (SUCCEEDED|FAILED)" "$f" | tail -40; echo "::endgroup::"; done
-          echo "Screenshots: $(ls "$OUT"/*.png | wc -l)"
-          xcrun simctl shutdown all || true
-          ls "$RES"/*.failed >/dev/null 2>&1 && { echo "::error::some screens failed, see the logs above"; exit 1; }
+          N=$(ls "$OUT"/*.png 2>/dev/null | wc -l | tr -d ' ')
+          echo "Screenshots: $N (14 screens, 6 configurations: 84)"
+          ls "$RES"/*.failed >/dev/null 2>&1 && { echo "::error::a screens run failed, see the logs above"; exit 1; }
+          [ "$N" -ge 84 ] || { echo "::error::only $N of 84 screenshots"; exit 1; }
           exit 0
+
+      - name: Shut the simulators down
+        if: always()
+        timeout-minutes: 3
+        continue-on-error: true
+        run: xcrun simctl shutdown all
 
       - name: Keep the screenshots
         if: always()
