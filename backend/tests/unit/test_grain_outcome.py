@@ -366,3 +366,22 @@ def test_an_answer_another_request_already_sent_is_reported_sent_not_waiting(tmp
         # a flush that finds the saved answer already sent says so
         from repairos.grain import service as s
         assert s.unsent_outcomes(tmp_path / "sessions", report["session_id"], scan_id) == {}
+
+
+def test_two_checks_on_one_net_are_two_rows_and_dirt_is_not_wear(tmp_path):
+    a = {"finding_id": "g_a", "subject": {"kind": "net", "ref": "VIN", "pins": ["J1.1", "J1.2"]},
+         "proof": {"status": "confirmed_by_meter", "reading_id": "rd_1"}}
+    b = {"finding_id": "g_b", "subject": {"kind": "net", "ref": "VIN", "pins": ["J1.1", "J1.2"]},
+         "proof": {"status": "confirmed_by_meter", "reading_id": "rd_2"}}
+    assert service.row_key(a) != service.row_key(b)
+    assert service.row_key({"subject": {"kind": "part", "ref": "cover"}}) == "part:cover"
+    # dirt, a half-seated part and electrical faults are not states the design engine takes as a person's label
+    t = FilesRecorder(files_answers())
+    client = GrainClient(BASE, "k", transport=t)
+    GrainClient.record(tmp_path / "sess_x" / "grain", "scan", "scan_x", {"id": "scan_g1"})
+    for issue in ("dirty", "partly", "open", "out_of_range", "wrong_pin"):
+        row = {"finding_id": "g_c", "subject": {"kind": "part", "ref": "cover"}, "issue": issue}
+        assert service.forward_outcome(client, root=tmp_path, session={"product": "demo_product"},
+                                       scan={"scan_id": "scan_x", "session_id": "sess_x"},
+                                       entry=service.outcome_entry(row, "fixed", None)) == "not_applicable"
+    assert t.requests == []

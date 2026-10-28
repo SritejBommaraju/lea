@@ -214,17 +214,21 @@ def chat_result(answer: Mapping[str, Any]) -> dict:
 # ------------------------------------------------------------------------------------------ what the person answered
 OUTCOMES = ("fixed", "not_fixed", "not_tried")
 ROW_BUCKETS = ("findings", "not_inspected", "insufficient_evidence")
-# The state the person confirms about a part, in the words the design engine takes, from the report row's issue.
+# The state the person confirms about a part, in the words the design engine takes, from the report row's issue. Only
+# issues that say the same thing are mapped; dirt, a half-seated part or an electrical fault is not "worn" or "damaged".
 OUTCOME_STATE = {"missing": "missing", "shifted": "shifted", "damaged": "damaged", "broken": "damaged",
-                 "partly": "damaged", "worn": "worn", "loose": "loose", "open": "damaged", "out_of_range": "damaged",
-                 "wrong_pin": "damaged", "dirty": "worn", "none": "ok"}
+                 "worn": "worn", "loose": "loose"}
 VIEW_TTL_S = 6 * 3600
 
 
 def row_key(row: Mapping[str, Any]) -> str:
     """What a row is about, stable when the report is made again (the finding id is a hash of what it says)."""
     s = row.get("subject") or {}
-    return f"{s.get('kind')}:{s.get('ref')}"
+    key = f"{s.get('kind')}:{s.get('ref')}"
+    if s.get("pins"):
+        key += "@" + "|".join(str(p) for p in s["pins"])   # two checks on one net are two rows
+    reading = (row.get("proof") or {}).get("reading_id")
+    return key + (f"#{reading}" if reading else "")
 
 
 def find_row(report: Mapping[str, Any], row_id: str) -> dict | None:
