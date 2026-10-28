@@ -59,8 +59,25 @@ final class ScreenshotTests: XCTestCase {
             shoot(app, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: audit)
             taken.append(screen)
         }
-        XCTAssertEqual(taken.count, 14, "screens taken: \(taken)")
+        app.terminate()
+
+        // A screen the walk went past while a slow accessibility query was answering is taken again on its own: a fresh
+        // launch straight to that screen.
+        for screen in Self.allScreens where !taken.contains(screen) {
+            let single = XCUIApplication()
+            single.launchArguments = ["-screens", screen]
+            single.launch()
+            Thread.sleep(forTimeInterval: settle[screen] ?? 2.5)
+            shoot(single, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: false)
+            taken.append(screen)
+            single.terminate()
+        }
+        XCTAssertEqual(Set(taken), Set(Self.allScreens), "screens taken: \(taken)")
     }
+
+    /// The screens `-screens walk` shows (ScreensGallery.walkOrder).
+    private static let allScreens = ["consent", "home-empty", "home-scans", "settings", "pairing", "product-code", "product-pairing",
+                                     "report", "meter", "capture", "capture-locked", "camera-permission", "progress-error", "failures"]
 
     // MARK: -
 

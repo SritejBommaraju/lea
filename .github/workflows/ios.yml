@@ -146,8 +146,18 @@ jobs:
             xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 || true
             xcrun simctl ui "$udid" appearance "$appearance" || true
             xcrun simctl ui "$udid" content_size "$size" || true
-            rm -rf "$RES/$name.xcresult"
-            env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text"                 TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit"               xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens                 -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd"                 -resultBundlePath "$RES/$name.xcresult"                 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 || { echo "tests failed in $name"; touch "$RES/$name.failed"; }
+            # A test runner that stalls while starting (seen on the first run after a cold boot) is stopped after 8 minutes
+            # and tried once more; a normal run takes 2 to 4 minutes.
+            for attempt in 1 2; do
+              rm -rf "$RES/$name.xcresult"
+              env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text"                   TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit"                 xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens                   -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd"                   -resultBundlePath "$RES/$name.xcresult"                   CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 &
+              local pid=$!
+              local waited=0
+              while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 480 ]; do sleep 5; waited=$((waited + 5)); done
+              if kill -0 "$pid" 2>/dev/null; then echo "$name: stopped after ${waited}s (attempt $attempt)"; pkill -P "$pid" || true; kill "$pid" || true; fi
+              if wait "$pid"; then rm -f "$RES/$name.failed"; break; else touch "$RES/$name.failed"; echo "tests failed in $name (attempt $attempt)"; fi
+              mv "$RES/$name.log" "$RES/$name.attempt$attempt.log" 2>/dev/null || true
+            done
             echo "[$(date +%T)] done $name"
           }
           # The two phones run side by side; each walks its own appearances one after the other.
