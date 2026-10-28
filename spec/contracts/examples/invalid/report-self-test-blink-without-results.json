@@ -1,0 +1,1 @@
+{"schema": "report", "why": "a blink code says how many long blinks mean ok, fail and unknown", "base": "report.design_engine_fix_plan.json", "patch": {"self_test": {"blink": {"long_blinks": null}}}}

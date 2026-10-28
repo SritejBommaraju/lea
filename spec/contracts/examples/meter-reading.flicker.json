@@ -1,0 +1,14 @@
+{
+  "reading_id": "rd_flicker",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "power_state": "on",
+  "recorded_at": "2026-10-28T12:05:03Z",
+  "kind": "flicker",
+  "part": "LED1",
+  "value": {
+    "hz": 120,
+    "depth": 0.35
+  },
+  "source": "phone"
+}

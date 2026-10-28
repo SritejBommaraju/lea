@@ -49,7 +49,7 @@ final class MeterLink: NSObject, ObservableObject {
 
     /// Scan for the meter, connect and start it in the mode that answers `kind`. If it is already connected, only the
     /// mode changes.
-    func start(kind: MeterReadingKind) {
+    func start(kind: MultimeterKind) {
         wantedMode = MeterMode(kind: kind)
         stopping = false
         if phase == .ready || phase == .measuring {

@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "a self-test reading was produced by the product, so its source is selftest",
+  "base": "meter-reading.selftest.json", "patch": { "source": "typed" } }

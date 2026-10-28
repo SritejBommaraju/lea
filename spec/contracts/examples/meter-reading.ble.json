@@ -11,7 +11,7 @@
   "condition": "idle",
   "source": "ble",
   "meter": {
-    "model": "Pokit Meter",
+    "model": "Bluetooth multimeter",
     "firmware": "1.0.0",
     "mode": "dc_voltage",
     "range": "auto",

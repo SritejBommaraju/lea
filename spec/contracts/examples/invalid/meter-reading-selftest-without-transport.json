@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "a self-test reading says how the app received it",
+  "base": "meter-reading.selftest.json", "patch": { "value": { "transport": null } } }

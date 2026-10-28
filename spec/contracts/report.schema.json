@@ -202,7 +202,12 @@
           "properties": {
             "part_refs": { "type": "array", "items": { "type": "string" } },
             "net": { "type": "string", "minLength": 1, "description": "Net name from the product's design." },
-            "pins": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "REF.PIN ids to probe." }
+            "pins": { "type": "array", "items": { "type": "string" }, "minItems": 2, "maxItems": 2, "description": "REF.PIN ids to probe." },
+            "instrument": {
+              "type": "string",
+              "enum": ["selftest_ble", "selftest_led", "magnetometer", "audio", "flicker", "light", "led", "typed"],
+              "description": "Which check on the phone settles this step, so the app opens that section first: the product's self-test over Bluetooth or through its blinking LED, one of the phone's own sensors, or a value the person types from their own meter. Absent: the app offers every instrument the product supports."
+            }
           }
         },
         "power_state": { "type": "string", "enum": ["off", "on", "n/a"], "description": "off for continuity and resistance; on for voltage (S4)." },
@@ -486,6 +491,9 @@
         "searched_at": { "type": "string", "format": "date-time" }
       }
     },
+    "self_test": {
+      "$ref": "#/$defs/self_test"
+    },
     "user_lead": {
       "type": "object",
       "additionalProperties": false,
@@ -691,6 +699,87 @@
     }
   ],
   "$defs": {
+    "self_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["transports", "checks"],
+      "description": "How to ask the product to check itself, copied from the design engine's electrical plan so the app never hard-codes a UUID or a timing. Absent when the product has no self-test. A check's `index` is the place the product's own firmware reports it under.",
+      "properties": {
+        "transports": {
+          "type": "array", "minItems": 1, "uniqueItems": true,
+          "items": { "type": "string", "enum": ["ble", "led"] },
+          "description": "The ways the product reports its self-test: `ble` over Bluetooth LE, `led` as blinks of its status LED."
+        },
+        "checks": {
+          "type": "array", "minItems": 1,
+          "description": "The checks the product runs, in the order of the blink code.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["index", "kind", "net"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "kind": { "type": "string", "enum": ["rail", "output"], "description": "rail: a voltage the product measures on itself; output: a pin it drives." },
+              "net": { "type": "string", "minLength": 1, "description": "Net name from the product's design." },
+              "expected": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "What a good result is. A rail has a volts range; an output has the state it should be in.",
+                "properties": {
+                  "volts_min": { "type": "number" },
+                  "volts_max": { "type": "number" },
+                  "state": { "type": "string", "enum": ["on", "off"] }
+                }
+              }
+            }
+          }
+        },
+        "ble": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["service", "result", "control"],
+          "description": "The Bluetooth service the product advertises and the two characteristics: write 0x01 to `control` to start the self-test, read or subscribe to `result` for the answer.",
+          "properties": {
+            "service": { "type": "string", "minLength": 1 },
+            "result": { "type": "string", "minLength": 1 },
+            "control": { "type": "string", "minLength": 1 },
+            "name_prefix": { "type": "string", "description": "The start of the name the product advertises, to tell it from other devices nearby." }
+          }
+        },
+        "blink": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["timings", "long_blinks"],
+          "description": "The blink code of the product's status LED: after the preamble, each check is its result's number of long blinks (`long_blinks`), and the code ends with the end flashes.",
+          "properties": {
+            "timings": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["flash_on_ms", "flash_off_ms", "long_on_ms", "long_off_ms", "gap_ms", "preamble_flashes", "end_flashes"],
+              "description": "Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on, `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then `end_flashes` short flashes.",
+              "properties": {
+                "flash_on_ms": { "type": "integer", "minimum": 1 },
+                "flash_off_ms": { "type": "integer", "minimum": 1 },
+                "long_on_ms": { "type": "integer", "minimum": 1 },
+                "long_off_ms": { "type": "integer", "minimum": 1 },
+                "gap_ms": { "type": "integer", "minimum": 1 },
+                "preamble_flashes": { "type": "integer", "minimum": 1 },
+                "end_flashes": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "long_blinks": {
+              "type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true,
+              "items": { "type": "integer", "minimum": 1 },
+              "description": "How many long blinks mean ok, fail and unknown, in that order. All three differ, so a result is never ambiguous."
+            }
+          }
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "transports": { "contains": { "const": "ble" } } }, "required": ["transports"] }, "then": { "required": ["ble"] } },
+        { "if": { "properties": { "transports": { "contains": { "const": "led" } } }, "required": ["transports"] }, "then": { "required": ["blink"] } }
+      ]
+    },
     "subject": {
       "type": "object",
       "additionalProperties": false,

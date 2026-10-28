@@ -1,0 +1,2 @@
+{ "schema": "report", "why": "a self-test offered as blinks carries the timings to decode them with",
+  "base": "report.design_engine_fix_plan.json", "patch": { "self_test": { "transports": ["led"], "ble": null, "blink": { "timings": null } } } }

@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "iOS has no lux sensor: light is on, off or dim, never a lux number",
+  "base": "meter-reading.light.json", "patch": { "value": { "state": "dim", "lux": 40 } } }

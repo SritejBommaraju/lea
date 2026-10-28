@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "a camera reading of an LED is a phone measurement, not something typed",
+  "base": "meter-reading.led.json", "patch": { "source": "typed" } }
