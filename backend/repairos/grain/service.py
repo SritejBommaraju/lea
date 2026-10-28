@@ -7,14 +7,17 @@ tested without a network.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import time
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from repairos.grain.bundle import zip_session
-from repairos.grain.client import GRAIN_DIR, GrainClient
+from repairos.grain.client import GRAIN_DIR, GrainClient, GrainError
 from repairos.report import from_grain
 
 MAX_FIELD = 400   # characters of any one free-text field put in a message to the design engine
@@ -79,7 +82,8 @@ def _flagged(call: Mapping[str, Any]) -> list[str]:
 
 def build_report(client: GrainClient, *, project: str, scan: Mapping[str, Any], call: dict, readings: list[dict],
                  stills: int, record_to: Path, now: datetime | None = None) -> dict:
-    """Plan, BOM rows for the parts to buy and part-file URLs for the parts to remake, then the report."""
+    """Plan and BOM rows for the parts to buy, then the report. A part to remake carries no address: the phone gets
+    its file from the gateway (GET /v1/scans/{id}/fixes/{row}/file)."""
     scan_id = scan["scan_id"]
     plan = client.plan(project, _flagged(call) or None, scan_id=scan_id, record_to=record_to)
     fixes = from_grain.fix_rows(call)
@@ -89,10 +93,8 @@ def build_report(client: GrainClient, *, project: str, scan: Mapping[str, Any], 
             row = client.bom_row(project, f["part"], scan_id=scan_id, record_to=record_to)
             if row:
                 bom_rows[f["part"]] = row
-    part_urls = {f["part"]: client.part_file_url(project, f["part"]) for f in fixes
-                 if str(f.get("action")).lower() == "remake"}
     return from_grain.build(scan=scan, project=project, call=call, plan=plan, readings=readings, bom_rows=bom_rows,
-                            part_urls=part_urls, stills=stills, now=now)
+                            stills=stills, now=now)
 
 
 def judge_scan(client: GrainClient, *, root: Path, session: Mapping[str, Any], scan: Mapping[str, Any],
@@ -203,3 +205,173 @@ def chat_result(answer: Mapping[str, Any]) -> dict:
     return {"reply": reply, "finished": bool(answer.get("finished")), "waiting": bool(answer.get("waiting")),
             "errors": [str(e) for e in answer.get("errors") or []],
             "build": "none" if not isinstance(build, Mapping) else "ok" if build.get("ok") else "failed"}
+
+
+# ------------------------------------------------------------------------------------------ what the person answered
+OUTCOMES = ("fixed", "not_fixed", "not_tried")
+ROW_BUCKETS = ("findings", "not_inspected", "insufficient_evidence")
+# The state the person confirms about a part, in the words the design engine takes, from the report row's issue.
+OUTCOME_STATE = {"missing": "missing", "shifted": "shifted", "damaged": "damaged", "broken": "damaged",
+                 "partly": "damaged", "worn": "worn", "loose": "loose", "open": "damaged", "out_of_range": "damaged",
+                 "wrong_pin": "damaged", "dirty": "worn", "none": "ok"}
+VIEW_TTL_S = 6 * 3600
+
+
+def row_key(row: Mapping[str, Any]) -> str:
+    """What a row is about, stable when the report is made again (the finding id is a hash of what it says)."""
+    s = row.get("subject") or {}
+    return f"{s.get('kind')}:{s.get('ref')}"
+
+
+def find_row(report: Mapping[str, Any], row_id: str) -> dict | None:
+    for bucket in ROW_BUCKETS:
+        for row in report.get(bucket) or []:
+            if row.get("finding_id") == row_id:
+                return row
+    return None
+
+
+def outcomes_path(root: Path, session_id: str) -> Path:
+    return Path(root) / session_id / "outcomes.json"
+
+
+def _read_outcomes(root: Path, session_id: str) -> dict:
+    try:
+        data = json.loads(outcomes_path(root, session_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_outcomes(root: Path, session_id: str, data: dict) -> None:
+    path = outcomes_path(root, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def load_outcomes(root: Path, session_id: str, scan_id: str) -> dict[str, dict]:
+    """{row key: saved answer} for one scan. Missing or unreadable file: none."""
+    got = _read_outcomes(root, session_id).get(scan_id)
+    return dict(got) if isinstance(got, dict) else {}
+
+
+def save_outcome(root: Path, session_id: str, scan_id: str, row: Mapping[str, Any], outcome: dict) -> None:
+    """Keep the person's answer for the row (a newer answer replaces the older one), atomically."""
+    data = _read_outcomes(root, session_id)
+    data.setdefault(scan_id, {})[row_key(row)] = outcome
+    _write_outcomes(root, session_id, data)
+
+
+def mark_sent(root: Path, session_id: str, scan_id: str, key: str) -> None:
+    data = _read_outcomes(root, session_id)
+    try:
+        data[scan_id][key]["sent"] = True
+    except (KeyError, TypeError):
+        return
+    _write_outcomes(root, session_id, data)
+
+
+def outcome_view(entry: Mapping[str, Any]) -> dict:
+    """The contract's `finding.outcome` of a saved answer (the sending state stays in the file)."""
+    out = {k: entry[k] for k in ("state", "recorded_at", "confirmed_by") if k in entry}
+    if entry.get("note"):
+        out["note"] = entry["note"]
+    return out
+
+
+def with_outcomes(report: dict, outcomes: Mapping[str, Mapping[str, Any]]) -> dict:
+    """The report with each row's saved answer as `outcome`. The stored report is never changed."""
+    if not outcomes:
+        return report
+    out = dict(report)
+    for bucket in ROW_BUCKETS:
+        rows = []
+        for row in report.get(bucket) or []:
+            got = outcomes.get(row_key(row))
+            rows.append({**row, "outcome": outcome_view(got)} if got else row)
+        out[bucket] = rows
+    return out
+
+
+def outcome_entry(row: Mapping[str, Any], outcome: str, note: str | None, now: datetime | None = None) -> dict:
+    """What is saved for one answer: the contract fields, plus what was flagged and whether it reached the design engine."""
+    entry: dict[str, Any] = {"state": outcome,
+                             "recorded_at": (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                             "confirmed_by": "person", "row_id": row["finding_id"], "part": str(row["subject"]["ref"]),
+                             "flagged": row.get("issue"), "sent": False}
+    if note and note.strip():
+        entry["note"] = note.strip()[:500]
+    return entry
+
+
+def outcome_note(entry: Mapping[str, Any]) -> str:
+    """The note sent with the outcome: the answer in words first, then what the person wrote."""
+    said = {"fixed": "The person tried the suggested fix and it fixed the problem.",
+            "not_fixed": "The person tried the suggested fix and it did not fix the problem."}[entry["state"]]
+    return said + (f" {entry['note']}" if entry.get("note") else "")
+
+
+def forward_outcome(client: GrainClient, *, root: Path, session: Mapping[str, Any], scan: Mapping[str, Any],
+                    entry: Mapping[str, Any]) -> str:
+    """Send one saved answer to the design engine. Returns "sent", "not_applicable" (not_tried says nothing about the
+    part), or "waiting" (the scan was never uploaded, or the design is unknown: it goes when it can). A design engine
+    error propagates; the caller keeps the answer saved and tries again later."""
+    if entry["state"] == "not_tried":
+        return "not_applicable"
+    scan_id, session_id = scan["scan_id"], scan["session_id"]
+    gdir = grain_dir(root, session_id)
+    record, project = latest(gdir, "scan", scan_id), project_for(session, client)
+    if record is None or project is None:
+        return "waiting"
+    state = OUTCOME_STATE.get(str(entry.get("flagged")), "damaged")
+    client.outcome(project, _scan_record_id(record), part=entry["part"], state=state, note=outcome_note(entry),
+                   scan_id=scan_id, record_to=gdir)
+    return "sent"
+
+
+def unsent_outcomes(root: Path, session_id: str, scan_id: str) -> dict[str, dict]:
+    return {k: e for k, e in load_outcomes(root, session_id, scan_id).items()
+            if isinstance(e, dict) and not e.get("sent") and e.get("state") in ("fixed", "not_fixed")}
+
+
+# ------------------------------------------------------------------------------------------ the design's own picture
+def view_cache_path(root: Path, project: str, view: str) -> Path:
+    return Path(root) / "_design_views" / hashlib.sha256(project.encode()).hexdigest()[:16] / f"{view}.png"
+
+
+def design_view(client: GrainClient, *, root: Path, project: str, view: str = "iso",
+                now: float | None = None) -> tuple[bytes, str]:
+    """A rendered view of the design, cached per design for VIEW_TTL_S. When the design engine cannot be reached the
+    cached picture (however old) is served; with none, the error is raised."""
+    path = view_cache_path(root, project, view)
+    clock = time.time() if now is None else now
+    try:
+        if clock - path.stat().st_mtime < VIEW_TTL_S:
+            return path.read_bytes(), "image/png"
+    except OSError:
+        pass
+    try:
+        data, ctype = client.design_view(project, view)
+    except GrainError:
+        if path.is_file():
+            return path.read_bytes(), "image/png"
+        raise
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
+    return data, ctype if ctype.startswith("image/") else "image/png"
+
+
+def reading_view(root: Path, session_id: str, reading_id: str) -> dict | None:
+    """The design engine's verdict on one reading as it was saved when the judgement came back, or None while it has
+    not (the app asks again). `grain_row` holds the design engine's own entry and the findings it points at."""
+    got = latest(grain_dir(root, session_id), "reading", reading_id)
+    if got is None:
+        return None
+    row = got.get("grain_row") or {}
+    entry = row.get("row") if isinstance(row.get("row"), Mapping) else {}
+    return {"verdict": got.get("grain_verdict"), "net": entry.get("net"),
+            "notes": [str(f.get("text")) for f in row.get("findings") or [] if isinstance(f, Mapping) and f.get("text")]}

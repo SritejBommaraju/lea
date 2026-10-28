@@ -109,13 +109,18 @@ def test_the_top_finding_is_the_first_fix_and_most_likely_has_at_most_three():
 
 
 def test_fixes_buy_remake_reseat_rescan_and_design_change():
-    r = build(part_urls={"hinge": "https://design.example/projects/demo/bom/part/hinge/file?format=stl"})
+    r = build()
     assert "WHL-65" in by_part(r, "rear_wheel")["fix"] and "Example Parts" in by_part(r, "rear_wheel")["fix"]
     assert "USD 3.50" in by_part(r, "rear_wheel")["fix"]
     assert r["fix"]["part"] == "rear_wheel"
     assert r["fix"]["options"] == [{"title": "65 mm wheel", "seller": "Example Parts",
                                     "link": "https://parts.example/wheel-65", "price": 3.5, "currency": "USD"}]
-    assert "format=stl" in by_part(r, "hinge")["fix"]
+    assert "http" not in by_part(r, "hinge")["fix"]   # no address of the design engine in what the phone shows
+    hinge = by_part(r, "hinge")["fix_plan"]
+    assert hinge["action"] == "remake" and hinge["part_file"] == {"formats": ["stl", "step"]}
+    wheel = by_part(r, "rear_wheel")["fix_plan"]
+    assert wheel["action"] == "buy" and wheel["options"] == r["fix"]["options"] and wheel["steps"] == ["Clip the new wheel on."]
+    assert by_part(r, "cover")["fix_plan"]["action"] == "reseat"
     assert by_part(r, "cover")["fix"].startswith("Press the cover down")
     assert [x["subject"]["ref"] for x in r["insufficient_evidence"]] == ["latch"]
     assert any("Counterbore the screw seat" in line for line in r["limits"])

@@ -152,9 +152,9 @@ def photo_states(call: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
 # ------------------------------------------------------------------------------------------------- the report
 def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], plan: Mapping[str, Any] | None = None,
           readings: Iterable[Mapping[str, Any]] = (), bom_rows: Mapping[str, Any] | None = None,
-          part_urls: Mapping[str, str] | None = None, stills: int = 0, now: datetime | None = None) -> dict[str, Any]:
+          stills: int = 0, now: datetime | None = None) -> dict[str, Any]:
     """The report for `scan` (a LEA scan package) judged against `project`. See the module doc for the mapping."""
-    bom_rows, part_urls = bom_rows or {}, part_urls or {}
+    bom_rows = bom_rows or {}
     readings = [r for r in readings if r.get("scan_id") == scan["scan_id"]]
     diagnosis = call.get("diagnosis") if isinstance(call.get("diagnosis"), Mapping) else {}
     parts = [p for p in diagnosis.get("parts") or [] if isinstance(p, Mapping) and _text(p.get("name"))]
@@ -210,7 +210,7 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
                    "location": location("Found in the photos; no point in the scan."),
                    "proof": {"status": "not_measured"}}
             if fix:
-                _apply_fix(row, fix, bom_rows, part_urls)
+                _apply_fix(row, fix, bom_rows)
             findings.append(row)
             continue
         if verdict == "ok":
@@ -237,7 +237,7 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
                "confidence_word": confidence_word((fix or {}).get("confidence")), "evidence": evidence,
                "inspected_by": [SOURCE], "location": location(), "proof": {"status": "not_measured"}}
         if fix:
-            _apply_fix(row, fix, bom_rows, part_urls)
+            _apply_fix(row, fix, bom_rows)
         findings.append(row)
 
     # 2. parts only a photo or a fix names
@@ -268,7 +268,7 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
                "evidence": list(dict.fromkeys(evidence)),
                "inspected_by": [SOURCE], "location": location("Found in the photos; no point in the scan."),
                "proof": {"status": "not_measured"}}
-        _apply_fix(row, f, bom_rows, part_urls)
+        _apply_fix(row, f, bom_rows)
         findings.append(row)
     for name, seen in photo.items():   # a fault only the photos show, with no scan verdict and no fix
         if name in seen_parts:
@@ -472,10 +472,12 @@ def reading_verdict(call: Mapping[str, Any], readings: Iterable[Mapping[str, Any
     return None, []
 
 
-def _apply_fix(row: dict, fix: Mapping[str, Any], bom_rows: Mapping[str, Any], part_urls: Mapping[str, str]) -> None:
-    """The plain fix on a row: what to buy (BOM row and price), the part file to remake it from, or where to reseat."""
+def _apply_fix(row: dict, fix: Mapping[str, Any], bom_rows: Mapping[str, Any]) -> None:
+    """The plain fix on a row, as one sentence (`fix`) and as data (`fix_plan`): what to buy (BOM row, price, link), the
+    part file to remake it from (served by the gateway, never by address), or how to reseat or rewire it."""
     action, part = _text(fix.get("action")).lower(), fix["part"]
     how = _first(fix.get("how"), fix.get("detail"))
+    plan: dict[str, Any] | None = None
     if action == "buy":
         bom = _bom_of(fix, bom_rows)
         offer = offer_from_row(bom, part)
@@ -484,13 +486,27 @@ def _apply_fix(row: dict, fix: Mapping[str, Any], bom_rows: Mapping[str, Any], p
         if offer:
             parts_.append(f"from {offer['seller']}" + (f" ({offer['currency']} {offer['price']:.2f})" if "price" in offer else ""))
         row["fix"] = " ".join(parts_) + "." + (f" {how}" if how else "")
+        rows = fix.get("bom")
+        rows = rows if isinstance(rows, list) else [bom] if bom else []
+        options = [o for o in (offer_from_row(r, part) for r in rows) if o][:3]
+        plan = {"action": "buy", "summary": f"Buy a replacement {part}" + (f": {what}" if what else "") + ".",
+                **({"options": options} if options else {})}
     elif action == "remake":
-        url = part_urls.get(part)
-        row["fix"] = f"Remake {part} from the design's part file" + (f" ({url})" if url else "") + "." + (f" {how}" if how else "")
+        row["fix"] = f"Remake {part} from the design's part file." + (f" {how}" if how else "")
+        plan = {"action": "remake", "summary": f"Remake {part} from the design's part file.",
+                "part_file": {"formats": ["stl", "step"]}}
     elif how:
         row["fix"] = how
     if action == "reseat" and "fix" not in row:
         row["fix"] = f"Reseat {part}."
+    if action in ("reseat", "rewire"):
+        plan = {"action": action, "summary": row.get("fix") or f"{action.capitalize()} {part}."}
+    if plan is not None:
+        if how and action in ("reseat", "rewire", "remake", "buy"):
+            steps = [s.strip() for s in re.split(r"(?<=[.!?])\s+", how) if s.strip()][:8]
+            if steps:
+                plan["steps"] = steps
+        row["fix_plan"] = plan
 
 
 def _offers(fixes: list[Mapping[str, Any]], bom_rows: Mapping[str, Any]) -> tuple[str, list[dict]] | None:
