@@ -755,6 +755,108 @@ class Category(StrEnum):
     setup = 'setup'
 
 
+class Action(StrEnum):
+    """
+    buy: order a replacement; remake: print or machine the part again from the design's file; reseat: put it back in place; rewire: fix a wire or connection; check: measure with a meter first.
+    """
+
+    buy = 'buy'
+    remake = 'remake'
+    reseat = 'reseat'
+    rewire = 'rewire'
+    check = 'check'
+
+
+class Step(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
+class Option1(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    title: str = Field(..., min_length=1)
+    price: float | None = Field(None, gt=0.0)
+    currency: str | None = Field(None, pattern='^[A-Z]{3}$')
+    seller: str = Field(..., min_length=1)
+    link: str = Field(..., min_length=1)
+
+
+class Format1(StrEnum):
+    stl = 'stl'
+    step = 'step'
+
+
+class PartFile(BaseModel):
+    """
+    The part's own file from the design (action remake). The phone gets it from the gateway, GET /v1/scans/{scan_id}/fixes/{finding_id}/file?format=; it never holds the design engine's address or key.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    formats: list[Format1] = Field(..., min_length=1)
+
+
+class FixPlan(BaseModel):
+    """
+    The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    action: Action = Field(
+        ...,
+        description="buy: order a replacement; remake: print or machine the part again from the design's file; reseat: put it back in place; rewire: fix a wire or connection; check: measure with a meter first.",
+    )
+    summary: str | None = Field(
+        None, description='The action in one plain line.', min_length=1
+    )
+    steps: list[Step] | None = Field(
+        None, description='Short steps, in order, for reseat and rewire.', max_length=8
+    )
+    options: list[Option1] | None = Field(
+        None,
+        description="Where to buy it (action buy), from the design's bill of materials.",
+        max_length=3,
+    )
+    part_file: PartFile | None = Field(
+        None,
+        description="The part's own file from the design (action remake). The phone gets it from the gateway, GET /v1/scans/{scan_id}/fixes/{finding_id}/file?format=; it never holds the design engine's address or key.",
+    )
+    check_action_id: str | None = Field(
+        None,
+        description='The next-step action id of the meter check that settles this row (action check).',
+        min_length=1,
+    )
+
+
+class State(StrEnum):
+    fixed = 'fixed'
+    not_fixed = 'not_fixed'
+    not_tried = 'not_tried'
+
+
+class ConfirmedBy(StrEnum):
+    person = 'person'
+    meter = 'meter'
+
+
+class Outcome(BaseModel):
+    """
+    What the person said after trying the fix for this row (POST /v1/scans/{scan_id}/outcome). Set by the gateway when the report is read, never by the design engine; it is also the label the design engine learns from.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    state: State
+    recorded_at: AwareDatetime
+    confirmed_by: ConfirmedBy
+    note: str | None = Field(None, max_length=500)
+
+
 class FindingId(RootModel[str]):
     root: str = Field(..., min_length=1)
 
@@ -814,6 +916,14 @@ class Finding(BaseModel):
         None,
         description="For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the batteries in, then test again.'). Shown to the user.",
         min_length=1,
+    )
+    fix_plan: FixPlan | None = Field(
+        None,
+        description='The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row.',
+    )
+    outcome: Outcome | None = Field(
+        None,
+        description='What the person said after trying the fix for this row (POST /v1/scans/{scan_id}/outcome). Set by the gateway when the report is read, never by the design engine; it is also the label the design engine learns from.',
     )
     finding_ids: list[FindingId] | None = Field(
         None,

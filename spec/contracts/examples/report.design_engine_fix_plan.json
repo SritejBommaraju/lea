@@ -1,0 +1,123 @@
+{
+  "report_id": "rep_scan_example_de",
+  "scan_id": "scan_example_de",
+  "session_id": "sess_example",
+  "created_at": "2026-10-28T12:00:00Z",
+  "verdict": "potential_issues",
+  "verdict_reason": {
+    "code": "issues_found",
+    "rule": "G1",
+    "text": "The design engine compared the scan with the product's design and flagged one part."
+  },
+  "summary": {
+    "text": "One part of the design was not found in the scan. A meter check on the power input would tell whether the fault is electrical.",
+    "written_by": "<design engine>",
+    "from_words_only": false
+  },
+  "design": {
+    "engine": "grain",
+    "project": "example_design"
+  },
+  "findings": [
+    {
+      "finding_id": "g_cover",
+      "subject": {
+        "kind": "part",
+        "ref": "cover"
+      },
+      "part_class": "cover",
+      "issue": "missing",
+      "confidence_word": "high",
+      "evidence": [
+        "The scan has no points where the design puts the cover.",
+        "design engine verdict: not seen"
+      ],
+      "inspected_by": [
+        "grain"
+      ],
+      "location": {
+        "status": "not_computed",
+        "reason": "The design engine names the part; it gives no point in this scan's frame."
+      },
+      "proof": {
+        "status": "not_measured"
+      },
+      "fix": "Order a replacement cover (listed under Fix it).",
+      "fix_plan": {
+        "action": "buy",
+        "summary": "Order a replacement cover.",
+        "options": [
+          {
+            "title": "Cover, grey ABS",
+            "seller": "example-parts.test",
+            "link": "https://example-parts.test/cover",
+            "price": 4.5,
+            "currency": "USD"
+          }
+        ]
+      },
+      "outcome": {
+        "state": "fixed",
+        "recorded_at": "2026-10-28T12:00:00Z",
+        "confirmed_by": "person",
+        "note": "New cover clipped on."
+      }
+    }
+  ],
+  "most_likely": [
+    "g_cover"
+  ],
+  "not_inspected": [
+    {
+      "finding_id": "g_board",
+      "subject": {
+        "kind": "part",
+        "ref": "board"
+      },
+      "part_class": "board",
+      "reason": "The scan cannot see this part from outside."
+    }
+  ],
+  "insufficient_evidence": [],
+  "next_step": {
+    "action_id": "chk_power_in",
+    "kind": "run_voltage_test",
+    "instruction": "With the product on, touch the red probe to J1.1 and the black probe to J1.2.",
+    "reason": "The design says this net should read between 4.75 and 5.25 volts.",
+    "target": {
+      "net": "VIN",
+      "pins": [
+        "J1.1",
+        "J1.2"
+      ]
+    },
+    "power_state": "on",
+    "expected": {
+      "volts_min": 4.75,
+      "volts_max": 5.25,
+      "source": "design_engine"
+    },
+    "safety_notes": [
+      "Keep the probes apart; the product is powered."
+    ]
+  },
+  "limits": [
+    "A phone scan sees the outside only."
+  ],
+  "capture": {
+    "depth_source": "lidar",
+    "stills": 0,
+    "stills_inspected": 0,
+    "keyframes": 12,
+    "scan_points": 40000,
+    "coverage_words": "1 of 2 designed parts seen"
+  },
+  "models": {
+    "detector": "not run (the design engine judged this scan)",
+    "classifier": "not run (the design engine judged this scan)",
+    "vlm": "not run (the design engine judged this scan)",
+    "summary_writer": "design engine",
+    "jev": "not run (the design engine judged this scan)",
+    "locate": "not computed (parts are named by the design)"
+  }
+}

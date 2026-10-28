@@ -59,7 +59,7 @@ public struct Finding: Codable, Sendable {
     /// the wrong way round, from marks visible in a photo, never from wire colour, S1), meter
     /// state out_of_range, discovery states (unexpected_*), and honesty states
     /// (not_seen_in_photo not_inspected insufficient_evidence).
-    public let state: State
+    public let state: FindingState
     public let subject: FindingSubject
     /// Structured answer from the crop-pair question, when source is repairos.vision.
     public let vlmAnswer: VlmAnswer?
@@ -85,7 +85,7 @@ public struct Finding: Codable, Sendable {
         case vlmAnswer = "vlm_answer"
     }
 
-    public init(category: Category?, confidence: Double, createdAt: Date, designTrust: DesignTrust?, evidence: [String], evidenceRefs: EvidenceRefs?, findingID: String, fix: String?, isProof: Bool, measurements: Measurements?, onSymptomPowerPath: Bool?, partWords: String?, scanID: String, severity: Severity?, source: FindingSource, state: State, subject: FindingSubject, vlmAnswer: VlmAnswer?) {
+    public init(category: Category?, confidence: Double, createdAt: Date, designTrust: DesignTrust?, evidence: [String], evidenceRefs: EvidenceRefs?, findingID: String, fix: String?, isProof: Bool, measurements: Measurements?, onSymptomPowerPath: Bool?, partWords: String?, scanID: String, severity: Severity?, source: FindingSource, state: FindingState, subject: FindingSubject, vlmAnswer: VlmAnswer?) {
         self.category = category
         self.confidence = confidence
         self.createdAt = createdAt
@@ -231,7 +231,7 @@ public enum FindingSource: String, Codable, Sendable {
 /// the wrong way round, from marks visible in a photo, never from wire colour, S1), meter
 /// state out_of_range, discovery states (unexpected_*), and honesty states
 /// (not_seen_in_photo not_inspected insufficient_evidence).
-public enum State: String, Codable, Sendable {
+public enum FindingState: String, Codable, Sendable {
     case broken = "broken"
     case colourMismatch = "colour_mismatch"
     case damaged = "damaged"
@@ -1621,6 +1621,11 @@ public struct CosmeticElement: Codable, Sendable {
     /// For a setup finding: the plain fix a person can do, in one sentence (e.g. 'Put the
     /// batteries in, then test again.'). Shown to the user.
     public let fix: String?
+    /// The fix for this row as data, so the app can show a card with a button instead of a
+    /// sentence: what to do, what to buy, which file to print, or which meter check settles it.
+    /// `fix` stays the same fix in one sentence. Absent when the design engine offered no fix
+    /// for the row.
+    public let fixPlan: FixPlan?
     /// Stages that looked at this region. A judged region always includes a state judge (vlm,
     /// classifier, meter or grain). grain: the design engine judged it against the product's own
     /// design (scan measurements, photos, readings).
@@ -1631,6 +1636,10 @@ public struct CosmeticElement: Codable, Sendable {
     public let location: Location
     /// Why the findings of a collapsed row are one issue.
     public let mergedBy: MergedBy?
+    /// What the person said after trying the fix for this row (POST
+    /// /v1/scans/{scan_id}/outcome). Set by the gateway when the report is read, never by the
+    /// design engine; it is also the label the design engine learns from.
+    public let outcome: Outcome?
     /// Generic class (vision/generic_classes.py), never a product name. For a row judged by the
     /// design engine: the design's own name for the part.
     public let partClass: String
@@ -1657,11 +1666,13 @@ public struct CosmeticElement: Codable, Sendable {
         case findingID = "finding_id"
         case findingIDS = "finding_ids"
         case fix = "fix"
+        case fixPlan = "fix_plan"
         case inspectedBy = "inspected_by"
         case issue = "issue"
         case judgment = "judgment"
         case location = "location"
         case mergedBy = "merged_by"
+        case outcome = "outcome"
         case partClass = "part_class"
         case partWords = "part_words"
         case proof = "proof"
@@ -1671,7 +1682,7 @@ public struct CosmeticElement: Codable, Sendable {
         case supersededIDS = "superseded_ids"
     }
 
-    public init(category: Category?, confidenceWord: ConfidenceWord, crop: Crop?, crops: [Crop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: Severity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
+    public init(category: Category?, confidenceWord: ConfidenceWord, crop: Crop?, crops: [Crop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, fixPlan: FixPlan?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, outcome: Outcome?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: Severity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
         self.category = category
         self.confidenceWord = confidenceWord
         self.crop = crop
@@ -1680,11 +1691,13 @@ public struct CosmeticElement: Codable, Sendable {
         self.findingID = findingID
         self.findingIDS = findingIDS
         self.fix = fix
+        self.fixPlan = fixPlan
         self.inspectedBy = inspectedBy
         self.issue = issue
         self.judgment = judgment
         self.location = location
         self.mergedBy = mergedBy
+        self.outcome = outcome
         self.partClass = partClass
         self.partWords = partWords
         self.proof = proof
@@ -1722,6 +1735,105 @@ public struct Crop: Codable, Sendable {
         self.cropRef = cropRef
         self.stillID = stillID
     }
+}
+
+/// The fix for this row as data, so the app can show a card with a button instead of a
+/// sentence: what to do, what to buy, which file to print, or which meter check settles it.
+/// `fix` stays the same fix in one sentence. Absent when the design engine offered no fix
+/// for the row.
+// MARK: - FixPlan
+public struct FixPlan: Codable, Sendable {
+    /// buy: order a replacement; remake: print or machine the part again from the design's file;
+    /// reseat: put it back in place; rewire: fix a wire or connection; check: measure with a
+    /// meter first.
+    public let action: Action
+    /// The next-step action id of the meter check that settles this row (action check).
+    public let checkActionID: String?
+    /// Where to buy it (action buy), from the design's bill of materials.
+    public let options: [FixPlanOption]?
+    /// The part's own file from the design (action remake). The phone gets it from the gateway,
+    /// GET /v1/scans/{scan_id}/fixes/{finding_id}/file?format=; it never holds the design
+    /// engine's address or key.
+    public let partFile: PartFile?
+    /// Short steps, in order, for reseat and rewire.
+    public let steps: [String]?
+    /// The action in one plain line.
+    public let summary: String?
+
+    public enum CodingKeys: String, CodingKey {
+        case action = "action"
+        case checkActionID = "check_action_id"
+        case options = "options"
+        case partFile = "part_file"
+        case steps = "steps"
+        case summary = "summary"
+    }
+
+    public init(action: Action, checkActionID: String?, options: [FixPlanOption]?, partFile: PartFile?, steps: [String]?, summary: String?) {
+        self.action = action
+        self.checkActionID = checkActionID
+        self.options = options
+        self.partFile = partFile
+        self.steps = steps
+        self.summary = summary
+    }
+}
+
+/// buy: order a replacement; remake: print or machine the part again from the design's file;
+/// reseat: put it back in place; rewire: fix a wire or connection; check: measure with a
+/// meter first.
+public enum Action: String, Codable, Sendable {
+    case buy = "buy"
+    case check = "check"
+    case remake = "remake"
+    case reseat = "reseat"
+    case rewire = "rewire"
+}
+
+// MARK: - FixPlanOption
+public struct FixPlanOption: Codable, Sendable {
+    public let currency: String?
+    public let link: String
+    public let price: Double?
+    public let seller: String
+    public let title: String
+
+    public enum CodingKeys: String, CodingKey {
+        case currency = "currency"
+        case link = "link"
+        case price = "price"
+        case seller = "seller"
+        case title = "title"
+    }
+
+    public init(currency: String?, link: String, price: Double?, seller: String, title: String) {
+        self.currency = currency
+        self.link = link
+        self.price = price
+        self.seller = seller
+        self.title = title
+    }
+}
+
+/// The part's own file from the design (action remake). The phone gets it from the gateway,
+/// GET /v1/scans/{scan_id}/fixes/{finding_id}/file?format=; it never holds the design
+/// engine's address or key.
+// MARK: - PartFile
+public struct PartFile: Codable, Sendable {
+    public let formats: [FormatElement]
+
+    public enum CodingKeys: String, CodingKey {
+        case formats = "formats"
+    }
+
+    public init(formats: [FormatElement]) {
+        self.formats = formats
+    }
+}
+
+public enum FormatElement: String, Codable, Sendable {
+    case step = "step"
+    case stl = "stl"
 }
 
 public enum InspectedBy: String, Codable, Sendable {
@@ -1870,6 +1982,42 @@ public enum MergedBy: String, Codable, Sendable {
     case samePlaceOnScan = "same_place_on_scan"
 }
 
+/// What the person said after trying the fix for this row (POST
+/// /v1/scans/{scan_id}/outcome). Set by the gateway when the report is read, never by the
+/// design engine; it is also the label the design engine learns from.
+// MARK: - Outcome
+public struct Outcome: Codable, Sendable {
+    public let confirmedBy: ConfirmedBy
+    public let note: String?
+    public let recordedAt: Date
+    public let state: OutcomeState
+
+    public enum CodingKeys: String, CodingKey {
+        case confirmedBy = "confirmed_by"
+        case note = "note"
+        case recordedAt = "recorded_at"
+        case state = "state"
+    }
+
+    public init(confirmedBy: ConfirmedBy, note: String?, recordedAt: Date, state: OutcomeState) {
+        self.confirmedBy = confirmedBy
+        self.note = note
+        self.recordedAt = recordedAt
+        self.state = state
+    }
+}
+
+public enum ConfirmedBy: String, Codable, Sendable {
+    case meter = "meter"
+    case person = "person"
+}
+
+public enum OutcomeState: String, Codable, Sendable {
+    case fixed = "fixed"
+    case notFixed = "not_fixed"
+    case notTried = "not_tried"
+}
+
 /// Only a meter reading proves or rules out (I1, I2).
 // MARK: - Proof
 public struct Proof: Codable, Sendable {
@@ -1924,7 +2072,7 @@ public enum Engine: String, Codable, Sendable {
 public struct FixClass: Codable, Sendable {
     /// A public replacement guide for that part, when the search found one.
     public let guideLink: String?
-    public let options: [Option]
+    public let options: [FixOption]
     /// The part searched for, in generic words (the top finding's part class).
     public let part: String
     public let searchedAt: Date
@@ -1936,7 +2084,7 @@ public struct FixClass: Codable, Sendable {
         case searchedAt = "searched_at"
     }
 
-    public init(guideLink: String?, options: [Option], part: String, searchedAt: Date) {
+    public init(guideLink: String?, options: [FixOption], part: String, searchedAt: Date) {
         self.guideLink = guideLink
         self.options = options
         self.part = part
@@ -1944,8 +2092,8 @@ public struct FixClass: Codable, Sendable {
     }
 }
 
-// MARK: - Option
-public struct Option: Codable, Sendable {
+// MARK: - FixOption
+public struct FixOption: Codable, Sendable {
     public let currency: String?
     public let link: String
     /// The displayed price; absent when the result showed none (a web result, not a shopping
@@ -2016,7 +2164,7 @@ public struct Mesh: Codable, Sendable {
     /// uchar red green blue), same frame (/v1/scans/{scan_id}/cloud?rev=N).
     public let cloudURL: String?
     /// Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists.
-    public let format: Format
+    public let format: MeshFormat
     public let frame: LocationFrame
     /// What to show as the 3D view: points (cloud_url), mesh (url), or photos when the object is
     /// too small or too little was captured for 3D to read as the object.
@@ -2040,7 +2188,7 @@ public struct Mesh: Codable, Sendable {
         case url = "url"
     }
 
-    public init(cloudPoints: Int?, cloudURL: String?, format: Format, frame: LocationFrame, hero: Hero?, heroReason: String?, rev: Int, triangles: Int?, url: String) {
+    public init(cloudPoints: Int?, cloudURL: String?, format: MeshFormat, frame: LocationFrame, hero: Hero?, heroReason: String?, rev: Int, triangles: Int?, url: String) {
         self.cloudPoints = cloudPoints
         self.cloudURL = cloudURL
         self.format = format
@@ -2054,7 +2202,7 @@ public struct Mesh: Codable, Sendable {
 }
 
 /// Binary little-endian PLY: float x y z, uchar red green blue per vertex; triangle lists.
-public enum Format: String, Codable, Sendable {
+public enum MeshFormat: String, Codable, Sendable {
     case ply = "ply"
 }
 
