@@ -1075,8 +1075,14 @@
         "fix_plan": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["action"],
-          "description": "The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row.",
+          "required": ["action", "summary"],
+          "allOf": [
+            { "if": { "properties": { "action": { "const": "buy" } } },
+              "then": { "required": ["options"], "properties": { "options": { "minItems": 1 } } } },
+            { "if": { "properties": { "action": { "const": "remake" } } }, "then": { "required": ["part_file"] } },
+            { "if": { "properties": { "action": { "const": "check" } } }, "then": { "required": ["check_action_id"] } }
+          ],
+          "description": "The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row. Each action carries what it needs: buy at least one shop option, remake a part file, check the id of the meter check.",
           "properties": {
             "action": {
               "type": "string",

@@ -800,7 +800,7 @@ class PartFile(BaseModel):
 
 class FixPlan(BaseModel):
     """
-    The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row.
+    The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row. Each action carries what it needs: buy at least one shop option, remake a part file, check the id of the meter check.
     """
 
     model_config = ConfigDict(
@@ -810,9 +810,7 @@ class FixPlan(BaseModel):
         ...,
         description="buy: order a replacement; remake: print or machine the part again from the design's file; reseat: put it back in place; rewire: fix a wire or connection; check: measure with a meter first.",
     )
-    summary: str | None = Field(
-        None, description='The action in one plain line.', min_length=1
-    )
+    summary: str = Field(..., description='The action in one plain line.', min_length=1)
     steps: list[Step] | None = Field(
         None, description='Short steps, in order, for reseat and rewire.', max_length=8
     )
@@ -919,7 +917,7 @@ class Finding(BaseModel):
     )
     fix_plan: FixPlan | None = Field(
         None,
-        description='The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row.',
+        description='The fix for this row as data, so the app can show a card with a button instead of a sentence: what to do, what to buy, which file to print, or which meter check settles it. `fix` stays the same fix in one sentence. Absent when the design engine offered no fix for the row. Each action carries what it needs: buy at least one shop option, remake a part file, check the id of the meter check.',
     )
     outcome: Outcome | None = Field(
         None,

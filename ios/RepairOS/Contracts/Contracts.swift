@@ -1624,7 +1624,8 @@ public struct CosmeticElement: Codable, Sendable {
     /// The fix for this row as data, so the app can show a card with a button instead of a
     /// sentence: what to do, what to buy, which file to print, or which meter check settles it.
     /// `fix` stays the same fix in one sentence. Absent when the design engine offered no fix
-    /// for the row.
+    /// for the row. Each action carries what it needs: buy at least one shop option, remake a
+    /// part file, check the id of the meter check.
     public let fixPlan: FixPlan?
     /// Stages that looked at this region. A judged region always includes a state judge (vlm,
     /// classifier, meter or grain). grain: the design engine judged it against the product's own
@@ -1740,7 +1741,8 @@ public struct Crop: Codable, Sendable {
 /// The fix for this row as data, so the app can show a card with a button instead of a
 /// sentence: what to do, what to buy, which file to print, or which meter check settles it.
 /// `fix` stays the same fix in one sentence. Absent when the design engine offered no fix
-/// for the row.
+/// for the row. Each action carries what it needs: buy at least one shop option, remake a
+/// part file, check the id of the meter check.
 // MARK: - FixPlan
 public struct FixPlan: Codable, Sendable {
     /// buy: order a replacement; remake: print or machine the part again from the design's file;
@@ -1758,7 +1760,7 @@ public struct FixPlan: Codable, Sendable {
     /// Short steps, in order, for reseat and rewire.
     public let steps: [String]?
     /// The action in one plain line.
-    public let summary: String?
+    public let summary: String
 
     public enum CodingKeys: String, CodingKey {
         case action = "action"
@@ -1769,7 +1771,7 @@ public struct FixPlan: Codable, Sendable {
         case summary = "summary"
     }
 
-    public init(action: Action, checkActionID: String?, options: [FixPlanOption]?, partFile: PartFile?, steps: [String]?, summary: String?) {
+    public init(action: Action, checkActionID: String?, options: [FixPlanOption]?, partFile: PartFile?, steps: [String]?, summary: String) {
         self.action = action
         self.checkActionID = checkActionID
         self.options = options

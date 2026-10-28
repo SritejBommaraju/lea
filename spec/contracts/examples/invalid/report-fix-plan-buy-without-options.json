@@ -1,0 +1,45 @@
+{
+  "schema": "report",
+  "why": "a buy fix has at least one shop option",
+  "base": "report.design_engine_fix_plan.json",
+  "patch": {
+    "findings": [
+      {
+        "finding_id": "g_cover",
+        "subject": {
+          "kind": "part",
+          "ref": "cover"
+        },
+        "part_class": "cover",
+        "issue": "missing",
+        "confidence_word": "high",
+        "evidence": [
+          "The scan has no points where the design puts the cover.",
+          "design engine verdict: not seen"
+        ],
+        "inspected_by": [
+          "grain"
+        ],
+        "location": {
+          "status": "not_computed",
+          "reason": "The design engine names the part; it gives no point in this scan's frame."
+        },
+        "proof": {
+          "status": "not_measured"
+        },
+        "fix": "Order a replacement cover (listed under Fix it).",
+        "fix_plan": {
+          "action": "buy",
+          "summary": "Buy a cover.",
+          "options": []
+        },
+        "outcome": {
+          "state": "fixed",
+          "recorded_at": "2026-10-28T12:00:00Z",
+          "confirmed_by": "person",
+          "note": "New cover clipped on."
+        }
+      }
+    ]
+  }
+}
