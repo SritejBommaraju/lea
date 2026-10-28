@@ -83,6 +83,16 @@ struct ReportModel: Sendable {
         var isSetup: Bool = false
         /// The plain fix for a setup state ("Put the batteries in, then test again.").
         var fix: String? = nil
+        /// The report's issue code for the row ("missing", "loose"), for the customer's sentence.
+        var issueCode: String = ""
+        /// The design engine's own confidence word (high, medium, low), before it is turned into words.
+        var confidenceWord: String? = nil
+        /// The fix as data (report `fix_plan`): what to do, buy, print or measure.
+        var fixPlan: RepairFix? = nil
+        /// What the person said after trying the fix (report `outcome`).
+        var outcome: OutcomeAnswer? = nil
+        /// What the row is about (`kind:ref`), stable when the report is made again.
+        var subjectKey: String? = nil
     }
 
     /// A region nobody looked at (not_inspected) or that could not be judged (insufficient_evidence).
@@ -126,6 +136,8 @@ struct ReportModel: Sendable {
         var powerState: String? = nil
         /// What to watch out for before probing (`next_step.safety_notes`), in the design engine's words.
         var safetyNotes: [String] = []
+        /// What a good reading looks like (`next_step.expected`): the design's own range for the check.
+        var expected: ExpectedReading? = nil
 
         var symbol: String {
             switch kind {
@@ -228,7 +240,8 @@ struct ReportModel: Sendable {
             nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String,
                                 actionID: n["action_id"] as? String, net: (target?["net"] as? String)?.trimmedOrNil,
                                 pins: (target?["pins"] as? [String]) ?? [], powerState: n["power_state"] as? String,
-                                safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil))
+                                safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil),
+                                expected: ExpectedReading(json: n["expected"] as? [String: Any]))
         }
         design = ((r["design"] as? [String: Any])?["project"] as? String)?.trimmedOrNil
         limits = r["limits"] as? [String] ?? []
@@ -327,7 +340,12 @@ struct ReportModel: Sendable {
             cropStill: (f["crop"] as? [String: Any])?["still_id"] as? String,
             cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue),
             isSetup: f["category"] as? String == "setup",
-            fix: (f["fix"] as? String)?.trimmedOrNil)
+            fix: (f["fix"] as? String)?.trimmedOrNil,
+            issueCode: f["issue"] as? String ?? "",
+            confidenceWord: f["confidence_word"] as? String,
+            fixPlan: RepairFix(json: f["fix_plan"] as? [String: Any]),
+            outcome: OutcomeAnswer(json: f["outcome"] as? [String: Any]),
+            subjectKey: Self.subjectKey(f))
     }
 
     private static func gap(_ g: [String: Any]) -> Gap {
@@ -395,6 +413,17 @@ struct ReportModel: Sendable {
               let hi = (location?["region_max_m"] as? [Any])?.compactMap({ ($0 as? NSNumber)?.floatValue }), hi.count == 3
         else { return nil }
         return simd_distance(SIMD3(lo[0], lo[1], lo[2]), SIMD3(hi[0], hi[1], hi[2])) / 2
+    }
+
+    /// "part:rear_wheel", "net:VIN@J1.1|J1.2#rd_1": what a row is about, the same key the gateway keeps outcomes under
+    /// (two checks on one net are two rows).
+    static func subjectKey(_ row: [String: Any]) -> String? {
+        let subject = row["subject"] as? [String: Any]
+        guard let kind = subject?["kind"] as? String, let ref = subject?["ref"] as? String else { return nil }
+        var key = "\(kind):\(ref)"
+        if let pins = subject?["pins"] as? [String], !pins.isEmpty { key += "@" + pins.joined(separator: "|") }
+        if let reading = (row["proof"] as? [String: Any])?["reading_id"] as? String { key += "#" + reading }
+        return key
     }
 
     static func sha(_ ref: Any?) -> String? {

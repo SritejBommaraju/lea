@@ -231,6 +231,11 @@ enum ReportWords {
         ["request_closeup", "request_other_angle", "rescan"].contains(step.kind)
     }
 
+    /// A step the customer takes with a multimeter.
+    static func isMeterStep(_ step: ReportModel.NextStep) -> Bool {
+        ["run_continuity_test", "run_resistance_test", "run_voltage_test"].contains(step.kind)
+    }
+
     /// The photo number in "s8", "scan_ab12_s8", "Photo 8" or "photo 8", if any.
     static func photoNumber(in text: String) -> Int? {
         if let m = text.firstMatch(of: /(?:^|_|\b)s(\d+)\b/) { return Int(m.1) }

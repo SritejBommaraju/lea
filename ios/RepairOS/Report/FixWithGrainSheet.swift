@@ -31,18 +31,25 @@ struct FixReply: Equatable, Sendable {
 
 /// "Fix it with Grain": the customer says what should change (pre-filled with the symptom they reported), Grain's agent
 /// changes the product's design and answers. The server adds the context the customer cannot type: the flagged parts,
-/// the meter readings and their verdicts, the fixes suggested so far.
+/// the meter readings and their verdicts, the fixes suggested so far. The sheet lists that context in plain words, so
+/// the customer sees what Grain will know before they send, and shows the reply when it arrives.
 struct FixWithGrainSheet: View {
     let scanID: String
+    /// What Grain is told besides the customer's words, one plain line each (CustomerWords.fixContext).
+    let context: [String]
     let gateway: GatewayClient?
+    /// Called when the design was rebuilt and every check passed (its picture has changed).
+    var onBuilt: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var message: String
     @State private var sending = false
     @State private var reply: FixReply?
     @State private var error: String?
 
-    init(scanID: String, symptom: String?, gateway: GatewayClient?) {
+    init(scanID: String, symptom: String?, context: [String] = [], gateway: GatewayClient?, onBuilt: @escaping () -> Void = {}) {
+        self.onBuilt = onBuilt
         self.scanID = scanID
+        self.context = context
         self.gateway = gateway
         _message = SwiftUI.State(initialValue: symptom ?? "")
     }
@@ -59,16 +66,28 @@ struct FixWithGrainSheet: View {
                 } header: { Text("What should change?") } footer: {
                     Text("Grain changes the product's design. It can take a few minutes.")
                 }
+                if !context.isEmpty {
+                    Section {
+                        ForEach(context.indices, id: \.self) { i in
+                            Label(context[i], systemImage: "checkmark.circle").font(.subheadline)
+                                .labelStyle(.titleAndIcon)
+                        }
+                    } header: { Text("Grain will also be told") } footer: {
+                        Text("This comes from your report. It is sent with your words so you do not have to explain it again.")
+                    }
+                }
                 if sending {
                     Section {
                         HStack(spacing: Spacing.m) {
                             ProgressView()
-                            Text("Grain is working on it…").foregroundStyle(Palette.secondary)
+                            Text("Grain is working on it. This can take a few minutes; you can leave this open.")
+                                .foregroundStyle(Palette.secondary)
                         }
+                        .accessibilityElement(children: .combine)
                     }
                 }
                 if let reply {
-                    Section("Grain") {
+                    Section("Grain's reply") {
                         Text(reply.reply.isEmpty ? "Grain did not say anything." : reply.reply)
                         if let words = reply.buildWords { Text(words).font(.footnote).foregroundStyle(Palette.secondary) }
                         if reply.waiting {
@@ -79,7 +98,10 @@ struct FixWithGrainSheet: View {
                     }
                 }
                 if let error {
-                    Section { Text(error).foregroundStyle(Palette.danger) }
+                    Section {
+                        Text(error).foregroundStyle(Palette.danger)
+                        Button("Try again") { Task { await send() } }.disabled(!canSend)
+                    }
                 }
             }
             .navigationTitle("Fix it with Grain")
@@ -100,7 +122,9 @@ struct FixWithGrainSheet: View {
         error = nil
         defer { sending = false }
         do {
-            reply = try await gateway.fix(scanID: scanID, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+            let answer = try await gateway.fix(scanID: scanID, message: message.trimmingCharacters(in: .whitespacesAndNewlines))
+            reply = answer
+            if answer.build == "ok" { onBuilt() }
         } catch {
             self.error = error.localizedDescription
         }

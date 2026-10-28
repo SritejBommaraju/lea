@@ -16,6 +16,8 @@ struct ProblemDetailView: View {
     var numbers: [String: Int] = [:]
     /// Shown as a sheet: the previous / next row with Done. nil when pushed (the system back button).
     var onDone: (() -> Void)?
+    /// The customer's side of the report: the fix card and "Did this fix it?" for a row listed under "Also worth a look".
+    var customer: CustomerContext?
 
     @State private var still: StillImage?
     @State private var page = 0
@@ -23,7 +25,8 @@ struct ProblemDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(problems: [ReportModel.Problem], index: Int = 0, stillsDir: URL? = nil, numbers: [String: Int] = [:],
-         onDone: (() -> Void)? = nil) {
+         onDone: (() -> Void)? = nil, customer: CustomerContext? = nil) {
+        self.customer = customer
         self.problems = problems
         _index = SwiftUI.State(initialValue: min(max(0, index), max(0, problems.count - 1)))
         self.stillsDir = stillsDir
@@ -42,8 +45,14 @@ struct ProblemDetailView: View {
         VStack(spacing: 0) {
             if let onDone { pager(onDone) }
             ScrollView {
-                content.id(problem.id)
-                    .transition(.opacity)
+                VStack(spacing: Spacing.l) {
+                    content.id(problem.id)
+                        .transition(.opacity)
+                    if let customer, problem.fixPlan != nil || problem.fix != nil {
+                        FixPlanCard(problem: problem, customer: customer).id(problem.id).padding(.horizontal, Spacing.gutter)
+                    }
+                }
+                .padding(.bottom, Spacing.xl)
             }
             .bounceBasedOnSize()
         }

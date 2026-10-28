@@ -165,6 +165,38 @@ struct GatewayClient: Sendable {
         return reply
     }
 
+    /// POST /v1/scans/{id}/outcome: what the person found after trying a fix (`fixed`, `not_fixed`, `not_tried`). The
+    /// gateway saves it with the session and sends it on; the same answer sent twice is harmless.
+    func postOutcome(scanID: String, rowID: String, outcome: OutcomeChoice, note: String? = nil) async throws {
+        var body: [String: Any] = ["row_id": rowID, "outcome": outcome.rawValue]
+        if let note = note?.trimmedOrNil { body["note"] = note }
+        _ = try await send("POST", "v1/scans/\(scanID)/outcome", json: body, expect: [200])
+    }
+
+    /// GET /v1/scans/{id}/design-view: the design's own picture of the product (PNG). `view` is iso (the one to show),
+    /// front, right, top or sheet. 404 when the design has none.
+    func designView(scanID: String, view: String = "iso") async throws -> Data {
+        try await send("GET", "v1/scans/\(scanID)/design-view?view=\(view)", expect: [200]).0
+    }
+
+    /// GET /v1/scans/{id}/fixes/{row}/file: the part a "remake it" fix names, as STL or STEP, and the name to save it as.
+    func partFile(scanID: String, rowID: String, format: String) async throws -> (data: Data, filename: String) {
+        let (data, http) = try await send("GET", "v1/scans/\(scanID)/fixes/\(rowID)/file?format=\(format)", expect: [200])
+        let disposition = http.value(forHTTPHeaderField: "Content-Disposition") ?? ""
+        let name = disposition.components(separatedBy: "filename=\"").dropFirst().first?.components(separatedBy: "\"").first
+        return (data, name?.trimmedOrNil ?? "part.\(format)")
+    }
+
+    /// GET /v1/readings/{id}: the design engine's verdict on one meter reading (`pending` until it is judged).
+    func readingVerdict(id: String) async throws -> ReadingVerdict {
+        let (data, _) = try await send("GET", "v1/readings/\(id)", expect: [200])
+        let json = (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        guard let verdict = ReadingVerdict(json: json["verdict"] as? [String: Any]) else {
+            throw GatewayError.message("The server's answer had no verdict.")
+        }
+        return verdict
+    }
+
     func reportHTMLRequest(scanID: String) -> URLRequest {
         request("GET", "v1/scans/\(scanID)/report/export?format=html", auth: true)
     }
