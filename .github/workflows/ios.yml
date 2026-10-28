@@ -78,6 +78,48 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # An unsigned Release build for a real iPhone, packaged as an .ipa (a zip with Payload/RepairOS.app). No secrets: a
+  # free-Apple-ID tool on Windows (Sideloadly, AltServer) signs it at install time. See ios/README.md.
+  ipa:
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Select the newest Xcode
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+
+      - name: Metal toolchain (the app has .metal shaders)
+        run: xcodebuild -downloadComponent MetalToolchain || echo "::warning::MetalToolchain download failed; continuing in case the image has it"
+
+      - name: Build Release for a device, unsigned
+        run: |
+          set -o pipefail
+          xcodebuild -project ios/RepairOS.xcodeproj -scheme RepairOS -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO DEVELOPMENT_TEAM="" \
+            build 2>&1 | tee "$RUNNER_TEMP/ipa-build.log"
+
+      - name: Package RepairOS-unsigned.ipa
+        run: |
+          APP=build/Build/Products/Release-iphoneos/RepairOS.app
+          test -d "$APP" || { echo "::error::$APP was not built"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/RepairOS.app"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry RepairOS-unsigned.ipa Payload)
+          ls -l "$RUNNER_TEMP/ipa/RepairOS-unsigned.ipa"
+
+      - name: Keep the unsigned .ipa
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 (MIT)
+        with:
+          name: RepairOS-unsigned-ipa
+          path: ${{ runner.temp }}/ipa/RepairOS-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+
   archive:
     if: github.event_name == 'workflow_dispatch' && inputs.archive
     runs-on: xcode-27

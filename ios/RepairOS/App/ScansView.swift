@@ -69,6 +69,8 @@ struct ScanRowButton: View {
     var toggle: () -> Void = {}
     var select: () -> Void = {}
     @Environment(AppState.self) private var app
+    @State private var sharing: SharedFile?
+    @State private var shareFailed = false
 
     var body: some View {
         let deletable = ScanLibrary.canDelete(record, app: app)
@@ -99,14 +101,41 @@ struct ScanRowButton: View {
             .listRowBackground(Color.clear)
             // Not `role: .destructive`: that removes the row optimistically while the confirmation is still open, and
             // the real delete then leaves the list's item count out of step (UICollectionView invalid-update crash).
+            .sheet(item: $sharing) { ShareSheet(url: $0.url) }
+            .alert("Couldn't zip this session", isPresented: $shareFailed) { Button("OK", role: .cancel) {} }
             .swipeActions { if deletable, !selecting { Button("Delete", systemImage: "trash", action: delete).tint(Palette.danger) } }
             .contextMenu {
                 if !selecting {
+                    Button("Share session", systemImage: "square.and.arrow.up") { shareSession() }
+                        .disabled(!deletable)
                     Button("Select", systemImage: "checkmark.circle", action: select).disabled(!deletable)
                     Button("Delete scan", systemImage: "trash", role: .destructive, action: delete).disabled(!deletable)
                 }
             }
     }
+}
+
+extension ScanRowButton {
+    /// Zips the session folder as it is (never the one being captured) and opens the share sheet.
+    fileprivate func shareSession() {
+        let dir = app.storage.dir(record)
+        Task { @MainActor in
+            if let url = try? await SessionShare.zip(dir) { sharing = SharedFile(url: url) } else { shareFailed = true }
+        }
+    }
+}
+
+struct SharedFile: Identifiable { let url: URL; var id: URL { url } }
+
+enum SessionShare {
+    @concurrent static func zip(_ dir: URL) async throws -> URL { try SessionArchive.zip(dir) }
+}
+
+/// The system share sheet for one file.
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController { UIActivityViewController(activityItems: [url], applicationActivities: nil) }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 extension View {

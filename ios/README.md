@@ -33,6 +33,30 @@ You can write, build, test and install this app without owning a Mac.
   install it from Windows with Sideloadly or AltServer. A free Apple ID gives a 7-day certificate and 3 apps; a paid
   Apple Developer account allows TestFlight and 90-day builds. Turn on Developer Mode on the phone (Settings > Privacy
   and Security).
+- **Install on your phone with a free Apple ID (no secrets, no Developer account):** the `ipa` job in the same workflow
+  builds a Release app for a device with code signing off and uploads `RepairOS-unsigned.ipa` (artifact
+  `RepairOS-unsigned-ipa`, kept 14 days). Then:
+  1. Download it: Actions > the run > Artifacts, or `gh run download <run id> -n RepairOS-unsigned-ipa`.
+  2. On Windows install iTunes and iCloud from Apple's own site (apple.com/itunes and the iCloud for Windows download
+     linked from Apple Support). The Microsoft Store versions do not work: Sideloadly rejects them.
+  3. Install Sideloadly (or AltServer), plug the phone in, tap Trust on the phone, sign in with your Apple ID in
+     Sideloadly, and drag the `.ipa` onto it. Sideloadly signs it with a free 7-day certificate as it installs.
+  4. On the phone turn on Developer Mode (Settings > Privacy & Security > Developer Mode; it restarts the phone), then
+     trust the certificate (Settings > General > VPN & Device Management > your Apple ID > Trust).
+  5. The app lives 7 days. Re-sideload the same way to renew it (data in the app is kept when it is installed over
+     itself). A free Apple ID allows 3 sideloaded apps at once.
+
+  What has not been tried: the artifact is verified to hold `Payload/RepairOS.app/Info.plist` and the `RepairOS` binary
+  (below), but nobody has yet installed it through Sideloadly or AltServer from Windows, or run it on a phone. If
+  Sideloadly refuses it, the message is the thing to report.
+- **Get a session off the phone** (so it can be handed to the design engine as one zip of
+  `Documents/sessions/<id>/`: `app_session.json`, `scans/<scan_id>/scan_package.json` + the PLY + keyframes,
+  `stills/`, `readings/`):
+  - *Files app:* Files > On My iPhone > RepairOS > sessions > long-press the session folder > Compress > share the zip.
+    The app sets `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`, which is what makes the folder visible.
+  - *In the app:* Home > long-press a saved scan > Share session. It zips the folder with Foundation's directory
+    zipper (`NSFileCoordinator` `.forUploading`) and opens the share sheet (AirDrop, Files, Mail). Only files already in
+    the folder are included.
 - **Logs:** `devicectl` needs a Mac. Instead open the Files app on the phone > RepairOS > `sessions/<id>/` and share
   `diag.jsonl` (the folder is visible there, see "Capture layout").
 - **Fallback:** for Instruments or a step-through debugger, rent an hourly cloud Mac mini and use the commands above.
