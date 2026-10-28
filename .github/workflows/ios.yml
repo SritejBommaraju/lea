@@ -78,6 +78,102 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # Screenshots of every screen, so the app can be looked at from Windows: the UI tests in ios/RepairOSUITests open each
+  # screen in a fixed demo state on two simulators (the biggest and the smallest iPhone on the image), in light and
+  # dark, and once at the largest accessibility text size. Runs beside `test`, never after it.
+  screens:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Select the newest Xcode
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+
+      - name: Metal toolchain (the app has .metal shaders)
+        run: xcodebuild -downloadComponent MetalToolchain || echo "::warning::MetalToolchain download failed; continuing in case the image has it"
+
+      - name: Pick the big and the small simulator
+        run: |
+          LIST=$(xcrun simctl list devices available)
+          echo "$LIST"
+          uuid() { grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1; }
+          BIG=""
+          for n in "iPhone 17 Pro" "iPhone 16 Pro" "iPhone 15 Pro"; do
+            BIG=$(echo "$LIST" | grep -F " $n (" | uuid || true); [ -n "$BIG" ] && BIG_NAME="$n" && break
+          done
+          if [ -z "$BIG" ]; then BIG=$(echo "$LIST" | grep -E '^ +iPhone' | tail -1 | uuid || true); BIG_NAME="iPhone"; fi
+          SMALL=""
+          for n in "iPhone SE (3rd generation)" "iPhone 16e" "iPhone 17e" "iPhone 15" "iPhone 17"; do
+            SMALL=$(echo "$LIST" | grep -F " $n (" | uuid || true); [ -n "$SMALL" ] && SMALL_NAME="$n" && break
+          done
+          test -n "$BIG" && test -n "$SMALL" || { echo "no iPhone simulators on this image"; exit 1; }
+          label() { echo "$1" | tr -c 'A-Za-z0-9\n' '-' | sed 's/--*/-/g; s/-$//'; }
+          echo "BIG=$BIG" >> "$GITHUB_ENV"
+          echo "SMALL=$SMALL" >> "$GITHUB_ENV"
+          echo "BIG_LABEL=$(label "$BIG_NAME")" >> "$GITHUB_ENV"
+          echo "SMALL_LABEL=$(label "$SMALL_NAME")" >> "$GITHUB_ENV"
+          echo "Big: $BIG_NAME ($BIG). Small: $SMALL_NAME ($SMALL)."
+
+      - name: Build the app and the UI tests
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project ios/RepairOS.xcodeproj -scheme RepairOSScreens \
+            -destination "id=$BIG" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Take the screenshots
+        run: |
+          OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
+          mkdir -p "$OUT" "$RES"
+          FAILED=0
+          # udid device-label appearance text-size-name simctl-size audit
+          run_config() {
+            local udid="$1" label="$2" appearance="$3" text="$4" size="$5" audit="$6"
+            echo "::group::$label $appearance $text"
+            xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$udid" || true
+            xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 || true
+            xcrun simctl ui "$udid" appearance "$appearance" || true
+            xcrun simctl ui "$udid" content_size "$size" || true
+            local name="$label-$appearance-$text"
+            rm -rf "$RES/$name.xcresult"
+            env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text" \
+                TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit" \
+              xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens \
+                -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd" \
+                -resultBundlePath "$RES/$name.xcresult" \
+                CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 || { echo "tests failed in $name"; FAILED=1; }
+            tail -25 "$RES/$name.log"
+            # Backup copy of the attachments straight from the result bundle (Xcode 16 and later).
+            mkdir -p "$OUT/raw/$name"
+            xcrun xcresulttool export attachments --path "$RES/$name.xcresult" --output-path "$OUT/raw/$name" || echo "xcresulttool export attachments failed for $name"
+            echo "::endgroup::"
+          }
+          run_config "$BIG"   "$BIG_LABEL"   light default            large 1
+          run_config "$BIG"   "$BIG_LABEL"   dark  default            large 0
+          run_config "$BIG"   "$BIG_LABEL"   light text-xxxl          accessibility-extra-extra-extra-large 0
+          xcrun simctl shutdown "$BIG" || true
+          run_config "$SMALL" "$SMALL_LABEL" light default            large 0
+          run_config "$SMALL" "$SMALL_LABEL" dark  default            large 0
+          run_config "$SMALL" "$SMALL_LABEL" light text-xxxl          accessibility-extra-extra-extra-large 1
+          xcrun simctl shutdown "$SMALL" || true
+          echo "Screenshots:"; ls "$OUT"/*.png | wc -l
+          [ "$FAILED" = 0 ] || exit 1
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 (MIT)
+        with:
+          name: screens
+          path: |
+            ${{ runner.temp }}/screens
+            ${{ runner.temp }}/results/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
   archive:
     if: github.event_name == 'workflow_dispatch' && inputs.archive
     runs-on: xcode-27

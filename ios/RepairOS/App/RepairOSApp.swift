@@ -4,6 +4,12 @@ import SwiftUI
 struct RepairOSApp: App {
     @StateObject private var app = AppState()
 
+    init() {
+        #if DEBUG
+        ScreensHarness.prepare()   // `-screens <name>`: a fixed state for screenshots (ios/RepairOSUITests)
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             root
@@ -20,7 +26,9 @@ struct RepairOSApp: App {
 
     @ViewBuilder private var root: some View {
         #if DEBUG
-        if let screen = UIGallery.screen { UIGallery.root(screen, app: app) } else { RootView() }
+        if let screen = ScreensHarness.screen { ScreensHarness.root(screen, app: app) }
+        else if let screen = UIGallery.screen { UIGallery.root(screen, app: app) }
+        else { RootView() }
         #else
         RootView()
         #endif
