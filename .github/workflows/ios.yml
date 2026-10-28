@@ -67,6 +67,17 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/RepairOS.xcresult" \
             build test 2>&1 | tee "$RUNNER_TEMP/xcodebuild.log"
 
+      - name: The session zip opens with a real unzip tool and has the importer's root entries
+        run: |
+          python3 -m zipfile -l "$RUNNER_TEMP/session_x.zip"
+          python3 -m zipfile -t "$RUNNER_TEMP/session_x.zip"
+          python3 - "$RUNNER_TEMP/session_x.zip" <<'PY'
+          import sys, zipfile
+          n = zipfile.ZipFile(sys.argv[1]).namelist()
+          want = {"app_session.json", "scans/scan_x/scan_package.json", "stills/s1.json"}
+          assert want <= set(n), n
+          PY
+
       - name: Keep the result bundle and log
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 (MIT)

@@ -22,5 +22,10 @@ struct SessionArchiveTests {
         #expect(names.contains("app_session.json"), "entries were \(names)")
         #expect(names.contains("scans/scan_x/scan_package.json"), "entries were \(names)")
         #expect(names.contains("stills/s1.json"), "entries were \(names)")
+        // CI sets this so a real unzip tool (Python's zipfile) checks the archive after the tests.
+        if let copy = ProcessInfo.processInfo.environment["SESSION_ZIP_COPY"] {
+            try? fm.removeItem(atPath: copy)
+            try fm.copyItem(at: zip, to: URL(fileURLWithPath: copy))
+        }
     }
 }
