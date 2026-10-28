@@ -49,7 +49,7 @@ struct ProblemDetailView: View {
                     content.id(problem.id)
                         .transition(.opacity)
                     if let customer, problem.fixPlan != nil || problem.fix != nil {
-                        FixPlanCard(problem: problem, customer: customer).padding(.horizontal, Spacing.gutter)
+                        FixPlanCard(problem: problem, customer: customer).id(problem.id).padding(.horizontal, Spacing.gutter)
                     }
                 }
                 .padding(.bottom, Spacing.xl)

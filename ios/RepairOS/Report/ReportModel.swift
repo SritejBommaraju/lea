@@ -345,7 +345,7 @@ struct ReportModel: Sendable {
             confidenceWord: f["confidence_word"] as? String,
             fixPlan: RepairFix(json: f["fix_plan"] as? [String: Any]),
             outcome: OutcomeAnswer(json: f["outcome"] as? [String: Any]),
-            subjectKey: Self.subjectKey(f["subject"] as? [String: Any]))
+            subjectKey: Self.subjectKey(f))
     }
 
     private static func gap(_ g: [String: Any]) -> Gap {
@@ -415,10 +415,15 @@ struct ReportModel: Sendable {
         return simd_distance(SIMD3(lo[0], lo[1], lo[2]), SIMD3(hi[0], hi[1], hi[2])) / 2
     }
 
-    /// "part:rear_wheel": what a row is about, the same key the gateway keeps outcomes under.
-    static func subjectKey(_ subject: [String: Any]?) -> String? {
+    /// "part:rear_wheel", "net:VIN@J1.1|J1.2#rd_1": what a row is about, the same key the gateway keeps outcomes under
+    /// (two checks on one net are two rows).
+    static func subjectKey(_ row: [String: Any]) -> String? {
+        let subject = row["subject"] as? [String: Any]
         guard let kind = subject?["kind"] as? String, let ref = subject?["ref"] as? String else { return nil }
-        return "\(kind):\(ref)"
+        var key = "\(kind):\(ref)"
+        if let pins = subject?["pins"] as? [String], !pins.isEmpty { key += "@" + pins.joined(separator: "|") }
+        if let reading = (row["proof"] as? [String: Any])?["reading_id"] as? String { key += "#" + reading }
+        return key
     }
 
     static func sha(_ ref: Any?) -> String? {

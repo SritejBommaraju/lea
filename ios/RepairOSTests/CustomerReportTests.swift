@@ -242,6 +242,10 @@ struct CustomerReportTests {
         #expect(r.otherIssues.count == 1)
         #expect((r.mostLikely + r.otherIssues).allSatisfy { $0.fixPlan?.action == .reseat })
         #expect(r.otherIssues[0].subjectKey == "part:part4")
+        // two checks on one net are two rows, as the gateway keeps them
+        #expect(ReportModel.subjectKey(["subject": ["kind": "net", "ref": "VIN", "pins": ["J1.1", "J1.2"]],
+                                        "proof": ["reading_id": "rd_1"]]) == "net:VIN@J1.1|J1.2#rd_1")
+        #expect(ReportModel.subjectKey(["subject": ["kind": "part", "ref": "cover"]]) == "part:cover")
     }
 
     @Test func aSuspectNobodyMeasuredIsNeverSaidAsAFact() {

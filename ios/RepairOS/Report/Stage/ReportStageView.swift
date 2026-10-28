@@ -52,6 +52,8 @@ struct ReportStageView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @State var focus: String?
     @State private var sheet: ReportModel.Problem?
+    /// "Check with the meter" was tapped in the detail sheet: the sheet closes first, then the meter sheet opens.
+    @State private var meterAfterSheet: MeterRequest?
     @State private var showOthers = false
     @State private var showTranscript = false
     @State private var handoffZoom: HandoffZoom?
@@ -214,13 +216,24 @@ struct ReportStageView: View {
             }
             .environment(\.cropSource, cropSource)
         }
-        .sheet(item: $sheet) { p in
+        .sheet(item: $sheet, onDismiss: {
+            if let request = meterAfterSheet {
+                meterAfterSheet = nil
+                customer?.openMeter(request.actionID)
+            }
+        }) { p in
             // Previous and next step through the numbered problems in marker order, in place.
             let list = detailList.contains { $0.id == p.id } ? detailList : [p]
             NavigationStack {
                 ProblemDetailView(problems: list, index: list.firstIndex { $0.id == p.id } ?? 0,
                                   stillsDir: sessionDir?.appending(path: "stills"), numbers: markerNumbers,
-                                  onDone: { sheet = nil }, customer: customer)
+                                  onDone: { sheet = nil }, customer: customer.map { c in
+                                      CustomerContext(scanID: c.scanID, gateway: c.gateway, outcomes: c.outcomes,
+                                                      designRevision: c.designRevision) { id in
+                                          meterAfterSheet = MeterRequest(actionID: id)
+                                          sheet = nil
+                                      }
+                                  })
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -790,6 +803,11 @@ enum StageMarks {
 
 /// The next step: the step itself is the section title ("Take a closer photo"), then the instruction and the reason.
 /// No "Next step" above it (an eyebrow) and no button: its action is in the pinned bar.
+/// A wish to open the meter sheet once the detail sheet over the report has closed (one sheet at a time).
+struct MeterRequest: Equatable {
+    var actionID: String?
+}
+
 struct StageNextStep: View {
     let step: ReportModel.NextStep
     /// Opens the meter sheet filled in for this step (a meter step with a gateway to send the reading to).
