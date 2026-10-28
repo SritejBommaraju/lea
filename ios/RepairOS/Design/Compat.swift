@@ -269,11 +269,11 @@ struct ObservedOptional<Object: ObservableObject>: DynamicProperty {
 }
 
 /// Forwards one object's changes as its own, so SwiftUI has something fixed to watch.
-@MainActor
 final class OptionalWatcher: ObservableObject {
     let objectWillChange = ObservableObjectPublisher()
     private var subscription: AnyCancellable?
 
+    @MainActor
     init<O: ObservableObject>(_ object: O?) {
         let relay = objectWillChange
         subscription = object?.objectWillChange.sink { _ in relay.send() }
