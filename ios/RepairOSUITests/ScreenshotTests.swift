@@ -27,7 +27,7 @@ final class ScreenshotTests: XCTestCase {
         let app = XCUIApplication()
         // Each screen stays up for the dwell, then the app moves on by itself: long enough to settle, shoot, and (with
         // the audit, which takes seconds) to audit.
-        app.launchArguments = ["-screens", "walk", "-screens-dwell", audit ? "20" : "4", "-screens-start-delay", "12"]
+        app.launchArguments = ["-screens", "walk", "-screens-dwell", audit ? "40" : "5", "-screens-start-delay", "15"]
         app.launch()
         let current = app.buttons["screens.next"]
         XCTAssertTrue(current.waitForExistence(timeout: 30), "the screens marker never appeared")

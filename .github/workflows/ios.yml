@@ -144,8 +144,9 @@ jobs:
             echo "[$(date +%T)] done $name"
           }
           # The two phones run side by side; each walks its own appearances one after the other.
-          ( run_config "$BIG" "$BIG_LABEL" light default large 1
-            run_config "$BIG" "$BIG_LABEL" dark default large 0 ) &
+          ( run_config "$BIG" "$BIG_LABEL" light default large 0
+            run_config "$BIG" "$BIG_LABEL" dark default large 0
+            run_config "$BIG" "$BIG_LABEL" light text-xxxl accessibility-extra-extra-extra-large 0 ) &
           ( run_config "$SMALL" "$SMALL_LABEL" light default large 0
             run_config "$SMALL" "$SMALL_LABEL" dark default large 0
             run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large 1 ) &

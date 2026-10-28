@@ -49,9 +49,9 @@ picture of every screen:
   `settings`, `pairing`, `product-code`, `product-pairing`, `report`, `meter`, `capture` and `capture-locked` (the capture
   overlay without a camera), `camera-permission`, `progress-error`, `failures`. The report is the contract example in
   `spec/contracts/examples`; nothing is sent anywhere.
-- It runs on the biggest and the smallest iPhone simulator on the image (an iPhone 17 Pro, and an iPhone SE or 16e), each in
+- It runs on the biggest and the smallest iPhone simulator on the image (the newest Pro, and an iPhone SE or 17e), each in
   light, in dark, and in light at the largest accessibility text size (`simctl ui ... content_size
-  accessibility-extra-extra-extra-large`). The status bar is fixed at 9:41. On the iPhone 17 Pro in light and on the small
+  accessibility-extra-extra-extra-large`). The status bar is fixed at 9:41. On the small
   phone at the large text size, Xcode's accessibility audit also runs on every screen (contrast, tap target size, clipped
   text, missing labels) and its findings are saved as `<screen>-...-audit.txt`; the audit never fails the job.
 - The pictures are the `screens` artifact (14 days): `gh run download <run id> -n screens`. Names are
