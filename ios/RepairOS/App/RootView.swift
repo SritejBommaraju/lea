@@ -167,7 +167,7 @@ struct RootView: View {
                 if app.isPaired, app.gateway != nil {
                     Button(action: talkToLea) { TalkLabel() }
                         .buttonStyle(.primary(.quiet))
-                        .widthFromScreen { width in stacked ? width - 2 * Spacing.gutter : (width - 2 * Spacing.gutter - Spacing.s) * 0.425 }
+                        .widthFromScreen { width in stacked ? width - 2 * Spacing.gutter : (width - 2 * Spacing.gutter - Spacing.s) * 0.47 }
                         .accessibilityLabel("Talk to Lea")
                         .accessibilityHint("Opens Lea, already listening")
                 }
@@ -423,7 +423,7 @@ private struct TalkLabel: View {
                     .frame(width: 24, height: 24)
                     .accessibilityLabel(wake.mode == .followUp ? "Lea is listening" : "Listening for Hey Lea")
             }
-            Text("Talk to Lea")
+            Text("Talk to Lea").lineLimit(1).minimumScaleFactor(0.85)   // whole on the narrowest phone
         }
     }
 }
