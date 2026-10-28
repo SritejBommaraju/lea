@@ -253,3 +253,116 @@ def test_a_hand_typed_reading_with_a_check_id_is_judged_and_its_verdict_can_be_r
         sent = json.loads(t.of("POST", "/call")[-1].content)
         assert sent["readings"] == [{"net": "VIN", "id": "rd_hand", "power_state": "on", "volts": 3.1, "check": "chk_vin"}]
         assert c.req("GET", "/v1/readings/nope")[0] == 404
+
+
+# ------------------------------------------------------------------------------- review fixes (Greptile on this PR)
+def test_answers_for_two_scans_of_one_session_written_at_once_all_survive(tmp_path):
+    import threading
+
+    row = {"finding_id": "g_a", "subject": {"kind": "part", "ref": "a"}, "issue": "loose"}
+
+    def write(scan, i):
+        r = {**row, "subject": {"kind": "part", "ref": f"p{i}"}, "finding_id": f"g_{i}"}
+        service.save_outcome(tmp_path, "sess_x", scan, r, service.outcome_entry(r, "fixed", None))
+
+    threads = [threading.Thread(target=write, args=(f"scan_{i % 2}", i)) for i in range(40)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    saved = json.loads(service.outcomes_path(tmp_path, "sess_x").read_text(encoding="utf-8"))
+    assert sum(len(v) for v in saved.values()) == 40
+    assert list(service.outcomes_path(tmp_path, "sess_x").parent.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("row", [
+    {"finding_id": "g_n", "subject": {"kind": "net", "ref": "VIN"}, "issue": "out_of_range"},    # a net is not a part
+    {"finding_id": "g_p", "subject": {"kind": "part", "ref": "board"}},                          # a region nobody looked at
+    {"finding_id": "g_k", "subject": {"kind": "part", "ref": "cover"}, "issue": "none"},         # judged fine: nothing to label
+    {"finding_id": "g_u", "subject": {"kind": "part", "ref": "cover"}, "issue": "something_new"}])
+def test_an_answer_is_only_sent_as_a_part_label_when_the_row_names_a_judged_fault(tmp_path, row):
+    t = FilesRecorder(files_answers())
+    client = GrainClient(BASE, "k", transport=t)
+    d = tmp_path / "sess_x" / "grain"
+    GrainClient.record(d, "scan", "scan_x", {"id": "scan_g1"})
+    entry = service.outcome_entry(row, "fixed", None)
+    got = service.forward_outcome(client, root=tmp_path, session={"product": "demo_product"},
+                                  scan={"scan_id": "scan_x", "session_id": "sess_x"}, entry=entry)
+    assert got == "not_applicable" and t.requests == []
+
+
+def test_a_design_picture_asked_for_twice_at_once_never_shares_a_file(tmp_path):
+    import threading
+
+    t = FilesRecorder(files_answers())
+    client = GrainClient(BASE, "k", transport=t)
+    errors = []
+
+    def get():
+        try:
+            service.design_view(client, root=tmp_path, project="demo_product", now=1.0)
+        except Exception as e:   # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=get) for _ in range(12)]
+    [x.start() for x in threads]
+    [x.join() for x in threads]
+    assert errors == [] and list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_a_changed_design_forgets_its_old_pictures(tmp_path):
+    t = FilesRecorder(files_answers())
+    with serve(gateway(tmp_path, t)) as c:
+        scan_id, _, _ = judged(c, t)
+        c.req("GET", f"/v1/scans/{scan_id}/design-view")
+        c.req("GET", f"/v1/scans/{scan_id}/design-view")
+        assert len(t.of("GET", "/projects/demo_product/files/out/views/iso.png")) == 1
+        assert c.req("POST", f"/v1/scans/{scan_id}/fix", {"message": "make the cover seat deeper"})[0] == 200   # build ok
+        c.req("GET", f"/v1/scans/{scan_id}/design-view")
+        assert len(t.of("GET", "/projects/demo_product/files/out/views/iso.png")) == 2
+
+
+def test_a_reading_taken_before_the_upload_is_judged_once_the_scan_is_up(tmp_path):
+    t = FilesRecorder(files_answers())
+    with serve(gateway(tmp_path, t)) as c:
+        paired(c)
+        _, session, _ = c.req("POST", "/v1/sessions", {"product": "demo_product"})
+        pkg = make_scan(c, session["session_id"])
+        c.req("POST", "/v1/scans", pkg)
+        reading = {**ex("meter-reading"), "session_id": session["session_id"], "scan_id": pkg["scan_id"],
+                   "reading_id": "rd_early", "kind": "voltage_dc", "net": "VIN", "value": {"volts": 5.0},
+                   "power_state": "on", "source": "typed"}
+        reading.pop("pins", None)
+        reading.pop("meter", None)
+        assert c.req("POST", "/v1/readings", reading)[0] == 201
+        assert c.req("GET", "/v1/readings/rd_early")[1]["verdict"]["state"] == "pending"   # nothing uploaded yet
+        t.answers[("POST", "/call")] = {**CALL, "electrical": {"readings": [{"net": "VIN", "verdict": "ok", "findings": []}],
+                                                               "findings": []}}
+        assert c.req("POST", f"/v1/scans/{pkg['scan_id']}/complete")[0] == 202
+        got = wait_for(lambda: (lambda b: b if b["verdict"]["state"] != "pending" else None)(
+            c.req("GET", "/v1/readings/rd_early")[1]), "the early reading to be judged")
+        assert got["verdict"]["state"] == "judged" and got["verdict"]["verdict"] == "ok"
+
+
+def test_a_judgement_that_says_nothing_about_a_reading_is_unjudged_not_pending_for_ever(tmp_path):
+    t = FilesRecorder(files_answers())
+    with serve(gateway(tmp_path, t)) as c:
+        scan_id, session_id, report = judged(c, t)
+        reading = {**ex("meter-reading"), "session_id": session_id, "scan_id": scan_id, "reading_id": "rd_mute",
+                   "kind": "voltage_dc", "net": "VIN", "value": {"volts": 5.0}, "power_state": "on", "source": "typed"}
+        reading.pop("pins", None)
+        reading.pop("meter", None)
+        assert c.req("POST", "/v1/readings", reading)[0] == 201   # the call answers with no electrical section
+        got = wait_for(lambda: (lambda b: b if b["verdict"]["state"] != "pending" else None)(
+            c.req("GET", "/v1/readings/rd_mute")[1]), "the verdict")
+        assert got["verdict"]["state"] == "unjudged" and got["verdict"]["verdict"] is None
+
+
+def test_an_answer_another_request_already_sent_is_reported_sent_not_waiting(tmp_path):
+    t = FilesRecorder(files_answers())
+    with serve(gateway(tmp_path, t)) as c:
+        scan_id, _, report = judged(c, t)
+        wheel = row_of(report, "rear_wheel")["finding_id"]
+        first = c.req("POST", f"/v1/scans/{scan_id}/outcome", {"row_id": wheel, "outcome": "fixed"})[1]
+        assert first["forwarded"] == "sent"
+        # a flush that finds the saved answer already sent says so
+        from repairos.grain import service as s
+        assert s.unsent_outcomes(tmp_path / "sessions", report["session_id"], scan_id) == {}

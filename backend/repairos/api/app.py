@@ -566,6 +566,8 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                                             "finished_at": _now(), "stages": {"design_engine": {"status": "done"}}})
         if await asyncio.to_thread(grain_service.load_outcomes, root, sid, scan_id):
             _spawn(_flush_outcomes(scan_id))   # answers saved before the scan was uploaded go now
+        if reading_id is None and readings:
+            _spawn(_grain_publish(scan_id, reading_id=readings[-1]["reading_id"]))   # readings taken before the upload
 
     @app.post("/v1/scans/{scan_id}/fix")
     async def fix_scan(scan_id: str, body: FixRequest, request: Request, _d: Device):
@@ -591,7 +593,10 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             answer = await asyncio.to_thread(client.chat, project, message, scan_id=scan_id, record_to=gdir)
         except GrainError as e:
             raise HTTPException(502, {"error": "design_engine", "message": str(e)}) from e
-        return grain_service.chat_result(answer)
+        result = grain_service.chat_result(answer)
+        if result["build"] == "ok":   # the design changed: its old pictures are stale
+            await asyncio.to_thread(grain_service.clear_design_views, recordings_root(), project)
+        return result
 
     # ------------------------------------------------- what the person did next (outcome, design picture, part file)
     def _outcome_lock(scan_id: str) -> asyncio.Lock:
@@ -612,7 +617,8 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             todo = await asyncio.to_thread(grain_service.load_outcomes, root, sid, scan_id)
             session = (await st.get("session", sid)).data
             for key, entry in todo.items():
-                if entry.get("sent"):
+                if entry.get("sent"):   # another request got there first: it is sent, or never needed sending
+                    out[key] = "not_applicable" if entry.get("state") == "not_tried" else "sent"
                     continue
                 try:
                     got = await asyncio.to_thread(grain_service.forward_outcome, client, root=root, session=session,
@@ -707,14 +713,15 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
     async def get_reading(reading_id: str, request: Request, _d: Device):
         """One stored reading with the design engine's verdict on it: `{reading, verdict}`. verdict.state is `pending`
         until the judgement comes back, then `judged` (verdict.verdict ok | off | open | wrong_pin | unknown_net |
-        no_expected | invalid, verdict.notes in the design engine's words) or `failed` when the last judgement failed."""
+        no_expected | invalid, verdict.notes in the design engine's words), `unjudged` (the judgement came back with nothing
+        for this reading) or `failed` when the last judgement failed."""
         reading = await _get(request, "meter-reading", reading_id)
         base: dict[str, Any] = {"reading": reading}
         if not design_engine().enabled:
             return {**base, "verdict": {"state": "unavailable"}}
         got = await asyncio.to_thread(grain_service.reading_view, recordings_root(), reading["session_id"], reading_id)
         if got is not None:
-            return {**base, "verdict": {"state": "judged", **got}}
+            return {**base, "verdict": {"state": "judged" if got.get("verdict") else "unjudged", **got}}
         run = await _run(request, reading["scan_id"])
         return {**base, "verdict": {"state": "failed" if (run or {}).get("status") == "failed" else "pending"}}
 

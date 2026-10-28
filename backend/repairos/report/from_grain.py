@@ -489,8 +489,9 @@ def _apply_fix(row: dict, fix: Mapping[str, Any], bom_rows: Mapping[str, Any]) -
         rows = fix.get("bom")
         rows = rows if isinstance(rows, list) else [bom] if bom else []
         options = [o for o in (offer_from_row(r, part) for r in rows) if o][:3]
-        plan = {"action": "buy", "summary": f"Buy a replacement {part}" + (f": {what}" if what else "") + ".",
-                **({"options": options} if options else {})}
+        if options:   # a buy plan without a shop to go to is only the sentence in `fix`
+            plan = {"action": "buy", "summary": f"Buy a replacement {part}" + (f": {what}" if what else "") + ".",
+                    "options": options}
     elif action == "remake":
         row["fix"] = f"Remake {part} from the design's part file." + (f" {how}" if how else "")
         plan = {"action": "remake", "summary": f"Remake {part} from the design's part file.",

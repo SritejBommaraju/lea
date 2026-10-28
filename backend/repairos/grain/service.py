@@ -10,7 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import threading
 import time
+import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -135,10 +138,11 @@ def judge_reading(client: GrainClient, *, root: Path, session: Mapping[str, Any]
         return None
     call = client.call(project, _scan_record_id(record), question=session.get("symptom") or scan.get("symptom"),
                        readings=readings_payload(readings), scan_id=scan_id, record_to=gdir)
-    entry, notes = from_grain.reading_verdict(call, readings, reading["reading_id"])
-    client.record(gdir, "reading", reading["reading_id"],
-                  {"reading_id": reading["reading_id"], "grain_verdict": (entry or {}).get("verdict"),
-                   "grain_row": {"row": entry, "findings": notes}})
+    for r in readings:   # the call judged them all: each one's verdict (or that it was not judged) is saved
+        entry, notes = from_grain.reading_verdict(call, readings, r["reading_id"])
+        client.record(gdir, "reading", r["reading_id"],
+                      {"reading_id": r["reading_id"], "grain_verdict": (entry or {}).get("verdict"),
+                       "grain_row": {"row": entry, "findings": notes}})
     return build_report(client, project=project, scan=scan, call=call, readings=readings, stills=stills,
                         record_to=gdir, now=now)
 
@@ -243,10 +247,13 @@ def _read_outcomes(root: Path, session_id: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+_OUTCOMES_LOCK = threading.Lock()   # one writer of any session's outcomes.json at a time (read, change, replace)
+
+
 def _write_outcomes(root: Path, session_id: str, data: dict) -> None:
     path = outcomes_path(root, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
     tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
@@ -259,18 +266,20 @@ def load_outcomes(root: Path, session_id: str, scan_id: str) -> dict[str, dict]:
 
 def save_outcome(root: Path, session_id: str, scan_id: str, row: Mapping[str, Any], outcome: dict) -> None:
     """Keep the person's answer for the row (a newer answer replaces the older one), atomically."""
-    data = _read_outcomes(root, session_id)
-    data.setdefault(scan_id, {})[row_key(row)] = outcome
-    _write_outcomes(root, session_id, data)
+    with _OUTCOMES_LOCK:
+        data = _read_outcomes(root, session_id)
+        data.setdefault(scan_id, {})[row_key(row)] = outcome
+        _write_outcomes(root, session_id, data)
 
 
 def mark_sent(root: Path, session_id: str, scan_id: str, key: str) -> None:
-    data = _read_outcomes(root, session_id)
-    try:
-        data[scan_id][key]["sent"] = True
-    except (KeyError, TypeError):
-        return
-    _write_outcomes(root, session_id, data)
+    with _OUTCOMES_LOCK:
+        data = _read_outcomes(root, session_id)
+        try:
+            data[scan_id][key]["sent"] = True
+        except (KeyError, TypeError):
+            return
+        _write_outcomes(root, session_id, data)
 
 
 def outcome_view(entry: Mapping[str, Any]) -> dict:
@@ -300,7 +309,7 @@ def outcome_entry(row: Mapping[str, Any], outcome: str, note: str | None, now: d
     entry: dict[str, Any] = {"state": outcome,
                              "recorded_at": (now or datetime.now(UTC)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                              "confirmed_by": "person", "row_id": row["finding_id"], "part": str(row["subject"]["ref"]),
-                             "flagged": row.get("issue"), "sent": False}
+                             "kind": row["subject"].get("kind"), "flagged": row.get("issue"), "sent": False}
     if note and note.strip():
         entry["note"] = note.strip()[:500]
     return entry
@@ -316,16 +325,18 @@ def outcome_note(entry: Mapping[str, Any]) -> str:
 def forward_outcome(client: GrainClient, *, root: Path, session: Mapping[str, Any], scan: Mapping[str, Any],
                     entry: Mapping[str, Any]) -> str:
     """Send one saved answer to the design engine. Returns "sent", "not_applicable" (not_tried says nothing about the
-    part), or "waiting" (the scan was never uploaded, or the design is unknown: it goes when it can). A design engine
-    error propagates; the caller keeps the answer saved and tries again later."""
-    if entry["state"] == "not_tried":
+    part; a row that is not a part with a fault the design engine judged, such as a net a meter cleared or a region nobody
+    could look at, names nothing to label), or "waiting" (the scan was never uploaded, or the design is unknown: it goes
+    when it can). A design engine error propagates; the caller keeps the answer saved and tries again later."""
+    if entry["state"] == "not_tried" or entry.get("kind") != "part" or entry.get("flagged") not in OUTCOME_STATE \
+            or entry.get("flagged") == "none":
         return "not_applicable"
     scan_id, session_id = scan["scan_id"], scan["session_id"]
     gdir = grain_dir(root, session_id)
     record, project = latest(gdir, "scan", scan_id), project_for(session, client)
     if record is None or project is None:
         return "waiting"
-    state = OUTCOME_STATE.get(str(entry.get("flagged")), "damaged")
+    state = OUTCOME_STATE[str(entry["flagged"])]
     client.outcome(project, _scan_record_id(record), part=entry["part"], state=state, note=outcome_note(entry),
                    scan_id=scan_id, record_to=gdir)
     return "sent"
@@ -359,15 +370,24 @@ def design_view(client: GrainClient, *, root: Path, project: str, view: str = "i
             return path.read_bytes(), "image/png"
         raise
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")   # its own file: two requests never share one
     tmp.write_bytes(data)
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:   # another request is storing the same picture (Windows refuses a replace under a reader)
+        tmp.unlink(missing_ok=True)
     return data, ctype if ctype.startswith("image/") else "image/png"
+
+
+def clear_design_views(root: Path, project: str) -> None:
+    """Forget the cached pictures of a design (it was just changed: the next request fetches the new ones)."""
+    shutil.rmtree(view_cache_path(root, project, "iso").parent, ignore_errors=True)
 
 
 def reading_view(root: Path, session_id: str, reading_id: str) -> dict | None:
     """The design engine's verdict on one reading as it was saved when the judgement came back, or None while it has
-    not (the app asks again). `grain_row` holds the design engine's own entry and the findings it points at."""
+    not (the app asks again). `verdict` is None when the judgement came back without an answer for this reading.
+    `grain_row` holds the design engine's own entry and the findings it points at."""
     got = latest(grain_dir(root, session_id), "reading", reading_id)
     if got is None:
         return None
