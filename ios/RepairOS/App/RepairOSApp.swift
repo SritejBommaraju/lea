@@ -9,7 +9,7 @@ struct RepairOSApp: App {
             root
                 .environment(app)
                 .overlay(alignment: .top) { UsageBanner() }   // a paid service on the Mac paused (spend_alert)
-                .task { UsageAlerts.shared.start(app) }
+                .task { UsageAlerts.shared.start(app); SessionShare.purge() }
                 .task {
                     await app.launch()
                     LeaVoice.shared.attach(app)

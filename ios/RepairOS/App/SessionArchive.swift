@@ -3,6 +3,7 @@ import Foundation
 /// One session folder as one zip, to hand to the design engine's import (it reads `scans/<scan_id>/scan_package.json`
 /// relative to the session root). Only files already in the folder go in; nothing is generated.
 enum SessionArchive {
+    // Writing stops with Failure.tooBig before any 32-bit field would overflow.
     enum Failure: Error { case missingFolder, tooBig }
 
     /// Writes every file under `dir` into `<dir name>.zip` in `into`, with paths relative to `dir` (so the root entries
@@ -10,7 +11,10 @@ enum SessionArchive {
     /// files do not shrink much, and a stored zip needs no library. Foundation's own directory zipper
     /// (`NSFileCoordinator` `.forUploading`) was tried first and always wraps everything in a top folder named after the
     /// directory, which the importer does not expect. Blocking: call it off the main actor.
-    static func zip(_ dir: URL, into: URL = FileManager.default.temporaryDirectory) throws -> URL {
+    ///
+    /// `limit` is the largest archive the classic zip format can describe (offsets are 32 bits); tests pass a small
+    /// one to prove the throw without writing 4 GiB. Every offset is checked before it is converted.
+    static func zip(_ dir: URL, into: URL = FileManager.default.temporaryDirectory, limit: Int = 0xFFFF_FFFF) throws -> URL {
         let fm = FileManager.default
         guard fm.fileExists(atPath: dir.path) else { throw Failure.missingFolder }
         let out = into.appending(path: "\(dir.lastPathComponent).zip")
@@ -28,19 +32,21 @@ enum SessionArchive {
         }
         files.sort { $0.name < $1.name }
         guard files.count < 0xFFFF else { throw Failure.tooBig }
+        func fits(_ n: Int) throws { guard n <= limit else { throw Failure.tooBig } }
 
         var central = Data()
         var offset = 0
         for (name, url) in files {
             let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            guard data.count < 0xFFFF_FFFF, offset < 0xFFFF_FFFF else { throw Failure.tooBig }
             let nameBytes = Data(name.utf8)
             let crc = crc32(data)
             let (time, date) = dosTime((try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? Date())
+            try fits(data.count)
             var local = Data()
             local.le32(0x0403_4B50); local.le16(20); local.le16(0x0800); local.le16(0); local.le16(time); local.le16(date)
             local.le32(crc); local.le32(UInt32(data.count)); local.le32(UInt32(data.count))
             local.le16(UInt16(nameBytes.count)); local.le16(0); local.append(nameBytes)
+            try fits(offset + local.count + data.count)
             try handle.write(contentsOf: local)
             try handle.write(contentsOf: data)
             central.le32(0x0201_4B50); central.le16(20); central.le16(20); central.le16(0x0800); central.le16(0)
@@ -51,6 +57,7 @@ enum SessionArchive {
             offset += local.count + data.count
         }
         var end = Data()
+        try fits(offset + central.count + 22)
         end.le32(0x0605_4B50); end.le16(0); end.le16(0); end.le16(UInt16(files.count)); end.le16(UInt16(files.count))
         end.le32(UInt32(central.count)); end.le32(UInt32(offset)); end.le16(0)
         try handle.write(contentsOf: central)

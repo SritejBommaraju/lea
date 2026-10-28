@@ -28,4 +28,21 @@ struct SessionArchiveTests {
             try fm.copyItem(at: zip, to: URL(fileURLWithPath: copy))
         }
     }
+
+    /// A session that does not fit the 32-bit zip format throws instead of trapping. The limit is lowered so no test
+    /// writes 4 GiB: a 200-byte file against limits that fit and that do not, including the last-file/final-offset case.
+    @Test func throwsWhenTheArchiveWouldPassTheFormatLimit() throws {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory.appending(path: "archive-limit-\(UUID().uuidString)")
+        let dir = tmp.appending(path: "s", directoryHint: .isDirectory)
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data(repeating: 7, count: 200).write(to: dir.appending(path: "a.bin"))
+        try Data(repeating: 7, count: 200).write(to: dir.appending(path: "b.bin"))
+        defer { try? fm.removeItem(at: tmp) }
+        // Two entries: 2 x (30 + 5 + 200) local + 2 x (46 + 5) central + 22 end = 594 bytes.
+        _ = try SessionArchive.zip(dir, into: tmp, limit: 594)
+        #expect(throws: SessionArchive.Failure.self) { try SessionArchive.zip(dir, into: tmp, limit: 593) }   // only the end record overflows
+        #expect(throws: SessionArchive.Failure.self) { try SessionArchive.zip(dir, into: tmp, limit: 300) }   // the second file overflows
+        #expect(throws: SessionArchive.Failure.self) { try SessionArchive.zip(dir, into: tmp, limit: 100) }   // the first does
+    }
 }
