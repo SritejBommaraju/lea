@@ -67,7 +67,7 @@ struct MeterReadingContext: Identifiable {
     var firstInstrument: Instrument? {
         if let instrument, offers(instrument) { return instrument }
         if offers(.selftestBle) { return .selftestBle }
-        if offers(.selftestLed) { return .selftestLed }
+        if offers(.selftestLED) { return .selftestLED }
         return nil
     }
 
