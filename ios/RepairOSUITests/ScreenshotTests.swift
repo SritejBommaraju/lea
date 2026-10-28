@@ -68,7 +68,7 @@ final class ScreenshotTests: XCTestCase {
             single.launchArguments = ["-screens", screen]
             single.launch()
             Thread.sleep(forTimeInterval: settle[screen] ?? 2.5)
-            shoot(single, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: false)
+            shoot(single, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: audit)
             taken.append(screen)
             single.terminate()
         }

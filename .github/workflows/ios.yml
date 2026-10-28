@@ -34,7 +34,7 @@ permissions:
 
 concurrency:
   # One run per branch: a push and the pull request it belongs to would otherwise both run, twice the macOS load.
-  group: ios-${{ github.head_ref || github.ref_name }}
+  group: ios-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -161,7 +161,9 @@ jobs:
               env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text"                   TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit"                 xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens                   -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd"                   -resultBundlePath "$RES/$name.xcresult"                   CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 &
               local pid=$!
               local waited=0
-              while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 330 ]; do sleep 5; waited=$((waited + 5)); done
+              # An audited run takes about 12 minutes by itself, so its limit is longer.
+              limit=330; [ "$audit" = 1 ] && limit=1500
+              while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$limit" ]; do sleep 5; waited=$((waited + 5)); done
               if kill -0 "$pid" 2>/dev/null; then echo "$name: stopped after ${waited}s (attempt $attempt)"; pkill -P "$pid" || true; kill "$pid" || true; fi
               if wait "$pid"; then rm -f "$RES/$name.failed"; break; else touch "$RES/$name.failed"; echo "tests failed in $name (attempt $attempt)"; fi
               mv "$RES/$name.log" "$RES/$name.attempt$attempt.log" 2>/dev/null || true
