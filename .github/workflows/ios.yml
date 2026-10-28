@@ -19,6 +19,10 @@ on:
         description: "Also build a signed .ipa (needs the APPLE_* repository secrets)"
         type: boolean
         default: false
+      audit:
+        description: "Screens job: also run Xcode's accessibility audit on the small phone at the largest text (adds about 10 minutes)"
+        type: boolean
+        default: false
       export_method:
         description: "Export method for the .ipa"
         type: choice
@@ -127,6 +131,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" 2>&1 | tee "$RUNNER_TEMP/build.log"
 
       - name: Take the screenshots
+        env:
+          AUDIT: ${{ inputs.audit && '1' || '0' }}
         run: |
           OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
           mkdir -p "$OUT" "$RES"
@@ -149,7 +155,7 @@ jobs:
             run_config "$BIG" "$BIG_LABEL" light text-xxxl accessibility-extra-extra-extra-large 0 ) &
           ( run_config "$SMALL" "$SMALL_LABEL" light default large 0
             run_config "$SMALL" "$SMALL_LABEL" dark default large 0
-            run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large 1 ) &
+            run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large "$AUDIT" ) &
           wait
           for f in "$RES"/*.log; do echo "::group::$(basename "$f")"; grep -E "Test Case .*(passed|failed)|error:|Executed|TEST (SUCCEEDED|FAILED)" "$f" | tail -40; echo "::endgroup::"; done
           # Backup copy of the attachments straight from the result bundles (Xcode 16 and later).

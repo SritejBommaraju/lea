@@ -51,8 +51,9 @@ picture of every screen:
   `spec/contracts/examples`; nothing is sent anywhere.
 - It runs on the biggest and the smallest iPhone simulator on the image (the newest Pro, and an iPhone SE or 17e), each in
   light, in dark, and in light at the largest accessibility text size (`simctl ui ... content_size
-  accessibility-extra-extra-extra-large`). The status bar is fixed at 9:41. On the small
-  phone at the large text size, Xcode's accessibility audit also runs on every screen (contrast, tap target size, clipped
+  accessibility-extra-extra-extra-large`). The status bar is fixed at 9:41. Run the workflow
+  by hand with `audit` ticked (Actions > iOS > Run workflow) and, on the small phone at the large text size, Xcode's
+  accessibility audit also runs on every screen (contrast, tap target size, clipped
   text, missing labels) and its findings are saved as `<screen>-...-audit.txt`; the audit never fails the job.
 - The pictures are the `screens` artifact (14 days): `gh run download <run id> -n screens`. Names are
   `<screen>-<device>-<appearance>-<textsize>.png`. `raw/` holds the same attachments exported from each `.xcresult`.
