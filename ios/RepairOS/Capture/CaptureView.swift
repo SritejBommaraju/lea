@@ -55,7 +55,7 @@ struct SessionFlowView: View {
             } else if finished != nil || record.status != .capturing, let upload {
                 ReportView(record: current, upload: upload, close: { dismiss() })
                     .id(reportVersion)
-                    .environment(\.continueScan, canContinue ? ContinueScanAction(run: continueScanning) : nil)
+                    .environment(\.continueScan, canContinue ? ContinueScanAction(run: { continueScanning() }) : nil)
                     .environment(\.scanBottom, canContinue ? ScanBottomAction { _ in scanBottom(current) } : nil)   // Capture/Handheld/FlipSegment
                     .environment(\.liveEvents, live)
                     // The Done gather hands over to the same cloud on the report's dark stage: a plain fade, no zoom.
