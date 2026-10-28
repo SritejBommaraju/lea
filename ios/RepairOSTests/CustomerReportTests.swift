@@ -206,9 +206,10 @@ struct CustomerReportTests {
     @Test func anAnswerFollowsItsPartWhenTheReportIsMadeAgain() {
         var box = OutcomeOutbox()
         box.record(rowID: "g_wheel_old", key: "part:rear_wheel", choice: .fixed, at: Self.t0)
-        #expect(!box.adopt(rowID: "g_wheel_old", key: "part:rear_wheel"))   // same id: nothing moves
-        #expect(!box.adopt(rowID: "g_other", key: "part:cover"))             // another part: nothing moves
-        #expect(box.adopt(rowID: "g_wheel_new", key: "part:rear_wheel"))
+        let sameID = box.adopt(rowID: "g_wheel_old", key: "part:rear_wheel")   // same id: nothing moves
+        let otherPart = box.adopt(rowID: "g_other", key: "part:cover")          // another part: nothing moves
+        let moved = box.adopt(rowID: "g_wheel_new", key: "part:rear_wheel")
+        #expect(!sameID && !otherPart && moved)
         #expect(box.entries["g_wheel_old"] == nil && box.entries["g_wheel_new"]?.choice == .fixed)
         #expect(box.unsent.map(\.rowID) == ["g_wheel_new"])   // it is sent under the row the gateway has now
         // a newer answer for the same part under a new id replaces the older one
