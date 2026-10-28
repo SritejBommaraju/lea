@@ -45,6 +45,7 @@ struct ReportView: View {
     /// The meter-reading sheet, and how many readings this report has sent.
     @State private var meterContext: MeterReadingContext?
     @State private var meterReadingsSent = 0
+    @State private var showFixWithGrain = false
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -82,6 +83,7 @@ struct ReportView: View {
                                     addMeterReading: gateway == nil ? nil : {
                                         meterContext = report.nextStep.map { MeterReadingContext(step: $0) } ?? MeterReadingContext()
                                     },
+                                    askDesign: gateway == nil || report.design == nil ? nil : { showFixWithGrain = true },
                                     meterReadingsSent: meterReadingsSent)
                         .transition(.opacity)
                 } else if error == nil {
@@ -121,6 +123,9 @@ struct ReportView: View {
                     WhatWasntCheckedSheet(notInspected: report.notInspected, unclear: report.insufficient, limits: report.limits,
                                           continueScan: continueScan.map { action -> () -> Void in { action() } })
                 }
+            }
+            .sheet(isPresented: $showFixWithGrain) {
+                FixWithGrainSheet(scanID: record.scanID, symptom: record.symptom, gateway: gateway)
             }
             .sheet(item: $meterContext) { ctx in
                 MeterReadingSheet(context: ctx, scanID: record.scanID,

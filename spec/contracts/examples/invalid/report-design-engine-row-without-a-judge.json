@@ -1,0 +1,20 @@
+{
+ "schema": "report",
+ "why": "a row with no photo still needs a state judge: detector alone is not one (I3)",
+ "base": "report.design_engine.json",
+ "patch": {
+  "findings": [
+   {
+    "finding_id": "g_cover",
+    "subject": { "kind": "part", "ref": "cover" },
+    "part_class": "cover",
+    "issue": "missing",
+    "confidence_word": "high",
+    "evidence": ["no points where the cover should be"],
+    "inspected_by": ["detector"],
+    "location": { "status": "not_computed", "reason": "no photo" },
+    "proof": { "status": "not_measured" }
+   }
+  ]
+ }
+}

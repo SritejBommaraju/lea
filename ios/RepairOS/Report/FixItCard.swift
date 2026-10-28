@@ -63,9 +63,38 @@ struct FixItCard: View {
     let searching: Bool
     /// The backend skipped the search (its spend cap): a quiet line instead of offers.
     var unavailable = false
+    /// Opens "Fix it with Grain" (nil when the report was not judged against a design, or there is no server).
+    var askDesign: (() -> Void)? = nil
     @Environment(\.openURL) private var openURL
 
     var body: some View {
+        VStack(alignment: .leading, spacing: Spacing.m) {
+            offers
+            if let askDesign { askRow(askDesign) }
+        }
+    }
+
+    private func askRow(_ open: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.s) {
+            if fix == nil { SectionHeader("Fix it") }
+            GroupedList {
+                Button(action: open) {
+                    HStack {
+                        Label("Fix it with Grain", systemImage: "wand.and.stars")
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(Palette.accent)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Palette.secondary)
+                    }
+                    .padding(.vertical, Spacing.m)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PressableCardStyle())
+                .accessibilityHint("Asks the design engine to change the product's design")
+            }
+        }
+    }
+
+    @ViewBuilder private var offers: some View {
         if let fix {
             VStack(alignment: .leading, spacing: Spacing.s) {
                 SectionHeader("Fix it")

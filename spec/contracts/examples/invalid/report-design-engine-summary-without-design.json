@@ -1,0 +1,6 @@
+{
+ "schema": "report",
+ "why": "a summary the design engine wrote (not words only) needs the design it judged against, even with no row naming grain",
+ "base": "report.design_engine.json",
+ "patch": { "design": null, "findings": [], "most_likely": [] }
+}

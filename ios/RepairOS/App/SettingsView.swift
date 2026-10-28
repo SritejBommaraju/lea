@@ -86,6 +86,7 @@ struct SettingsView: View {
     @State private var confirmDeleteAll = false
     @State private var versionTaps = 0
     @AppStorage(DemoReplay.unlockedKey) private var demoUnlocked = false
+    @AppStorage(DesignID.key) private var designID = ""
 
     var body: some View {
         NavigationStack {
@@ -114,6 +115,13 @@ struct SettingsView: View {
                         .disabled(checking || app.gateway == nil)
                     } header: { Text("Server") } footer: {
                         Text("Scans stay on the phone until it is paired.")
+                    }
+
+                    Section {
+                        TextField("Design id on the product", text: $designID)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    } header: { Text("Product") } footer: {
+                        Text("The design id printed on the product. Lea judges each scan against that design.")
                     }
 
                     Section {

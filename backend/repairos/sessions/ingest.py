@@ -8,7 +8,7 @@ from typing import Any
 from repairos.sessions.layout import TYPE_BY_EXT, map_files
 from repairos.sessions.reader import Session
 
-SESSION_ROW_FIELDS = ("product_id", "make_model", "symptom", "created_at")
+SESSION_ROW_FIELDS = ("product", "product_id", "make_model", "symptom", "created_at")
 
 
 def session_row(session_id: str, meta: dict[str, Any]) -> dict[str, Any]:

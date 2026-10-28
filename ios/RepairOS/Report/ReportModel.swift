@@ -119,6 +119,13 @@ struct ReportModel: Sendable {
         var reason: String?
         /// The NextAction behind it (`next_step.action_id`), so a meter reading can say what it answers.
         var actionID: String? = nil
+        /// The net and the two probe points of a meter step (`next_step.target`), so the meter sheet opens filled in.
+        var net: String? = nil
+        var pins: [String] = []
+        /// `on` or `off`: the power state the meter step is read in (`next_step.power_state`).
+        var powerState: String? = nil
+        /// What to watch out for before probing (`next_step.safety_notes`), in the design engine's words.
+        var safetyNotes: [String] = []
 
         var symbol: String {
             switch kind {
@@ -158,6 +165,8 @@ struct ReportModel: Sendable {
     var notInspected: [Gap]
     var insufficient: [Gap]
     var nextStep: NextStep?
+    /// The design the design engine judged this scan against (`design.project`); nil for a report it did not judge.
+    var design: String?
     var limits: [String]
     var photos: Int
     var photosInspected: Int
@@ -215,9 +224,13 @@ struct ReportModel: Sendable {
         notInspected = Self.current(r["not_inspected"]).map(Self.gap)
         insufficient = Self.current(r["insufficient_evidence"]).map(Self.gap)
         if let n = r["next_step"] as? [String: Any], let instruction = n["instruction"] as? String {
+            let target = n["target"] as? [String: Any]
             nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String,
-                                actionID: n["action_id"] as? String)
+                                actionID: n["action_id"] as? String, net: (target?["net"] as? String)?.trimmedOrNil,
+                                pins: (target?["pins"] as? [String]) ?? [], powerState: n["power_state"] as? String,
+                                safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil))
         }
+        design = ((r["design"] as? [String: Any])?["project"] as? String)?.trimmedOrNil
         limits = r["limits"] as? [String] ?? []
         let capture = r["capture"] as? [String: Any] ?? [:]
         photos = capture["stills"] as? Int ?? 0

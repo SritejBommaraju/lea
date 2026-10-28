@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
@@ -29,6 +30,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from repairos import contracts
 from repairos.config import ROOT, get_settings
+from repairos.grain import service as grain_service
+from repairos.grain.client import GrainClient, GrainError
+from repairos.report import from_grain
 from repairos.sessions import files
 from repairos.sessions.ids import new_session_id
 from repairos.sessions.ingest import session_row
@@ -38,6 +42,7 @@ from repairos.slots.blob import (REF_PREFIX, BlobError, BlobNotFound, BlobStore,
                                  is_sha256, ref_of)
 from repairos.slots.state import InvariantViolation, Job, NotFound, RevConflict, StateError
 
+log = logging.getLogger("repairos.api")
 MAX_BLOB_BYTES = 4 << 30
 SSE_POLL_S = 0.25
 SSE_KEEPALIVE_S = 15.0
@@ -123,6 +128,25 @@ SPEND_POLL_S = 1.0          # how often an event stream looks for new spend aler
 SPEND_REPLAY_S = 300.0      # a new stream first gets the spend alerts of the last few minutes (a pause still on)
 
 
+INTERRUPTED = ("the gateway restarted while the design engine was judging this scan: nothing was lost on the phone, "
+               "send the scan again")
+
+
+async def fail_interrupted_runs(store) -> int:
+    """Runs the design engine was judging when the gateway stopped are failed at start-up, with a reason the phone shows:
+    the work lived in memory, so without this the run would stay `running` for ever and the phone would wait."""
+    n = 0
+    for row in await store.list(RUN_KIND):
+        d = row.data
+        if d.get("status") == "running" and ((d.get("stages") or {}).get("design_engine") or {}).get("status") == "running":
+            await store.transition(RUN_KIND, row.id, "pipeline.update", {
+                "scan_id": d.get("scan_id"), "session_id": d.get("session_id"), "status": "failed",
+                "finished_at": _now(), "error": {"message": INTERRUPTED, "stage": "design_engine"},
+                "stages": {"design_engine": {"status": "failed", "error": INTERRUPTED}}})
+            n += 1
+    return n
+
+
 class SpendAlerts:
     """New rows of repairos.spend's alert table as SSE `spend_alert` chunks, for one event stream. Alerts carry no
     `id:` field, so a client's Last-Event-ID (the session's row cursor) is never moved by them; `alert_id` in the
@@ -158,6 +182,9 @@ def _token_hash(token: str) -> str:
 
 class NewSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    product: str | None = Field(default=None, min_length=1, max_length=200,
+                                description="The design id of the product (the design engine's project), printed on "
+                                            "it or typed; GRAIN_PROJECT is used when a session names none.")
     product_id: str | None = None
     make_model: str | None = None
     symptom: str | None = None
@@ -173,6 +200,11 @@ class Story(BaseModel):
 class IdentifyPhoto(BaseModel):
     model_config = ConfigDict(extra="forbid")
     image: str = Field(pattern=r"^blob://sha256:[0-9a-f]{64}$")
+
+
+class FixRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=1, max_length=4000, description="The customer's own words.")
 
 
 class Pair(BaseModel):
@@ -195,7 +227,7 @@ Device = Annotated[dict, Depends(device)]
 
 
 def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str | None = None,
-               recordings: Path | None = None) -> FastAPI:
+               recordings: Path | None = None, grain: GrainClient | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if state is None or blobs is None:
@@ -203,11 +235,15 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             reg = default_registry()
             app.state.store = state or reg.slot("STATE")
             app.state.blobs = blobs or reg.slot("BLOB")
+        await fail_interrupted_runs(app.state.store)
         yield
 
     app = FastAPI(title="RepairOS gateway", version="0.1.0", lifespan=lifespan)
     app.state.store, app.state.blobs = state, blobs
     app.state.recordings = recordings
+    app.state.grain = grain                  # None: built from GRAIN_URL / GRAIN_API_KEY / GRAIN_PROJECT on first use
+    app.state.grain_tasks = set()            # background judgements (kept so a task is never garbage collected)
+    app.state.grain_locks = {}               # scan_id -> asyncio.Lock: one judgement of a scan at a time
 
     def store(request: Request):
         return request.app.state.store
@@ -215,11 +251,17 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
     def blob_store(request: Request) -> BlobStore:
         return request.app.state.blobs
 
+    def recordings_root() -> Path:
+        root = app.state.recordings
+        return Path(root) if root is not None else Path(os.environ.get("REPAIROS_DATA_DIR") or ROOT / "data") / "sessions"
+
     def recorder(request: Request, session_id: str) -> SessionWriter:
-        root = request.app.state.recordings
-        if root is None:
-            root = Path(os.environ.get("REPAIROS_DATA_DIR") or ROOT / "data") / "sessions"
-        return SessionWriter(root, session_id)
+        return SessionWriter(recordings_root(), session_id)
+
+    def design_engine() -> GrainClient:
+        if app.state.grain is None:
+            app.state.grain = GrainClient.from_settings()
+        return app.state.grain
 
     # ---------------------------------------------------------------- errors
     @app.exception_handler(jsonschema.ValidationError)
@@ -513,6 +555,8 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         contracts.validate("meter-reading", body)
         row = await store(request).transition("meter-reading", body["reading_id"], "reading.record", body)
         recorder(request, body["session_id"]).write_reading(body)
+        if design_engine().enabled:   # the design engine judges the reading; the report is re-made when it answers
+            _spawn(_grain_publish(body["scan_id"], reading_id=body["reading_id"]))
         return {"reading_id": row.id, "rev": row.rev}
 
     # ---------------------------------------------------------------- reads
@@ -558,12 +602,114 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         await _get(request, "scan-package", scan_id)
         return await _list(request, "suspect", scan_id=scan_id)
 
+    # ------------------------------------------------------------ the design engine (repairos.grain)
+    def _spawn(coro) -> None:
+        task = asyncio.create_task(coro)
+        app.state.grain_tasks.add(task)
+        task.add_done_callback(app.state.grain_tasks.discard)
+
+    async def _run_patch(scan_id: str, session_id: str, patch: dict) -> None:
+        await app.state.store.transition("pipeline-run", f"run_{scan_id}", "pipeline.update",
+                                         {"scan_id": scan_id, "session_id": session_id, **patch})
+
+    async def _input_key(scan_id: str) -> str:
+        """What a judgement of this scan is made from: the scan package, its stills and its readings."""
+        st = app.state.store
+        scan = (await st.get("scan-package", scan_id)).data
+        body = [scan, sorted(r.id for r in await st.list("still", scan_id=scan_id)),
+                sorted(r.id for r in await st.list("meter-reading", scan_id=scan_id))]
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+    async def _grain_publish(scan_id: str, reading_id: str | None = None) -> None:
+        """Judge the scan against its design and publish the report (reading_id None: upload + judge), or forward one
+        reading and re-make the report. One judgement of a scan at a time. A failure is the run's error, never a
+        report (a service that is down is an error, not a verdict)."""
+        st, client = app.state.store, design_engine()
+        root = recordings_root()
+        async with app.state.grain_locks.setdefault(scan_id, asyncio.Lock()):
+            scan = (await st.get("scan-package", scan_id)).data
+            sid = scan["session_id"]
+            if reading_id is not None and grain_service.latest(grain_service.grain_dir(root, sid), "scan",
+                                                              scan_id) is None:
+                return   # never uploaded: the reading goes with the scan at its /complete
+            session = (await st.get("session", sid)).data
+            readings = sorted((r.data for r in await st.list("meter-reading", scan_id=scan_id)),
+                              key=lambda r: (r["recorded_at"], r["reading_id"]))
+            stills = len(await st.list("still", scan_id=scan_id))
+            await _run_patch(scan_id, sid, {"status": "running", "started_at": _now(), "error": None,
+                                            "input_key": await _input_key(scan_id),
+                                            "stages": {"design_engine": {"status": "running"}}})
+            try:
+                if reading_id is None:
+                    report = await asyncio.to_thread(grain_service.judge_scan, client, root=root, session=session,
+                                                     scan=scan, readings=readings, stills=stills)
+                else:
+                    reading = next(r for r in readings if r["reading_id"] == reading_id)
+                    report = await asyncio.to_thread(grain_service.judge_reading, client, root=root, session=session,
+                                                     scan=scan, reading=reading, readings=readings, stills=stills)
+                contracts.validate("report", report)
+                for f in from_grain.findings_of(report):   # a report row names a stored finding (the state store's rule)
+                    contracts.validate("finding", f)
+                    if await st.get("finding", f["finding_id"]) is None:
+                        await st.transition("finding", f["finding_id"], "finding.create", f)
+                await st.transition("report", report["report_id"], "report.publish", report)
+            except Exception as e:  # noqa: BLE001 - recorded as the run's error; the previous report (if any) stands
+                msg = f"{type(e).__name__}: {e}"[:600]
+                log.error("design engine, scan %s: %s", scan_id, msg)
+                await _run_patch(scan_id, sid, {"status": "failed", "finished_at": _now(),
+                                                "error": {"message": msg, "stage": "design_engine"},
+                                                "stages": {"design_engine": {"status": "failed", "error": msg}}})
+                return
+            await _run_patch(scan_id, sid, {"status": "done", "report_id": report["report_id"],
+                                            "finished_at": _now(), "stages": {"design_engine": {"status": "done"}}})
+
+    @app.post("/v1/scans/{scan_id}/fix")
+    async def fix_scan(scan_id: str, body: FixRequest, request: Request, _d: Device):
+        """Fix it from the phone: the customer's words go to the design engine's agent with the context they cannot
+        type (symptom, design, flagged parts, readings and their verdicts, fixes so far). Returns when its turn ends:
+        `{reply, finished, waiting, errors, build}` (build: ok | failed | none)."""
+        scan = await _get(request, "scan-package", scan_id)
+        client = design_engine()
+        if not client.enabled:
+            raise HTTPException(409, "no design engine configured (GRAIN_URL)")
+        session = (await _session(request, scan["session_id"])).data
+        project = grain_service.project_for(session, client)
+        if project is None:
+            raise HTTPException(409, "the design is unknown: name the product when the session is created "
+                                     "(POST /v1/sessions with product) or set GRAIN_PROJECT")
+        gdir = grain_service.grain_dir(recordings_root(), scan["session_id"])
+        readings = sorted(await _list(request, "meter-reading", scan_id=scan_id),
+                          key=lambda r: (r["recorded_at"], r["reading_id"]))
+        message = grain_service.fix_message(project=project, session=session, scan=scan,
+                                            call=grain_service.latest(gdir, "call", scan_id), readings=readings,
+                                            words=body.message)
+        try:
+            answer = await asyncio.to_thread(client.chat, project, message, scan_id=scan_id, record_to=gdir)
+        except GrainError as e:
+            raise HTTPException(502, {"error": "design_engine", "message": str(e)}) from e
+        return grain_service.chat_result(answer)
+
     # ------------------------------------------------------------ pipeline + report (B10, B11)
     @app.post("/v1/scans/{scan_id}/complete", status_code=202)
     async def complete_scan(scan_id: str, request: Request, _d: Device):
-        """The upload of this scan and its stills is complete: queue the pipeline run (inspect what is left,
-        fuse with Jev, locate, report). Idempotent for the same set of stills; a new still queues a new run."""
+        """The upload of this scan and its stills is complete. With a design engine configured it judges the scan
+        against the product's design and the report follows (`report_ready`); otherwise queue the pipeline run
+        (inspect what is left, fuse with Jev, locate, report). Idempotent for the same set of stills; a new still
+        queues a new run."""
         scan = await _get(request, "scan-package", scan_id)
+        if design_engine().enabled:
+            n = len(await store(request).list("still", scan_id=scan_id))
+            out = {"scan_id": scan_id, "job_id": f"grain_{scan_id}", "stills": n}
+            key = await _input_key(scan_id)
+            run = await _run(request, scan_id)
+            if run and run.get("input_key") == key and run.get("status") in ("running", "done"):
+                return out   # a retry (a lost answer, a double tap): the same inputs are being judged, or were
+            # Marked running before the answer goes out, so a second request that follows at once sees it.
+            await _run_patch(scan_id, scan["session_id"], {"status": "running", "started_at": _now(), "error": None,
+                                                           "input_key": key,
+                                                           "stages": {"design_engine": {"status": "running"}}})
+            _spawn(_grain_publish(scan_id))
+            return out
         stills = sorted(r.id for r in await store(request).list("still", scan_id=scan_id))
         digest = hashlib.sha256(f"{scan_id}:{','.join(stills)}".encode()).hexdigest()[:16]
         job_id = await store(request).enqueue(Job(kind="pipeline", job_id=f"job_pipeline_{digest}",

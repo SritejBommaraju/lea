@@ -98,6 +98,11 @@ cp .env.example .env     # ANTHROPIC_API_KEY, TYPESAFE_KEY, CARTESIA_API_KEY, RE
 .venv/bin/python -m repairos.pipeline.worker                       # pipeline worker, second terminal
 ```
 
+**Design engine.** Set `GRAIN_URL`, `GRAIN_API_KEY` and, optionally, `GRAIN_PROJECT` (the design to judge against when the
+phone names none) in `backend/.env`. Each completed scan is then judged by Grain against the product's own design instead of
+by the pipeline, meter readings go through it, and the report offers "Fix it with Grain". Type the design id printed on the
+product in the app's Settings, under Product. Every Grain answer is saved in the session's `grain/` folder.
+
 **Host it** on one Runpod GPU pod: the start command runs `deploy/runpod/bootstrap.sh`, which clones the repo,
 installs the locked dependencies, caches the detector weights and starts everything. See `deploy/runpod/README.md`.
 

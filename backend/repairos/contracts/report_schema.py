@@ -67,9 +67,9 @@ class Summary(BaseModel):
     written_by: str = Field(
         ..., description='Model id that wrote the text.', min_length=1
     )
-    from_words_only: Literal[True] = Field(
+    from_words_only: bool = Field(
         ...,
-        description='The writer received words only (S5); checked in code before the call.',
+        description="true when the writer received words only (S5), checked in code before the call. false when the text came from the design engine, which judged the scan against the product's own design.",
     )
 
 
@@ -90,6 +90,59 @@ class Kind(StrEnum):
     ask_user = 'ask_user'
 
 
+class Target(BaseModel):
+    """
+    What the step is about, so the app can open the meter sheet filled in. Same fields as next-action `target`.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    part_refs: list[str] | None = None
+    net: str | None = Field(
+        None, description="Net name from the product's design.", min_length=1
+    )
+    pins: list[str] | None = Field(
+        None, description='REF.PIN ids to probe.', max_length=2, min_length=2
+    )
+
+
+class PowerState(StrEnum):
+    """
+    off for continuity and resistance; on for voltage (S4).
+    """
+
+    off = 'off'
+    on = 'on'
+    n_a = 'n/a'
+
+
+class Source(StrEnum):
+    report_json_minmax = 'report_json_minmax'
+    repairos_derived = 'repairos_derived'
+    datasheet = 'datasheet'
+    design_engine = 'design_engine'
+
+
+class Expected(BaseModel):
+    """
+    What a good reading looks like, compared in code (S5).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    continuity: bool | None = None
+    ohms_max: float | None = Field(None, ge=0.0)
+    volts_min: float | None = None
+    volts_max: float | None = None
+    source: Source | None = None
+
+
+class SafetyNote(RootModel[str]):
+    root: str = Field(..., min_length=1)
+
+
 class NextStep(BaseModel):
     """
     The one next action code chose from Jev's judgments (repairos.fusion), when there is one.
@@ -102,6 +155,19 @@ class NextStep(BaseModel):
     kind: Kind
     instruction: str = Field(..., min_length=1)
     reason: str | None = None
+    target: Target | None = Field(
+        None,
+        description='What the step is about, so the app can open the meter sheet filled in. Same fields as next-action `target`.',
+    )
+    power_state: PowerState | None = Field(
+        None, description='off for continuity and resistance; on for voltage (S4).'
+    )
+    expected: Expected | None = Field(
+        None, description='What a good reading looks like, compared in code (S5).'
+    )
+    safety_notes: list[SafetyNote] | None = Field(
+        None, description='Shown before the step.'
+    )
 
 
 class Code1(StrEnum):
@@ -320,11 +386,23 @@ class Mesh(BaseModel):
     hero_reason: str | None = Field(None, min_length=1)
 
 
+class Design(BaseModel):
+    """
+    Present when the design engine judged this scan against the product's own design; required when a row names `grain` or the summary says it is not words only. `project` is the design the scan was judged against.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    engine: Literal['grain']
+    project: str = Field(..., min_length=1)
+
+
 class Hint(RootModel[str]):
     root: str = Field(..., min_length=1)
 
 
-class Source(BaseModel):
+class Source7(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
@@ -341,7 +419,7 @@ class ReferenceHints(BaseModel):
         extra='forbid',
     )
     hints: list[Hint] = Field(..., max_length=3)
-    sources: list[Source] | None = Field(None, max_length=5)
+    sources: list[Source7] | None = Field(None, max_length=5)
 
 
 class Option(BaseModel):
@@ -426,7 +504,7 @@ class UserLead(BaseModel):
         description='One or two plain sentences, written in code from the rows cited.',
         min_length=1,
     )
-    sources: list[Source] | None = Field(None, max_length=5)
+    sources: list[Source7] | None = Field(None, max_length=5)
 
 
 class Kind5(StrEnum):
@@ -655,6 +733,7 @@ class InspectedByEnum(StrEnum):
     vlm = 'vlm'
     ocr = 'ocr'
     meter = 'meter'
+    grain = 'grain'
 
 
 class Severity(StrEnum):
@@ -702,7 +781,7 @@ class Finding(BaseModel):
     subject: Subject
     part_class: str = Field(
         ...,
-        description='Generic class (vision/generic_classes.py), never a product name.',
+        description="Generic class (vision/generic_classes.py), never a product name. For a row judged by the design engine: the design's own name for the part.",
         min_length=1,
     )
     issue: Issue = Field(
@@ -711,7 +790,10 @@ class Finding(BaseModel):
     )
     confidence_word: ConfidenceWord2
     evidence: list[str] = Field(..., min_length=1)
-    crop: Crop
+    crop: Crop | None = Field(
+        None,
+        description="The photo and box the region was seen in. Absent for a row the design engine judged from the scan's measurements, not from a photo.",
+    )
     location: Location
     proof: Proof
     judgment: Judgment | None = None
@@ -903,6 +985,10 @@ class Report(BaseModel):
     mesh: Mesh | None = Field(
         None,
         description="The scan's 3D mesh for the 3D view: LiDAR TSDF, decimated, vertex-coloured, in the frame of every finding's location (pins sit on it as they are).",
+    )
+    design: Design | None = Field(
+        None,
+        description="Present when the design engine judged this scan against the product's own design; required when a row names `grain` or the summary says it is not words only. `project` is the design the scan was judged against.",
     )
     reference_hints: ReferenceHints | None = Field(
         None,

@@ -81,6 +81,7 @@ FINDING_SOURCE = {
     "repairos.ocr": "label text read from a photo",
     "repairos.meter": "multimeter reading",
     "repairos.user": "the user",
+    "grain": "the design engine's judgement against the product's design",
 }
 
 # Finding.vlm_answer -> words (every value of finding.schema.json vlm_answer.enum)

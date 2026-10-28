@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     brightdata_serp_zone: str | None = None
     # Lea's voice (optional; no key = the phone's own voice): Cartesia TTS/STT (repairos.voice)
     cartesia_api_key: SecretStr | None = None
+    # The design engine (Grain; repairos.grain): where the product's design lives and judges. No URL = off.
+    grain_url: str | None = None
+    grain_api_key: SecretStr | None = None
+    grain_project: str | None = None  # the design to judge against when a session names no product
     # RepairOS runtime
     repairos_pairing_code: SecretStr | None = None  # the phone pairs with this code (gateway, B5)
     repairos_release: bool = False

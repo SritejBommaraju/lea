@@ -40,7 +40,7 @@ class State(StrEnum):
 
 class Source(StrEnum):
     """
-    Which stage produced it.
+    Which stage produced it. `grain`: the design engine judged it against the product's own design (scan measurements, photos); a meter reading it compared stays `repairos.meter`.
     """
 
     repairos_scan = 'repairos.scan'
@@ -49,6 +49,7 @@ class Source(StrEnum):
     repairos_ocr = 'repairos.ocr'
     repairos_meter = 'repairos.meter'
     repairos_user = 'repairos.user'
+    grain = 'grain'
 
 
 class CropBoxPxItem(RootModel[int]):
@@ -185,7 +186,10 @@ class Finding(BaseModel):
         ...,
         description='Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch open short), the assembly state reversed (a part with a polarity or orientation fitted the wrong way round, from marks visible in a photo, never from wire colour, S1), meter state out_of_range, discovery states (unexpected_*), and honesty states (not_seen_in_photo not_inspected insufficient_evidence).',
     )
-    source: Source = Field(..., description='Which stage produced it.')
+    source: Source = Field(
+        ...,
+        description="Which stage produced it. `grain`: the design engine judged it against the product's own design (scan measurements, photos); a meter reading it compared stays `repairos.meter`.",
+    )
     confidence: float = Field(
         ...,
         description="Source's own confidence. Not calibrated; fusion recalibrates.",
