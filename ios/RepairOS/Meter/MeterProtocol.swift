@@ -54,7 +54,7 @@ enum MeterMode: UInt8, Sendable, CaseIterable {
     }
 
     /// The mode that answers a reading of this kind.
-    init(kind: MeterReadingKind) {
+    init(kind: MultimeterKind) {
         switch kind {
         case .continuity: self = .continuity
         case .voltageDc: self = .dcVoltage

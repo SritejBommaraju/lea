@@ -1,0 +1,22 @@
+{
+  "reading_id": "rd_selftest",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "power_state": "on",
+  "recorded_at": "2026-10-28T12:05:03Z",
+  "action_id": "chk_power_in",
+  "kind": "selftest",
+  "net": "VIN",
+  "value": {
+    "index": 0,
+    "value_mv": 4980,
+    "ok": "ok",
+    "transport": "ble"
+  },
+  "expected": {
+    "volts_min": 4.75,
+    "volts_max": 5.25,
+    "source": "design_engine"
+  },
+  "source": "selftest"
+}

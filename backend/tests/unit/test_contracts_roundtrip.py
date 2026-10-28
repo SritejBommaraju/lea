@@ -25,6 +25,12 @@ MODEL_CANNOT_EXPRESS = {
     "meter-reading-continuity-without-pins.json",
     "meter-reading-resistance-with-volts.json",
     "meter-reading-voltage-with-continuity-value.json",
+    "meter-reading-voltage-without-net.json",         # net is required per kind (if/then), optional in the model
+    "meter-reading-selftest-without-net.json",
+    "meter-reading-selftest-typed-source.json",       # a kind fixes its source (if/then)
+    "meter-reading-magnetometer-without-part.json",
+    "meter-reading-led-from-a-meter-source.json",
+    "report-self-test-ble-without-service.json",      # a transport needs its block (if/then)
     "repair-plan-power-on-step-without-gate.json",
     "repair-plan-power-path-step-without-gate.json",
     "scan-package-lidar-without-points.json",       # depth_source if/then/else (no-LiDAR, A8)

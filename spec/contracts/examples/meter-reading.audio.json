@@ -1,0 +1,13 @@
+{
+  "reading_id": "rd_audio",
+  "scan_id": "scan_7f3a",
+  "session_id": "sess_2026-10-23_01",
+  "power_state": "on",
+  "recorded_at": "2026-10-28T12:05:03Z",
+  "kind": "audio",
+  "part": "M1",
+  "value": {
+    "hz": 187.5
+  },
+  "source": "phone"
+}

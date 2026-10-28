@@ -295,11 +295,16 @@ public enum VlmAnswer: String, Codable, Sendable {
     case unplugged = "unplugged"
 }
 
-/// One multimeter reading typed or spoken by the user, or read by the app from a Bluetooth
-/// meter, in response to a NextAction. The only kind of evidence that counts as proof (I1,
-/// I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts};
-/// continuity -> {continuity} and pins required; resistance -> {ohms} and pins required.
-/// RepairOS's verdict (`verdict`) is judged against [min, max] in code.
+/// One reading in response to a NextAction: a multimeter value the person typed or said, a
+/// check the product ran on itself (`selftest`, read over Bluetooth or decoded from the
+/// status LED's blinks), or a measurement the phone's own sensors took (`phone`). The only
+/// kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape
+/// of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required;
+/// resistance -> {ohms} and pins required; selftest -> {index, ok, transport, value_mv?,
+/// state?} and net required; magnetometer -> {delta_uT, state}; audio -> {hz}; flicker ->
+/// {hz, depth}; light -> {state on|off|dim}; led -> {state on|off|blinking, color?}, the
+/// five sensor kinds with part required. The verdict (`verdict`) is judged against [min,
+/// max] in code.
 // MARK: - MeterReading
 public struct MeterReading: Codable, Sendable {
     /// The NextAction this answers.
@@ -311,25 +316,33 @@ public struct MeterReading: Codable, Sendable {
     /// {min, max}, never from a single expected value.
     public let expected: MeterReadingExpected?
     public let kind: MeterReadingKind
-    /// The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for
-    /// typed and voice readings.
+    /// DEPRECATED, only with source `ble`: the third-party meter that produced the reading. No
+    /// app writes it any more.
     public let meter: Meter?
-    /// Net name from the design's electrical reference. Not a harness wire name.
-    public let net: String
+    /// Net name from the design's electrical reference. Not a harness wire name. Required for
+    /// continuity, voltage_dc, resistance and selftest; absent on a reading that is about a part.
+    public let net: String?
+    /// The part of the product a phone-sensor reading is about (a motor, a fan, the status LED),
+    /// in the design's own naming. Required for magnetometer, audio, flicker, light and led.
+    public let part: String?
     /// REF.PIN ids probed, in the design's net naming (e.g. J1.1), not harness end names.
     /// Required for continuity and resistance; optional for voltage_dc ([probe +, probe -]).
     public let pins: [String]?
-    public let powerState: MeterReadingPowerState
+    public let powerState: PowerStateEnum
     /// What the user said or typed, before parsing.
     public let rawText: String?
     public let readingID: String
     public let recordedAt: Date
     public let scanID: String
     public let sessionID: String
-    /// `ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it.
-    /// Then `meter` says which meter and how it was set.
+    /// `typed` / `voice`: a person typed or said what a meter showed. `selftest`: the product
+    /// ran the check on itself and the app read the result over Bluetooth or decoded its blinks
+    /// through the camera; nobody typed it. `phone`: the phone's own sensor took the
+    /// measurement. `ble` is DEPRECATED: the app no longer reads third-party Bluetooth meters,
+    /// no app writes it, and it stays valid only so readings stored before this version still
+    /// validate.
     public let source: MeterReadingSource
-    /// Exactly the field that matches kind (see allOf).
+    /// Exactly the shape that matches kind (see allOf).
     public let value: Value
     /// RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol
     /// = 0.25 V or 5 %; under 5 ohm conducts).
@@ -342,6 +355,7 @@ public struct MeterReading: Codable, Sendable {
         case kind = "kind"
         case meter = "meter"
         case net = "net"
+        case part = "part"
         case pins = "pins"
         case powerState = "power_state"
         case rawText = "raw_text"
@@ -354,13 +368,14 @@ public struct MeterReading: Codable, Sendable {
         case verdict = "verdict"
     }
 
-    public init(actionID: String?, condition: Condition?, expected: MeterReadingExpected?, kind: MeterReadingKind, meter: Meter?, net: String, pins: [String]?, powerState: MeterReadingPowerState, rawText: String?, readingID: String, recordedAt: Date, scanID: String, sessionID: String, source: MeterReadingSource, value: Value, verdict: MeterReadingVerdict?) {
+    public init(actionID: String?, condition: Condition?, expected: MeterReadingExpected?, kind: MeterReadingKind, meter: Meter?, net: String?, part: String?, pins: [String]?, powerState: PowerStateEnum, rawText: String?, readingID: String, recordedAt: Date, scanID: String, sessionID: String, source: MeterReadingSource, value: Value, verdict: MeterReadingVerdict?) {
         self.actionID = actionID
         self.condition = condition
         self.expected = expected
         self.kind = kind
         self.meter = meter
         self.net = net
+        self.part = part
         self.pins = pins
         self.powerState = powerState
         self.rawText = rawText
@@ -421,13 +436,19 @@ public enum ExpectedSource: String, Codable, Sendable {
 }
 
 public enum MeterReadingKind: String, Codable, Sendable {
+    case audio = "audio"
     case continuity = "continuity"
+    case flicker = "flicker"
+    case led = "led"
+    case light = "light"
+    case magnetometer = "magnetometer"
     case resistance = "resistance"
+    case selftest = "selftest"
     case voltageDc = "voltage_dc"
 }
 
-/// The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for
-/// typed and voice readings.
+/// DEPRECATED, only with source `ble`: the third-party meter that produced the reading. No
+/// app writes it any more.
 // MARK: - Meter
 public struct Meter: Codable, Sendable {
     /// The meter's battery voltage when read.
@@ -478,38 +499,121 @@ public enum Mode: String, Codable, Sendable {
     case temperature = "temperature"
 }
 
-public enum MeterReadingPowerState: String, Codable, Sendable {
+public enum PowerStateEnum: String, Codable, Sendable {
     case off = "off"
     case on = "on"
 }
 
-/// `ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it.
-/// Then `meter` says which meter and how it was set.
+/// `typed` / `voice`: a person typed or said what a meter showed. `selftest`: the product
+/// ran the check on itself and the app read the result over Bluetooth or decoded its blinks
+/// through the camera; nobody typed it. `phone`: the phone's own sensor took the
+/// measurement. `ble` is DEPRECATED: the app no longer reads third-party Bluetooth meters,
+/// no app writes it, and it stays valid only so readings stored before this version still
+/// validate.
 public enum MeterReadingSource: String, Codable, Sendable {
     case ble = "ble"
+    case phone = "phone"
+    case selftest = "selftest"
     case typed = "typed"
     case voice = "voice"
 }
 
-/// Exactly the field that matches kind (see allOf).
+/// Exactly the shape that matches kind (see allOf).
+///
+/// One check of the product's self-test. `index` is the check's place in the product's own
+/// list (the plan's self_test.checks maps it to a net). `ok` is the product's own verdict on
+/// itself (ok, fail, or unknown when it could not tell); the number is still judged against
+/// the design.
+///
+/// The change in the magnetic field the phone felt at the part, in microtesla, against a
+/// baseline taken just before with the product off. `current` when the change is at least 5
+/// microtesla and at least 3 times the baseline's own noise.
+///
+/// The tone the microphone heard from the part (a motor or fan), reduced to its fundamental,
+/// in hertz.
+///
+/// The strongest brightness oscillation the camera saw: its frequency in hertz and its
+/// modulation depth from 0 (steady) to 1 (fully on and off).
+///
+/// Relative brightness of the scene as the camera's exposure reports it, against a baseline
+/// taken with the product off. iOS has no public lux sensor, so this is a ratio and never a
+/// lux value.
+///
+/// What the camera saw an LED do: lit, dark or blinking, and the hue of its brightest region.
 // MARK: - Value
 public struct Value: Codable, Sendable {
     public let volts: Double?
     /// True when the meter beeps / reads under 5 ohm.
     public let continuity: Bool?
     public let ohms: Double?
+    public let index: Int?
+    public let ok: Ok?
+    /// An output check: whether the product reports the output on.
+    public let state: ValueState?
+    /// How the app received it: read over Bluetooth, or decoded from the status LED's blinks
+    /// through the camera.
+    public let transport: Transport?
+    /// A rail check: the voltage the product measured on itself, in millivolts.
+    public let valueMv: Double?
+    public let deltaUT: Double?
+    public let hz: Double?
+    public let depth: Double?
+    /// The hue of the brightest region, as a plain colour word: red, orange, yellow, green,
+    /// cyan, blue, purple, pink or white.
+    public let color: String?
 
     public enum CodingKeys: String, CodingKey {
         case volts = "volts"
         case continuity = "continuity"
         case ohms = "ohms"
+        case index = "index"
+        case ok = "ok"
+        case state = "state"
+        case transport = "transport"
+        case valueMv = "value_mv"
+        case deltaUT = "delta_uT"
+        case hz = "hz"
+        case depth = "depth"
+        case color = "color"
     }
 
-    public init(volts: Double?, continuity: Bool?, ohms: Double?) {
+    public init(volts: Double?, continuity: Bool?, ohms: Double?, index: Int?, ok: Ok?, state: ValueState?, transport: Transport?, valueMv: Double?, deltaUT: Double?, hz: Double?, depth: Double?, color: String?) {
         self.volts = volts
         self.continuity = continuity
         self.ohms = ohms
+        self.index = index
+        self.ok = ok
+        self.state = state
+        self.transport = transport
+        self.valueMv = valueMv
+        self.deltaUT = deltaUT
+        self.hz = hz
+        self.depth = depth
+        self.color = color
     }
+}
+
+public enum Ok: String, Codable, Sendable {
+    case fail = "fail"
+    case ok = "ok"
+    case unknown = "unknown"
+}
+
+/// An output check: whether the product reports the output on.
+public enum ValueState: String, Codable, Sendable {
+    case blinking = "blinking"
+    case current = "current"
+    case dim = "dim"
+    case none = "none"
+    case off = "off"
+    case on = "on"
+}
+
+/// How the app received it: read over Bluetooth, or decoded from the status LED's blinks
+/// through the camera.
+public enum Transport: String, Codable, Sendable {
+    case ble = "ble"
+    case led = "led"
 }
 
 /// RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol
@@ -539,7 +643,7 @@ public struct NextAction: Codable, Sendable {
     public let insufficientEvidenceReason: InsufficientEvidenceReason?
     public let kind: NextActionKind
     /// off for continuity and resistance; on for voltage (S4).
-    public let powerState: NextActionPowerState?
+    public let powerState: PowerState?
     /// Jev's distribution over action kinds, for the evaluation (rules vs Jev).
     public let probabilities: [String: Double]?
     /// Why this action, in one sentence, for the UI's 'why' tap.
@@ -567,7 +671,7 @@ public struct NextAction: Codable, Sendable {
         case target = "target"
     }
 
-    public init(actionID: String, chosenBy: ChosenBy, createdAt: Date, expected: NextActionExpected?, instruction: String, insufficientEvidenceReason: InsufficientEvidenceReason?, kind: NextActionKind, powerState: NextActionPowerState?, probabilities: [String: Double]?, reason: String?, safetyNotes: [String]?, scanID: String, target: NextActionTarget?) {
+    public init(actionID: String, chosenBy: ChosenBy, createdAt: Date, expected: NextActionExpected?, instruction: String, insufficientEvidenceReason: InsufficientEvidenceReason?, kind: NextActionKind, powerState: PowerState?, probabilities: [String: Double]?, reason: String?, safetyNotes: [String]?, scanID: String, target: NextActionTarget?) {
         self.actionID = actionID
         self.chosenBy = chosenBy
         self.createdAt = createdAt
@@ -646,7 +750,7 @@ public enum NextActionKind: String, Codable, Sendable {
 }
 
 /// off for continuity and resistance; on for voltage (S4).
-public enum NextActionPowerState: String, Codable, Sendable {
+public enum PowerState: String, Codable, Sendable {
     case nA = "n/a"
     case off = "off"
     case on = "on"
@@ -1218,7 +1322,7 @@ public struct Step: Codable, Sendable {
     /// power nets), including meter checks on it.
     public let onPowerPath: Bool?
     public let partRefs: [String]?
-    public let powerState: NextActionPowerState?
+    public let powerState: PowerState?
     /// True for steps that touch the power path or a supply; the UI requires a confirm tap (S3).
     /// Required true when on_power_path is true or power_state is on.
     public let safetyGate: Bool?
@@ -1234,7 +1338,7 @@ public struct Step: Codable, Sendable {
         case text = "text"
     }
 
-    public init(arLabels: [String]?, n: Int, onPowerPath: Bool?, partRefs: [String]?, powerState: NextActionPowerState?, safetyGate: Bool?, text: String) {
+    public init(arLabels: [String]?, n: Int, onPowerPath: Bool?, partRefs: [String]?, powerState: PowerState?, safetyGate: Bool?, text: String) {
         self.arLabels = arLabels
         self.n = n
         self.onPowerPath = onPowerPath
@@ -1316,6 +1420,7 @@ public struct Report: Codable, Sendable {
     /// anything else.
     public let safety: [Safety]?
     public let scanID: String
+    public let selfTest: SelfTest?
     public let sessionID: String
     /// Setup and assembly states (category setup: a battery missing, a cable unplugged, a cover
     /// not clipped), each with its plain fix. Not a broken part: listed apart and they never
@@ -1355,6 +1460,7 @@ public struct Report: Codable, Sendable {
         case reportID = "report_id"
         case safety = "safety"
         case scanID = "scan_id"
+        case selfTest = "self_test"
         case sessionID = "session_id"
         case setup = "setup"
         case summary = "summary"
@@ -1363,7 +1469,7 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, buildID: String?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, design: Design?, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, buildID: String?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, design: Design?, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, selfTest: SelfTest?, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.bottomNotPlaced = bottomNotPlaced
         self.buildID = buildID
         self.capture = capture
@@ -1384,6 +1490,7 @@ public struct Report: Codable, Sendable {
         self.reportID = reportID
         self.safety = safety
         self.scanID = scanID
+        self.selfTest = selfTest
         self.sessionID = sessionID
         self.setup = setup
         self.summary = summary
@@ -2257,7 +2364,7 @@ public struct NextStep: Codable, Sendable {
     public let instruction: String
     public let kind: NextActionKind
     /// off for continuity and resistance; on for voltage (S4).
-    public let powerState: NextActionPowerState?
+    public let powerState: PowerState?
     public let reason: String?
     /// Shown before the step.
     public let safetyNotes: [String]?
@@ -2276,7 +2383,7 @@ public struct NextStep: Codable, Sendable {
         case target = "target"
     }
 
-    public init(actionID: String, expected: NextStepExpected?, instruction: String, kind: NextActionKind, powerState: NextActionPowerState?, reason: String?, safetyNotes: [String]?, target: NextStepTarget?) {
+    public init(actionID: String, expected: NextStepExpected?, instruction: String, kind: NextActionKind, powerState: PowerState?, reason: String?, safetyNotes: [String]?, target: NextStepTarget?) {
         self.actionID = actionID
         self.expected = expected
         self.instruction = instruction
@@ -2318,6 +2425,11 @@ public struct NextStepExpected: Codable, Sendable {
 /// next-action `target`.
 // MARK: - NextStepTarget
 public struct NextStepTarget: Codable, Sendable {
+    /// Which check on the phone settles this step, so the app opens that section first: the
+    /// product's self-test over Bluetooth or through its blinking LED, one of the phone's own
+    /// sensors, or a value the person types from their own meter. Absent: the app offers every
+    /// instrument the product supports.
+    public let instrument: Instrument?
     /// Net name from the product's design.
     public let net: String?
     public let partRefs: [String]?
@@ -2325,16 +2437,33 @@ public struct NextStepTarget: Codable, Sendable {
     public let pins: [String]?
 
     public enum CodingKeys: String, CodingKey {
+        case instrument = "instrument"
         case net = "net"
         case partRefs = "part_refs"
         case pins = "pins"
     }
 
-    public init(net: String?, partRefs: [String]?, pins: [String]?) {
+    public init(instrument: Instrument?, net: String?, partRefs: [String]?, pins: [String]?) {
+        self.instrument = instrument
         self.net = net
         self.partRefs = partRefs
         self.pins = pins
     }
+}
+
+/// Which check on the phone settles this step, so the app opens that section first: the
+/// product's self-test over Bluetooth or through its blinking LED, one of the phone's own
+/// sensors, or a value the person types from their own meter. Absent: the app offers every
+/// instrument the product supports.
+public enum Instrument: String, Codable, Sendable {
+    case audio = "audio"
+    case flicker = "flicker"
+    case led = "led"
+    case light = "light"
+    case magnetometer = "magnetometer"
+    case selftestBle = "selftest_ble"
+    case selftestLED = "selftest_led"
+    case typed = "typed"
 }
 
 /// One row of regions nobody looked at (I3). A row stands for one region, or, when
@@ -2472,6 +2601,177 @@ public enum SafetyCode: String, Codable, Sendable {
     case heatDamage = "heat_damage"
     case mainsPower = "mains_power"
     case unplugFirst = "unplug_first"
+}
+
+/// How to ask the product to check itself, copied from the design engine's electrical plan
+/// so the app never hard-codes a UUID or a timing. Absent when the product has no self-test.
+/// A check's `index` is the place the product's own firmware reports it under.
+// MARK: - SelfTest
+public struct SelfTest: Codable, Sendable {
+    /// The Bluetooth service the product advertises and the two characteristics: write 0x01 to
+    /// `control` to start the self-test, read or subscribe to `result` for the answer.
+    public let ble: Ble?
+    /// The blink code of the product's status LED. Per check, in order: `long_count_ok`,
+    /// `long_count_fail` or `long_count_unknown` long blinks.
+    public let blink: Blink?
+    /// The checks the product runs, in the order of the blink code.
+    public let checks: [Check]
+    /// The ways the product reports its self-test: `ble` over Bluetooth LE, `led` as blinks of
+    /// its status LED.
+    public let transports: [Transport]
+
+    public enum CodingKeys: String, CodingKey {
+        case ble = "ble"
+        case blink = "blink"
+        case checks = "checks"
+        case transports = "transports"
+    }
+
+    public init(ble: Ble?, blink: Blink?, checks: [Check], transports: [Transport]) {
+        self.ble = ble
+        self.blink = blink
+        self.checks = checks
+        self.transports = transports
+    }
+}
+
+/// The Bluetooth service the product advertises and the two characteristics: write 0x01 to
+/// `control` to start the self-test, read or subscribe to `result` for the answer.
+// MARK: - Ble
+public struct Ble: Codable, Sendable {
+    public let control: String
+    /// The start of the name the product advertises, to tell it from other devices nearby.
+    public let namePrefix: String?
+    public let result: String
+    public let service: String
+
+    public enum CodingKeys: String, CodingKey {
+        case control = "control"
+        case namePrefix = "name_prefix"
+        case result = "result"
+        case service = "service"
+    }
+
+    public init(control: String, namePrefix: String?, result: String, service: String) {
+        self.control = control
+        self.namePrefix = namePrefix
+        self.result = result
+        self.service = service
+    }
+}
+
+/// The blink code of the product's status LED. Per check, in order: `long_count_ok`,
+/// `long_count_fail` or `long_count_unknown` long blinks.
+// MARK: - Blink
+public struct Blink: Codable, Sendable {
+    public let longCountFail: Int?
+    public let longCountOk: Int?
+    public let longCountUnknown: Int?
+    /// Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on,
+    /// `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each
+    /// `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then
+    /// `end_flashes` short flashes.
+    public let timings: Timings
+
+    public enum CodingKeys: String, CodingKey {
+        case longCountFail = "long_count_fail"
+        case longCountOk = "long_count_ok"
+        case longCountUnknown = "long_count_unknown"
+        case timings = "timings"
+    }
+
+    public init(longCountFail: Int?, longCountOk: Int?, longCountUnknown: Int?, timings: Timings) {
+        self.longCountFail = longCountFail
+        self.longCountOk = longCountOk
+        self.longCountUnknown = longCountUnknown
+        self.timings = timings
+    }
+}
+
+/// Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on,
+/// `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each
+/// `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then
+/// `end_flashes` short flashes.
+// MARK: - Timings
+public struct Timings: Codable, Sendable {
+    public let endFlashes: Int
+    public let flashOffMS: Int
+    public let flashOnMS: Int
+    public let gapMS: Int
+    public let longOffMS: Int
+    public let longOnMS: Int
+    public let preambleFlashes: Int
+
+    public enum CodingKeys: String, CodingKey {
+        case endFlashes = "end_flashes"
+        case flashOffMS = "flash_off_ms"
+        case flashOnMS = "flash_on_ms"
+        case gapMS = "gap_ms"
+        case longOffMS = "long_off_ms"
+        case longOnMS = "long_on_ms"
+        case preambleFlashes = "preamble_flashes"
+    }
+
+    public init(endFlashes: Int, flashOffMS: Int, flashOnMS: Int, gapMS: Int, longOffMS: Int, longOnMS: Int, preambleFlashes: Int) {
+        self.endFlashes = endFlashes
+        self.flashOffMS = flashOffMS
+        self.flashOnMS = flashOnMS
+        self.gapMS = gapMS
+        self.longOffMS = longOffMS
+        self.longOnMS = longOnMS
+        self.preambleFlashes = preambleFlashes
+    }
+}
+
+// MARK: - Check
+public struct Check: Codable, Sendable {
+    /// What a good result is. A rail has a volts range; an output has the state it should be in.
+    public let expected: CheckExpected?
+    public let index: Int
+    /// rail: a voltage the product measures on itself; output: a pin it drives.
+    public let kind: CheckKind
+    /// Net name from the product's design.
+    public let net: String
+
+    public enum CodingKeys: String, CodingKey {
+        case expected = "expected"
+        case index = "index"
+        case kind = "kind"
+        case net = "net"
+    }
+
+    public init(expected: CheckExpected?, index: Int, kind: CheckKind, net: String) {
+        self.expected = expected
+        self.index = index
+        self.kind = kind
+        self.net = net
+    }
+}
+
+/// What a good result is. A rail has a volts range; an output has the state it should be in.
+// MARK: - CheckExpected
+public struct CheckExpected: Codable, Sendable {
+    public let state: PowerStateEnum?
+    public let voltsMax: Double?
+    public let voltsMin: Double?
+
+    public enum CodingKeys: String, CodingKey {
+        case state = "state"
+        case voltsMax = "volts_max"
+        case voltsMin = "volts_min"
+    }
+
+    public init(state: PowerStateEnum?, voltsMax: Double?, voltsMin: Double?) {
+        self.state = state
+        self.voltsMax = voltsMax
+        self.voltsMin = voltsMin
+    }
+}
+
+/// rail: a voltage the product measures on itself; output: a pin it drives.
+public enum CheckKind: String, Codable, Sendable {
+    case output = "output"
+    case rail = "rail"
 }
 
 // MARK: - Summary

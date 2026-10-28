@@ -90,6 +90,21 @@ class Kind(StrEnum):
     ask_user = 'ask_user'
 
 
+class Instrument(StrEnum):
+    """
+    Which check on the phone settles this step, so the app opens that section first: the product's self-test over Bluetooth or through its blinking LED, one of the phone's own sensors, or a value the person types from their own meter. Absent: the app offers every instrument the product supports.
+    """
+
+    selftest_ble = 'selftest_ble'
+    selftest_led = 'selftest_led'
+    magnetometer = 'magnetometer'
+    audio = 'audio'
+    flicker = 'flicker'
+    light = 'light'
+    led = 'led'
+    typed = 'typed'
+
+
 class Target(BaseModel):
     """
     What the step is about, so the app can open the meter sheet filled in. Same fields as next-action `target`.
@@ -104,6 +119,10 @@ class Target(BaseModel):
     )
     pins: list[str] | None = Field(
         None, description='REF.PIN ids to probe.', max_length=2, min_length=2
+    )
+    instrument: Instrument | None = Field(
+        None,
+        description="Which check on the phone settles this step, so the app opens that section first: the product's self-test over Bluetooth or through its blinking LED, one of the phone's own sensors, or a value the person types from their own meter. Absent: the app offers every instrument the product supports.",
     )
 
 
@@ -507,7 +526,136 @@ class UserLead(BaseModel):
     sources: list[Source7] | None = Field(None, max_length=5)
 
 
+class Transport(StrEnum):
+    ble = 'ble'
+    led = 'led'
+
+
 class Kind5(StrEnum):
+    """
+    rail: a voltage the product measures on itself; output: a pin it drives.
+    """
+
+    rail = 'rail'
+    output = 'output'
+
+
+class State(StrEnum):
+    on = 'on'
+    off = 'off'
+
+
+class Expected3(BaseModel):
+    """
+    What a good result is. A rail has a volts range; an output has the state it should be in.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    volts_min: float | None = None
+    volts_max: float | None = None
+    state: State | None = None
+
+
+class Check(BaseModel):
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    index: int = Field(..., ge=0)
+    kind: Kind5 = Field(
+        ...,
+        description='rail: a voltage the product measures on itself; output: a pin it drives.',
+    )
+    net: str = Field(
+        ..., description="Net name from the product's design.", min_length=1
+    )
+    expected: Expected3 | None = Field(
+        None,
+        description='What a good result is. A rail has a volts range; an output has the state it should be in.',
+    )
+
+
+class Ble(BaseModel):
+    """
+    The Bluetooth service the product advertises and the two characteristics: write 0x01 to `control` to start the self-test, read or subscribe to `result` for the answer.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    service: str = Field(..., min_length=1)
+    result: str = Field(..., min_length=1)
+    control: str = Field(..., min_length=1)
+    name_prefix: str | None = Field(
+        None,
+        description='The start of the name the product advertises, to tell it from other devices nearby.',
+    )
+
+
+class Timings(BaseModel):
+    """
+    Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on, `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then `end_flashes` short flashes.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    flash_on_ms: int = Field(..., ge=1)
+    flash_off_ms: int = Field(..., ge=1)
+    long_on_ms: int = Field(..., ge=1)
+    long_off_ms: int = Field(..., ge=1)
+    gap_ms: int = Field(..., ge=1)
+    preamble_flashes: int = Field(..., ge=1)
+    end_flashes: int = Field(..., ge=1)
+
+
+class Blink(BaseModel):
+    """
+    The blink code of the product's status LED. Per check, in order: `long_count_ok`, `long_count_fail` or `long_count_unknown` long blinks.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    timings: Timings = Field(
+        ...,
+        description='Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on, `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then `end_flashes` short flashes.',
+    )
+    long_count_ok: int | None = Field(None, ge=1)
+    long_count_fail: int | None = Field(None, ge=1)
+    long_count_unknown: int | None = Field(None, ge=1)
+
+
+class SelfTest(BaseModel):
+    """
+    How to ask the product to check itself, copied from the design engine's electrical plan so the app never hard-codes a UUID or a timing. Absent when the product has no self-test. A check's `index` is the place the product's own firmware reports it under.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    transports: list[Transport] = Field(
+        ...,
+        description='The ways the product reports its self-test: `ble` over Bluetooth LE, `led` as blinks of its status LED.',
+        min_length=1,
+    )
+    checks: list[Check] = Field(
+        ...,
+        description='The checks the product runs, in the order of the blink code.',
+        min_length=1,
+    )
+    ble: Ble | None = Field(
+        None,
+        description='The Bluetooth service the product advertises and the two characteristics: write 0x01 to `control` to start the self-test, read or subscribe to `result` for the answer.',
+    )
+    blink: Blink | None = Field(
+        None,
+        description="The blink code of the product's status LED. Per check, in order: `long_count_ok`, `long_count_fail` or `long_count_unknown` long blinks.",
+    )
+
+
+class Kind6(StrEnum):
     part = 'part'
     wire = 'wire'
     net = 'net'
@@ -521,7 +669,7 @@ class Subject(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    kind: Kind5
+    kind: Kind6
     ref: str = Field(..., min_length=1)
     pins: list[str] | None = None
 
@@ -830,7 +978,7 @@ class FixPlan(BaseModel):
     )
 
 
-class State(StrEnum):
+class State6(StrEnum):
     fixed = 'fixed'
     not_fixed = 'not_fixed'
     not_tried = 'not_tried'
@@ -849,7 +997,7 @@ class Outcome(BaseModel):
     model_config = ConfigDict(
         extra='forbid',
     )
-    state: State
+    state: State6
     recorded_at: AwareDatetime
     confirmed_by: ConfirmedBy
     note: str | None = Field(None, max_length=500)
@@ -1106,6 +1254,7 @@ class Report(BaseModel):
         None,
         description='Optional "Fix it": where to buy the part of the top finding, from a public shopping search (repairos.references.parts). Only title, displayed price, seller and link are kept; no page, text or image. Added when the search is ready; never evidence and never delays the report.',
     )
+    self_test: SelfTest | None = None
     user_lead: UserLead | None = Field(
         None,
         description='Optional: what the person said they suspected and what the photos showed about it (repairos.references.leads.user_lead). The guess is a lead, never evidence: it only ordered the inspection; this section cites findings and never adds or changes one.',

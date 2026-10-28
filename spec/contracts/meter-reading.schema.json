@@ -2,24 +2,29 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "meter-reading.schema.json",
   "title": "MeterReading",
-  "description": "One multimeter reading typed or spoken by the user, or read by the app from a Bluetooth meter, in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.",
+  "description": "One reading in response to a NextAction: a multimeter value the person typed or said, a check the product ran on itself (`selftest`, read over Bluetooth or decoded from the status LED's blinks), or a measurement the phone's own sensors took (`phone`). The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required; selftest -> {index, ok, transport, value_mv?, state?} and net required; magnetometer -> {delta_uT, state}; audio -> {hz}; flicker -> {hz, depth}; light -> {state on|off|dim}; led -> {state on|off|blinking, color?}, the five sensor kinds with part required. The verdict (`verdict`) is judged against [min, max] in code.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["reading_id", "scan_id", "session_id", "kind", "net", "value", "power_state", "source", "recorded_at"],
+  "required": ["reading_id", "scan_id", "session_id", "kind", "value", "power_state", "source", "recorded_at"],
   "properties": {
     "reading_id": { "type": "string", "minLength": 1 },
     "scan_id": { "type": "string", "minLength": 1 },
     "session_id": { "type": "string", "minLength": 1 },
     "action_id": { "type": "string", "description": "The NextAction this answers." },
-    "kind": { "type": "string", "enum": ["continuity", "voltage_dc", "resistance"] },
-    "net": { "type": "string", "minLength": 1, "description": "Net name from the design's electrical reference. Not a harness wire name." },
+    "kind": { "type": "string", "enum": ["continuity", "voltage_dc", "resistance", "selftest", "magnetometer", "audio", "flicker", "light", "led"] },
+    "net": { "type": "string", "minLength": 1, "description": "Net name from the design's electrical reference. Not a harness wire name. Required for continuity, voltage_dc, resistance and selftest; absent on a reading that is about a part." },
+    "part": { "type": "string", "minLength": 1, "description": "The part of the product a phone-sensor reading is about (a motor, a fan, the status LED), in the design's own naming. Required for magnetometer, audio, flicker, light and led." },
     "pins": {
       "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 2, "maxItems": 2,
       "description": "REF.PIN ids probed, in the design's net naming (e.g. J1.1), not harness end names. Required for continuity and resistance; optional for voltage_dc ([probe +, probe -])."
     },
     "value": {
-      "description": "Exactly the field that matches kind (see allOf).",
-      "oneOf": [{ "$ref": "#/$defs/value_volts" }, { "$ref": "#/$defs/value_continuity" }, { "$ref": "#/$defs/value_ohms" }]
+      "description": "Exactly the shape that matches kind (see allOf).",
+      "anyOf": [
+        { "$ref": "#/$defs/value_volts" }, { "$ref": "#/$defs/value_continuity" }, { "$ref": "#/$defs/value_ohms" },
+        { "$ref": "#/$defs/value_selftest" }, { "$ref": "#/$defs/value_magnetometer" }, { "$ref": "#/$defs/value_audio" },
+        { "$ref": "#/$defs/value_flicker" }, { "$ref": "#/$defs/value_light" }, { "$ref": "#/$defs/value_led" }
+      ]
     },
     "power_state": { "type": "string", "enum": ["off", "on"] },
     "condition": { "type": "string", "enum": ["idle", "load", "charging", "unknown"], "description": "Operating condition when read. We use it to pick which part of the SPICE [min, max] applies." },
@@ -40,11 +45,11 @@
       "enum": ["agrees", "disagrees", "unknown"],
       "description": "RepairOS's verdict, computed in code against expected (inside [min - tol, max + tol], tol = 0.25 V or 5 %; under 5 ohm conducts)."
     },
-    "source": { "type": "string", "enum": ["typed", "voice", "ble"], "description": "`ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it. Then `meter` says which meter and how it was set." },
+    "source": { "type": "string", "enum": ["typed", "voice", "ble", "selftest", "phone"], "description": "`typed` / `voice`: a person typed or said what a meter showed. `selftest`: the product ran the check on itself and the app read the result over Bluetooth or decoded its blinks through the camera; nobody typed it. `phone`: the phone's own sensor took the measurement. `ble` is DEPRECATED: the app no longer reads third-party Bluetooth meters, no app writes it, and it stays valid only so readings stored before this version still validate." },
     "meter": {
       "type": "object",
       "additionalProperties": false,
-      "description": "The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for typed and voice readings.",
+      "description": "DEPRECATED, only with source `ble`: the third-party meter that produced the reading. No app writes it any more.",
       "properties": {
         "model": { "type": "string", "description": "Model string the meter reports." },
         "firmware": { "type": "string", "description": "Firmware revision the meter reports." },
@@ -70,6 +75,38 @@
     {
       "if": { "required": ["kind"], "properties": { "kind": { "const": "resistance" } } },
       "then": { "required": ["pins"], "properties": { "value": { "$ref": "#/$defs/value_ohms" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "enum": ["continuity", "voltage_dc", "resistance", "selftest"] } } },
+      "then": { "required": ["net"] }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "enum": ["magnetometer", "audio", "flicker", "light", "led"] } } },
+      "then": { "required": ["part"] }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "selftest" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_selftest" }, "source": { "const": "selftest" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "magnetometer" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_magnetometer" }, "source": { "const": "phone" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "audio" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_audio" }, "source": { "const": "phone" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "flicker" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_flicker" }, "source": { "const": "phone" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "light" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_light" }, "source": { "const": "phone" } } }
+    },
+    {
+      "if": { "required": ["kind"], "properties": { "kind": { "const": "led" } } },
+      "then": { "properties": { "value": { "$ref": "#/$defs/value_led" }, "source": { "const": "phone" } } }
     }
   ],
   "$defs": {
@@ -84,6 +121,51 @@
     "value_ohms": {
       "type": "object", "additionalProperties": false, "required": ["ohms"],
       "properties": { "ohms": { "type": "number", "minimum": 0 } }
+    },
+    "value_selftest": {
+      "type": "object", "additionalProperties": false, "required": ["index", "ok", "transport"],
+      "description": "One check of the product's self-test. `index` is the check's place in the product's own list (the plan's self_test.checks maps it to a net). `ok` is the product's own verdict on itself (ok, fail, or unknown when it could not tell); the number is still judged against the design.",
+      "properties": {
+        "index": { "type": "integer", "minimum": 0 },
+        "value_mv": { "type": "number", "description": "A rail check: the voltage the product measured on itself, in millivolts." },
+        "state": { "type": "string", "enum": ["on", "off"], "description": "An output check: whether the product reports the output on." },
+        "ok": { "type": "string", "enum": ["ok", "fail", "unknown"] },
+        "transport": { "type": "string", "enum": ["ble", "led"], "description": "How the app received it: read over Bluetooth, or decoded from the status LED's blinks through the camera." }
+      }
+    },
+    "value_magnetometer": {
+      "type": "object", "additionalProperties": false, "required": ["delta_uT", "state"],
+      "description": "The change in the magnetic field the phone felt at the part, in microtesla, against a baseline taken just before with the product off. `current` when the change is at least 5 microtesla and at least 3 times the baseline's own noise.",
+      "properties": {
+        "delta_uT": { "type": "number", "minimum": 0 },
+        "state": { "type": "string", "enum": ["current", "none"] }
+      }
+    },
+    "value_audio": {
+      "type": "object", "additionalProperties": false, "required": ["hz"],
+      "description": "The tone the microphone heard from the part (a motor or fan), reduced to its fundamental, in hertz.",
+      "properties": { "hz": { "type": "number", "exclusiveMinimum": 0 } }
+    },
+    "value_flicker": {
+      "type": "object", "additionalProperties": false, "required": ["hz", "depth"],
+      "description": "The strongest brightness oscillation the camera saw: its frequency in hertz and its modulation depth from 0 (steady) to 1 (fully on and off).",
+      "properties": {
+        "hz": { "type": "number", "minimum": 0 },
+        "depth": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "value_light": {
+      "type": "object", "additionalProperties": false, "required": ["state"],
+      "description": "Relative brightness of the scene as the camera's exposure reports it, against a baseline taken with the product off. iOS has no public lux sensor, so this is a ratio and never a lux value.",
+      "properties": { "state": { "type": "string", "enum": ["on", "off", "dim"] } }
+    },
+    "value_led": {
+      "type": "object", "additionalProperties": false, "required": ["state"],
+      "description": "What the camera saw an LED do: lit, dark or blinking, and the hue of its brightest region.",
+      "properties": {
+        "state": { "type": "string", "enum": ["on", "off", "blinking"] },
+        "color": { "type": "string", "description": "The hue of the brightest region, as a plain colour word: red, orange, yellow, green, cyan, blue, purple, pink or white." }
+      }
     }
   }
 }

@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "modulation depth is a ratio from 0 to 1",
+  "base": "meter-reading.flicker.json", "patch": { "value": { "hz": 120, "depth": 35 } } }

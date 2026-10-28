@@ -1,5 +1,20 @@
 import Foundation
 
+/// What a person can measure with a multimeter. The contract's `MeterReadingKind` also has the product's self-test and
+/// the phone's own sensors, which the multimeter sections never produce.
+enum MultimeterKind: String, CaseIterable, Sendable {
+    case continuity, voltageDc, resistance
+
+    /// The contract's name for it (`kind`).
+    var contract: MeterReadingKind {
+        switch self {
+        case .continuity: .continuity
+        case .voltageDc: .voltageDc
+        case .resistance: .resistance
+        }
+    }
+}
+
 /// What a good reading looks like for one meter check (report `next_step.expected`): the design's own range, shown to
 /// the customer in words before they measure and beside the verdict after. The app never judges the reading; the
 /// design engine does. This only says what it will be judged against.
@@ -58,7 +73,7 @@ enum MeterWords {
 
     /// The two places to touch, in order: the first is the red probe, the second the black. Voltage is read red on the
     /// positive point; continuity and resistance work either way round, so only "touch one probe on each" is said.
-    static func probes(pins: [String], kind: MeterReadingKind) -> [String] {
+    static func probes(pins: [String], kind: MultimeterKind) -> [String] {
         guard pins.count == 2 else { return [] }
         if kind == .voltageDc {
             return ["Red probe on \(pin(pins[0]))", "Black probe on \(pin(pins[1]))"]
@@ -67,7 +82,7 @@ enum MeterWords {
     }
 
     /// What to set the meter dial to.
-    static func dial(_ kind: MeterReadingKind) -> String {
+    static func dial(_ kind: MultimeterKind) -> String {
         switch kind {
         case .continuity: "Set the meter to continuity (the beep symbol)."
         case .voltageDc: "Set the meter to DC volts (the V with a straight line)."
@@ -76,7 +91,7 @@ enum MeterWords {
     }
 
     /// The unit the typed value is in.
-    static func unit(_ kind: MeterReadingKind) -> String? {
+    static func unit(_ kind: MultimeterKind) -> String? {
         switch kind {
         case .voltageDc: "V"
         case .resistance: "\u{3A9}"

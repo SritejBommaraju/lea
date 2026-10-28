@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "a voltage reading is about a net",
+  "base": "meter-reading.json", "patch": { "net": null } }

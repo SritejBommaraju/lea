@@ -89,7 +89,8 @@
       "pins": [
         "J1.1",
         "J1.2"
-      ]
+      ],
+      "instrument": "selftest_ble"
     },
     "power_state": "on",
     "expected": {
@@ -119,5 +120,59 @@
     "summary_writer": "design engine",
     "jev": "not run (the design engine judged this scan)",
     "locate": "not computed (parts are named by the design)"
+  },
+  "self_test": {
+    "transports": [
+      "ble",
+      "led"
+    ],
+    "checks": [
+      {
+        "index": 0,
+        "kind": "rail",
+        "net": "VIN",
+        "expected": {
+          "volts_min": 4.75,
+          "volts_max": 5.25
+        }
+      },
+      {
+        "index": 1,
+        "kind": "rail",
+        "net": "3V3",
+        "expected": {
+          "volts_min": 3.1,
+          "volts_max": 3.5
+        }
+      },
+      {
+        "index": 2,
+        "kind": "output",
+        "net": "LED_DRV",
+        "expected": {
+          "state": "on"
+        }
+      }
+    ],
+    "ble": {
+      "service": "7A1E0001-5E1F-4E57-B5A1-0000C0FFEE01",
+      "result": "7A1E0002-5E1F-4E57-B5A1-0000C0FFEE01",
+      "control": "7A1E0003-5E1F-4E57-B5A1-0000C0FFEE01",
+      "name_prefix": "GRAIN-"
+    },
+    "blink": {
+      "timings": {
+        "flash_on_ms": 100,
+        "flash_off_ms": 100,
+        "long_on_ms": 600,
+        "long_off_ms": 300,
+        "gap_ms": 1000,
+        "preamble_flashes": 3,
+        "end_flashes": 3
+      },
+      "long_count_ok": 1,
+      "long_count_fail": 2,
+      "long_count_unknown": 3
+    }
   }
 }

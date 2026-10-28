@@ -1,0 +1,2 @@
+{ "schema": "meter-reading", "why": "a self-test reading is about a net: the plan maps its index to one",
+  "base": "meter-reading.selftest.json", "patch": { "net": null } }

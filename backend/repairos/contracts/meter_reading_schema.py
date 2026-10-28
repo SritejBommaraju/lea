@@ -13,6 +13,12 @@ class Kind(StrEnum):
     continuity = 'continuity'
     voltage_dc = 'voltage_dc'
     resistance = 'resistance'
+    selftest = 'selftest'
+    magnetometer = 'magnetometer'
+    audio = 'audio'
+    flicker = 'flicker'
+    light = 'light'
+    led = 'led'
 
 
 class Pin(RootModel[str]):
@@ -69,12 +75,14 @@ class Verdict(StrEnum):
 
 class Source2(StrEnum):
     """
-    `ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it. Then `meter` says which meter and how it was set.
+    `typed` / `voice`: a person typed or said what a meter showed. `selftest`: the product ran the check on itself and the app read the result over Bluetooth or decoded its blinks through the camera; nobody typed it. `phone`: the phone's own sensor took the measurement. `ble` is DEPRECATED: the app no longer reads third-party Bluetooth meters, no app writes it, and it stays valid only so readings stored before this version still validate.
     """
 
     typed = 'typed'
     voice = 'voice'
     ble = 'ble'
+    selftest = 'selftest'
+    phone = 'phone'
 
 
 class Mode(StrEnum):
@@ -94,7 +102,7 @@ class Mode(StrEnum):
 
 class Meter(BaseModel):
     """
-    The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for typed and voice readings.
+    DEPRECATED, only with source `ble`: the third-party meter that produced the reading. No app writes it any more.
     """
 
     model_config = ConfigDict(
@@ -146,9 +154,134 @@ class ValueOhms(BaseModel):
     ohms: float = Field(..., ge=0.0)
 
 
+class State(StrEnum):
+    """
+    An output check: whether the product reports the output on.
+    """
+
+    on = 'on'
+    off = 'off'
+
+
+class Ok(StrEnum):
+    ok = 'ok'
+    fail = 'fail'
+    unknown = 'unknown'
+
+
+class Transport(StrEnum):
+    """
+    How the app received it: read over Bluetooth, or decoded from the status LED's blinks through the camera.
+    """
+
+    ble = 'ble'
+    led = 'led'
+
+
+class ValueSelftest(BaseModel):
+    """
+    One check of the product's self-test. `index` is the check's place in the product's own list (the plan's self_test.checks maps it to a net). `ok` is the product's own verdict on itself (ok, fail, or unknown when it could not tell); the number is still judged against the design.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    index: int = Field(..., ge=0)
+    value_mv: float | None = Field(
+        None,
+        description='A rail check: the voltage the product measured on itself, in millivolts.',
+    )
+    state: State | None = Field(
+        None, description='An output check: whether the product reports the output on.'
+    )
+    ok: Ok
+    transport: Transport = Field(
+        ...,
+        description="How the app received it: read over Bluetooth, or decoded from the status LED's blinks through the camera.",
+    )
+
+
+class State2(StrEnum):
+    current = 'current'
+    none = 'none'
+
+
+class ValueMagnetometer(BaseModel):
+    """
+    The change in the magnetic field the phone felt at the part, in microtesla, against a baseline taken just before with the product off. `current` when the change is at least 5 microtesla and at least 3 times the baseline's own noise.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    delta_uT: float = Field(..., ge=0.0)
+    state: State2
+
+
+class ValueAudio(BaseModel):
+    """
+    The tone the microphone heard from the part (a motor or fan), reduced to its fundamental, in hertz.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    hz: float = Field(..., gt=0.0)
+
+
+class ValueFlicker(BaseModel):
+    """
+    The strongest brightness oscillation the camera saw: its frequency in hertz and its modulation depth from 0 (steady) to 1 (fully on and off).
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    hz: float = Field(..., ge=0.0)
+    depth: float = Field(..., ge=0.0, le=1.0)
+
+
+class State3(StrEnum):
+    on = 'on'
+    off = 'off'
+    dim = 'dim'
+
+
+class ValueLight(BaseModel):
+    """
+    Relative brightness of the scene as the camera's exposure reports it, against a baseline taken with the product off. iOS has no public lux sensor, so this is a ratio and never a lux value.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    state: State3
+
+
+class State4(StrEnum):
+    on = 'on'
+    off = 'off'
+    blinking = 'blinking'
+
+
+class ValueLed(BaseModel):
+    """
+    What the camera saw an LED do: lit, dark or blinking, and the hue of its brightest region.
+    """
+
+    model_config = ConfigDict(
+        extra='forbid',
+    )
+    state: State4
+    color: str | None = Field(
+        None,
+        description='The hue of the brightest region, as a plain colour word: red, orange, yellow, green, cyan, blue, purple, pink or white.',
+    )
+
+
 class MeterReading(BaseModel):
     """
-    One multimeter reading typed or spoken by the user, or read by the app from a Bluetooth meter, in response to a NextAction. The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required. RepairOS's verdict (`verdict`) is judged against [min, max] in code.
+    One reading in response to a NextAction: a multimeter value the person typed or said, a check the product ran on itself (`selftest`, read over Bluetooth or decoded from the status LED's blinks), or a measurement the phone's own sensors took (`phone`). The only kind of evidence that counts as proof (I1, I2). Sent into fusion. `kind` fixes the shape of `value`: voltage_dc -> {volts}; continuity -> {continuity} and pins required; resistance -> {ohms} and pins required; selftest -> {index, ok, transport, value_mv?, state?} and net required; magnetometer -> {delta_uT, state}; audio -> {hz}; flicker -> {hz, depth}; light -> {state on|off|dim}; led -> {state on|off|blinking, color?}, the five sensor kinds with part required. The verdict (`verdict`) is judged against [min, max] in code.
     """
 
     model_config = ConfigDict(
@@ -159,9 +292,14 @@ class MeterReading(BaseModel):
     session_id: str = Field(..., min_length=1)
     action_id: str | None = Field(None, description='The NextAction this answers.')
     kind: Kind
-    net: str = Field(
-        ...,
-        description="Net name from the design's electrical reference. Not a harness wire name.",
+    net: str | None = Field(
+        None,
+        description="Net name from the design's electrical reference. Not a harness wire name. Required for continuity, voltage_dc, resistance and selftest; absent on a reading that is about a part.",
+        min_length=1,
+    )
+    part: str | None = Field(
+        None,
+        description="The part of the product a phone-sensor reading is about (a motor, a fan, the status LED), in the design's own naming. Required for magnetometer, audio, flicker, light and led.",
         min_length=1,
     )
     pins: list[Pin] | None = Field(
@@ -170,9 +308,17 @@ class MeterReading(BaseModel):
         max_length=2,
         min_length=2,
     )
-    value: ValueVolts | ValueContinuity | ValueOhms = Field(
-        ..., description='Exactly the field that matches kind (see allOf).'
-    )
+    value: (
+        ValueVolts
+        | ValueContinuity
+        | ValueOhms
+        | ValueSelftest
+        | ValueMagnetometer
+        | ValueAudio
+        | ValueFlicker
+        | ValueLight
+        | ValueLed
+    ) = Field(..., description='Exactly the shape that matches kind (see allOf).')
     power_state: PowerState
     condition: Condition | None = Field(
         None,
@@ -188,11 +334,11 @@ class MeterReading(BaseModel):
     )
     source: Source2 = Field(
         ...,
-        description='`ble`: the app read the value from the meter over Bluetooth LE; nobody typed or said it. Then `meter` says which meter and how it was set.',
+        description="`typed` / `voice`: a person typed or said what a meter showed. `selftest`: the product ran the check on itself and the app read the result over Bluetooth or decoded its blinks through the camera; nobody typed it. `phone`: the phone's own sensor took the measurement. `ble` is DEPRECATED: the app no longer reads third-party Bluetooth meters, no app writes it, and it stays valid only so readings stored before this version still validate.",
     )
     meter: Meter | None = Field(
         None,
-        description='The meter that produced a `ble` reading, as the app read it over Bluetooth. Absent for typed and voice readings.',
+        description='DEPRECATED, only with source `ble`: the third-party meter that produced the reading. No app writes it any more.',
     )
     raw_text: str | None = Field(
         None, description='What the user said or typed, before parsing.'

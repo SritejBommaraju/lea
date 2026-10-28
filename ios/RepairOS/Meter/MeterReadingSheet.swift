@@ -6,7 +6,7 @@ import SwiftUI
 struct MeterReadingContext: Identifiable {
     let id = UUID()
     var actionID: String?
-    var kind: MeterReadingKind
+    var kind: MultimeterKind
     var net: String
     var pins: [String]
     /// What to watch out for before probing, shown above the probe points (the report's `next_step.safety_notes`).
@@ -16,7 +16,7 @@ struct MeterReadingContext: Identifiable {
     /// What a good reading looks like (`next_step.expected`), said before measuring and beside the verdict.
     var expected: ExpectedReading?
 
-    init(kind: MeterReadingKind = .continuity, net: String = "", pins: [String] = [], actionID: String? = nil,
+    init(kind: MultimeterKind = .continuity, net: String = "", pins: [String] = [], actionID: String? = nil,
          safetyNotes: [String] = [], instruction: String? = nil, expected: ExpectedReading? = nil) {
         self.kind = kind
         self.net = net
@@ -42,7 +42,7 @@ struct MeterReadingContext: Identifiable {
                   expected: step.expected)
     }
 
-    static func kind(forAction kind: String) -> MeterReadingKind? {
+    static func kind(forAction kind: String) -> MultimeterKind? {
         switch kind {
         case "run_continuity_test": .continuity
         case "run_resistance_test": .resistance
@@ -52,15 +52,23 @@ struct MeterReadingContext: Identifiable {
     }
 }
 
+extension Value {
+    /// A multimeter value (the generated memberwise init also lists the self-test and phone-sensor fields).
+    init(volts: Double?, continuity: Bool?, ohms: Double?) {
+        self.init(volts: volts, continuity: continuity, ohms: ohms, index: nil, ok: nil, state: nil, transport: nil,
+                  valueMv: nil, deltaUT: nil, hz: nil, depth: nil, color: nil)
+    }
+}
+
 /// The rules of a meter reading, apart from the screen so they can be tested.
 enum MeterReadingDraft {
     /// Continuity and resistance are read with the product off, voltage with it on (invariant S4).
-    static func powerState(_ kind: MeterReadingKind) -> MeterReadingPowerState {
+    static func powerState(_ kind: MultimeterKind) -> PowerStateEnum {
         kind == .voltageDc ? .on : .off
     }
 
     /// Shown before the probe points.
-    static func banner(_ kind: MeterReadingKind) -> String {
+    static func banner(_ kind: MultimeterKind) -> String {
         switch kind {
         case .continuity, .resistance: "Switch the product off and disconnect its power source and battery."
         case .voltageDc: "The product is powered: keep the probes apart."
@@ -74,7 +82,7 @@ enum MeterReadingDraft {
     }
 
     /// Why this cannot be sent yet, in words, or nil.
-    static func problem(kind: MeterReadingKind, net: String, pinA: String, pinB: String) -> String? {
+    static func problem(kind: MultimeterKind, net: String, pinA: String, pinB: String) -> String? {
         if net.trimmingCharacters(in: .whitespaces).isEmpty { return "Enter the net name." }
         let p = pins(pinA, pinB)
         if let p, p.contains(where: \.isEmpty) { return "Enter both probe points, or neither." }
@@ -83,7 +91,7 @@ enum MeterReadingDraft {
     }
 
     /// The value the meter's sample gives for this kind, or nil when it is for another mode or the meter flagged an error.
-    static func value(from sample: MeterSample, kind: MeterReadingKind) -> Value? {
+    static func value(from sample: MeterSample, kind: MultimeterKind) -> Value? {
         guard !sample.error, sample.mode == MeterMode(kind: kind), sample.value.isFinite else { return nil }
         switch kind {
         case .continuity: return sample.continuity.map { Value(volts: nil, continuity: $0, ohms: nil) }
@@ -93,7 +101,7 @@ enum MeterReadingDraft {
     }
 
     /// A typed value ("4.98", "4,98", "120") for this kind; nil when it is not a number the kind allows.
-    static func value(typed text: String, kind: MeterReadingKind, beeps: Bool) -> Value? {
+    static func value(typed text: String, kind: MultimeterKind, beeps: Bool) -> Value? {
         if kind == .continuity { return Value(volts: nil, continuity: beeps, ohms: nil) }
         let t = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
         guard let x = Double(t), x.isFinite else { return nil }
@@ -108,11 +116,11 @@ enum MeterReadingDraft {
               readAt: sample.readAt)
     }
 
-    static func reading(context: MeterReadingContext, kind: MeterReadingKind, net: String, pinA: String, pinB: String,
+    static func reading(context: MeterReadingContext, kind: MultimeterKind, net: String, pinA: String, pinB: String,
                         scanID: String, sessionID: String, value: Value, meter: Meter?, rawText: String?,
                         now: Date = Date(), id: String = "rd_" + ScanStorage.hex(8)) -> MeterReading {
-        MeterReading(actionID: context.actionID, condition: nil, expected: nil, kind: kind, meter: meter,
-                     net: net.trimmingCharacters(in: .whitespaces), pins: pins(pinA, pinB), powerState: powerState(kind),
+        MeterReading(actionID: context.actionID, condition: nil, expected: nil, kind: kind.contract, meter: meter,
+                     net: net.trimmingCharacters(in: .whitespaces), part: nil, pins: pins(pinA, pinB), powerState: powerState(kind),
                      rawText: rawText, readingID: id, recordedAt: now, scanID: scanID, sessionID: sessionID,
                      source: meter == nil ? .typed : .ble, value: value, verdict: nil)
     }
@@ -130,7 +138,7 @@ struct MeterReadingSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var link = MeterLink()
-    @State private var kind: MeterReadingKind
+    @State private var kind: MultimeterKind
     @State private var net: String
     @State private var pinA: String
     @State private var pinB: String
@@ -165,9 +173,9 @@ struct MeterReadingSheet: View {
                 } else {
                     Section {
                         Picker("Measuring", selection: $kind) {
-                            Text("Continuity").tag(MeterReadingKind.continuity)
-                            Text("DC voltage").tag(MeterReadingKind.voltageDc)
-                            Text("Resistance").tag(MeterReadingKind.resistance)
+                            Text("Continuity").tag(MultimeterKind.continuity)
+                            Text("DC voltage").tag(MultimeterKind.voltageDc)
+                            Text("Resistance").tag(MultimeterKind.resistance)
                         }
                         .pickerStyle(.segmented)
                     }
@@ -328,7 +336,7 @@ struct MeterReadingSheet: View {
         }
     }
 
-    static func words(_ s: MeterSample, kind: MeterReadingKind) -> String {
+    static func words(_ s: MeterSample, kind: MultimeterKind) -> String {
         if s.error { return "Error" }
         switch kind {
         case .continuity: return s.continuity == true ? "Connected" : "No connection"
