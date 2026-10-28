@@ -432,7 +432,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["engine", "project"],
-      "description": "Present when the design engine judged this scan against the product's own design. `project` is the design the scan was judged against.",
+      "description": "Present when the design engine judged this scan against the product's own design; required when a row names `grain` or the summary says it is not words only. `project` is the design the scan was judged against.",
       "properties": {
         "engine": { "const": "grain" },
         "project": { "type": "string", "minLength": 1 }
@@ -506,6 +506,34 @@
     }
   },
   "allOf": [
+    {
+      "description": "A row judged by the design engine, or a summary it wrote, names the design it was judged against.",
+      "if": {
+        "anyOf": [
+          {
+            "required": ["summary"],
+            "properties": { "summary": { "required": ["from_words_only"], "properties": { "from_words_only": { "const": false } } } }
+          },
+          {
+            "required": ["findings"],
+            "properties": { "findings": { "contains": { "required": ["inspected_by"], "properties": { "inspected_by": { "contains": { "const": "grain" } } } } } }
+          },
+          {
+            "required": ["cosmetic"],
+            "properties": { "cosmetic": { "contains": { "required": ["inspected_by"], "properties": { "inspected_by": { "contains": { "const": "grain" } } } } } }
+          },
+          {
+            "required": ["setup"],
+            "properties": { "setup": { "contains": { "required": ["inspected_by"], "properties": { "inspected_by": { "contains": { "const": "grain" } } } } } }
+          },
+          {
+            "required": ["insufficient_evidence"],
+            "properties": { "insufficient_evidence": { "contains": { "required": ["inspected_by"], "properties": { "inspected_by": { "contains": { "const": "grain" } } } } } }
+          }
+        ]
+      },
+      "then": { "required": ["design"] }
+    },
     {
       "if": {
         "properties": {

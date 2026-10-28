@@ -1,0 +1,15 @@
+{
+  "reading_id": "rd_example_de",
+  "scan_id": "scan_example_de",
+  "session_id": "sess_example",
+  "action_id": "chk_power_in",
+  "kind": "voltage_dc",
+  "net": "VIN",
+  "pins": ["J1.1", "J1.2"],
+  "value": { "volts": 4.98 },
+  "power_state": "on",
+  "expected": { "volts_min": 4.75, "volts_max": 5.25, "source": "design_engine" },
+  "verdict": "agrees",
+  "source": "typed",
+  "recorded_at": "2026-10-28T12:05:00Z"
+}

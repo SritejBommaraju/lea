@@ -63,12 +63,13 @@ class PowerState(StrEnum):
 
 class Source(StrEnum):
     """
-    report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches.
+    report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches; design_engine: the range the design engine's meter plan gave.
     """
 
     report_json_minmax = 'report_json_minmax'
     repairos_derived = 'repairos_derived'
     datasheet = 'datasheet'
+    design_engine = 'design_engine'
 
 
 class Expected(BaseModel):
@@ -85,7 +86,7 @@ class Expected(BaseModel):
     volts_max: float | None = None
     source: Source | None = Field(
         None,
-        description='report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches.',
+        description="report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the ~0 ohm rule for wires, fuses, closed switches; design_engine: the range the design engine's meter plan gave.",
     )
 
 
