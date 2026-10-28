@@ -46,6 +46,9 @@ You can write, build, test and install this app without owning a Mac.
   5. The app lives 7 days. Re-sideload the same way to renew it (data in the app is kept when it is installed over
      itself). A free Apple ID allows 3 sideloaded apps at once.
 
+  Measured on the first green run: the `ipa` job takes about 3 minutes and the .ipa is 4.3 MB (a 15.7 MB arm64
+  binary inside); the `test` job took 17 minutes.
+
   What has not been tried: the artifact is verified to hold `Payload/RepairOS.app/Info.plist` and the `RepairOS` binary
   (below), but nobody has yet installed it through Sideloadly or AltServer from Windows, or run it on a phone. If
   Sideloadly refuses it, the message is the thing to report.
@@ -54,9 +57,11 @@ You can write, build, test and install this app without owning a Mac.
   `stills/`, `readings/`):
   - *Files app:* Files > On My iPhone > RepairOS > sessions > long-press the session folder > Compress > share the zip.
     The app sets `UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`, which is what makes the folder visible.
-  - *In the app:* Home > long-press a saved scan > Share session. It zips the folder with Foundation's directory
-    zipper (`NSFileCoordinator` `.forUploading`) and opens the share sheet (AirDrop, Files, Mail). Only files already in
-    the folder are included.
+  - *In the app:* Home > long-press a saved scan > Share session. It zips the folder (`SessionArchive`: a stored
+    zip whose entries are relative to the session root, because Foundation's `.forUploading` zipper wraps everything in a
+    top folder named after the session, which the importer does not expect) and opens the share sheet (AirDrop, Files,
+    Mail). Only files already in the folder are included. CI opens the zip with Python's `zipfile` and checks the root
+    entries.
 - **Logs:** `devicectl` needs a Mac. Instead open the Files app on the phone > RepairOS > `sessions/<id>/` and share
   `diag.jsonl` (the folder is visible there, see "Capture layout").
 - **Fallback:** for Instruments or a step-through debugger, rent an hourly cloud Mac mini and use the commands above.
