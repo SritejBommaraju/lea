@@ -112,16 +112,16 @@ struct CustomerReportTests {
     }
 
     @Test func aRemakePlanListsOnlyTheFormatsTheGatewayServes() throws {
-        let plan = try #require(FixPlan(json: ["action": "remake", "part_file": ["formats": ["stl", "step", "exe"]],
+        let plan = try #require(RepairFix(json: ["action": "remake", "part_file": ["formats": ["stl", "step", "exe"]],
                                                "steps": ["Print it flat.", "  "]]))
         #expect(plan.action == .remake && plan.fileFormats == ["stl", "step"] && plan.steps == ["Print it flat."])
-        #expect(FixPlan(json: ["action": "teleport"]) == nil && FixPlan(json: nil) == nil)
-        let check = try #require(FixPlan(json: ["action": "check", "check_action_id": "chk_vin"]))
+        #expect(RepairFix(json: ["action": "teleport"]) == nil && RepairFix(json: nil) == nil)
+        let check = try #require(RepairFix(json: ["action": "check", "check_action_id": "chk_vin"]))
         #expect(check.checkActionID == "chk_vin" && check.offers.isEmpty)
     }
 
     @Test func anOfferWithoutAShopLinkIsDropped() throws {
-        let plan = try #require(FixPlan(json: ["action": "buy", "options": [
+        let plan = try #require(RepairFix(json: ["action": "buy", "options": [
             ["title": "Cover", "seller": "Shop", "link": "javascript:alert(1)"],
             ["title": "Cover", "seller": "Shop", "link": "https://shop.example/cover", "price": 4.5, "currency": "USD"]]]))
         #expect(plan.offers.map(\.link.absoluteString) == ["https://shop.example/cover"])

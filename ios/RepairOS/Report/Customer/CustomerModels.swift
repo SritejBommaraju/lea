@@ -3,7 +3,7 @@ import Foundation
 /// The fix for one report row as data (report `findings[].fix_plan`, spec/contracts/report.schema.json): what to do,
 /// where to buy it, which part file to print, or which meter check settles it. Read leniently from the report's
 /// JSON, like the rest of ReportModel. Every word about the fix is the backend's; the app only lays it out.
-struct FixPlan: Equatable, Sendable {
+struct RepairFix: Equatable, Sendable {
     enum Action: String, Sendable { case buy, remake, reseat, rewire, check }
 
     var action: Action

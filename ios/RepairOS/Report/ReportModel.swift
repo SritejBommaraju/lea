@@ -88,7 +88,7 @@ struct ReportModel: Sendable {
         /// The design engine's own confidence word (high, medium, low), before it is turned into words.
         var confidenceWord: String? = nil
         /// The fix as data (report `fix_plan`): what to do, buy, print or measure.
-        var fixPlan: FixPlan? = nil
+        var fixPlan: RepairFix? = nil
         /// What the person said after trying the fix (report `outcome`).
         var outcome: OutcomeAnswer? = nil
         /// What the row is about (`kind:ref`), stable when the report is made again.
@@ -343,7 +343,7 @@ struct ReportModel: Sendable {
             fix: (f["fix"] as? String)?.trimmedOrNil,
             issueCode: f["issue"] as? String ?? "",
             confidenceWord: f["confidence_word"] as? String,
-            fixPlan: FixPlan(json: f["fix_plan"] as? [String: Any]),
+            fixPlan: RepairFix(json: f["fix_plan"] as? [String: Any]),
             outcome: OutcomeAnswer(json: f["outcome"] as? [String: Any]),
             subjectKey: Self.subjectKey(f["subject"] as? [String: Any]))
     }
