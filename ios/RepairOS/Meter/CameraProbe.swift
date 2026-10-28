@@ -33,6 +33,8 @@ final class FrameBuffer: @unchecked Sendable {
 
 enum CameraProbeError: Error, Equatable {
     case denied, noCamera, cannotStart
+    /// `stop()` was called before the camera got going: nothing was started, and nothing is wrong.
+    case stopped
 }
 
 /// The back camera as a sensor: it reads frames at the highest frame rate up to `targetFPS` and keeps each one as a
@@ -44,6 +46,8 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
     private let queue = DispatchQueue(label: "lea.phonecheck.camera", qos: .userInitiated)
     private var device: AVCaptureDevice?   // only touched on `queue`
     private var configured = false          // only touched on `queue`
+    private let wantedLock = NSLock()
+    private var wanted = false               // the last of `start` and `stop` that was called
 
     init(keepSeconds: Double) {
         buffer = FrameBuffer(keepSeconds: keepSeconds)
@@ -60,6 +64,7 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
 
     /// Starts the camera and returns the frame rate it runs at (the highest the phone offers, up to `targetFPS`).
     func start(targetFPS: Double) async throws -> Double {
+        setWanted(true)
         guard await Self.authorized() else { throw CameraProbeError.denied }
         buffer.clear()
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Double, Error>) in
@@ -70,12 +75,26 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
     }
 
     func stop() {
+        setWanted(false)
         queue.async {
             if self.session.isRunning { self.session.stopRunning() }
         }
     }
 
+    private func setWanted(_ on: Bool) {
+        wantedLock.lock()
+        wanted = on
+        wantedLock.unlock()
+    }
+
+    private var isWanted: Bool {
+        wantedLock.lock()
+        defer { wantedLock.unlock() }
+        return wanted
+    }
+
     private func run(targetFPS: Double) throws -> Double {
+        guard isWanted else { throw CameraProbeError.stopped }
         if !configured {
             guard let dev = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
                 throw CameraProbeError.noCamera
@@ -146,6 +165,7 @@ enum PhoneCheckWords {
         switch error as? CameraProbeError {
         case .denied: "The camera is off for this app. Turn it on in Settings > Privacy & Security > Camera."
         case .noCamera: "This phone has no camera this check can use."
+        case .stopped: "The camera was stopped."
         default: "The camera did not start. Close other apps that use it and try again."
         }
     }

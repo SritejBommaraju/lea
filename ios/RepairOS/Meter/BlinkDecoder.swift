@@ -52,6 +52,14 @@ struct BlinkCode: Equatable, Sendable {
         return nil
     }
 
+    /// How long one round of the code takes with `checks` results, the longest result every time: the camera has to keep
+    /// at least this much to see a preamble and its end flashes together.
+    func roundSeconds(checks: Int) -> Double {
+        let flashes = Double(preambleFlashes + endFlashes) * (flashOnMS + flashOffMS)
+        let perCheck = Double(max(longCountOK, longCountFail, longCountUnknown)) * (longOnMS + longOffMS) + gapMS
+        return (flashes + gapMS + Double(checks) * perCheck) / 1000
+    }
+
     /// Dark time that ends a group of blinks: halfway between the longest gap inside a group and the shortest gap
     /// between groups, each stretched by the tolerance.
     var boundaryMS: Double { (max(longOffMS, flashOffMS) * (1 + tolerance) + gapMS * (1 - tolerance)) / 2 }
@@ -162,8 +170,23 @@ enum BlinkDecoder {
         // The last group is only whole once the LED has been dark long enough to end it.
         let lastClosed = (tail ?? 0) >= c.boundaryMS
         let lengths = groups.map { $0.map { length($0.durationMS, c) } }
+        // Dark time inside a group must match the pulse before it (a short flash is followed by the flash gap, a long
+        // blink by the blink gap), and the dark time between groups must be the code's gap: the gap alone, or the gap
+        // after the last blink's own dark time. A pattern with other off-times is not this product's code.
+        func clean(_ i: Int) -> Bool {
+            for k in groups[i].indices.dropFirst() {
+                let gap = groups[i][k].startMS - groups[i][k - 1].endMS
+                let expected = lengths[i][k - 1] == .short ? c.flashOffMS : c.longOffMS
+                if abs(gap - expected) / expected > c.tolerance { return false }
+            }
+            return true
+        }
+        func gapOK(before i: Int) -> Bool {
+            let gap = groups[i].first!.startMS - groups[i - 1].last!.endMS
+            return gap >= c.gapMS * (1 - c.tolerance) && gap <= (c.gapMS + max(c.flashOffMS, c.longOffMS)) * (1 + c.tolerance)
+        }
         func isFlashes(_ i: Int, _ count: Int) -> Bool {
-            lengths[i].count == count && lengths[i].allSatisfy { $0 == .short }
+            lengths[i].count == count && lengths[i].allSatisfy { $0 == .short } && clean(i)
         }
 
         var partial: [SelfTestFrame.Outcome]?
@@ -176,6 +199,10 @@ enum BlinkDecoder {
             var j = start + 1
             walk: while j < groups.count {
                 let last = j == groups.count - 1
+                if !gapOK(before: j) {
+                    broken = "The dark time before blink \(j - start) is not the gap the product uses."
+                    break walk
+                }
                 if isFlashes(j, c.endFlashes) {
                     // Three flashes straight after three flashes are an end followed by a new start, not an empty code.
                     if outcomes.isEmpty { break walk }
@@ -184,7 +211,7 @@ enum BlinkDecoder {
                 // The end flashes may follow the last check's blinks without a long gap: [long...][short x endFlashes].
                 let trailing = lengths[j].reversed().prefix { $0 == .short }.count
                 if trailing == c.endFlashes, trailing < lengths[j].count,
-                   lengths[j].dropLast(trailing).allSatisfy({ $0 == .long }) {
+                   lengths[j].dropLast(trailing).allSatisfy({ $0 == .long }), clean(j) {
                     guard let o = c.outcome(forLongCount: lengths[j].count - trailing) else {
                         broken = "Check \(outcomes.count + 1) blinked \(lengths[j].count - trailing) times, which is not a result the product sends."
                         break walk
@@ -192,8 +219,8 @@ enum BlinkDecoder {
                     return .complete(outcomes + [o])
                 }
                 if last, !lastClosed { break walk }
-                guard lengths[j].allSatisfy({ $0 == .long }) else {
-                    broken = "Blink \(j - start) of the code is not the length the product uses."
+                guard lengths[j].allSatisfy({ $0 == .long }), clean(j) else {
+                    broken = "Blink \(j - start) of the code is not the length or timing the product uses."
                     break walk
                 }
                 guard let o = c.outcome(forLongCount: groups[j].count) else {

@@ -6,6 +6,9 @@ import Foundation
 // The phone's own instruments, each as a small object the sheet watches. They only start when the person taps the
 // instrument, so the camera and microphone prompts appear then and not before. None of this runs in the simulator
 // (no camera, microphone or magnetometer there); the rules they feed are unit-tested on synthetic data.
+//
+// Every object numbers its runs (`generation`): stopping or starting again makes the older run's results, cleanup and
+// camera calls void, so a run that wakes up late can never stop the camera of the run that replaced it.
 
 /// Reads the product's status LED through the camera: finds the LED, turns its brightness into on and off, decodes
 /// the blink code, and says how far it has got.
@@ -17,42 +20,58 @@ final class BlinkCheck: ObservableObject {
     @Published private(set) var analysis = BlinkAnalysis.Result(progress: .searching, marker: nil)
     @Published private(set) var fps = 0.0
     let code: BlinkCode
-    private let probe = CameraProbe(keepSeconds: 60)
+    private let probe: CameraProbe
     var session: AVCaptureSession { probe.session }
     private var loop: Task<Void, Never>?
+    private var generation = 0
 
-    init(code: BlinkCode) { self.code = code }
+    /// The camera keeps two rounds of the code plus a margin, so a code with many checks still has its preamble in view
+    /// when its end flashes arrive.
+    init(code: BlinkCode, checkCount: Int) {
+        self.code = code
+        probe = CameraProbe(keepSeconds: BlinkCheck.windowSeconds(code: code, checkCount: checkCount))
+    }
+
+    nonisolated static func windowSeconds(code: BlinkCode, checkCount: Int) -> Double {
+        min(300, 2 * code.roundSeconds(checks: checkCount) + 10)
+    }
 
     func start() {
         guard loop == nil else { return }
+        generation += 1
+        let mine = generation
         phase = .starting
         analysis = BlinkAnalysis.Result(progress: .searching, marker: nil)
-        loop = Task { [weak self] in await self?.run() }
+        loop = Task { [weak self] in await self?.run(mine) }
     }
 
     func stop() {
+        generation += 1
         loop?.cancel()
         loop = nil
         probe.stop()
         if phase == .starting || phase == .watching { phase = .idle }
     }
 
-    private func run() async {
+    private func run(_ mine: Int) async {
         do {
-            fps = try await probe.start(targetFPS: 60)
+            let rate = try await probe.start(targetFPS: 60)
+            guard mine == generation else { return }
+            fps = rate
         } catch {
+            guard mine == generation, (error as? CameraProbeError) != .stopped else { return }
             phase = .failed(PhoneCheckWords.camera(error))
             loop = nil
             return
         }
-        if Task.isCancelled { probe.stop(); return }
         phase = .watching
         let code = self.code
-        while !Task.isCancelled {
+        while mine == generation {
             try? await Task.sleep(for: .milliseconds(200))
+            guard mine == generation else { return }
             let frames = probe.buffer.snapshot()
             let result = await Task.detached(priority: .userInitiated) { BlinkAnalysis.run(frames, code: code) }.value
-            if Task.isCancelled { break }
+            guard mine == generation else { return }
             analysis = result
             if case .complete = result.progress {
                 phase = .complete
@@ -93,37 +112,43 @@ final class FlickerCheck: ObservableObject {
     private let probe = CameraProbe(keepSeconds: 4)
     var session: AVCaptureSession { probe.session }
     private var task: Task<Void, Never>?
+    private var generation = 0
 
     func measure() {
         guard task == nil else { return }
+        generation += 1
+        let mine = generation
         phase = .measuring
         result = nil
-        task = Task { [weak self] in await self?.run() }
+        task = Task { [weak self] in await self?.run(mine) }
     }
 
     func stop() {
+        generation += 1
         task?.cancel()
         task = nil
         probe.stop()
         if phase == .measuring { phase = .idle }
     }
 
-    private func run() async {
-        defer { task = nil }
+    private func run(_ mine: Int) async {
+        defer { if mine == generation { task = nil } }
         do {
             _ = try await probe.start(targetFPS: 240)
         } catch {
+            guard mine == generation, (error as? CameraProbeError) != .stopped else { return }
             phase = .failed(PhoneCheckWords.camera(error))
             return
         }
         try? await Task.sleep(for: .milliseconds(700))   // the camera's exposure settles
-        if Task.isCancelled { probe.stop(); return }
+        guard mine == generation else { return }
         probe.buffer.clear()
         try? await Task.sleep(for: .seconds(2))
+        guard mine == generation else { return }
         let frames = probe.buffer.snapshot()
         probe.stop()
-        if Task.isCancelled { return }
         let got = await Task.detached { FlickerAnalysis.analyze(frames: frames) }.value
+        guard mine == generation else { return }
         if let got {
             result = got
             phase = .done
@@ -145,6 +170,7 @@ final class LightCheck: ObservableObject {
     private let probe = CameraProbe(keepSeconds: 3)
     var session: AVCaptureSession { probe.session }
     private var task: Task<Void, Never>?
+    private var generation = 0
 
     /// Point the camera at the part with the product off.
     func takeBaseline() {
@@ -166,6 +192,7 @@ final class LightCheck: ObservableObject {
     }
 
     func stop() {
+        generation += 1
         task?.cancel()
         task = nil
         probe.stop()
@@ -173,22 +200,26 @@ final class LightCheck: ObservableObject {
     }
 
     private func run(_ done: @escaping @MainActor (Double) -> Void) {
+        generation += 1
+        let mine = generation
         phase = .measuring
         task = Task { [weak self] in
             guard let self else { return }
-            defer { self.task = nil }
+            defer { if mine == self.generation { self.task = nil } }
             do {
                 _ = try await self.probe.start(targetFPS: 30)
             } catch {
+                guard mine == self.generation, (error as? CameraProbeError) != .stopped else { return }
                 self.phase = .failed(PhoneCheckWords.camera(error))
                 return
             }
             try? await Task.sleep(for: .milliseconds(900))   // the camera's exposure settles
+            guard mine == self.generation else { return }
             self.probe.buffer.clear()
             try? await Task.sleep(for: .seconds(1))
+            guard mine == self.generation else { return }
             let frames = self.probe.buffer.snapshot()
             self.probe.stop()
-            if Task.isCancelled { return }
             let levels = frames.compactMap { RelativeLight.level(meanBrightness: $0.mean, iso: $0.iso, exposureS: $0.exposureS) }.sorted()
             guard !levels.isEmpty else {
                 self.phase = .failed("The camera did not report its exposure. Try again.")
@@ -210,37 +241,43 @@ final class LedStateCheck: ObservableObject {
     private let probe = CameraProbe(keepSeconds: 5)
     var session: AVCaptureSession { probe.session }
     private var task: Task<Void, Never>?
+    private var generation = 0
 
     func watch() {
         guard task == nil else { return }
+        generation += 1
+        let mine = generation
         phase = .watching
         result = nil
-        task = Task { [weak self] in await self?.run() }
+        task = Task { [weak self] in await self?.run(mine) }
     }
 
     func stop() {
+        generation += 1
         task?.cancel()
         task = nil
         probe.stop()
         if phase == .watching { phase = .idle }
     }
 
-    private func run() async {
-        defer { task = nil }
+    private func run(_ mine: Int) async {
+        defer { if mine == generation { task = nil } }
         do {
             _ = try await probe.start(targetFPS: 60)
         } catch {
+            guard mine == generation, (error as? CameraProbeError) != .stopped else { return }
             phase = .failed(PhoneCheckWords.camera(error))
             return
         }
         try? await Task.sleep(for: .milliseconds(700))
-        if Task.isCancelled { probe.stop(); return }
+        guard mine == generation else { return }
         probe.buffer.clear()
         try? await Task.sleep(for: .seconds(3))
+        guard mine == generation else { return }
         let frames = probe.buffer.snapshot()
         probe.stop()
-        if Task.isCancelled { return }
         let got = await Task.detached { LedObservation.observe(frames) }.value
+        guard mine == generation else { return }
         if let got {
             result = got
             phase = .done
@@ -264,6 +301,7 @@ final class MagnetometerCheck: ObservableObject {
     @Published private(set) var state: ValueState?
     private let motion = CMMotionManager()
     private var task: Task<Void, Never>?
+    private var generation = 0
 
     static let baselineSeconds = 2.0
     private static let intervalS = 0.02
@@ -274,6 +312,8 @@ final class MagnetometerCheck: ObservableObject {
             phase = .failed(PhoneCheckWords.noMagnetometer)
             return
         }
+        generation += 1
+        let mine = generation
         baseline = nil
         delta = nil
         state = nil
@@ -281,10 +321,11 @@ final class MagnetometerCheck: ObservableObject {
         phase = .baseline
         motion.magnetometerUpdateInterval = Self.intervalS
         motion.startMagnetometerUpdates()
-        task = Task { [weak self] in await self?.run() }
+        task = Task { [weak self] in await self?.run(mine) }
     }
 
     func stop() {
+        generation += 1
         task?.cancel()
         task = nil
         motion.stopMagnetometerUpdates()
@@ -297,16 +338,16 @@ final class MagnetometerCheck: ObservableObject {
         return Magnetometer.magnitude(x: d.magneticField.x, y: d.magneticField.y, z: d.magneticField.z)
     }
 
-    private func run() async {
+    private func run(_ mine: Int) async {
         var last: TimeInterval = -1
         var samples: [Double] = []
         let began = Date()
-        while !Task.isCancelled, Date().timeIntervalSince(began) < Self.baselineSeconds {
+        while mine == generation, Date().timeIntervalSince(began) < Self.baselineSeconds {
             if let m = next(after: &last) { samples.append(m) }
             progress = min(1, Date().timeIntervalSince(began) / Self.baselineSeconds)
             try? await Task.sleep(for: .milliseconds(20))
         }
-        if Task.isCancelled { return }
+        guard mine == generation else { return }
         guard let base = MagneticBaseline(magnitudes: samples) else {
             phase = .failed("The magnetometer gave too few readings. Try again.")
             motion.stopMagnetometerUpdates()
@@ -316,7 +357,7 @@ final class MagnetometerCheck: ObservableObject {
         baseline = base
         phase = .live
         var recent: [Double] = []
-        while !Task.isCancelled {
+        while mine == generation {
             if let m = next(after: &last) {
                 recent.append(m)
                 if recent.count > 50 { recent.removeFirst(recent.count - 50) }   // the last second
@@ -345,61 +386,73 @@ final class AudioCheck: ObservableObject {
     private let ring = SampleRing(capacity: 32768)
     private var task: Task<Void, Never>?
     private var estimates: [Double] = []
+    private var generation = 0
+    /// "Hey Lea" is paused by this check (and must be given back).
+    private var heldWake = false
     private static let window = 16384
 
     func start() {
         guard task == nil else { return }
+        generation += 1
+        let mine = generation
         phase = .starting
         tone = nil
         steady = nil
         estimates = []
-        task = Task { [weak self] in await self?.run() }
+        task = Task { [weak self] in await self?.run(mine) }
     }
 
     func stop() {
-        let wasRunning = engine != nil || phase == .starting
+        generation += 1
         task?.cancel()
         task = nil
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
-        if wasRunning { WakeListener.shared.suspend(false) }
+        giveBackWake()
         if phase == .starting || phase == .listening { phase = .idle }
     }
 
-    private func run() async {
+    private func giveBackWake() {
+        guard heldWake else { return }
+        heldWake = false
+        WakeListener.shared.suspend(false)
+    }
+
+    private func fail(_ mine: Int, _ text: String) {
+        guard mine == generation else { return }
+        giveBackWake()
+        phase = .failed(text)
+        task = nil
+    }
+
+    private func run(_ mine: Int) async {
         switch MicPermission.state {
         case .denied:
-            phase = .failed(PhoneCheckWords.microphoneDenied)
-            task = nil
+            fail(mine, PhoneCheckWords.microphoneDenied)
             return
         case .undetermined:
             let granted = await MicPermission.request()
+            guard mine == generation else { return }
             if !granted {
-                phase = .failed(PhoneCheckWords.microphoneDenied)
-                task = nil
+                fail(mine, PhoneCheckWords.microphoneDenied)
                 return
             }
         case .granted: break
         }
         WakeListener.shared.suspend(true)
-        guard await VoiceAudioSession.record() else {
-            WakeListener.shared.suspend(false)
-            phase = .failed(PhoneCheckWords.microphoneFailed)
-            task = nil
-            return
-        }
-        if Task.isCancelled {
-            WakeListener.shared.suspend(false)
+        heldWake = true
+        let recording = await VoiceAudioSession.record()
+        guard mine == generation else { return }   // stop() already gave "Hey Lea" back
+        guard recording else {
+            fail(mine, PhoneCheckWords.microphoneFailed)
             return
         }
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else {
-            WakeListener.shared.suspend(false)
-            phase = .failed(PhoneCheckWords.microphoneFailed)
-            task = nil
+            fail(mine, PhoneCheckWords.microphoneFailed)
             return
         }
         let ring = self.ring
@@ -412,19 +465,18 @@ final class AudioCheck: ObservableObject {
             try engine.start()
         } catch {
             input.removeTap(onBus: 0)
-            WakeListener.shared.suspend(false)
-            phase = .failed(PhoneCheckWords.microphoneFailed)
-            task = nil
+            fail(mine, PhoneCheckWords.microphoneFailed)
             return
         }
         self.engine = engine
         phase = .listening
         let rate = format.sampleRate
-        while !Task.isCancelled {
+        while mine == generation {
             try? await Task.sleep(for: .milliseconds(250))
+            guard mine == generation else { return }
             guard let samples = ring.latest(Self.window) else { continue }
             let got = await Task.detached(priority: .userInitiated) { (AudioAnalysis.tone(samples, rate: rate), AudioAnalysis.level(samples)) }.value
-            if Task.isCancelled { break }
+            guard mine == generation else { return }
             tone = got.0
             levelDB = got.1
             if let hz = got.0?.hz { estimates.append(hz) } else { estimates = [] }

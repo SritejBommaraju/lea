@@ -59,6 +59,37 @@ struct MeterTests {
         #expect(MultimeterKind.continuity.contract == .continuity && MultimeterKind.resistance.contract == .resistance)
     }
 
+    // MARK: Which readings answer the step
+
+    @Test func aReadingCarriesTheStepsIdOnlyWhenItAnswersTheStep() throws {
+        let r = try ReportModelTests.example("report.design_engine_fix_plan.json")
+        let c = MeterReadingContext(step: try #require(r.nextStep), selfTest: r.selfTest)
+        #expect(c.answeringActionID(for: .net("VIN")) == "chk_power_in")
+        #expect(c.answeringActionID(for: .net(" vin ")) == "chk_power_in")
+        #expect(c.answeringActionID(for: .net("3V3")) == nil)                       // another net: a separate measurement
+        #expect(c.answeringActionID(for: .part("M1", .audio)) == nil)               // the step names the self-test, not a tone
+        #expect(MeterReadingContext().answeringActionID(for: .net("VIN")) == nil)
+
+        let sensor = MeterReadingContext(actionID: "chk_m", instrument: .magnetometer, parts: ["M1"])
+        #expect(sensor.answeringActionID(for: .part("m1", .magnetometer)) == "chk_m")
+        #expect(sensor.answeringActionID(for: .part("M2", .magnetometer)) == nil)
+        #expect(sensor.answeringActionID(for: .part("M1", .audio)) == nil)
+        #expect(sensor.answeringActionID(for: .net("VIN")) == nil)
+        // a step that names the sensor but no part is answered by any part
+        #expect(MeterReadingContext(actionID: "chk_a", instrument: .audio).answeringActionID(for: .part("FAN", .audio)) == "chk_a")
+    }
+
+    @Test func aTypedReadingOnAnotherNetThanTheStepsDoesNotAnswerIt() throws {
+        let context = MeterReadingContext(kind: .voltageDc, net: "VBUS", pins: ["J1.1", "J1.2"], actionID: "act_1")
+        let value = try #require(MeterReadingDraft.value(typed: "4.9", kind: .voltageDc, beeps: true))
+        func reading(net: String) -> MeterReading {
+            MeterReadingDraft.reading(context: context, kind: .voltageDc, net: net, pinA: "J1.1", pinB: "J1.2", scanID: "s",
+                                      sessionID: "x", value: value, rawText: "4.9")
+        }
+        #expect(reading(net: "VBUS").actionID == "act_1" && reading(net: "vbus").actionID == "act_1")
+        #expect(reading(net: "OTHER").actionID == nil)
+    }
+
     // MARK: Which section opens first
 
     @Test func aStepNamingAnInstrumentOpensThatSectionIfTheProductOffersIt() throws {

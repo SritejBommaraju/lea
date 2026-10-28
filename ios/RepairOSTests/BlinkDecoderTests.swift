@@ -172,6 +172,54 @@ struct BlinkDecoderTests {
         #expect(other.outcome(forLongCount: 2) == .ok && other.outcome(forLongCount: 4) == .unknown && other.outcome(forLongCount: 1) == nil)
     }
 
+    @Test func darkTimeThatIsNotTheCodesIsNotTheCode() {
+        // flashes only 40 ms apart (the code has 100)
+        var quick: [BlinkSynth.Segment] = [(false, 400)]
+        for _ in 0..<3 { quick += [(true, 100), (false, 40)] }
+        quick.append((false, 1000))
+        quick += [(true, 600), (false, 1000)]
+        for _ in 0..<3 { quick += [(true, 100), (false, 40)] }
+        quick.append((false, 1600))
+        #expect(BlinkDecoder.decode(BlinkSynth.samples(quick), code: code) == .searching)
+
+        // a six second wait between two checks
+        var slow = BlinkSynth.segments(longCounts: [1, 2])
+        let at = slow.indices.filter { slow[$0].on == false && slow[$0].ms == 1000 }[1]
+        slow[at] = (false, 6000)
+        guard case .unreadable(let why) = BlinkDecoder.decode(BlinkSynth.samples(slow), code: code) else {
+            Issue.record("expected unreadable")
+            return
+        }
+        #expect(why.contains("dark time"))
+
+        // two long blinks 30 ms apart (the code has 300)
+        var tight = BlinkSynth.segments(longCounts: [2])
+        let off = tight.indices.filter { tight[$0].on == false && tight[$0].ms == 300 }[0]
+        tight[off] = (false, 30)
+        guard case .unreadable = BlinkDecoder.decode(BlinkSynth.samples(tight), code: code) else {
+            Issue.record("expected unreadable")
+            return
+        }
+    }
+
+    @Test func aGapThatReplacesTheLastOffTimeIsReadToo() {
+        // Either reading of "100 off, then 1000 off" is the same code: 1100 ms of dark or 1000.
+        var s: [BlinkSynth.Segment] = [(false, 400)]
+        for i in 0..<3 { s += [(true, 100), (false, i == 2 ? 1000 : 100)] }
+        s += [(true, 600), (false, 1000)]
+        for _ in 0..<3 { s += [(true, 100), (false, 100)] }
+        s.append((false, 1600))
+        #expect(BlinkDecoder.decode(BlinkSynth.samples(s), code: code) == .complete([.ok]))
+    }
+
+    @Test func theCameraKeepsTwoRoundsOfALongCode() {
+        // 20 results of three long blinks each take 76.2 s at the documented timings: more than a fixed minute.
+        #expect(abs(code.roundSeconds(checks: 20) - 76.2) < 1e-9)
+        #expect(abs(BlinkCheck.windowSeconds(code: code, checkCount: 20) - 162.4) < 1e-9)
+        #expect(BlinkCheck.windowSeconds(code: code, checkCount: 3) > 2 * code.roundSeconds(checks: 3))
+        #expect(BlinkCheck.windowSeconds(code: code, checkCount: 500) == 300)
+    }
+
     // MARK: Edges
 
     @Test func edgesSitHalfwayBetweenTheFramesThatSawThem() {
@@ -252,6 +300,28 @@ struct LedFromFramesTests {
         let samples = BlinkSynth.samples([(false, 300), (true, 400), (false, 400), (true, 400), (false, 400), (true, 400), (false, 300)])
         let got = try #require(LedObservation.observe(BlinkSynth.frames(samples, cell: cell, rgb: (30, 255, 40))))
         #expect(got.state == .blinking && got.color == "green")
+    }
+
+    @Test func aPureRedOrBlueLedIsLitNotDark() throws {
+        // Straight from pixels, through the reduction, to the verdict: the strongest channel is the brightness.
+        for (b, g, r, name) in [(UInt8(0), UInt8(0), UInt8(255), "red"), (UInt8(255), UInt8(0), UInt8(0), "blue")] {
+            let w = 640, h = 480
+            var pixels = [UInt8](repeating: 10, count: w * h * 4)
+            for y in 200..<208 {
+                for x in 300..<308 {
+                    let o = (y * w + x) * 4
+                    pixels[o] = b; pixels[o + 1] = g; pixels[o + 2] = r; pixels[o + 3] = 255
+                }
+            }
+            let reduced = pixels.withUnsafeBufferPointer { p in
+                CellGrid.reduce(base: p.baseAddress!, width: w, height: h, bytesPerRow: w * 4)
+            }
+            let frames = (0..<90).map { i in
+                CameraFrame(t: Double(i) / 60, luma: reduced.luma, rgb: reduced.rgb, mean: reduced.mean, iso: 100, exposureS: 0.01)
+            }
+            let got = try #require(LedObservation.observe(frames))
+            #expect(got.state == .on && got.color == name)
+        }
     }
 
     @Test func colourNamesFollowTheHue() {

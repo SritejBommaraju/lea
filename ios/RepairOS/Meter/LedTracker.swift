@@ -1,8 +1,8 @@
 import Foundation
 
 /// One camera frame reduced to a grid of cells, which is all the phone checks need from it. Per cell: the brightest
-/// pixel's brightness (0 to 1; a small LED must not be averaged away by the dark around it) and the average colour of
-/// the bright pixels. `mean` is the whole frame's average brightness, `iso` and `exposureS` what the camera used.
+/// pixel's brightness (0 to 1, the strongest of its colour channels, so a pure red or blue LED is as bright as a white
+/// one; a small LED must not be averaged away by the dark around it) and the average colour of the bright pixels. `mean` is the whole frame's average brightness, `iso` and `exposureS` what the camera used.
 struct CameraFrame: Equatable, Sendable {
     var t: Double
     var luma: [Float]
@@ -37,11 +37,11 @@ enum CellGrid {
                     for x in stride(from: x0, to: x1, by: step) {
                         let p = row + x * 4
                         let b = Int(p[0]), g = Int(p[1]), r = Int(p[2])
-                        let l = (r + 2 * g + b) >> 2
-                        total += l
+                        let v = max(r, max(g, b))
+                        total += (r + 2 * g + b) >> 2   // the frame's average is perceived brightness, for the exposure checks
                         seen += 1
-                        if l > maxL { maxL = l; maxR = r; maxG = g; maxB = b }
-                        if l >= 128 { brightR += r; brightG += g; brightB += b; bright += 1 }
+                        if v > maxL { maxL = v; maxR = r; maxG = g; maxB = b }
+                        if v >= 128 { brightR += r; brightG += g; brightB += b; bright += 1 }
                     }
                 }
                 let cell = cy * cols + cx

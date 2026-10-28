@@ -154,6 +154,26 @@ def test_a_check_the_phone_could_not_map_drops_the_whole_self_test(change):
     assert from_grain.self_test_block(st) is None
 
 
+@pytest.mark.parametrize("raw", [
+    {**SELF_TEST, "checks": 3},                         # not a list
+    {**SELF_TEST, "checks": "VIN"},
+    {**SELF_TEST, "checks": [7]},                        # an entry that is not an object
+    {**SELF_TEST, "transports": [{}]},                   # entries that are not strings
+    {**SELF_TEST, "transports": "ble"},                  # not a list
+    {**SELF_TEST, "transports": [["ble"], None, 5]},
+    {**SELF_TEST, "ble": "7A1E0001"},                    # a block that is not an object
+    {**SELF_TEST, "blink": ["timings"]},
+    {**SELF_TEST, "blink": {"timings": 100}},
+    "self test", 7, [], None,
+])
+def test_malformed_optional_data_never_breaks_the_report(raw):
+    got = from_grain.self_test_block(raw)       # must not raise
+    assert got is None or isinstance(got, dict)
+    report = build(plan={**PLAN, "self_test": raw})
+    contracts.validate("report", report)        # whatever was kept still validates
+    assert report["next_step"]["action_id"] == "chk_vin"   # and the rest of the report is intact
+
+
 def test_a_way_to_read_the_self_test_is_kept_only_when_its_block_is_whole():
     st = copy.deepcopy(SELF_TEST)
     del st["ble"]["control"]

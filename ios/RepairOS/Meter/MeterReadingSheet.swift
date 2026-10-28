@@ -82,6 +82,31 @@ struct MeterReadingContext: Identifiable {
     }
 }
 
+/// What a reading is about, to decide whether it answers the step the sheet was opened for.
+enum ReadingSubject {
+    case net(String)
+    case part(String, Instrument)
+}
+
+extension MeterReadingContext {
+    /// The step's action id for a reading about `subject`, or nil. A reading carries the id only when it answers the step:
+    /// a reading on the step's own net, or a phone-sensor reading when the step names that sensor (and, if it names
+    /// parts, that part). Anything else is a separate measurement and must not mark the step as done.
+    func answeringActionID(for subject: ReadingSubject) -> String? {
+        guard let actionID else { return nil }
+        func same(_ a: String, _ b: String) -> Bool {
+            a.trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(b.trimmingCharacters(in: .whitespaces)) == .orderedSame
+        }
+        switch subject {
+        case .net(let n):
+            return !net.isEmpty && same(net, n) ? actionID : nil
+        case .part(let p, let sensor):
+            guard instrument == sensor else { return nil }
+            return parts.isEmpty || parts.contains(where: { same($0, p) }) ? actionID : nil
+        }
+    }
+}
+
 extension ReportModel {
     /// The sheet's context for this report: the step it names, if any, and the product's self-test.
     var meterContext: MeterReadingContext {
@@ -132,7 +157,7 @@ enum MeterReadingDraft {
     static func reading(context: MeterReadingContext, kind: MultimeterKind, net: String, pinA: String, pinB: String,
                         scanID: String, sessionID: String, value: Value, rawText: String?,
                         now: Date = Date(), id: String = "rd_" + ScanStorage.hex(8)) -> MeterReading {
-        MeterReading(actionID: context.actionID, condition: nil, expected: nil, kind: kind.contract, meter: nil,
+        MeterReading(actionID: context.answeringActionID(for: .net(net)), condition: nil, expected: nil, kind: kind.contract, meter: nil,
                      net: net.trimmingCharacters(in: .whitespaces), part: nil, pins: pins(pinA, pinB), powerState: powerState(kind),
                      rawText: rawText, readingID: id, recordedAt: now, scanID: scanID, sessionID: sessionID,
                      source: .typed, value: value, verdict: nil)
@@ -192,7 +217,7 @@ struct MeterReadingSheet: View {
     }
 
     private var env: PhoneCheckEnv {
-        PhoneCheckEnv(actionID: context.actionID, scanID: scanID, sessionID: sessionID) { readings in await post(readings) }
+        PhoneCheckEnv(actionID: { context.answeringActionID(for: $0) }, scanID: scanID, sessionID: sessionID) { readings in await post(readings) }
     }
 
     var body: some View {

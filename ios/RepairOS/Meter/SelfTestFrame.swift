@@ -109,7 +109,7 @@ enum SelfTestRows {
     /// One row per check of the plan, in the plan's order. Items the plan does not list are returned apart: the app
     /// cannot say which net they are, so it shows the count and sends nothing for them.
     static func rows(frame: SelfTestFrame, plan: SelfTest) -> (rows: [SelfTestRow], unlisted: [Int]) {
-        let checks = plan.checks.sorted { $0.index < $1.index }
+        let checks = plan.checks   // the plan's order is the blink order
         var rows: [SelfTestRow] = []
         for c in checks {
             let item = frame.items.first { $0.index == c.index }
@@ -133,8 +133,9 @@ enum SelfTestRows {
     }
 
     /// The readings to send for the rows the product reported, one per check. `transport` is how the app received
-    /// them. A row the product did not report, or reported as another kind, sends nothing.
-    static func readings(rows: [SelfTestRow], transport: Transport, actionID: String?, scanID: String, sessionID: String,
+    /// them. A row the product did not report, or reported as another kind, sends nothing. `actionID` says which plan
+    /// step a net's reading answers (nil: none).
+    static func readings(rows: [SelfTestRow], transport: Transport, actionID: (String) -> String?, scanID: String, sessionID: String,
                          now: Date = Date(), id: () -> String = { "rd_" + ScanStorage.hex(8) }) -> [MeterReading] {
         rows.compactMap { row in
             guard case .reported(let item) = row.state else { return nil }
@@ -142,7 +143,7 @@ enum SelfTestRows {
                               state: item.kind == .output ? (item.value == 0 ? ValueState.off : ValueState.on) : nil,
                               transport: transport, valueMv: item.kind == .rail ? Double(item.value) : nil,
                               deltaUT: nil, hz: nil, depth: nil, color: nil)
-            return MeterReading(actionID: actionID, condition: nil, expected: nil, kind: .selftest, meter: nil, net: row.net,
+            return MeterReading(actionID: actionID(row.net), condition: nil, expected: nil, kind: .selftest, meter: nil, net: row.net,
                                 part: nil, pins: nil, powerState: .on, rawText: nil, readingID: id(), recordedAt: now,
                                 scanID: scanID, sessionID: sessionID, source: .selftest, value: value, verdict: nil)
         }
@@ -152,7 +153,7 @@ enum SelfTestRows {
     /// the product's verdict (ok, fail, unknown), no number. `problem` is set, and nothing may be sent, when the
     /// product blinked a different number of results than the plan lists: the app cannot tell which net is which.
     static func rows(blink outcomes: [SelfTestFrame.Outcome], plan: SelfTest) -> (rows: [BlinkRow], problem: String?) {
-        let checks = plan.checks.sorted { $0.index < $1.index }
+        let checks = plan.checks   // the plan's order is the blink order
         guard checks.count == outcomes.count else {
             return ([], "The light blinked \(outcomes.count) result\(outcomes.count == 1 ? "" : "s") but the design lists \(checks.count) checks, so they cannot be matched. Nothing was sent.")
         }
@@ -162,12 +163,12 @@ enum SelfTestRows {
         return (rows, nil)
     }
 
-    static func readings(blink rows: [BlinkRow], actionID: String?, scanID: String, sessionID: String, now: Date = Date(),
+    static func readings(blink rows: [BlinkRow], actionID: (String) -> String?, scanID: String, sessionID: String, now: Date = Date(),
                          id: () -> String = { "rd_" + ScanStorage.hex(8) }) -> [MeterReading] {
         rows.map { row in
             let value = Value(volts: nil, continuity: nil, ohms: nil, index: row.index, ok: row.outcome.contract, state: nil,
                               transport: .led, valueMv: nil, deltaUT: nil, hz: nil, depth: nil, color: nil)
-            return MeterReading(actionID: actionID, condition: nil, expected: nil, kind: .selftest, meter: nil, net: row.net,
+            return MeterReading(actionID: actionID(row.net), condition: nil, expected: nil, kind: .selftest, meter: nil, net: row.net,
                                 part: nil, pins: nil, powerState: .on, rawText: nil, readingID: id(), recordedAt: now,
                                 scanID: scanID, sessionID: sessionID, source: .selftest, value: value, verdict: nil)
         }

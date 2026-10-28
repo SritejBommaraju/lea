@@ -78,6 +78,7 @@ final class MeterLink: NSObject, ObservableObject {
     /// Scan for the product, connect, and ask it to check itself.
     func start(_ config: SelfTestLinkConfig) {
         guard phase == .off || phase == .lost || phase == .done else { return }
+        cancelTimers()   // a run that is starting again begins with no timer left from the last one
         self.config = config
         frame = nil
         message = nil
@@ -144,6 +145,7 @@ final class MeterLink: NSObject, ObservableObject {
 
     /// Several products may be in range (a shelf of them): the closest, by signal strength, is the one in the person's hand.
     private func connectClosest() {
+        chooser = nil
         guard phase == .scanning, peripheral == nil, let best = candidates.values.max(by: { $0.rssi < $1.rssi }) else { return }
         scanTimeout?.cancel()
         central?.stopScan()
@@ -173,7 +175,11 @@ final class MeterLink: NSObject, ObservableObject {
         guard !started, let p = peripheral, let config,
               let result = characteristics[config.resultUUID], characteristics[config.controlUUID] != nil else { return }
         started = true
-        p.setNotifyValue(true, for: result)
+        if result.properties.contains(.notify) || result.properties.contains(.indicate) {
+            p.setNotifyValue(true, for: result)   // the start byte is written once the subscription is confirmed
+        } else {
+            writeStart()   // a result that can only be read: the polling after the start byte reads it
+        }
     }
 
     private func writeStart() {

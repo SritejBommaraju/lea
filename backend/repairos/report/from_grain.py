@@ -613,10 +613,10 @@ def self_test_block(raw: Any) -> dict | None:
     hard-codes a UUID or a timing. Only what the report contract names is kept. A way to read the self-test (Bluetooth,
     the status light) is kept only when its block is whole; a check the phone could not map (no index, a repeated index,
     an unknown kind, no net) drops the whole self-test, because a result matched to the wrong net is worse than none."""
-    if not isinstance(raw, Mapping):
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("checks"), list):
         return None
     checks: list[dict[str, Any]] = []
-    for c in raw.get("checks") or []:
+    for c in raw["checks"]:
         if not isinstance(c, Mapping):
             return None
         index, kind, net = _int(c.get("index")), _text(c.get("kind")), _text(c.get("net"))
@@ -632,7 +632,11 @@ def self_test_block(raw: Any) -> dict | None:
         checks.append(item)
     if not checks:
         return None
-    transports = [t for t in dict.fromkeys(raw.get("transports") or []) if t in ("ble", "led")]
+    listed = raw.get("transports") if isinstance(raw.get("transports"), list) else []
+    transports: list[str] = []
+    for t in listed:
+        if isinstance(t, str) and t in ("ble", "led") and t not in transports:
+            transports.append(t)
     out: dict[str, Any] = {"checks": checks}
     ble = raw.get("ble") if isinstance(raw.get("ble"), Mapping) else {}
     if "ble" in transports:

@@ -11,7 +11,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>lea</string>
 	<key>NSCameraUsageDescription</key>
-	<string>RepairOS uses the camera (and LiDAR when the phone has it) to scan the object and take close-up photos for the report, and, when you tap a check, to read a status light or measure flicker. Nothing is recorded.</string>
+	<string>RepairOS uses the camera (and LiDAR when the phone has it) to scan the object and take close-up photos for the report. The phone checks (reading a status light, measuring flicker) look at the camera picture without saving it; scan photos are saved and sent for the report.</string>
 	<key>INAlternativeAppNames</key>
 	<array>
 		<dict>

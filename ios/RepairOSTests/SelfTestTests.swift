@@ -9,7 +9,7 @@ struct SelfTestTests {
     /// Three checks: a 4.980 V rail that is ok, a 3.300 V rail that is ok, an output that is on and failed.
     private let frameBytes: [UInt8] = [
         1, 3,
-        0, 1, 0x7C, 0x13, 0x00, 0x00, 1,
+        0, 1, 0x74, 0x13, 0x00, 0x00, 1,
         1, 1, 0xE4, 0x0C, 0x00, 0x00, 1,
         2, 2, 0x01, 0x00, 0x00, 0x00, 0,
     ]
@@ -84,7 +84,7 @@ struct SelfTestTests {
         let frame = SelfTestFrame(items: [.init(index: 2, kind: .rail, value: 3300, outcome: .ok)])
         let rows = SelfTestRows.rows(frame: frame, plan: try plan()).rows
         #expect(rows[2].state == .kindMismatch)
-        let readings = SelfTestRows.readings(rows: rows, transport: .ble, actionID: nil, scanID: "s", sessionID: "x")
+        let readings = SelfTestRows.readings(rows: rows, transport: .ble, actionID: { _ in nil }, scanID: "s", sessionID: "x")
         #expect(readings.isEmpty)
     }
 
@@ -94,8 +94,8 @@ struct SelfTestTests {
         let frame = try SelfTestFrame.decode(Data(frameBytes)).get()
         let rows = SelfTestRows.rows(frame: frame, plan: try plan()).rows
         var n = 0
-        let readings = SelfTestRows.readings(rows: rows, transport: .ble, actionID: "chk_power_in", scanID: "scan_1",
-                                             sessionID: "sess_1", now: Date(timeIntervalSince1970: 1_800_000_000)) {
+        let readings = SelfTestRows.readings(rows: rows, transport: .ble, actionID: { $0 == "VIN" ? "chk_power_in" : nil },
+                                             scanID: "scan_1", sessionID: "sess_1", now: Date(timeIntervalSince1970: 1_800_000_000)) {
             n += 1
             return "rd_\(n)"
         }
@@ -104,12 +104,41 @@ struct SelfTestTests {
         #expect(first["kind"] as? String == "selftest" && first["source"] as? String == "selftest")
         #expect(first["net"] as? String == "VIN" && first["power_state"] as? String == "on" && first["action_id"] as? String == "chk_power_in")
         #expect(first["part"] == nil && first["meter"] == nil)
+        // only the check on the step's own net answers the step
+        let second = try #require(JSONSerialization.jsonObject(with: JSON.encoder.encode(readings[1])) as? [String: Any])
+        #expect(second["action_id"] == nil)
         let v0 = try #require(first["value"] as? [String: Any])
         #expect(v0["index"] as? Int == 0 && v0["value_mv"] as? Double == 4980 && v0["ok"] as? String == "ok" && v0["transport"] as? String == "ble")
         #expect(v0["state"] == nil)
         let third = try #require(JSONSerialization.jsonObject(with: JSON.encoder.encode(readings[2])) as? [String: Any])
         let v2 = try #require(third["value"] as? [String: Any])
         #expect(v2["state"] as? String == "on" && v2["ok"] as? String == "fail" && v2["value_mv"] == nil)
+    }
+
+    // MARK: The blink code's results
+
+    @Test func blinkResultsFollowThePlansOrderNotTheIndexOrder() throws {
+        let p = try plan()
+        // The plan lists its checks in blink order: the output first, then the two rails.
+        let reordered = SelfTest(ble: p.ble, blink: p.blink, checks: [p.checks[2], p.checks[0], p.checks[1]], transports: p.transports)
+        let built = SelfTestRows.rows(blink: [.fail, .ok, .unknown], plan: reordered)
+        #expect(built.problem == nil)
+        #expect(built.rows.map(\.net) == ["LED_DRV", "VIN", "3V3"])
+        #expect(built.rows.map(\.outcome) == [.fail, .ok, .unknown])
+        let readings = SelfTestRows.readings(blink: built.rows, actionID: { _ in nil }, scanID: "s", sessionID: "x")
+        let first = try #require(JSONSerialization.jsonObject(with: JSON.encoder.encode(readings[0])) as? [String: Any])
+        let value = try #require(first["value"] as? [String: Any])
+        #expect(first["net"] as? String == "LED_DRV" && value["index"] as? Int == 2 && value["ok"] as? String == "fail")
+        #expect(value["transport"] as? String == "led" && value["value_mv"] == nil)
+        // the order of a bluetooth frame's rows is the plan's too
+        let frame = SelfTestFrame(items: [.init(index: 0, kind: .rail, value: 5000, outcome: .ok)])
+        #expect(SelfTestRows.rows(frame: frame, plan: reordered).rows.map(\.index) == [2, 0, 1])
+    }
+
+    @Test func aBlinkOfAnotherLengthThanThePlanSendsNothing() throws {
+        let built = SelfTestRows.rows(blink: [.ok], plan: try plan())
+        #expect(built.rows.isEmpty)
+        #expect(built.problem?.contains("1 result but the design lists 3") == true)
     }
 
     // MARK: The Bluetooth plan

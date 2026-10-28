@@ -7,7 +7,8 @@ import UIKit
 
 /// What every instrument needs to send a reading, so the sections do not know about the gateway.
 struct PhoneCheckEnv {
-    var actionID: String?
+    /// The plan step a reading answers, if it does (see `MeterReadingContext.answeringActionID(for:)`).
+    var actionID: (ReadingSubject) -> String?
     var scanID: String
     var sessionID: String
     /// Sends the readings; true when the gateway accepted all of them (the sheet shows the error otherwise).
@@ -207,8 +208,8 @@ struct SelfTestBluetoothSection: View {
         if !built.unlisted.isEmpty {
             Hint("The product also reported \(built.unlisted.count) check\(built.unlisted.count == 1 ? "" : "s") the design does not list. They are not sent.")
         }
-        let readings = SelfTestRows.readings(rows: built.rows, transport: .ble, actionID: env.actionID, scanID: env.scanID,
-                                             sessionID: env.sessionID)
+        let readings = SelfTestRows.readings(rows: built.rows, transport: .ble, actionID: { env.actionID(.net($0)) },
+                                             scanID: env.scanID, sessionID: env.sessionID)
         SendButton(title: "Send \(readings.count) result\(readings.count == 1 ? "" : "s")", sent: sent, enabled: !readings.isEmpty) {
             sent = await env.post(readings)
         }
@@ -225,7 +226,7 @@ struct SelfTestBlinkSection: View {
     init(plan: SelfTest, code: BlinkCode, env: PhoneCheckEnv) {
         self.plan = plan
         self.env = env
-        _check = StateObject(wrappedValue: BlinkCheck(code: code))
+        _check = StateObject(wrappedValue: BlinkCheck(code: code, checkCount: plan.checks.count))
     }
 
     var body: some View {
@@ -274,7 +275,8 @@ struct SelfTestBlinkSection: View {
             ForEach(built.rows) { row in
                 SelfTestRowView(net: row.net, measured: nil, expected: row.expected, verdict: row.outcome, note: nil)
             }
-            let readings = SelfTestRows.readings(blink: built.rows, actionID: env.actionID, scanID: env.scanID, sessionID: env.sessionID)
+            let readings = SelfTestRows.readings(blink: built.rows, actionID: { env.actionID(.net($0)) }, scanID: env.scanID,
+                                                 sessionID: env.sessionID)
             SendButton(title: "Send \(readings.count) result\(readings.count == 1 ? "" : "s")", sent: sent, enabled: !readings.isEmpty) {
                 sent = await env.post(readings)
             }
@@ -337,7 +339,7 @@ struct MagnetometerSection: View {
             Hint(String(format: "It counts as current from %.1f \u{B5}T: 5, or three times the phone's own noise (%.2f) if that is larger.", b.threshold, b.noise))
             SendButton(title: "Send this reading", sent: sent, enabled: hasPart(part)) {
                 let value = Value.magnetometer(deltaUT: PhoneReadings.rounded(d, places: 1), state: state)
-                sent = await env.post([PhoneReadings.reading(kind: .magnetometer, part: part, value: value, actionID: env.actionID,
+                sent = await env.post([PhoneReadings.reading(kind: .magnetometer, part: part, value: value, actionID: env.actionID(.part(part, .magnetometer)),
                                                               scanID: env.scanID, sessionID: env.sessionID)])
             }
             if !hasPart(part) { Hint("Name the part above to send.") }
@@ -385,7 +387,7 @@ struct AudioSection: View {
         if let hz = check.steady {
             SendButton(title: String(format: "Send %.1f Hz", hz), sent: sent, enabled: hasPart(part)) {
                 let value = Value.audio(hz: PhoneReadings.rounded(hz, places: 1))
-                sent = await env.post([PhoneReadings.reading(kind: .audio, part: part, value: value, actionID: env.actionID,
+                sent = await env.post([PhoneReadings.reading(kind: .audio, part: part, value: value, actionID: env.actionID(.part(part, .audio)),
                                                               scanID: env.scanID, sessionID: env.sessionID)])
             }
             if !hasPart(part) { Hint("Name the part above to send.") }
@@ -429,7 +431,7 @@ struct FlickerSection: View {
         Hint(String(format: "The camera ran at %.0f frames a second, so it can only show flicker up to %.0f Hz. Faster flicker, such as most LED dimming, shows as steady or at a false lower rate.", r.rate, r.limitHz))
         SendButton(title: "Send this reading", sent: sent, enabled: hasPart(part)) {
             let value = Value.flicker(hz: PhoneReadings.rounded(r.hz, places: 1), depth: PhoneReadings.rounded(r.depth, places: 2))
-            sent = await env.post([PhoneReadings.reading(kind: .flicker, part: part, value: value, actionID: env.actionID,
+            sent = await env.post([PhoneReadings.reading(kind: .flicker, part: part, value: value, actionID: env.actionID(.part(part, .flicker)),
                                                           scanID: env.scanID, sessionID: env.sessionID)])
         }
         if !hasPart(part) { Hint("Name the part above to send.") }
@@ -470,7 +472,8 @@ struct LightSection: View {
                             ratio, RelativeLight.unchangedBelow, RelativeLight.dimBelow))
                 SendButton(title: "Send this reading", sent: sent, enabled: hasPart(part)) {
                     sent = await env.post([PhoneReadings.reading(kind: .light, part: part, value: .light(state: state),
-                                                                  actionID: env.actionID, scanID: env.scanID, sessionID: env.sessionID)])
+                                                                  actionID: env.actionID(.part(part, .light)), scanID: env.scanID,
+                                                                  sessionID: env.sessionID)])
                 }
                 if !hasPart(part) { Hint("Name the part above to send.") }
             }
@@ -513,7 +516,8 @@ struct LedStateSection: View {
                 Text(Self.words(r)).font(.title2.weight(.semibold))
                 SendButton(title: "Send this reading", sent: sent, enabled: hasPart(part)) {
                     sent = await env.post([PhoneReadings.reading(kind: .led, part: part, value: .led(state: r.state, color: r.color),
-                                                                  actionID: env.actionID, scanID: env.scanID, sessionID: env.sessionID)])
+                                                                  actionID: env.actionID(.part(part, .led)), scanID: env.scanID,
+                                                                  sessionID: env.sessionID)])
                 }
                 if !hasPart(part) { Hint("Name the part above to send.") }
             }
