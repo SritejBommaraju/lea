@@ -156,7 +156,7 @@ jobs:
             xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 || true
             xcrun simctl ui "$udid" appearance "$appearance" || true
             xcrun simctl ui "$udid" content_size "$size" || true
-            # A test runner that stalls while starting (seen on the first run after a cold boot) is stopped after 5 and a half minutes
+            # A test runner that stalls while starting (seen on the first run after a cold boot) is stopped after 11 minutes
             # and tried once more; a normal run takes 2 to 4 minutes.
             for attempt in 1 2; do
               rm -rf "$RES/$name.xcresult"
@@ -164,7 +164,7 @@ jobs:
               local pid=$!
               local waited=0
               # An audited run takes about 12 minutes by itself, so its limit is longer.
-              limit=330; [ "$audit" = 1 ] && limit=1500
+              limit=660; [ "$audit" = 1 ] && limit=1500
               while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$limit" ]; do sleep 5; waited=$((waited + 5)); done
               if kill -0 "$pid" 2>/dev/null; then echo "$name: stopped after ${waited}s (attempt $attempt)"; pkill -P "$pid" || true; kill "$pid" || true; fi
               if wait "$pid"; then rm -f "$RES/$name.failed"; break; else touch "$RES/$name.failed"; echo "tests failed in $name (attempt $attempt)"; fi
