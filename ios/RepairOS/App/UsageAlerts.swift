@@ -1,13 +1,11 @@
 import Foundation
-import Observation
 import SwiftUI
 
 /// Paid-service usage on the Mac (backend/repairos/spend.py): a banner when a service is paused or close to its daily
 /// limit (the live event `spend_alert`, from GET /v1/events and every session's event stream), and the Settings
 /// "Usage" screen (GET /v1/usage). Service names come from the backend (`label`), so the app holds no list of them.
 @MainActor
-@Observable
-final class UsageAlerts {
+final class UsageAlerts: ObservableObject {
     static let shared = UsageAlerts()
 
     struct Alert: Equatable, Identifiable {
@@ -43,7 +41,7 @@ final class UsageAlerts {
     }
 
     /// The banner on screen, if any. Dismissed by a tap, or on its own after a few seconds.
-    private(set) var banner: Alert?
+    @Published private(set) var banner: Alert?
     private var seen: Set<Int> = []
     private var task: Task<Void, Never>?
     private var hide: Task<Void, Never>?
@@ -119,7 +117,7 @@ final class UsageAlerts {
 
 /// The non-blocking banner at the top of every screen (taps pass through everywhere else).
 struct UsageBanner: View {
-    @State private var alerts = UsageAlerts.shared
+    @ObservedObject private var alerts = UsageAlerts.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -148,13 +146,13 @@ struct UsageBanner: View {
             Spacer(minLength: 0)
         }
         .animation(Motion.pick(Motion.standard, reduceMotion: reduceMotion), value: alerts.banner)
-        .sensoryFeedback(Haptic.warn, trigger: alerts.banner?.id)
+        .haptic(Haptic.warn, trigger: alerts.banner?.id)
     }
 }
 
 /// Settings > Usage: per service, today's calls and the estimated cost, from GET /v1/usage.
 struct UsageView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @State private var rows: [Row] = []
     @State private var total: Double?
     @State private var error: String?

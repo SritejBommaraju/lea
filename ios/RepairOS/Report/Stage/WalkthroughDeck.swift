@@ -6,7 +6,7 @@ import SwiftUI
 /// nearest card; while Lea narrates, the pager glides on by itself and the camera with it. Under it: a thin progress
 /// line, back, pause or play, next; the close button ends the tour. The evidence photo opens full screen on a tap.
 struct WalkthroughDeck: View {
-    let player: WalkthroughPlayer
+    @ObservedObject var player: WalkthroughPlayer
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.cropSource) private var cropSource
     @State private var selected: String?
@@ -21,7 +21,7 @@ struct WalkthroughDeck: View {
         }
         .environment(\.colorScheme, .dark)
         .onAppear { selected = player.step?.id }
-        .onChange(of: player.index) { _, i in
+        .onValueChange(of: player.index) { _, i in
             // Lea moved on (or back / next): glide there, the camera with it; a cut under Reduce Motion.
             guard player.steps.indices.contains(i), selected != player.steps[i].id else { return }
             withAnimation(reduceMotion ? nil : Motion.glide) { selected = player.steps[i].id }
@@ -43,7 +43,36 @@ struct WalkthroughDeck: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var pager: some View {
+    /// iOS 18 pages with the scroll position APIs (the camera follows the finger); before that the cards page with a
+    /// TabView and the camera moves a card at a time, when the page settles.
+    @ViewBuilder private var pager: some View {
+        Group {
+            if #available(iOS 18.0, *) { modernPager } else { legacyPager }
+        }
+        .frame(height: WalkthroughCard.height)
+    }
+
+    private var legacyPager: some View {
+        TabView(selection: $selected) {
+            ForEach(Array(player.steps.enumerated()), id: \.element.id) { i, step in
+                WalkthroughCard(step: step, position: i + 1, count: player.steps.count) {
+                    player.pause()
+                    zoom = ZoomShas(shas: step.crops)
+                }
+                .padding(.horizontal, Spacing.gutter + Spacing.m)
+                .tag(Optional(step.id))
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .onValueChange(of: selected) { _, id in
+            guard let id, let i = player.steps.firstIndex(where: { $0.id == id }) else { return }
+            player.progress = Double(i)
+            if i != player.index { player.go(to: i) }
+        }
+    }
+
+    @available(iOS 18.0, *)
+    private var modernPager: some View {
         ScrollView(.horizontal) {
             LazyHStack(spacing: Spacing.m) {
                 ForEach(Array(player.steps.enumerated()), id: \.element.id) { i, step in
@@ -66,7 +95,7 @@ struct WalkthroughDeck: View {
         .scrollTargetBehavior(.viewAligned)
         .scrollPosition(id: $selected, anchor: .center)
         .scrollIndicators(.hidden)
-        .scrollClipDisabled()
+        .scrollUnclipped()
         // The camera follows the finger: the pager's offset in cards, continuously.
         .onScrollGeometryChange(for: Double.self) { geo in
             let page = geo.containerSize.width - geo.contentInsets.leading - geo.contentInsets.trailing + Spacing.m
@@ -79,7 +108,6 @@ struct WalkthroughDeck: View {
             guard phase == .idle, let id = selected, let i = player.steps.firstIndex(where: { $0.id == id }) else { return }
             player.go(to: i)
         }
-        .frame(height: WalkthroughCard.height)
     }
 
     private var controls: some View {
@@ -91,7 +119,7 @@ struct WalkthroughDeck: View {
                 .accessibilityLabel("Previous step")
             Button { player.toggle() } label: {
                 Image(systemName: player.playing ? "pause.fill" : (player.finished ? "arrow.counterclockwise" : "play.fill"))
-                    .contentTransition(.symbolEffect(.replace))
+                    .symbolReplaceTransition()
             }
             .buttonStyle(StageIconButtonStyle())
             .accessibilityLabel(player.playing ? "Pause" : (player.finished ? "Play again" : "Resume"))
@@ -101,7 +129,7 @@ struct WalkthroughDeck: View {
                 .opacity(player.index >= player.steps.count - 1 ? 0.4 : 1)
                 .accessibilityLabel("Next step")
         }
-        .sensoryFeedback(Haptic.select, trigger: player.index)
+        .haptic(Haptic.select, trigger: player.index)
     }
 
     private struct ZoomShas: Identifiable {
@@ -112,7 +140,7 @@ struct WalkthroughDeck: View {
 
 /// The thin line under the cards: how far through the tour the pager is, following the swipe.
 private struct WalkthroughProgress: View {
-    let player: WalkthroughPlayer
+    @ObservedObject var player: WalkthroughPlayer
     var body: some View {
         let n = max(1, player.steps.count - 1)
         Capsule().fill(Palette.chalk.opacity(0.18))
@@ -150,7 +178,7 @@ struct WalkthroughCard: View {
                     Text(step.speech).font(.subheadline).foregroundStyle(Palette.chalk.opacity(0.85))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .scrollBounceBehavior(.basedOnSize)
+                .bounceBasedOnSize()
                 .scrollIndicators(.hidden)
                 // A soft edge where a long line runs on below.
                 .mask(LinearGradient(stops: [.init(color: .black, location: 0.8), .init(color: .black.opacity(0.15), location: 1)],
@@ -190,7 +218,7 @@ struct TourCutFade: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(dipped ? 0 : 1)
-            .onChange(of: nearest) { _, n in
+            .onValueChange(of: nearest) { _, n in
                 guard let n else { return }
                 guard on else { shown = n; return }
                 Task {

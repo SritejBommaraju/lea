@@ -45,7 +45,7 @@ struct ProblemDetailView: View {
                 content.id(problem.id)
                     .transition(.opacity)
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .bounceBasedOnSize()
         }
         .background(Palette.canvas.ignoresSafeArea())
         .navigationTitle(onDone == nil ? problem.part : "")
@@ -82,7 +82,7 @@ struct ProblemDetailView: View {
         }
         .padding(.horizontal, Spacing.gutter)
         .padding(.top, Spacing.m)
-        .sensoryFeedback(Haptic.select, trigger: index)
+        .haptic(Haptic.select, trigger: index)
     }
 
     private func go(_ step: Int) {

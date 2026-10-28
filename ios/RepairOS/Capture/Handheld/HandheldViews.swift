@@ -19,7 +19,7 @@ extension ScanSession {
 struct HandheldModeChip: View {
     /// Developer flag only (`--turn-it`): in-hand turning is not the product flow ("Scan the bottom" is).
     static let enabled = CommandLine.arguments.contains("--turn-it")
-    @Bindable var scan: ScanSession
+    @ObservedObject var scan: ScanSession
     @Binding var wanted: Bool
     @State private var suggest = false
     @State private var path: [(t: Date, p: SIMD3<Float>)] = []

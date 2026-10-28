@@ -32,7 +32,7 @@ struct ReportStageView: View {
     /// with `.custom` (see `StageHeroContext`) without touching anything else here.
     var hero: StageHero = .automatic
     /// Lea's conversation for the caption strip (nil when she can't be asked: not paired).
-    var captions: LeaCaptionFeed? = nil
+    @ObservedOptional var captions: LeaCaptionFeed? = nil
     /// What the object is ("Category · Brand Model"): the person's correction or the backend's identification. Shown
     /// on the stage whatever the hero (a photo, a scan, or nothing usable in 3D). nil falls back to the report's own.
     var identity: String? = nil
@@ -61,11 +61,11 @@ struct ReportStageView: View {
     @State private var screenHeight: CGFloat = 800
     /// 0 nothing, 1 stage, 2 sheet (verdict), 3 rows.
     @State private var phase = 0
-    @State private var probe = StageProbe()
+    @StateObject private var probe = StageProbe()
     /// The caption strip's measured height (it grows with Dynamic Type and long sentences); the hero leaves that room.
     @State private var captionHeight: CGFloat = ReportStageView.captionBand
     /// "Walk me through it": the guided tour of this report on the hero (Walkthrough, WalkthroughDeck).
-    @State private var tour = WalkthroughPlayer()
+    @StateObject private var tour = WalkthroughPlayer()
     /// Rings Lea put on parts that are not numbered problems (a part with no issue, a spot read from the photos), for
     /// a few seconds; and her camera move for the hero.
     @State private var leaPins: [ModelPin] = []
@@ -131,26 +131,24 @@ struct ReportStageView: View {
                             setLayout { $0.userPulledSheetUp() }
                         })
                 }
+                .reportsScrollOffset()
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .onScrollGeometryChange(for: CGSize.self) { CGSize(width: $0.contentOffset.y + $0.contentInsets.top, height: $0.containerSize.height) } action: { _, g in
-                scrolled = g.width
-                screenHeight = g.height
-            }
+            .bounceBasedOnSize()
+            .stageScrollMetrics(scrolled: $scrolled, height: $screenHeight)
             // Lea moved the model while the stage was mostly scrolled away: back to the stage first (L9).
-            .onChange(of: leaCue) { _, cue in
+            .onValueChange(of: leaCue) { _, cue in
                 guard cue != nil, stageLayout.followsLea, scrolled > stageHeight * 0.4 else { return }
                 withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) }
             }
             // An answer starting: the stage takes most of the screen, from the top (the sheet drops to a peek).
-            .onChange(of: stageLayout.detent) { old, new in
+            .onValueChange(of: stageLayout.detent) { old, new in
                 guard old == .report, new != .report else { return }
                 withAnimation(StageDetents.animation(reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) }
             }
             // The tour has the whole screen: the stage fills it and the sheet waits below. While Lea answers the stage
             // owns the screen too, and the sheet waits for a pull.
             .scrollDisabled(tour.active || !stageLayout.sheetScrolls)
-            .onChange(of: tour.active) { _, on in
+            .onValueChange(of: tour.active) { _, on in
                 if on { withAnimation(Motion.pick(Motion.standard, reduceMotion: reduceMotion)) { proxy.scrollTo("stage", anchor: .top) } }
             }
             // Pulling down past the top shows more stage, never a strip of canvas.
@@ -165,20 +163,20 @@ struct ReportStageView: View {
         }
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .sensoryFeedback(trigger: phase) { _, new in
+        .haptic(trigger: phase) { _, new in
             guard new == 2, fresh else { return nil }
             return report.verdict == .potentialIssues ? Haptic.verdictProblems : (report.verdict == .looksGood ? Haptic.verdictClear : nil)
         }
-        .sensoryFeedback(Haptic.select, trigger: focus) { _, new in new != nil }
+        .haptic(Haptic.select, trigger: focus) { _, new in new != nil }
         .task(id: landingKey) { await land() }
-        .onChange(of: voiceStarted) { heard += 1 }
-        .onChange(of: walkthrough) { startTour(afterLea: true) }
-        .onChange(of: leaCue) { _, cue in applyLea(cue) }
+        .onValueChange(of: voiceStarted) { heard += 1 }
+        .onValueChange(of: walkthrough) { startTour(afterLea: true) }
+        .onValueChange(of: leaCue) { _, cue in applyLea(cue) }
         // Lea answering: her first sentence (or first move) grows the stage; the answer ending leaves it be.
-        .onChange(of: captions?.speaking ?? false) { _, speaking in
+        .onValueChange(of: captions?.speaking ?? false) { _, speaking in
             if speaking { answerStarted() } else if !(captions?.thinking ?? false) { stageLayout.answerEnded() }
         }
-        .onChange(of: heroCue) { _, cue in
+        .onValueChange(of: heroCue) { _, cue in
             guard cue != nil else { return }
             cameraMoving = true
             Task {
@@ -189,13 +187,13 @@ struct ReportStageView: View {
         .onAppear { topInset = StageMetrics.windowTopInset }
         // The camera left the part Lea showed (a touch on the stage, the idle drift, a reset): her ring and label go
         // with it, so nothing stale stays drawn after a tap elsewhere.
-        .onChange(of: probe.landed) { old, new in
+        .onValueChange(of: probe.landed) { old, new in
             guard old != nil, new == nil else { return }
             leaPins = []
             leaLabel = nil
         }
-        .sensoryFeedback(Haptic.leaShow, trigger: heroCue) { _, new in new != nil }
-        .onChange(of: captions?.question) { captionPart = nil }
+        .haptic(Haptic.leaShow, trigger: heroCue) { _, new in new != nil }
+        .onValueChange(of: captions?.question) { captionPart = nil }
         .task(id: captions?.revision) {
             // Hidden after 8 s of quiet once Lea has finished (the transcript keeps everything).
             captionIdle = false
@@ -429,7 +427,7 @@ struct ReportStageView: View {
         }
         .motion(Motion.standard, value: stageBusy || stageLayout.detent == .expanded)
         .motion(Motion.standard, value: showsCaptions)
-        .containerRelativeFrame(.vertical) { [touring = tour.active, detent = stageLayout.detent] height, _ in
+        .heightFromContainer(fallback: stageHeight) { [touring = tour.active, detent = stageLayout.detent] height in
             StageDetents.stageHeight(detent, container: height, touring: touring)
         }
         .accessibilityElement(children: .contain)
@@ -603,8 +601,7 @@ struct ReportStageView: View {
         .padding(.horizontal, Spacing.gutter)
         .padding(.bottom, Spacing.xxl)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.canvas, in: UnevenRoundedRectangle(topLeadingRadius: Radius.sheet, topTrailingRadius: Radius.sheet,
-                                                               style: .continuous))
+        .background(Palette.canvas, in: TopRoundedShape(radius: Radius.sheet))
     }
 
     @ViewBuilder private func problemRow(_ p: ReportModel.Problem, number: Int, proxy: ScrollViewProxy) -> some View {
@@ -741,7 +738,7 @@ struct ReportStageView: View {
     /// VoiceOver hears the headline once when a report lands, unless Lea is already saying it.
     private func announce() {
         guard voiceOver, LeaVoice.shared.muted else { return }
-        AccessibilityNotification.Announcement("\(ReportWords.eyebrow(report)). \(ReportWords.headline(report))").post()
+        Announcer.say("\(ReportWords.eyebrow(report)). \(ReportWords.headline(report))")
     }
 }
 

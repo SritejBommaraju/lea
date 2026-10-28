@@ -1,7 +1,6 @@
 @preconcurrency import AVFoundation
 import AudioToolbox
 import Foundation
-import Observation
 @preconcurrency import Speech
 import UIKit
 
@@ -14,18 +13,17 @@ import UIKit
 /// ignored (she must not hear herself); with the mic's echo cancellation on, Ink-2 keeps listening during her
 /// answer, and the person starting to talk (`turn.start`) stops her: barge-in by voice.
 @MainActor
-@Observable
-final class WakeListener {
+final class WakeListener: ObservableObject {
     static let shared = WakeListener()
     nonisolated static let enabledKey = "leaWakeWordEnabled"
     nonisolated static let continuousKey = "leaHandsFreeContinuous"
 
     enum Mode: Equatable { case off, wake, followUp }
-    private(set) var mode: Mode = .off
+    @Published private(set) var mode: Mode = .off
     /// Goes up on each "Hey Lea" when no conversation is on screen (the home screen opens one).
-    private(set) var wakes = 0
+    @Published private(set) var wakes = 0
     /// Words said after the phrase, for the conversation that opens.
-    var pendingUtterance: String?
+    @Published var pendingUtterance: String?
 
     var enabled: Bool {
         get { UserDefaults.standard.object(forKey: Self.enabledKey) as? Bool ?? true }
@@ -34,7 +32,7 @@ final class WakeListener {
 
     /// Hands-free that stays on: after each answer Lea keeps listening for the next turn, with no window and no
     /// "Hey Lea", until it is turned off (swipe up turns it on; the ear button toggles it). Remembered.
-    var continuous: Bool = WakeListener.savedContinuous() {
+    @Published var continuous: Bool = WakeListener.savedContinuous() {
         didSet {
             UserDefaults.standard.set(continuous, forKey: Self.continuousKey)
             if continuous { listenForFollowUp() } else { endFollowUp() }
@@ -52,35 +50,35 @@ final class WakeListener {
         return d.bool(forKey: continuousKey)
     }
 
-    @ObservationIgnored private let mic = MicTap()
-    @ObservationIgnored private var foreground = true
-    @ObservationIgnored private var leaTalking = false
-    @ObservationIgnored private var holdToTalk = false
-    @ObservationIgnored private var capturing = false
-    @ObservationIgnored private var authorized: Bool?
+    private let mic = MicTap()
+    private var foreground = true
+    private var leaTalking = false
+    private var holdToTalk = false
+    private var capturing = false
+    private var authorized: Bool?
     /// The microphone is on or starting (kept here, on the main actor: never wait on the audio queue).
-    @ObservationIgnored private var micOn = false
+    private var micOn = false
     /// After the phrase: the words so far and when they last changed (the turn ends after `endSilence`).
-    @ObservationIgnored private var heardAfterWake: String?
-    @ObservationIgnored private var lastChange = Date()
-    @ObservationIgnored private var silenceTimer: Task<Void, Never>?
-    @ObservationIgnored private var followUpTimer: Task<Void, Never>?
-    @ObservationIgnored private var observers: [NSObjectProtocol] = []
+    private var heardAfterWake: String?
+    private var lastChange = Date()
+    private var silenceTimer: Task<Void, Never>?
+    private var followUpTimer: Task<Void, Never>?
+    private var observers: [NSObjectProtocol] = []
     /// When the current stretch of speech started (first words of a transcript), for the wake latency.
-    @ObservationIgnored private var speechStart: Date?
-    @ObservationIgnored private var lastLogged = ""
-    @ObservationIgnored private var wokeAt: Date?
-    @ObservationIgnored private var heartbeat: Task<Void, Never>?
-    @ObservationIgnored private var leaStoppedAt = Date.distantPast
-    @ObservationIgnored private var stream: CartesiaTurns?
-    @ObservationIgnored private var streamOpening: Task<Void, Never>?
-    @ObservationIgnored private var streamWatchdog: Task<Void, Never>?
+    private var speechStart: Date?
+    private var lastLogged = ""
+    private var wokeAt: Date?
+    private var heartbeat: Task<Void, Never>?
+    private var leaStoppedAt = Date.distantPast
+    private var stream: CartesiaTurns?
+    private var streamOpening: Task<Void, Never>?
+    private var streamWatchdog: Task<Void, Never>?
     /// Ink-2 has heard words in this turn (it owns the turn from then on).
-    @ObservationIgnored private var streamHeard = false
+    private var streamHeard = false
     /// The mic runs with voice processing (echo cancellation): Lea's own voice is taken out of what it hears.
-    @ObservationIgnored private var echoCancelled = false
+    private var echoCancelled = false
     /// Ink-2 is open during Lea's answer, for the person to cut in (barge-in).
-    @ObservationIgnored private var bargeListening = false
+    private var bargeListening = false
     /// How long Ink-2 may stay quiet after opening before Apple takes the turn back.
     static let streamGrace: TimeInterval = 3.5
     static let echoGuard: TimeInterval = 0.7
@@ -312,7 +310,7 @@ final class WakeListener {
         if authorized == nil {
             authorized = await Self.authorize()
             Self.diag.log("wake_auth", ["ok": authorized ?? false,
-                                        "mic": "\(AVAudioApplication.shared.recordPermission.rawValue)",
+                                        "mic": MicPermission.state.rawValue,
                                         "speech": "\(SFSpeechRecognizer.authorizationStatus().rawValue)"])
         }
         guard authorized == true, enabled, foreground, !holdToTalk, !capturing else { micOn = false; return }

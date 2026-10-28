@@ -164,7 +164,7 @@ private struct GalleryLeaReplay<Content: View>: View {
     let sessionDir: URL
     @ViewBuilder let content: (LeaStageCue?, LeaCaptionFeed?) -> Content
     @State private var cue: LeaStageCue?
-    @State private var feed = LeaCaptionFeed()
+    @StateObject private var feed = LeaCaptionFeed()
     private var path: String? { UIGallery.value("--ui-lea-replay") }
 
     var body: some View {

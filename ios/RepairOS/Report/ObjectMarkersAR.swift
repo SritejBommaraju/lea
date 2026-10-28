@@ -34,7 +34,7 @@ struct ObjectSpace: Sendable {
 
     /// Present only for a scan with a saved world map on a phone that can track the world.
     static func load(sessionDir: URL, scanPackage: URL) -> ObjectSpace? {
-        guard ARWorldTrackingConfiguration.isSupported,
+        guard #available(iOS 18, *), ARWorldTrackingConfiguration.isSupported,
               FileManager.default.fileExists(atPath: sessionDir.appending(path: "world.arworldmap").path) else { return nil }
         var center: SIMD3<Float>?
         var planeY: Float?
@@ -54,17 +54,16 @@ struct ObjectSpace: Sendable {
 }
 
 @MainActor
-@Observable
-final class ObjectMarkersModel {
+final class ObjectMarkersModel: ObservableObject {
     enum Phase: Equatable { case loading, relocalizing, found, timedOut, failed(String) }
 
     static let timeout: TimeInterval = 6
 
-    private(set) var phase: Phase = .loading
+    @Published private(set) var phase: Phase = .loading
     /// Seconds from the session start to the match (nil until it matched).
-    private(set) var relocalizedAfter: Double?
-    var selected: String?
-    private(set) var startedAt = Date()
+    @Published private(set) var relocalizedAfter: Double?
+    @Published var selected: String?
+    @Published private(set) var startedAt = Date()
     private var timer: Task<Void, Never>?
 
     func started() {
@@ -102,6 +101,7 @@ final class ObjectMarkersModel {
 }
 
 /// Full-screen AR: the camera with the markers, a cue while relocalising, the numbered problems along the bottom.
+@available(iOS 18.0, *)
 struct ObjectMarkersView: View {
     let space: ObjectSpace
     let markers: [ObjectMarker]
@@ -112,7 +112,7 @@ struct ObjectMarkersView: View {
     let show3D: () -> Void
     let close: () -> Void
 
-    @State private var model = ObjectMarkersModel()
+    @StateObject private var model = ObjectMarkersModel()
     @State private var card: ReportModel.Problem?
     @State private var showUnplaced = false
     @State private var foundTick = 0
@@ -174,8 +174,8 @@ struct ObjectMarkersView: View {
             .padding(.vertical, Spacing.s)
         }
         .motion(Motion.standard, value: model.phase)
-        .sensoryFeedback(Haptic.milestone, trigger: foundTick)
-        .onChange(of: model.phase) { _, new in if new == .found { foundTick += 1 } }
+        .haptic(Haptic.milestone, trigger: foundTick)
+        .onValueChange(of: model.phase) { _, new in if new == .found { foundTick += 1 } }
         .task {
             guard let url = space.hintImage, let data = try? Data(contentsOf: url) else { return }
             hint = UIImage(data: data)
@@ -270,12 +270,13 @@ struct ObjectMarkersView: View {
                 }
             }
         }
-        .scrollClipDisabled()
+        .scrollUnclipped()
     }
 }
 
 // MARK: - AR view
 
+@available(iOS 18.0, *)
 private struct ObjectMarkersARView: UIViewRepresentable {
     let space: ObjectSpace
     let markers: [ObjectMarker]
@@ -300,6 +301,7 @@ private struct ObjectMarkersARView: UIViewRepresentable {
 }
 
 /// Owns the AR session and the marker entities.
+@available(iOS 18.0, *)
 @MainActor
 final class MarkerScene: NSObject, ARSessionDelegate {
     private let space: ObjectSpace

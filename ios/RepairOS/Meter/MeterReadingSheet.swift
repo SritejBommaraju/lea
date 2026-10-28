@@ -118,7 +118,7 @@ struct MeterReadingSheet: View {
     let sent: () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var link = MeterLink()
+    @StateObject private var link = MeterLink()
     @State private var kind: MeterReadingKind
     @State private var net: String
     @State private var pinA: String
@@ -178,7 +178,7 @@ struct MeterReadingSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
             .disabled(sending)
-            .onChange(of: kind) { _, new in
+            .onValueChange(of: kind) { _, new in
                 if link.phase == .ready || link.phase == .measuring { link.start(kind: new) }
             }
             .onDisappear { link.stop() }

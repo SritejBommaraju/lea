@@ -5,7 +5,7 @@ import WebKit
 /// the caption strip), the report sheet below it, and the pinned Ask Lea bar. What wasn't checked is one tap away in
 /// the ⋯ menu, never counted as fine. Confidence is a word, never a number (A5).
 struct ReportView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     let record: SessionRecord
     /// nil for an offline replay (Demo replay): only what is on the phone is shown.
     let upload: UploadQueue?
@@ -39,7 +39,7 @@ struct ReportView: View {
     /// Lea's latest move of the 3D model while she answers (LeaStage): the stage focuses, rings and flies to it.
     @State private var leaCue: LeaStageCue?
     /// The conversation as the stage's caption strip shows it (fed by the pinned Ask Lea bar).
-    @State private var captions = LeaCaptionFeed()
+    @StateObject private var captions = LeaCaptionFeed()
     @State private var showUnchecked = false
     @State private var showOnObject = false
     /// The meter-reading sheet, and how many readings this report has sent.
@@ -53,6 +53,10 @@ struct ReportView: View {
     private var gateway: GatewayClient? { offline ? nil : app.gateway }
 
     var body: some View {
+        Watching(live) { Watching(upload) { reportBody } }
+    }
+
+    private var reportBody: some View {
         NavigationStack {
             Group {
                 if let report {
@@ -120,7 +124,7 @@ struct ReportView: View {
                 }
             }
             .fullScreenCover(isPresented: $showOnObject) {
-                if let report, let space {
+                if #available(iOS 18, *), let report, let space {
                     let all = report.mostLikely + report.otherIssues + report.setup + report.cosmetic
                     ObjectMarkersView(space: space,
                                       markers: StageMarks.pins(report).map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },
@@ -138,7 +142,7 @@ struct ReportView: View {
                 try? await Task.sleep(for: .seconds(FixSearch.giveUpS))
                 withAnimation(Motion.standard) { fixSearching = false }
             }
-            .onChange(of: live?.fix) { _, fix in if let fix { keepFix(fix) } }
+            .onValueChange(of: live?.fix) { _, fix in if let fix { keepFix(fix) } }
         }
         .tint(Palette.accent)
         .environment(\.cropSource, CropSource.saved(in: CropSource.dir(app.storage.dir(record)), fallback: gateway.map(CropSource.gateway)))
@@ -473,7 +477,7 @@ struct ReportProgressView: View {
             .frame(maxWidth: 560)
             .frame(maxWidth: .infinity)
         }
-        .scrollBounceBehavior(.basedOnSize)
+        .bounceBasedOnSize()
         .background(Palette.canvas.ignoresSafeArea())
     }
 

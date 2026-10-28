@@ -3,12 +3,12 @@ import SwiftUI
 /// The speaker toggle on the scan and report screens (remembered).
 struct VoiceMuteButton: View {
     var onCamera = false
-    @State private var voice = LeaVoice.shared
+    @ObservedObject private var voice = LeaVoice.shared
 
     var body: some View {
         Button { voice.muted.toggle() } label: {
             Image(systemName: voice.muted ? "speaker.slash" : "speaker.wave.2")
-                .contentTransition(.symbolEffect(.replace))
+                .symbolReplaceTransition()
         }
         .buttonStyle(RoundIconButtonStyle(onCamera: onCamera))
         .accessibilityLabel(voice.muted ? "Turn Lea's voice on" : "Mute Lea")
@@ -17,7 +17,7 @@ struct VoiceMuteButton: View {
 
 /// Toolbar version of the toggle (the report's navigation bar).
 struct VoiceMuteToolbarButton: View {
-    @State private var voice = LeaVoice.shared
+    @ObservedObject private var voice = LeaVoice.shared
 
     var body: some View {
         Button { voice.muted.toggle() } label: {
@@ -60,7 +60,7 @@ struct StoryMicButton: View {
                 } else {
                     Image(systemName: listening ? "stop.circle.fill" : "mic")
                         .foregroundStyle(listening ? Palette.accent : Palette.secondary)
-                        .contentTransition(.symbolEffect(.replace))
+                        .symbolReplaceTransition()
                 }
             }
             .frame(width: 44, height: 44)
@@ -68,7 +68,7 @@ struct StoryMicButton: View {
         }
         .buttonStyle(.plain)
         .disabled(working)
-        .sensoryFeedback(.impact(weight: .light), trigger: listening)
+        .haptic(Haptic.light, trigger: listening)
         .accessibilityLabel(listening ? "Stop dictating" : "Dictate what's wrong")
         .accessibilityHint(listening ? "Adds what you said to the field" : "Tap and speak, then tap again")
         .onDisappear { if listening { listening = false; recorder.cancel() } }
@@ -106,17 +106,16 @@ struct StoryMicButton: View {
 /// your last question and the sentence Lea is on, plus the whole history for the transcript. Fed by the Ask Lea bar
 /// (`ConversationPanel(skin: .bar)`), which owns the conversation.
 @MainActor
-@Observable
-final class LeaCaptionFeed {
-    private(set) var question: String?
+final class LeaCaptionFeed: ObservableObject {
+    @Published private(set) var question: String?
     /// Lea's newest sentence of this answer (her answer streams sentence by sentence, as it is spoken).
-    private(set) var sentence: String?
-    private(set) var thinking = false
-    private(set) var speaking = false
-    private(set) var failure: String?
-    private(set) var turns: [LeaConversation.Turn] = []
+    @Published private(set) var sentence: String?
+    @Published private(set) var thinking = false
+    @Published private(set) var speaking = false
+    @Published private(set) var failure: String?
+    @Published private(set) var turns: [LeaConversation.Turn] = []
     /// Bumped on every change, so the stage can hide the strip after a quiet spell.
-    private(set) var revision = 0
+    @Published private(set) var revision = 0
 
     /// Something has been said or asked in this report's conversation.
     var started: Bool { question != nil || sentence != nil || thinking || failure != nil }
@@ -188,7 +187,7 @@ final class LeaCaptionFeed {
 struct ConversationPanel: View {
     enum Skin: Sendable { case talk, bar }
 
-    @State private var convo: LeaConversation
+    @StateObject private var convo: LeaConversation
     let onAction: (String) -> Void
     var compact = false
     var skin: Skin = .talk
@@ -198,7 +197,7 @@ struct ConversationPanel: View {
     /// Start listening as it opens (the home Talk button), as one tap on the talk button would.
     var listenOnOpen = false
 
-    @State private var wake = WakeListener.shared
+    @ObservedObject private var wake = WakeListener.shared
     @State private var typed = ""
     @State private var typing = false
     @FocusState private var typeFocused: Bool
@@ -217,7 +216,7 @@ struct ConversationPanel: View {
         c.afterTurn = afterTurn
         c.onStage = onStage
         c.acceptOffer = onAction   // "yes" to the offer on screen is the same as tapping it
-        _convo = SwiftUI.State(initialValue: c)
+        _convo = StateObject(wrappedValue: c)
         self.compact = compact
         self.skin = skin
         self.feed = feed
@@ -238,11 +237,11 @@ struct ConversationPanel: View {
         .animation(Motion.pick(Motion.standard, reduceMotion: reduceMotion), value: typing)
         .onAppear { convo.appeared(); feed?.update(convo) }
         // The person asked for it in so many words: the tour starts on its own (after Lea's "I'll walk you through it").
-        .onChange(of: convo.actionKind) { _, kind in if kind == "walkthrough" { onAction("walkthrough") } }
-        .onChange(of: convo.turns) { feed?.update(convo) }
-        .onChange(of: convo.phase) { feed?.update(convo) }
-        .onChange(of: convo.liveCaption) { feed?.update(convo) }
-        .onChange(of: convo.heardSentence) { feed?.update(convo) }
+        .onValueChange(of: convo.actionKind) { _, kind in if kind == "walkthrough" { onAction("walkthrough") } }
+        .onValueChange(of: convo.turns) { feed?.update(convo) }
+        .onValueChange(of: convo.phase) { feed?.update(convo) }
+        .onValueChange(of: convo.liveCaption) { feed?.update(convo) }
+        .onValueChange(of: convo.heardSentence) { feed?.update(convo) }
         .fullScreenCover(item: $zoomed) { z in CropZoomView(shas: z.shas, index: z.index) }
         .task {
             WakeListener.shared.capture(false)   // back from a scan: listening resumes here for sure
@@ -306,7 +305,7 @@ struct ConversationPanel: View {
                             .contentShape(Circle())
                     }
                     .buttonStyle(TalkButtonStyle())
-                    .sensoryFeedback(.impact(weight: .light), trigger: convo.recording)
+                    .haptic(Haptic.light, trigger: convo.recording)
                     .accessibilityLabel(convo.recording ? "Stop listening" : "Talk to Lea")
                     .accessibilityValue(stateWords)
                     .accessibilityHint(convo.recording ? "Sends what you said to Lea" : "Tap and ask, then tap again to send")
@@ -363,16 +362,16 @@ struct ConversationPanel: View {
                 .padding(.horizontal, Spacing.gutter)
                 .padding(.vertical, Spacing.s)
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .defaultScrollAnchor(.bottom)
-            .onChange(of: convo.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
-            .onChange(of: convo.heardSentence) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
-            .onChange(of: isFailed) { _, failed in if failed { withAnimation(Motion.fade) { proxy.scrollTo("failed", anchor: .bottom) } } }
-            .onChange(of: convo.turns.last?.photos) { _, photos in
+            .bounceBasedOnSize()
+            .startsAtBottom(proxy, scrollingTo: convo.turns.last?.id)
+            .onValueChange(of: convo.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
+            .onValueChange(of: convo.heardSentence) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
+            .onValueChange(of: isFailed) { _, failed in if failed { withAnimation(Motion.fade) { proxy.scrollTo("failed", anchor: .bottom) } } }
+            .onValueChange(of: convo.turns.last?.photos) { _, photos in
                 guard let last = convo.turns.last, !(photos ?? []).isEmpty else { return }
                 withAnimation(Motion.fade) { proxy.scrollTo("photos:\(last.id)", anchor: .bottom) }
             }
-            .onChange(of: convo.liveCaption) { _, _ in proxy.scrollTo("live", anchor: .bottom) }
+            .onValueChange(of: convo.liveCaption) { _, _ in proxy.scrollTo("live", anchor: .bottom) }
         }
     }
 
@@ -453,7 +452,7 @@ struct ConversationPanel: View {
             .contentShape(Capsule())
         }
         .buttonStyle(TalkButtonStyle())
-        .sensoryFeedback(.impact(weight: .light), trigger: convo.recording)
+        .haptic(Haptic.light, trigger: convo.recording)
         .accessibilityLabel(convo.recording ? "Stop listening" : "Talk to Lea")
         .accessibilityHint(convo.recording ? "Sends what you said to Lea" : "Tap and ask about this scan, then tap again to send")
     }
@@ -462,7 +461,7 @@ struct ConversationPanel: View {
 /// Everything you and Lea said about this scan (tap the caption strip on the report): captions, newest at the bottom,
 /// with the photos she showed.
 struct LeaTranscriptSheet: View {
-    let feed: LeaCaptionFeed
+    @ObservedObject var feed: LeaCaptionFeed
     @Environment(\.dismiss) private var dismiss
     @State private var zoomed: SpotZoom?
 
@@ -482,9 +481,9 @@ struct LeaTranscriptSheet: View {
                     .padding(Spacing.gutter)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .defaultScrollAnchor(.bottom)
+                .startsAtBottom(proxy, scrollingTo: "end")
                 // New words while the transcript is open: it follows the latest line.
-                .onChange(of: feed.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo("end", anchor: .bottom) } }
+                .onValueChange(of: feed.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo("end", anchor: .bottom) } }
             }
             .background(Palette.canvas.ignoresSafeArea())
             .navigationTitle("Lea").navigationBarTitleDisplayMode(.inline)
@@ -499,7 +498,7 @@ struct LeaTranscriptSheet: View {
 /// A small ear while "Hey Lea" is listening (the system's mic dot shows too). No pulse: the words say it.
 struct WakeIndicator: View {
     var onCamera = false
-    @State private var wake = WakeListener.shared
+    @ObservedObject private var wake = WakeListener.shared
 
     var body: some View {
         if wake.mode != .off {
@@ -525,7 +524,7 @@ struct HomeConversationSheet: View {
     var listenOnOpen = false
     let startScan: (String) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var pre = PreScan.shared
+    @ObservedObject private var pre = PreScan.shared
 
     var body: some View {
         NavigationStack {
@@ -573,8 +572,8 @@ struct HomeConversationSheet: View {
 /// button (tap to talk, tap again to send; a stop icon while it listens). Each turn tells Lea what the scan screen
 /// shows now (`live`), so she can coach while you scan. Small, so the camera stays clear.
 struct ScanTalkBar: View {
-    @State private var convo: LeaConversation
-    @State private var wake = WakeListener.shared
+    @StateObject private var convo: LeaConversation
+    @ObservedObject private var wake = WakeListener.shared
 
     init(scanID: String, gateway: GatewayClient, diag: Diag?, sessionID: @escaping () -> String?,
          live: @escaping () -> [String: String], eyes: LeaEyes? = nil) {
@@ -582,7 +581,7 @@ struct ScanTalkBar: View {
         c.sessionID = sessionID
         c.live = live
         c.eyes = eyes
-        _convo = SwiftUI.State(initialValue: c)
+        _convo = StateObject(wrappedValue: c)
     }
 
     var body: some View {
@@ -616,7 +615,7 @@ struct ScanTalkBar: View {
                 .contentShape(Circle())
             }
             .buttonStyle(TalkButtonStyle())
-            .sensoryFeedback(.impact(weight: .light), trigger: convo.recording)
+            .haptic(Haptic.light, trigger: convo.recording)
             .accessibilityLabel(convo.recording ? "Stop listening" : "Talk to Lea")
             .accessibilityHint(convo.recording ? "Sends what you said to Lea" : "Tap and ask, then tap again to send")
         }

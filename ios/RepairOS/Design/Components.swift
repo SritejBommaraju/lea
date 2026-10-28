@@ -284,12 +284,16 @@ struct GroupedList<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Group(subviews: content) { rows in
-                ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
-                    if i > 0 { Rectangle().fill(Palette.hairline).frame(height: Line.hairline).padding(.leading, inset) }
-                    row.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                        .padding(.horizontal, inset)
+            if #available(iOS 18, *) {
+                Group(subviews: content) { rows in
+                    ForEach(Array(rows.enumerated()), id: \.offset) { i, row in
+                        if i > 0 { Rectangle().fill(Palette.hairline).frame(height: Line.hairline).padding(.leading, inset) }
+                        row.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                            .padding(.horizontal, inset)
+                    }
                 }
+            } else {
+                _VariadicView.Tree(DividedRows(inset: inset)) { content }
             }
         }
         .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card, style: .continuous))

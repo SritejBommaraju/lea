@@ -12,10 +12,10 @@ final class VoiceRecorder {
 
     /// Mic permission, asked once.
     static func allowed() async -> Bool {
-        switch AVAudioApplication.shared.recordPermission {
+        switch MicPermission.state {
         case .granted: return true
         case .denied: return false
-        default: return await AVAudioApplication.requestRecordPermission()
+        case .undetermined: return await MicPermission.request()
         }
     }
 

@@ -1,51 +1,49 @@
 @preconcurrency import AVFoundation
 import CryptoKit
 import Foundation
-import Observation
 
 /// Lea's voice: the report summary when a report lands, short scan cues, and spoken answers. Speech comes from the
 /// gateway (Cartesia, streamed as PCM and played on the first chunk) when the backend has a key, else from the
 /// phone (AVSpeechSynthesizer). One utterance at a time; mute is remembered.
 @MainActor
-@Observable
-final class LeaVoice: NSObject {
+final class LeaVoice: NSObject, ObservableObject {
     static let shared = LeaVoice()
     static let mutedKey = "leaVoiceMuted"
     private static let spokenKey = "leaVoiceSpokenReports"
 
-    var muted: Bool {
+    @Published var muted: Bool {
         didSet {
             UserDefaults.standard.set(muted, forKey: Self.mutedKey)
             if muted { stop() }
         }
     }
-    private(set) var speaking = false {
+    @Published private(set) var speaking = false {
         didSet { if speaking != oldValue { WakeListener.shared.leaSpeaking(speaking) } }   // never hear herself
     }
-    private(set) var status: VoiceStatus?
+    @Published private(set) var status: VoiceStatus?
     /// "cartesia" or "device": what the last utterance used.
-    private(set) var lastSource = ""
+    @Published private(set) var lastSource = ""
     /// Which utterance is current: goes up with every new one and with `stop()`, so a caller can tell its own line
     /// finished (still the same id when `speaking` goes false) from being cut off (the walkthrough pauses then).
     var utteranceID: Int { utterance }
 
-    @ObservationIgnored private weak var app: AppState?
-    @ObservationIgnored private var player = PCMPlayer(sampleRate: 24000)
-    @ObservationIgnored private let synth = AVSpeechSynthesizer()
-    @ObservationIgnored private var cuePCM: [String: Data] = [:]
-    @ObservationIgnored private var limiter = CueLimiter()
-    @ObservationIgnored private var currentCue: String?
+    private weak var app: AppState?
+    private var player = PCMPlayer(sampleRate: 24000)
+    private let synth = AVSpeechSynthesizer()
+    private var cuePCM: [String: Data] = [:]
+    private var limiter = CueLimiter()
+    private var currentCue: String?
     /// The scan's diag.jsonl: every spoken cue is logged there (`voice_cue`).
-    @ObservationIgnored private var cueDiag: Diag?
-    @ObservationIgnored private var pendingCue: Task<Void, Never>?
+    private var cueDiag: Diag?
+    private var pendingCue: Task<Void, Never>?
     /// A line that must be heard (`priorityCue`): its words, worked out when it can play, and who to tell once it starts.
-    @ObservationIgnored private var priority: (next: @MainActor () -> String?, said: @MainActor () -> Void)?
-    @ObservationIgnored private var priorityTask: Task<Void, Never>?
-    @ObservationIgnored private var utterance = 0
-    @ObservationIgnored private var deviceStarted: (@MainActor @Sendable () -> Void)?
-    @ObservationIgnored private var streamTask: Task<Void, Never>?
-    @ObservationIgnored private let clock = ContinuousClock()
-    @ObservationIgnored private let t0 = ContinuousClock.now
+    private var priority: (next: @MainActor () -> String?, said: @MainActor () -> Void)?
+    private var priorityTask: Task<Void, Never>?
+    private var utterance = 0
+    private var deviceStarted: (@MainActor @Sendable () -> Void)?
+    private var streamTask: Task<Void, Never>?
+    private let clock = ContinuousClock()
+    private let t0 = ContinuousClock.now
 
     override init() {
         muted = UserDefaults.standard.bool(forKey: Self.mutedKey)

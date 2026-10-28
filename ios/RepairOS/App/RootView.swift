@@ -1,3 +1,4 @@
+import Combine
 import AVFoundation
 import SwiftUI
 
@@ -5,7 +6,7 @@ import SwiftUI
 /// two taps: Start, then lock on), plus past scans. First run asks for consent, then offers pairing once; pairing
 /// can be skipped to scan offline.
 struct RootView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @State private var symptom = ""
     @State private var active: SessionRecord?
     @State private var showSettings = false
@@ -72,7 +73,7 @@ struct RootView: View {
                 Text(ScanSelection.confirmMessage)
             }
             // A scan gone or being captured can't stay ticked.
-            .onChange(of: app.sessions.map(\.id)) { selection.prune(to: selectable) }
+            .onValueChange(of: app.sessions.map(\.id)) { selection.prune(to: selectable) }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPairing) { PairingView() }
             .fullScreenCover(isPresented: $showConsent) {
@@ -104,14 +105,14 @@ struct RootView: View {
                 }
             }
             // "Hey Siri, scan with Lea" (Voice/ScanIntent): start a scan with the spoken description.
-            .onChange(of: IntentInbox.shared.requests, initial: true) { scanFromIntent() }
+            .onReceive(IntentInbox.shared.$requests.receive(on: DispatchQueue.main)) { _ in scanFromIntent() }
             // "Hey Siri, hey lea" (Voice/ScanIntent): the conversation opens listening, and Lea asks what's up.
-            .onChange(of: IntentInbox.shared.talks, initial: true) { _, talks in
+            .onReceive(IntentInbox.shared.$talks.receive(on: DispatchQueue.main)) { talks in
                 guard talks > talksSeen else { return }
                 talksSeen = talks
                 talkToLea()
             }
-            .onChange(of: WakeListener.shared.wakes) { if active == nil, replay == nil, app.gateway != nil { talkListens = false; talking = true } }
+            .onReceive(WakeListener.shared.$wakes.dropFirst().receive(on: DispatchQueue.main)) { _ in if active == nil, replay == nil, app.gateway != nil { talkListens = false; talking = true } }
             .sheet(isPresented: $talking) {
                 if let gateway = app.gateway {
                     HomeConversationSheet(gateway: gateway, listenOnOpen: talkListens) { said in
@@ -152,13 +153,13 @@ struct RootView: View {
                 if app.isPaired, app.gateway != nil {
                     Button(action: talkToLea) { TalkLabel() }
                         .buttonStyle(.primary(.quiet))
-                        .containerRelativeFrame(.horizontal) { width, _ in (width - 2 * Spacing.gutter - Spacing.s) * 0.425 }
+                        .widthFromScreen { width in (width - 2 * Spacing.gutter - Spacing.s) * 0.425 }
                         .accessibilityLabel("Talk to Lea")
                         .accessibilityHint("Opens Lea, already listening")
                 }
                 Button(action: newScan) { Label("Start scan", systemImage: Symbol.scan) }
                     .buttonStyle(.primary)
-                    .sensoryFeedback(Haptic.commit, trigger: starts)
+                    .haptic(Haptic.commit, trigger: starts)
             }
             if !app.isPaired {
                 // The only plumbing on Home, and only when it blocks a report.
@@ -370,7 +371,7 @@ private struct HomeArt: View {
 
 /// Talk to Lea's label: her mark, or the ear while "Hey Lea" listens (the old separate indicator, moved inside).
 private struct TalkLabel: View {
-    @State private var wake = WakeListener.shared
+    @ObservedObject private var wake = WakeListener.shared
 
     var body: some View {
         HStack(spacing: Spacing.s) {

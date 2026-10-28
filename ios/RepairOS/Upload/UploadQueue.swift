@@ -1,12 +1,10 @@
 import Foundation
-import Observation
 
 /// Uploads one session in the background while the person is still taking close-ups: scan files + scan package
 /// first, then each still as soon as it is saved, then `complete`. State is persisted in `upload.json` in the
 /// session folder, so a relaunch resumes where it stopped (blobs resume chunk-wise in `GatewayClient`).
 @MainActor
-@Observable
-final class UploadQueue {
+final class UploadQueue: ObservableObject {
     struct State: Codable {
         var gatewaySessionID: String?
         var refs: [String: String] = [:]      // relative path -> blob ref
@@ -28,11 +26,11 @@ final class UploadQueue {
 
     enum Item: Equatable { case scan, still(String) }
 
-    private(set) var state: State
-    private(set) var pending: [Item] = []
-    private(set) var busy = false
-    private(set) var lastError: String?
-    private(set) var uploadedFiles = 0
+    @Published private(set) var state: State
+    @Published private(set) var pending: [Item] = []
+    @Published private(set) var busy = false
+    @Published private(set) var lastError: String?
+    @Published private(set) var uploadedFiles = 0
 
     private var record: SessionRecord
     private let storage: ScanStorage
@@ -40,7 +38,7 @@ final class UploadQueue {
     private var worker: Task<Void, Never>?
     private var doneAt: Date?
     private var drainedLogged = false
-    private(set) var bytesSent: Int64 = 0
+    @Published private(set) var bytesSent: Int64 = 0
     /// Files to send ahead of their JSON (recorded keyframes), so little is left to upload after Done.
     private var ahead: [String] = []
     private var cancelled = false
@@ -280,7 +278,7 @@ final class UploadQueue {
     /// Files sent at once: over the internet each file costs a round trip, so one at a time leaves the link idle
     /// (the owner's mouse scan to the cloud ran at about one small file a second, 2026-10-24).
     static let parallel = 4
-    @ObservationIgnored private let batcher = UploadBatcher(width: UploadQueue.parallel)
+    private let batcher = UploadBatcher(width: UploadQueue.parallel)
 
     /// Uploads these files, `parallel` at a time (each once: `ref`).
     private func refs(_ paths: [String]) async throws {

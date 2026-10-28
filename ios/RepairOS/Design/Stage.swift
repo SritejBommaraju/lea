@@ -97,7 +97,7 @@ struct StageStatus: View {
                         guard !reduceMotion else { return }
                         withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) { turn = true }
                     }
-                    .onChange(of: reduceMotion) { _, rm in if rm { withAnimation(nil) { turn = false } } }
+                    .onValueChange(of: reduceMotion) { _, rm in if rm { withAnimation(nil) { turn = false } } }
                     .accessibilityHidden(true)
             }
             Text(text).font(.cue).monospacedDigit()

@@ -2,12 +2,12 @@ import SwiftUI
 
 @main
 struct RepairOSApp: App {
-    @State private var app = AppState()
+    @StateObject private var app = AppState()
 
     var body: some Scene {
         WindowGroup {
             root
-                .environment(app)
+                .environmentObject(app)
                 .overlay(alignment: .top) { UsageBanner() }   // a paid service on the Mac paused (spend_alert)
                 .task { UsageAlerts.shared.start(app) }
                 .task {

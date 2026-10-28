@@ -17,7 +17,7 @@ extension EnvironmentValues {
 /// One continuous flow for a session: capture and then upload + report. A captured session reopens at its report,
 /// and "Continue scanning" goes back to the scanner for the same scan (a new segment), then to a refreshed report.
 struct SessionFlowView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     let record: SessionRecord
     @State private var scan: ScanSession?
@@ -187,8 +187,8 @@ struct OfflineView: View {
 /// here reads coarse session state (≤ 10 changes a second); the close-up target is drawn by the renderer itself,
 /// anchored on the object. Done: the cloud gathers into the object, then the report.
 struct ScanView: View {
-    @Bindable var scan: ScanSession
-    var live: LiveEvents?
+    @ObservedObject var scan: ScanSession
+    @ObservedOptional var live: LiveEvents?
     let close: () -> Void
     let finished: (SessionRecord) -> Void
 
@@ -203,7 +203,7 @@ struct ScanView: View {
 
     init(scan: ScanSession, live: LiveEvents? = nil, close: @escaping () -> Void, finished: @escaping (SessionRecord) -> Void) {
         self.scan = scan
-        self.live = live
+        _live = ObservedOptional(wrappedValue: live)
         self.close = close
         self.finished = finished
     }
@@ -213,7 +213,7 @@ struct ScanView: View {
             GeometryReader { geo in
                 PointCloudView(scan: scan)
                     .onAppear { scan.setViewSize(geo.size) }
-                    .onChange(of: geo.size) { scan.setViewSize($1) }
+                    .onValueChange(of: geo.size) { scan.setViewSize($1) }
                     .gesture(SpatialTapGesture().onEnded { scan.tap(at: $0.location) })
                     // Voice/LeaSight: Lea's circles on the object, and a long press to point at something for her.
                     .overlay { LeaSightOverlay(scan: scan) }
@@ -284,11 +284,11 @@ struct ScanView: View {
             }
         }
         .motion(Motion.standard, value: scan.stage)
-        .sensoryFeedback(Haptic.milestone, trigger: scan.milestoneTick)
-        .sensoryFeedback(Haptic.commit, trigger: doneTick)
-        .sensoryFeedback(Haptic.warn, trigger: warnTick)
-        .onChange(of: cue.tone) { _, tone in if tone == .stop { warnTick += 1 } }
-        .onChange(of: cue.text, initial: true) { _, text in LeaVoice.shared.cueChanged(text, diag: scan.diag) }   // Voice/VoiceCues
+        .haptic(Haptic.milestone, trigger: scan.milestoneTick)
+        .haptic(Haptic.commit, trigger: doneTick)
+        .haptic(Haptic.warn, trigger: warnTick)
+        .onValueChange(of: cue.tone) { _, tone in if tone == .stop { warnTick += 1 } }
+        .onValueChange(of: cue.text, initial: true) { _, text in LeaVoice.shared.cueChanged(text, diag: scan.diag) }   // Voice/VoiceCues
         .alert("Battery is low", isPresented: .constant(scan.batteryQuestion)) {
             Button("Use the light") { scan.answerBattery(true) }
             Button("No light", role: .cancel) { scan.answerBattery(false) }
@@ -300,18 +300,18 @@ struct ScanView: View {
         } message: { Text("Helps the report. The scan carries on.") }
         .task { await VoiceProbe.run(scan: scan) }   // `--voice-frame-probe` only
         .onAppear { scan.start(); WakeListener.shared.capture(true) }
-        .onChange(of: scan.box != nil) { _, locked in if locked, turnWanted { scan.startHandheld() } }
+        .onValueChange(of: scan.box != nil) { _, locked in if locked, turnWanted { scan.startHandheld() } }
         .onDisappear {
             scan.stop(); LeaVoice.shared.cueChanged(nil); LeaVoice.shared.dropPriorityCue(); WakeListener.shared.capture(false)
         }
-        .onChange(of: live?.identity) { _, _ in   // what the backend thinks it is: said once, again only when sharper
+        .onValueChange(of: live?.identity) { _, _ in   // what the backend thinks it is: said once, again only when sharper
             // Worked out again when Lea can say it: the newest guess, nothing once the person has corrected it.
             let live = live, said = identitySaid
             LeaVoice.shared.priorityCue(diag: scan.diag,
                                         next: { said.next(live?.identity, corrected: live?.corrected) },
                                         said: { said.spoke() })
         }
-        .onChange(of: live?.lead) { _, lead in   // what the person suspects, researched by the backend
+        .onValueChange(of: live?.lead) { _, lead in   // what the person suspects, researched by the backend
             if let lead { LeaVoice.shared.dynamicCue(lead.spoken, diag: scan.diag) }
         }
         .statusBarHidden()
@@ -395,18 +395,7 @@ struct ScanView: View {
             Button(action: done) { Label("Done", systemImage: "checkmark") }
                 .buttonStyle(.primary(.light))
                 .overlay(Capsule().strokeBorder(Palette.next, lineWidth: Line.locked).opacity(scan.enough ? 1 : 0))
-                .keyframeAnimator(initialValue: CGFloat(1), trigger: scan.enough) { view, scale in
-                    view.scaleEffect(scale)
-                } keyframes: { _ in
-                    KeyframeTrack {
-                        if scan.enough && !reduceMotion {
-                            SpringKeyframe(1.04, duration: 0.18, spring: .init(response: 0.4, dampingRatio: 0.78))
-                            SpringKeyframe(1, duration: 0.3, spring: .init(response: 0.4, dampingRatio: 0.78))
-                        } else {
-                            LinearKeyframe(1, duration: 0.01)
-                        }
-                    }
-                }
+                .modifier(SettleOnceModifier(trigger: scan.enough, reduceMotion: reduceMotion))
                 .motion(Motion.fade, value: scan.enough)
                 .accessibilityHint(scan.enough ? "The scan has enough. Tap to finish." : "")
         case .failed:

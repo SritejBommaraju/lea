@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 import SwiftUI
 import UIKit
 
@@ -8,14 +7,13 @@ import UIKit
 /// and the product brief the gateway used to research were removed on 2026-10-28: the product is named by its design
 /// id, Settings > Product.)
 @MainActor
-@Observable
-final class PreScan {
+final class PreScan: ObservableObject {
     static let shared = PreScan()
 
-    private(set) var sessionID: String?
-    private(set) var scanID = PreScan.newScanID()
-    private(set) var live: LiveEvents?
-    @ObservationIgnored private var starting: Task<Void, Never>?
+    @Published private(set) var sessionID: String?
+    @Published private(set) var scanID = PreScan.newScanID()
+    @Published private(set) var live: LiveEvents?
+    private var starting: Task<Void, Never>?
 
     static func newScanID() -> String { "scan_" + ScanStorage.hex(8) }
 
