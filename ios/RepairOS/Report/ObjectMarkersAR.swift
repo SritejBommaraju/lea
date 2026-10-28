@@ -34,7 +34,7 @@ struct ObjectSpace: Sendable {
 
     /// Present only for a scan with a saved world map on a phone that can track the world.
     static func load(sessionDir: URL, scanPackage: URL) -> ObjectSpace? {
-        guard ARWorldTrackingConfiguration.isSupported,
+        guard #available(iOS 18, *), ARWorldTrackingConfiguration.isSupported,
               FileManager.default.fileExists(atPath: sessionDir.appending(path: "world.arworldmap").path) else { return nil }
         var center: SIMD3<Float>?
         var planeY: Float?
@@ -101,6 +101,7 @@ final class ObjectMarkersModel: ObservableObject {
 }
 
 /// Full-screen AR: the camera with the markers, a cue while relocalising, the numbered problems along the bottom.
+@available(iOS 18.0, *)
 struct ObjectMarkersView: View {
     let space: ObjectSpace
     let markers: [ObjectMarker]
@@ -275,6 +276,7 @@ struct ObjectMarkersView: View {
 
 // MARK: - AR view
 
+@available(iOS 18.0, *)
 private struct ObjectMarkersARView: UIViewRepresentable {
     let space: ObjectSpace
     let markers: [ObjectMarker]
@@ -299,6 +301,7 @@ private struct ObjectMarkersARView: UIViewRepresentable {
 }
 
 /// Owns the AR session and the marker entities.
+@available(iOS 18.0, *)
 @MainActor
 final class MarkerScene: NSObject, ARSessionDelegate {
     private let space: ObjectSpace

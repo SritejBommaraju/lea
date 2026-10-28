@@ -124,7 +124,7 @@ struct ReportView: View {
                 }
             }
             .fullScreenCover(isPresented: $showOnObject) {
-                if let report, let space {
+                if #available(iOS 18, *), let report, let space {
                     let all = report.mostLikely + report.otherIssues + report.setup + report.cosmetic
                     ObjectMarkersView(space: space,
                                       markers: StageMarks.pins(report).map { ObjectMarker(id: $0.id, number: $0.number, point: $0.point, tone: $0.tone) },

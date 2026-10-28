@@ -345,3 +345,41 @@ struct Watching<O: ObservableObject, Content: View>: View {
 
     var body: some View { content() }
 }
+
+// MARK: - Visibility, announcements and row groups
+
+extension View {
+    /// `visible` follows whether the view is on screen (scroll visibility is iOS 18; appear and disappear before).
+    @ViewBuilder func tracksVisibility(_ visible: Binding<Bool>) -> some View {
+        if #available(iOS 18, *) {
+            onScrollVisibilityChange(threshold: 0.05) { visible.wrappedValue = $0 }
+        } else {
+            onAppear { visible.wrappedValue = true }.onDisappear { visible.wrappedValue = false }
+        }
+    }
+}
+
+enum Announcer {
+    /// VoiceOver says `words` (AccessibilityNotification is iOS 17).
+    @MainActor static func say(_ words: String) {
+        if #available(iOS 17, *) {
+            AccessibilityNotification.Announcement(words).post()
+        } else {
+            UIAccessibility.post(notification: .announcement, argument: words)
+        }
+    }
+}
+
+/// The rows of `content` with a hairline between them, each at least 44 pt (the pre-iOS 18 route to `Group(subviews:)`).
+struct DividedRows: _VariadicView_MultiViewRoot {
+    let inset: CGFloat
+
+    @ViewBuilder
+    func body(children: _VariadicView.Children) -> some View {
+        ForEach(Array(children.enumerated()), id: \.offset) { i, row in
+            if i > 0 { Rectangle().fill(Palette.hairline).frame(height: Line.hairline).padding(.leading, inset) }
+            row.frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, inset)
+        }
+    }
+}

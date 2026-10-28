@@ -738,7 +738,7 @@ struct ReportStageView: View {
     /// VoiceOver hears the headline once when a report lands, unless Lea is already saying it.
     private func announce() {
         guard voiceOver, LeaVoice.shared.muted else { return }
-        AccessibilityNotification.Announcement("\(ReportWords.eyebrow(report)). \(ReportWords.headline(report))").post()
+        Announcer.say("\(ReportWords.eyebrow(report)). \(ReportWords.headline(report))")
     }
 }
 

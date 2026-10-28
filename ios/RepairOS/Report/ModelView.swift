@@ -353,7 +353,7 @@ struct ModelView: View {
                     .padding(Spacing.m).allowsHitTesting(false)
             }
         }
-        .onScrollVisibilityChange(threshold: 0.05) { visible = $0 }
+        .tracksVisibility($visible)
         .task(id: Self.key(source)) { await load(); onLoaded?() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("3D view of the scanned object with \(pins.count) numbered problems")
