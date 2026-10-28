@@ -32,6 +32,7 @@ struct RootView: View {
     @AppStorage(DemoReplay.enabledKey) private var demoReplay = false
     @AppStorage(DemoReplay.sessionKey) private var demoSession = ""
     @FocusState private var symptomFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     /// The `--autostart-scan` developer flag skips the consent screen so USB smoke tests run unattended.
     private var devAutostart: Bool { CommandLine.arguments.contains("--autostart-scan") }
@@ -157,11 +158,14 @@ struct RootView: View {
                     .onSubmit(newScan)
                 StoryMicButton(text: $symptom, gateway: app.isPaired ? app.gateway : nil)   // Voice/: tap to dictate
             }
-            HStack(spacing: Spacing.s) {
+            // Side by side at normal text sizes; one above the other when the words would be cut off.
+            let stacked = typeSize >= .xxxLarge
+            let layout = stacked ? AnyLayout(VStackLayout(spacing: Spacing.s)) : AnyLayout(HStackLayout(spacing: Spacing.s))
+            layout {
                 if app.isPaired, app.gateway != nil {
                     Button(action: talkToLea) { TalkLabel() }
                         .buttonStyle(.primary(.quiet))
-                        .widthFromScreen { width in (width - 2 * Spacing.gutter - Spacing.s) * 0.425 }
+                        .widthFromScreen { width in stacked ? width - 2 * Spacing.gutter : (width - 2 * Spacing.gutter - Spacing.s) * 0.425 }
                         .accessibilityLabel("Talk to Lea")
                         .accessibilityHint("Opens Lea, already listening")
                 }

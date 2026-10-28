@@ -348,11 +348,12 @@ struct ToneTag: View {
     var tone: Tone = .neutral
     var symbol: String?
     var dashed = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(spacing: 4) {
             if let symbol { Image(systemName: symbol).imageScale(.small).accessibilityHidden(true) }
-            Text(text).lineLimit(1)
+            Text(text).lineLimit(typeSize.isAccessibilitySize ? 4 : 1)
         }
         .font(.label)
         .foregroundStyle(tone.color)

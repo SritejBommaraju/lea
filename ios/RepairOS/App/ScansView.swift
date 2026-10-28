@@ -174,7 +174,7 @@ struct SessionRow: View {
                 .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(record.symptom ?? "Scan").font(.body.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(2)
+                Text(record.symptom ?? "Scan").font(.body.weight(.semibold)).foregroundStyle(Palette.ink).lineLimit(typeSize.isAccessibilitySize ? 5 : 2)
                     .multilineTextAlignment(.leading)
                 Text(meta).font(.footnote).foregroundStyle(Palette.secondary)
                 tag
