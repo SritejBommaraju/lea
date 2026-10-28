@@ -217,7 +217,7 @@ struct BlinkDecoderTests {
         #expect(abs(code.roundSeconds(checks: 20) - 76.2) < 1e-9)
         #expect(abs(BlinkCheck.windowSeconds(code: code, checkCount: 20) - 162.4) < 1e-9)
         #expect(BlinkCheck.windowSeconds(code: code, checkCount: 3) > 2 * code.roundSeconds(checks: 3))
-        #expect(BlinkCheck.windowSeconds(code: code, checkCount: 500) == 300)
+        #expect(BlinkCheck.windowSeconds(code: code, checkCount: 500) == 180)
     }
 
     // MARK: Edges
@@ -247,6 +247,27 @@ struct LedFromFramesTests {
         #expect(got.progress == .complete([.ok, .fail]))
         let centre = LedTracker.centre(of: cell)
         #expect(got.marker?.x == centre.x && got.marker?.y == centre.y)
+    }
+
+    @Test func aFollowedCellGivesTheSameAnswerAndAStillCellIsSearchedAgain() throws {
+        let samples = BlinkSynth.samples(BlinkSynth.segments(longCounts: [1, 3]))
+        let frames = BlinkSynth.frames(samples, cell: cell, steady: [100: 0.95])
+        let searched = BlinkAnalysis.run(frames, code: BlinkSynth.code)
+        #expect(searched.cell == cell && searched.progress == .complete([.ok, .unknown]))
+        #expect(BlinkAnalysis.run(frames, code: BlinkSynth.code, lock: cell) == searched)
+        // a lock on a cell that does not change falls back to looking at all of them
+        let wrong = BlinkAnalysis.run(frames, code: BlinkSynth.code, lock: 100)
+        #expect(wrong == searched)
+        // a lock outside the grid is ignored
+        #expect(BlinkAnalysis.run(frames, code: BlinkSynth.code, lock: 99_999) == searched)
+    }
+
+    @Test func colourCanBeLeftOutOfTheReduction() {
+        var pixels = [UInt8](repeating: 10, count: 64 * 48 * 4)
+        pixels[(20 * 64 + 20) * 4 + 2] = 255
+        let plain = pixels.withUnsafeBufferPointer { CellGrid.reduce(base: $0.baseAddress!, width: 64, height: 48, bytesPerRow: 256) }
+        let lean = pixels.withUnsafeBufferPointer { CellGrid.reduce(base: $0.baseAddress!, width: 64, height: 48, bytesPerRow: 256, colour: false) }
+        #expect(lean.luma == plain.luma && lean.mean == plain.mean && lean.rgb.isEmpty && plain.rgb.count == 32 * 24 * 3)
     }
 
     @Test func aLedThatDriftsOneCellIsStillFollowed() {

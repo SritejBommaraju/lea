@@ -17,10 +17,11 @@ enum CellGrid {
     static let rows = 24
 
     /// Reduces a BGRA pixel buffer. Every `step`-th pixel in each direction is read (step 2 still hits a 3-pixel LED).
+    /// `colour: false` leaves the colours out (an empty `rgb`): a blink decoder needs brightness only.
     static func reduce(base: UnsafePointer<UInt8>, width: Int, height: Int, bytesPerRow: Int, step: Int = 2,
-                       cols: Int = CellGrid.cols, rows: Int = CellGrid.rows) -> (luma: [Float], rgb: [UInt8], mean: Float) {
+                       cols: Int = CellGrid.cols, rows: Int = CellGrid.rows, colour: Bool = true) -> (luma: [Float], rgb: [UInt8], mean: Float) {
         var luma = [Float](repeating: 0, count: cols * rows)
-        var rgb = [UInt8](repeating: 0, count: cols * rows * 3)
+        var rgb = [UInt8](repeating: 0, count: colour ? cols * rows * 3 : 0)
         var total = 0
         var seen = 0
         for cy in 0..<rows {
@@ -46,6 +47,7 @@ enum CellGrid {
                 }
                 let cell = cy * cols + cx
                 luma[cell] = Float(maxL) / 255
+                guard colour else { continue }
                 if bright > 0 {
                     rgb[cell * 3] = UInt8(brightR / bright)
                     rgb[cell * 3 + 1] = UInt8(brightG / bright)
@@ -98,6 +100,16 @@ enum LedTracker {
         }
         return Track(cell: cell, series: series(frames, cell: cell, cols: cols, rows: rows), range: hi[cell] - lo[cell],
                      mean: mean(frames, cell: cell, cols: cols, rows: rows))
+    }
+
+    /// The brightness of one cell that is already being followed, if it still changes by `minRange`. Reading a single cell
+    /// is far cheaper than looking for the best of all of them again.
+    static func follow(_ frames: [CameraFrame], cell: Int, cols: Int = CellGrid.cols, rows: Int = CellGrid.rows,
+                       minRange: Float = 0.06) -> Track? {
+        guard frames.count >= 2, cell >= 0, cell < cols * rows else { return nil }
+        let s = series(frames, cell: cell, cols: cols, rows: rows)
+        guard let lo = s.map(\.v).min(), let hi = s.map(\.v).max(), hi - lo >= minRange else { return nil }
+        return Track(cell: cell, series: s, range: hi - lo, mean: s.map(\.v).reduce(0, +) / Float(s.count))
     }
 
     /// The brightest cell over the whole timeline, for an LED that does not change.
@@ -226,16 +238,22 @@ enum BlinkAnalysis {
         var progress: BlinkDecoder.Progress
         /// The LED's place in the picture (0 to 1 from the top left), when one was found.
         var marker: (x: Double, y: Double)?
+        /// The cell it was found in: pass it back as `lock` next time and only that cell is read.
+        var cell: Int? = nil
 
         static func == (a: Result, b: Result) -> Bool {
-            a.progress == b.progress && a.marker?.x == b.marker?.x && a.marker?.y == b.marker?.y
+            a.progress == b.progress && a.marker?.x == b.marker?.x && a.marker?.y == b.marker?.y && a.cell == b.cell
         }
     }
 
-    static func run(_ frames: [CameraFrame], code: BlinkCode) -> Result {
-        guard let t = LedTracker.track(frames) else { return Result(progress: .searching, marker: nil) }
+    /// With a `lock` (the cell of the last pass) only that cell is read while it still changes; otherwise, or when it
+    /// stopped changing, all cells are searched.
+    static func run(_ frames: [CameraFrame], code: BlinkCode, lock: Int? = nil) -> Result {
+        guard let t = lock.flatMap({ LedTracker.follow(frames, cell: $0) }) ?? LedTracker.track(frames) else {
+            return Result(progress: .searching, marker: nil)
+        }
         let centre = LedTracker.centre(of: t.cell)
-        guard let onOff = LedThreshold.onOff(t.series) else { return Result(progress: .searching, marker: centre) }
-        return Result(progress: BlinkDecoder.decode(onOff, code: code), marker: centre)
+        guard let onOff = LedThreshold.onOff(t.series) else { return Result(progress: .searching, marker: centre, cell: t.cell) }
+        return Result(progress: BlinkDecoder.decode(onOff, code: code), marker: centre, cell: t.cell)
     }
 }

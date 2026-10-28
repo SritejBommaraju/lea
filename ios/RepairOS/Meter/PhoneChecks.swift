@@ -26,14 +26,14 @@ final class BlinkCheck: ObservableObject {
     private var generation = 0
 
     /// The camera keeps two rounds of the code plus a margin, so a code with many checks still has its preamble in view
-    /// when its end flashes arrive.
+    /// when its end flashes arrive (up to three minutes: about 32 MB of cell brightness at 60 frames a second).
     init(code: BlinkCode, checkCount: Int) {
         self.code = code
-        probe = CameraProbe(keepSeconds: BlinkCheck.windowSeconds(code: code, checkCount: checkCount))
+        probe = CameraProbe(keepSeconds: BlinkCheck.windowSeconds(code: code, checkCount: checkCount), storeColour: false)
     }
 
     nonisolated static func windowSeconds(code: BlinkCode, checkCount: Int) -> Double {
-        min(300, 2 * code.roundSeconds(checks: checkCount) + 10)
+        min(180, 2 * code.roundSeconds(checks: checkCount) + 10)
     }
 
     func start() {
@@ -54,6 +54,7 @@ final class BlinkCheck: ObservableObject {
     }
 
     private func run(_ mine: Int) async {
+        guard mine == generation else { return }   // stopped before this task began: take nothing
         do {
             let rate = try await probe.start(targetFPS: 60)
             guard mine == generation else { return }
@@ -66,12 +67,18 @@ final class BlinkCheck: ObservableObject {
         }
         phase = .watching
         let code = self.code
+        var lock: Int?
+        var pass = 0
         while mine == generation {
             try? await Task.sleep(for: .milliseconds(200))
             guard mine == generation else { return }
             let frames = probe.buffer.snapshot()
-            let result = await Task.detached(priority: .userInitiated) { BlinkAnalysis.run(frames, code: code) }.value
+            // Follow the cell found last time; look at all cells again every tenth pass (two seconds).
+            let follow = pass % 10 == 0 ? nil : lock
+            let result = await Task.detached(priority: .userInitiated) { BlinkAnalysis.run(frames, code: code, lock: follow) }.value
             guard mine == generation else { return }
+            lock = result.cell
+            pass += 1
             analysis = result
             if case .complete = result.progress {
                 phase = .complete
@@ -133,6 +140,7 @@ final class FlickerCheck: ObservableObject {
 
     private func run(_ mine: Int) async {
         defer { if mine == generation { task = nil } }
+        guard mine == generation else { return }
         do {
             _ = try await probe.start(targetFPS: 240)
         } catch {
@@ -206,6 +214,7 @@ final class LightCheck: ObservableObject {
         task = Task { [weak self] in
             guard let self else { return }
             defer { if mine == self.generation { self.task = nil } }
+            guard mine == self.generation else { return }
             do {
                 _ = try await self.probe.start(targetFPS: 30)
             } catch {
@@ -262,6 +271,7 @@ final class LedStateCheck: ObservableObject {
 
     private func run(_ mine: Int) async {
         defer { if mine == generation { task = nil } }
+        guard mine == generation else { return }
         do {
             _ = try await probe.start(targetFPS: 60)
         } catch {
@@ -427,6 +437,7 @@ final class AudioCheck: ObservableObject {
     }
 
     private func run(_ mine: Int) async {
+        guard mine == generation else { return }   // stopped before this task began: take nothing
         switch MicPermission.state {
         case .denied:
             fail(mine, PhoneCheckWords.microphoneDenied)

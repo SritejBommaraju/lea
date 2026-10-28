@@ -49,10 +49,14 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
     private let wantedLock = NSLock()
     private var wanted = false               // the last of `start` and `stop` that was called
 
-    init(keepSeconds: Double) {
+    /// `storeColour: false` keeps only each cell's brightness (a third of the memory), for checks that never name a colour.
+    init(keepSeconds: Double, storeColour: Bool = true) {
         buffer = FrameBuffer(keepSeconds: keepSeconds)
+        self.storeColour = storeColour
         super.init()
     }
+
+    private let storeColour: Bool
 
     static func authorized() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -64,8 +68,14 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
 
     /// Starts the camera and returns the frame rate it runs at (the highest the phone offers, up to `targetFPS`).
     func start(targetFPS: Double) async throws -> Double {
+        // A check that was stopped before this task got going must not turn the camera on.
+        guard !Task.isCancelled else { throw CameraProbeError.stopped }
         setWanted(true)
         guard await Self.authorized() else { throw CameraProbeError.denied }
+        guard !Task.isCancelled else {
+            setWanted(false)
+            throw CameraProbeError.stopped
+        }
         buffer.clear()
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Double, Error>) in
             queue.async {
@@ -153,7 +163,8 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
         defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(pixels) else { return }
         let reduced = CellGrid.reduce(base: base.assumingMemoryBound(to: UInt8.self), width: CVPixelBufferGetWidth(pixels),
-                                      height: CVPixelBufferGetHeight(pixels), bytesPerRow: CVPixelBufferGetBytesPerRow(pixels))
+                                      height: CVPixelBufferGetHeight(pixels), bytesPerRow: CVPixelBufferGetBytesPerRow(pixels),
+                                      colour: storeColour)
         let t = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
         buffer.append(CameraFrame(t: t, luma: reduced.luma, rgb: reduced.rgb, mean: reduced.mean,
                                   iso: device?.iso ?? 0, exposureS: device.map { CMTimeGetSeconds($0.exposureDuration) } ?? 0))
