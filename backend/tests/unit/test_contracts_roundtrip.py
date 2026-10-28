@@ -39,6 +39,8 @@ MODEL_CANNOT_EXPRESS = {
     "report-meter-proof-without-reading.json",
     "report-ok-without-a-judge.json",
     "report-design-engine-row-without-a-judge.json",   # same rule, a row with no photo
+    "report-design-engine-without-design.json",   # if/then: a grain row or a not-words-only summary needs `design`
+    "report-design-engine-summary-without-design.json",
 }
 
 

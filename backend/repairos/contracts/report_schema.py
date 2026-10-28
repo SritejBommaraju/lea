@@ -388,7 +388,7 @@ class Mesh(BaseModel):
 
 class Design(BaseModel):
     """
-    Present when the design engine judged this scan against the product's own design. `project` is the design the scan was judged against.
+    Present when the design engine judged this scan against the product's own design; required when a row names `grain` or the summary says it is not words only. `project` is the design the scan was judged against.
     """
 
     model_config = ConfigDict(
@@ -988,7 +988,7 @@ class Report(BaseModel):
     )
     design: Design | None = Field(
         None,
-        description="Present when the design engine judged this scan against the product's own design. `project` is the design the scan was judged against.",
+        description="Present when the design engine judged this scan against the product's own design; required when a row names `grain` or the summary says it is not words only. `project` is the design the scan was judged against.",
     )
     reference_hints: ReferenceHints | None = Field(
         None,
