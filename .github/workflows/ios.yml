@@ -33,7 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-${{ github.ref }}
+  # One run per branch: a push and the pull request it belongs to would otherwise both run, twice the macOS load.
+  group: ios-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
