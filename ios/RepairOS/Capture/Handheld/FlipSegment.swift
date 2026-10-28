@@ -175,7 +175,7 @@ extension EnvironmentValues {
 }
 
 struct ScanBottomChip: View {
-    @Bindable var scan: ScanSession
+    @ObservedObject var scan: ScanSession
     @Environment(\.scanBottom) private var scanBottom
     @State private var busy = false
 

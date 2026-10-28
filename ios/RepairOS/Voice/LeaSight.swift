@@ -16,8 +16,7 @@ struct LeaMark: Sendable, Equatable {
 /// person walks around. A long press is the person's own pointer: it is pinned the same way and drawn into the next
 /// photo as a magenta ring ("they mean the ring"). A finished scan's findings are circled too while continuing it.
 @MainActor
-@Observable
-final class LeaSight {
+final class LeaSight: ObservableObject {
     enum Kind: Equatable { case lea, person, finding }
 
     struct Pin: Identifiable, Equatable {
@@ -28,24 +27,24 @@ final class LeaSight {
         let born = Date()
     }
 
-    private(set) var pins: [Pin] = []
+    @Published private(set) var pins: [Pin] = []
     /// Lea may take photos now: a conversation window is open (from a turn's start until a little after her
     /// answer). Shown as "Lea is looking"; no photo is ever taken outside it, so none before "Hey Lea".
-    private(set) var looking = false
+    @Published private(set) var looking = false
 
     /// Where the person pointed, on the object (world): projected into the next photo Lea sees, wherever the phone is
     /// by then (they point, then talk, often while moving).
-    @ObservationIgnored private var pointedAt: SIMD3<Float>?
+    private var pointedAt: SIMD3<Float>?
     /// The camera at the moment of the last photo sent: its marks are pinned from here, wherever the phone is now.
-    @ObservationIgnored private var lastLook: Snapshot?
+    private var lastLook: Snapshot?
     /// Puts a photo on the gateway (PUT /v1/blobs), returning its ref; set by the scan screen.
-    @ObservationIgnored var uploader: (@Sendable (Data) async -> String?)?
+    var uploader: (@Sendable (Data) async -> String?)?
     /// The keyframe ring: the last few photos inside the window, each uploading as soon as it is taken. The newest
     /// is "now" once a turn has started.
-    @ObservationIgnored private var shots: [Shot] = []
+    private var shots: [Shot] = []
     /// A turn has started and its "now" photo is taken: no keyframe may come after it until the turn's photos go.
-    @ObservationIgnored private var turnShot = false
-    @ObservationIgnored private var windowEnds: Task<Void, Never>?
+    private var turnShot = false
+    private var windowEnds: Task<Void, Never>?
 
     struct Snapshot {
         let transform: simd_float4x4
@@ -383,16 +382,22 @@ extension ScanSession {
 /// the object now. A circle draws itself in like a pen stroke. One that is off screen or behind the phone becomes an
 /// arrow at the edge pointing to it: move that way to see it.
 struct LeaSightOverlay: View {
-    let scan: ScanSession
+    @ObservedObject var scan: ScanSession
+    @ObservedObject private var sight: LeaSight
+
+    init(scan: ScanSession) {
+        self.scan = scan
+        sight = scan.sight
+    }
 
     var body: some View {
         // Follows the AR camera while there is something to draw; paused (no redraws over the camera) when there isn't.
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: scan.sight.pins.isEmpty)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: sight.pins.isEmpty)) { context in
             Canvas { ctx, size in
                 guard let frame = scan.session.currentFrame else { return }
                 let showFindings = scan.aligned && !scan.relocalizing
                 let view = frame.camera.transform.inverse
-                for pin in scan.sight.pins where pin.kind != .finding || showFindings {
+                for pin in sight.pins where pin.kind != .finding || showFindings {
                     let cam = view * SIMD4(pin.world, 1)
                     let p = frame.camera.projectPoint(pin.world, orientation: .portrait, viewportSize: size)
                     let onScreen = cam.z < 0 && p.x > 24 && p.y > 24 && p.x < size.width - 24 && p.y < size.height - 24
@@ -413,7 +418,7 @@ struct LeaSightOverlay: View {
         }
         .overlay(alignment: .topTrailing) {
             // Privacy: photos go to Lea only inside a conversation window, and it shows.
-            if scan.sight.looking {
+            if sight.looking {
                 Label("Lea is looking", systemImage: "eye")
                     .cameraChip()
                     .padding(.top, 72).padding(.trailing, 12)
@@ -422,7 +427,7 @@ struct LeaSightOverlay: View {
             }
         }
         .allowsHitTesting(false)
-        .animation(Motion.fade, value: scan.sight.looking)
+        .animation(Motion.fade, value: sight.looking)
     }
 
     private static func tint(_ kind: LeaSight.Kind) -> Color {

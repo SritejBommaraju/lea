@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PairingView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
     @State private var busy = false
@@ -9,7 +9,6 @@ struct PairingView: View {
     @State private var paired = 0
 
     var body: some View {
-        @Bindable var app = app
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Spacing.xl) {
@@ -50,7 +49,7 @@ struct PairingView: View {
                     }
                     .buttonStyle(.primary)
                     .disabled(busy || code.isEmpty || app.gatewayURL.isEmpty)
-                    .sensoryFeedback(.success, trigger: paired)
+                    .haptic(.success, trigger: paired)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -76,7 +75,8 @@ struct PairingView: View {
 }
 
 struct SettingsView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
+    @ObservedObject private var voice = LeaVoice.shared
     @Environment(\.dismiss) private var dismiss
     @State private var showPairing = false
     @State private var showConsent = false
@@ -127,7 +127,7 @@ struct SettingsView: View {
                     Section {
                         Toggle("Listen for \u{201C}Hey Lea\u{201D}", isOn: Binding(get: { WakeListener.shared.enabled },
                                                                         set: { WakeListener.shared.enabled = $0 }))
-                        Toggle("Lea speaks", isOn: Binding(get: { !LeaVoice.shared.muted }, set: { LeaVoice.shared.muted = !$0 }))
+                        Toggle("Lea speaks", isOn: Binding(get: { !voice.muted }, set: { voice.muted = !$0 }))
                     } header: { Text("Voice") } footer: {
                         Text("\u{201C}Hey Lea\u{201D} is heard on this phone only, while lea is open. Nothing is sent until you say it.")
                     }
@@ -282,7 +282,7 @@ extension View {
 
 /// Developer details: video formats and the close-up resolution probe.
 struct DiagnosticsView: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
 
     var body: some View {
         Form {

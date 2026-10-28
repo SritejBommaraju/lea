@@ -158,9 +158,9 @@ private struct ZoomablePhoto: View {
             if let image {
                 Image(uiImage: image).resizable().scaledToFit()
                     .scaleEffect(scale).offset(offset)
-                    .gesture(MagnifyGesture()
-                        .onChanged { scale = min(6, max(1, lastScale * $0.magnification)) }
-                        .onEnded { _ in lastScale = scale; if scale == 1 { reset() } })
+                    .modifier(PinchGestureModifier(
+                        changed: { scale = min(6, max(1, lastScale * $0)) },
+                        ended: { lastScale = scale; if scale == 1 { reset() } }))
                     .simultaneousGesture(DragGesture()
                         .onChanged { g in
                             guard scale > 1 else { return }

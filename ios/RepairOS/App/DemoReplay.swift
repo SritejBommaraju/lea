@@ -67,7 +67,7 @@ struct ScanReplayView: View {
     let record: SessionRecord
     let close: () -> Void
     let finished: () -> Void
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @State private var cells: [CellState] = Array(repeating: .missing, count: CoverageDome.cellCount)
     @State private var photos = 0
     @State private var shot = 0
@@ -110,7 +110,7 @@ struct ScanReplayView: View {
             .padding(.vertical, Spacing.s)
         }
         .motion(Motion.standard, value: phase)
-        .sensoryFeedback(Haptic.milestone, trigger: phase == 2)
+        .haptic(Haptic.milestone, trigger: phase == 2)
         .statusBarHidden()
         .task { await play() }
     }
@@ -247,7 +247,7 @@ private struct ReplayScene: UIViewRepresentable {
 
 /// Settings: the hidden "Demo replay" section (tap the version line five times to show it).
 struct DemoReplaySettings: View {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @AppStorage(DemoReplay.enabledKey) private var enabled = false
     @AppStorage(DemoReplay.sessionKey) private var sessionID = ""
     @State private var saving = false

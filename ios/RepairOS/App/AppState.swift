@@ -1,19 +1,17 @@
 import Foundation
-import Observation
 import os
 
 let log = Logger(subsystem: "com.repairos.app", category: "app")
 
 /// App-wide state: what the device can do, where the gateway is, and the local sessions.
 @MainActor
-@Observable
-final class AppState {
-    private(set) var capabilities = DeviceCapabilities.current()
-    private(set) var stillProbe: StillProbeResult? = StillProbeResult.cached()
-    private(set) var probing = false
-    private(set) var sessions: [SessionRecord] = []
+final class AppState: ObservableObject {
+    @Published private(set) var capabilities = DeviceCapabilities.current()
+    @Published private(set) var stillProbe: StillProbeResult? = StillProbeResult.cached()
+    @Published private(set) var probing = false
+    @Published private(set) var sessions: [SessionRecord] = []
 
-    var gatewayURL: String {
+    @Published var gatewayURL: String {
         didSet { UserDefaults.standard.set(gatewayURL, forKey: "gatewayURL") }
     }
 
@@ -22,9 +20,9 @@ final class AppState {
     let storage = ScanStorage()
     let launchedAt = Date()
     /// Set by the `--autostart-scan` developer flag: open a new scan straight away (smoke tests over USB).
-    private(set) var autostart = false
+    @Published private(set) var autostart = false
     /// Set by `--open-session <id>` (developer flag): the saved scan to open at launch.
-    var openSessionID: String?
+    @Published var openSessionID: String?
 
     /// Free space for the scan images and reconstruction; Object Capture needs room for ~100+ HEICs plus a checkpoint.
     static let minimumFreeBytes: Int64 = 1 << 30

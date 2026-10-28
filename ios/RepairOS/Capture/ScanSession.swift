@@ -1,7 +1,6 @@
 import ARKit
 import CoreImage
 import Foundation
-import Observation
 
 /// The scanner, as simple as the person needs it: point at the object, tap Scan, walk around while the live LiDAR
 /// point cloud fills in, tap Done. The object under the screen centre is locked automatically (the cloud brightens
@@ -15,39 +14,38 @@ import Observation
 /// Threading: the AR delegate runs on the main queue and only copies small buffers at ≤ 10 Hz; files are written
 /// on a background queue; ARFrames are never kept. Observable state changes ≤ 10 Hz.
 @MainActor
-@Observable
-final class ScanSession: NSObject {
+final class ScanSession: NSObject, ObservableObject {
     enum Stage: Equatable { case ready, locking, scanning, finishing, failed(String) }
 
     // UI state (≤ 10 Hz).
-    private(set) var stage: Stage = .ready
-    private(set) var cue: String?
-    private(set) var stills: [String] = []
-    private(set) var shotTick = 0
-    private(set) var lockTick = 0
-    private(set) var capturing = false
-    private(set) var torchLevel: Float = 0
-    private(set) var batteryQuestion = false
-    private(set) var boxPoints = 0
-    private(set) var box: ObjectBox?
+    @Published private(set) var stage: Stage = .ready
+    @Published private(set) var cue: String?
+    @Published private(set) var stills: [String] = []
+    @Published private(set) var shotTick = 0
+    @Published private(set) var lockTick = 0
+    @Published private(set) var capturing = false
+    @Published private(set) var torchLevel: Float = 0
+    @Published private(set) var batteryQuestion = false
+    @Published private(set) var boxPoints = 0
+    @Published private(set) var box: ObjectBox?
     /// Coverage of the object by accepted photos (the dial), the phone's sector (0…11), the cell the cue steers to.
-    private(set) var dome = CoverageDome()
-    private(set) var hereSector: Int?
-    private(set) var nextCell: Int?
+    @Published private(set) var dome = CoverageDome()
+    @Published private(set) var hereSector: Int?
+    @Published private(set) var nextCell: Int?
     /// +1 when a ring of the dome or the whole dome completes (one haptic each).
-    private(set) var milestoneTick = 0
+    @Published private(set) var milestoneTick = 0
     /// The locked box projected into the view (points, quantised to 4 pt), nil when off screen or larger than it.
-    private(set) var boxRect: CGRect?
+    @Published private(set) var boxRect: CGRect?
     /// The spot the "Move closer here" cue points at (world), drawn as an anchored marker by the renderer.
-    private(set) var closeTarget: SIMD3<Float>?
+    @Published private(set) var closeTarget: SIMD3<Float>?
     private var closeTargetSeen: TimeInterval = 0
     private var objectName: String?
     /// How much of what the backend needs is in (`ScanProgress`: views at the resolution target, required close-up
     /// faces, keyframe directions for the mesh), 0...1. One number for the dial and the cue.
-    private(set) var scanProgress = ScanProgress(views: 0, faces: nil, mesh: 0, linedUp: nil, value: 0, enough: false)
+    @Published private(set) var scanProgress = ScanProgress(views: 0, faces: nil, mesh: 0, linedUp: nil, value: 0, enough: false)
     var progress: Double { scanProgress.value }
     /// The scan has enough: no more stills or keyframes (the cloud keeps drawing), the cue says to tap Done.
-    private(set) var enough = false
+    @Published private(set) var enough = false
     private var enoughAt: Date?
 
     let record: SessionRecord
@@ -58,16 +56,16 @@ final class ScanSession: NSObject {
     let session = ARSession()
     /// What Lea sees and points at during this scan (Voice/LeaSight).
     let sight = LeaSight()
-    private(set) var renderer: PointCloudRenderer?
-    private(set) var torch: Torch
+    @Published private(set) var renderer: PointCloudRenderer?
+    @Published private(set) var torch: Torch
     private let analyzer = FrameAnalyzer()
     private let recorder: FrameRecorder
     /// 0 = the object as it stands; the flip step (later) starts 1.
-    private(set) var segment = 0
+    @Published private(set) var segment = 0
     /// "Turn it" (Capture/Handheld): set once the person turns the object instead of walking around it.
-    var handheld: HandheldController?
+    @Published var handheld: HandheldController?
     /// "Scan the bottom" (Capture/Handheld/FlipSegment): this continuation is a mini-scan of the flipped object.
-    var flip: FlipSegmentController?
+    @Published var flip: FlipSegmentController?
 
     private var lastTick: TimeInterval = 0
     private var lastRecord: TimeInterval = 0
@@ -163,8 +161,8 @@ final class ScanSession: NSObject {
     private var previous: ScanPackage?
     private var stillOffset = 0
     /// Relocalising against the saved map (continuation only); `aligned` once it matched.
-    private(set) var relocalizing = false
-    private(set) var aligned = true
+    @Published private(set) var relocalizing = false
+    @Published private(set) var aligned = true
     private var scanWanted = false
     static let relocalizeTimeout: TimeInterval = 5
 

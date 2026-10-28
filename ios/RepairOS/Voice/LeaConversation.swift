@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 import UIKit
 
 /// A conversation with Lea about one scan (or, on the home screen, about what is wrong before a scan). Each turn
@@ -9,8 +8,7 @@ import UIKit
 /// (`heardSentence`). The talk button is a strict tap toggle (`TalkToggle`, `tapTalk`): the mic opens on a tap and
 /// stays off after the answer until the next tap.
 @MainActor
-@Observable
-final class LeaConversation {
+final class LeaConversation: ObservableObject {
     struct Turn: Identifiable, Equatable {
         let id = UUID()
         var mine: Bool
@@ -33,7 +31,7 @@ final class LeaConversation {
     }
     private struct Weak { weak var value: LeaConversation? }
     private static var registry: [Weak] = []
-    @ObservationIgnored private(set) var visible = 0
+    private(set) var visible = 0
 
     func appeared() {
         visible += 1
@@ -53,64 +51,64 @@ final class LeaConversation {
     /// The gateway session, for sending what the person suspects (`POST /v1/sessions/{id}/story`).
     var sessionID: () -> String? = { nil }
     /// What the screen shows now, sent with each turn (a scan's stage, cue and progress); empty off the scanner.
-    @ObservationIgnored var live: () -> [String: String] = { [:] }
+    var live: () -> [String: String] = { [:] }
     /// While scanning: Lea's eyes (Voice/LeaSight). A turn's photos are taken when it starts and uploaded while the
     /// person talks (plus the keyframes of the last few seconds); her marks and measures land on the object. Nil off
     /// the scanner: turns go on words alone.
-    @ObservationIgnored var eyes: LeaEyes?
+    var eyes: LeaEyes?
     /// Lea offered an action ("Start a scan") and the person said yes out loud: the same as tapping it.
-    @ObservationIgnored var acceptOffer: ((String) -> Void)?
+    var acceptOffer: ((String) -> Void)?
     /// On a report: Lea moves its 3D model (LeaStage), each move timed to land with the sentence it belongs to.
-    @ObservationIgnored var onStage: ((StageCommand) -> Void)?
+    var onStage: ((StageCommand) -> Void)?
 
-    private(set) var turns: [Turn] = []
+    @Published private(set) var turns: [Turn] = []
     /// How many of `turns` came from the saved history (an earlier visit): the caption strip shows only this visit.
-    private(set) var historyCount = 0
-    private(set) var phase: Phase = .idle
+    @Published private(set) var historyCount = 0
+    @Published private(set) var phase: Phase = .idle
     /// The talk button's microphone is recording (tap to start, tap again to send).
-    private(set) var recording = false
+    @Published private(set) var recording = false
     /// Which sentence of the answer being spoken the person is hearing now (an index into its `sentences`), so the
     /// captions follow her voice instead of running ahead of it; nil when no answer is playing.
-    private(set) var heardSentence: Int?
+    @Published private(set) var heardSentence: Int?
     /// What the person is saying right now (live, from the phone's recognizer).
-    private(set) var liveCaption = ""
-    private(set) var action: (kind: String, label: String)?
+    @Published private(set) var liveCaption = ""
+    @Published private(set) var action: (kind: String, label: String)?
     /// Hands-free: after Lea answers, listen for the next turn without the wake word.
-    var handsFree = true
+    @Published var handsFree = true
     /// Called after each of Lea's answers.
-    @ObservationIgnored var afterTurn: (@MainActor () -> Void)?
+    var afterTurn: (@MainActor () -> Void)?
 
-    @ObservationIgnored private var task: Task<Void, Never>?
-    @ObservationIgnored private let recorder = VoiceRecorder()
-    @ObservationIgnored private var loaded = false
-    @ObservationIgnored private var firstAudioMs: Int?
-    @ObservationIgnored private var current: TurnState?
+    private var task: Task<Void, Never>?
+    private let recorder = VoiceRecorder()
+    private var loaded = false
+    private var firstAudioMs: Int?
+    private var current: TurnState?
     /// 3D moves waiting for their sentence to be heard: cancelled when Lea is stopped or a new turn starts, so a
     /// stopped answer never moves the model afterwards.
-    @ObservationIgnored private var stageMoves: [Task<Void, Never>] = []
+    private var stageMoves: [Task<Void, Never>] = []
     /// An answer started early on Ink-2's eager end: held until confirmed.
-    @ObservationIgnored private var holding = false
-    @ObservationIgnored private var heldEvents: [ConverseEvent] = []
+    private var holding = false
+    private var heldEvents: [ConverseEvent] = []
     /// A confirmed early answer's commit still in flight: every next turn waits for it, so its answer sees that exchange.
-    @ObservationIgnored private var pendingCommit: Task<Void, Never>?
+    private var pendingCommit: Task<Void, Never>?
     /// A confirmed early answer not known to be saved (its commit failed or is still out): the next turn carries its id
     /// (`converse?commit=`), and the gateway saves it before answering.
-    @ObservationIgnored private var unsavedHeld: String?
-    @ObservationIgnored private var speculativeText: String?
+    private var unsavedHeld: String?
+    private var speculativeText: String?
     /// The offer on screen when an early (Ink-2 eager) answer started: kept until the final words decide, so a
     /// final "yes" can still take it, and put back if the early answer is dropped.
-    @ObservationIgnored private var heldOffer: (kind: String, label: String)?
-    @ObservationIgnored private var speculativeTurn: UUID?
+    private var heldOffer: (kind: String, label: String)?
+    private var speculativeTurn: UUID?
     /// The talk button (tap toggle with a debounce).
-    @ObservationIgnored private var talk = TalkToggle()
+    private var talk = TalkToggle()
     /// The recording starting (serialised: a fast tap-tap-tap never leaves two starts racing for one recorder).
-    @ObservationIgnored private var recordStart: Task<Void, Never>?
-    @ObservationIgnored private var recordGeneration = 0
+    private var recordStart: Task<Void, Never>?
+    private var recordGeneration = 0
     /// The last words sent as a turn and when: the same words heard again a moment later (Apple's final and Ink-2's
     /// end for one utterance) are one turn, never a second question that replaces the answer.
-    @ObservationIgnored private var lastSent: (key: String, at: Date)?
+    private var lastSent: (key: String, at: Date)?
     /// Keeps `heardSentence` in step with the audio while an answer plays.
-    @ObservationIgnored private var captionClock: Task<Void, Never>?
+    private var captionClock: Task<Void, Never>?
 
     init(scanID: String?, gateway: GatewayClient, diag: Diag?) {
         self.scanID = scanID

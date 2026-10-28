@@ -1,13 +1,12 @@
 import CoreBluetooth
 import Foundation
-import Observation
 
 /// The phone's side of a Bluetooth multimeter: find it, connect, choose what it measures, publish what it reads.
 /// Everything runs on the main actor; CoreBluetooth calls back on the main queue (`queue: .main`), so the delegate
 /// conformances are `@preconcurrency`: the compiler checks at run time that each callback really is on the main actor.
 /// The radio is only touched by `start`, so the Bluetooth permission prompt appears when the person asks for a meter.
-@MainActor @Observable
-final class MeterLink: NSObject {
+@MainActor
+final class MeterLink: NSObject, ObservableObject {
     enum Phase: Equatable, Sendable {
         /// Not running, or Bluetooth is unavailable (see `message`).
         case off
@@ -20,16 +19,16 @@ final class MeterLink: NSObject {
         case lost
     }
 
-    private(set) var phase: Phase = .off
+    @Published private(set) var phase: Phase = .off
     /// One human sentence about the state, for the sheet. nil when there is nothing to say.
-    private(set) var message: String?
-    private(set) var sample: MeterSample?
-    private(set) var model: String?
-    private(set) var firmware: String?
-    private(set) var batteryV: Double?
-    private(set) var deviceName: String?
+    @Published private(set) var message: String?
+    @Published private(set) var sample: MeterSample?
+    @Published private(set) var model: String?
+    @Published private(set) var firmware: String?
+    @Published private(set) var batteryV: Double?
+    @Published private(set) var deviceName: String?
     /// What the meter was last told to do, for the `meter` object of a reading.
-    private(set) var mode: MeterMode = .idle
+    @Published private(set) var mode: MeterMode = .idle
     let intervalMs: UInt32 = 500
 
     private let profile: any MeterProfile

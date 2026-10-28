@@ -68,7 +68,7 @@ struct ScanRowButton: View {
     var selected = false
     var toggle: () -> Void = {}
     var select: () -> Void = {}
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
 
     var body: some View {
         let deletable = ScanLibrary.canDelete(record, app: app)
@@ -79,7 +79,7 @@ struct ScanRowButton: View {
                         .font(.title3)
                         .foregroundStyle(selected ? Palette.accent : Palette.secondary)
                         .opacity(deletable ? 1 : 0.35)
-                        .contentTransition(.symbolEffect(.replace))
+                        .symbolReplaceTransition()
                         .transition(.move(edge: .leading).combined(with: .opacity))
                         .accessibilityHidden(true)
                 }
@@ -117,7 +117,7 @@ extension View {
 }
 
 private struct ConfirmDeleteScan: ViewModifier {
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @Binding var record: SessionRecord?
     let deleted: () -> Void
 
@@ -148,7 +148,7 @@ private struct ConfirmDeleteScan: ViewModifier {
 /// never in the accent.
 struct SessionRow: View {
     let record: SessionRecord
-    @Environment(AppState.self) private var app
+    @EnvironmentObject private var app: AppState
     @State private var summary: Summary?
 
     struct Summary: Sendable { var verdict: ReportModel.Verdict?; var safety = false; var thumb: UIImage? }

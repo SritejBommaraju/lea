@@ -96,7 +96,7 @@ struct PhotoHero: View {
             loadFailed = loaded == nil
             withAnimation(Motion.fade) { image = loaded }
         }
-        .onChange(of: focus) { _, id in
+        .onValueChange(of: focus) { _, id in
             if let still = numbered.first(where: { $0.id == id })?.still, still != shown { lead = still }
         }
         .accessibilityElement(children: .contain)

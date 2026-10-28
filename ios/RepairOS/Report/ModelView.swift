@@ -294,7 +294,7 @@ struct ModelView: View {
     /// The recenter control (off where the view is only to look at, like the waiting stage).
     var controls = true
     /// The walkthrough playing on the stage: its pager drives the camera (TourCamera) and the spin stops.
-    var tour: WalkthroughPlayer? = nil
+    @ObservedOptional var tour: WalkthroughPlayer? = nil
     /// Lea's camera move while she answers (LeaStage): fly to a marker, look from a side, zoom.
     var cue: LeaStageCue? = nil
     let onPinTap: (String) -> Void

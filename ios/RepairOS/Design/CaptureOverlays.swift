@@ -44,7 +44,7 @@ struct CueBanner: View {
             Image(systemName: symbol)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(tone.glyph)
-                .contentTransition(.symbolEffect(.replace))
+                .symbolReplaceTransition()
                 .frame(width: 30, height: 30)
                 .background(tone.fill, in: Circle())
             Text(text)
@@ -75,8 +75,6 @@ struct ShotTick: View {
     var haptic = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private struct Pop { var scale: CGFloat; var opacity: Double }
-
     var body: some View {
         Image(systemName: "checkmark")
             .font(.system(size: 24, weight: .bold))
@@ -84,21 +82,8 @@ struct ShotTick: View {
             .frame(width: 56, height: 56)
             .background(Circle().fill(Palette.chalk))
             .overlay(Circle().strokeBorder(Palette.keyline, lineWidth: 1))
-            .keyframeAnimator(initialValue: Pop(scale: reduceMotion ? 1 : 0.7, opacity: 0), trigger: trigger) { view, pop in
-                view.scaleEffect(pop.scale).opacity(pop.opacity)
-            } keyframes: { _ in
-                KeyframeTrack(\.scale) {
-                    SpringKeyframe(1, duration: 0.3, spring: .init(response: 0.3, dampingRatio: 0.7))
-                    LinearKeyframe(1, duration: 0.35)
-                    LinearKeyframe(reduceMotion ? 1 : 0.94, duration: 0.2)
-                }
-                KeyframeTrack(\.opacity) {
-                    LinearKeyframe(1, duration: 0.08)
-                    LinearKeyframe(1, duration: reduceMotion ? 0.04 : 0.55)
-                    LinearKeyframe(0, duration: reduceMotion ? 0.08 : 0.22)
-                }
-            }
-            .sensoryFeedback(haptic ? Haptic.shot : .selection, trigger: trigger) { _, _ in haptic }
+            .modifier(CheckPopModifier(trigger: trigger, reduceMotion: reduceMotion))
+            .haptic(haptic ? Haptic.shot : .selection, trigger: trigger) { _, _ in haptic }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
@@ -336,8 +321,8 @@ struct LockBrackets: View {
             .keylined(CornerBrackets(), color: LockBoxSpec.color(phase), width: LockBoxSpec.lineWidth(phase))
             .scaleEffect(settle)
             .motion(Motion.fade, value: phase)
-            .sensoryFeedback(Haptic.lock, trigger: phase) { _, new in new == .locked }
-            .onChange(of: phase) { _, new in
+            .haptic(Haptic.lock, trigger: phase) { _, new in new == .locked }
+            .onValueChange(of: phase) { _, new in
                 guard new == .locked, !reduceMotion else { return }
                 settle = LockBoxSpec.lockOvershoot
                 withAnimation(Motion.settle) { settle = 1 }

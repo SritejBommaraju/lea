@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// The gateway's live events for one session (GET /v1/sessions/{id}/events, server-sent events), the channel that
 /// carries `report_ready`. While scanning, the app shows what the backend thinks the object is (`identified`) and how
@@ -7,8 +6,7 @@ import Observation
 /// offers on `fix_ready`. Reconnects with
 /// Last-Event-ID, so nothing is missed. State changes only when an event arrives (a few a second at most).
 @MainActor
-@Observable
-final class LiveEvents {
+final class LiveEvents: ObservableObject {
     struct Identity: Equatable, Sendable {
         var category: String
         var brand: String?
@@ -21,22 +19,22 @@ final class LiveEvents {
         }
     }
 
-    private(set) var identity: Identity?
+    @Published private(set) var identity: Identity?
     /// What the person said it is instead (tap to correct); shown in place of `identity`.
-    private(set) var corrected: String?
-    private(set) var areasChecked: Int?
-    private(set) var meshRev: Int?
+    @Published private(set) var corrected: String?
+    @Published private(set) var areasChecked: Int?
+    @Published private(set) var meshRev: Int?
     /// The backend's hero choice with that mesh revision (points, mesh, photos).
-    private(set) var hero: String?
-    private(set) var reportRev: Int?
+    @Published private(set) var hero: String?
+    @Published private(set) var reportRev: Int?
     /// "Fix it" offers for the top finding's part (`fix_ready`), when the search finished after the report.
-    private(set) var fix: FixIt?
+    @Published private(set) var fix: FixIt?
     /// The search ended with no offers (`fix_ready` with a status only): none, timeout, failed, or `limited` (the
     /// spend cap: "not available right now").
-    private(set) var fixEnded: String?
-    private(set) var connected = false
+    @Published private(set) var fixEnded: String?
+    @Published private(set) var connected = false
     /// The latest lead (`lead` event): an area worth a close look because of what the person said is wrong.
-    private(set) var lead: Lead?
+    @Published private(set) var lead: Lead?
 
     struct Lead: Equatable, Sendable {
         var area: String
@@ -56,7 +54,7 @@ final class LiveEvents {
     private var task: Task<Void, Never>?
 
     /// Where arrivals are logged (`live_event`, ms since the stream opened), when set.
-    var diag: Diag?
+    @Published var diag: Diag?
     private var openedAt: Date?
 
     init(scanID: String, corrected: String? = nil, diag: Diag? = nil) {

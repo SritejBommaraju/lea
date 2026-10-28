@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// Plays a walkthrough (Walkthrough.steps): Lea says each step's line, then a short beat, then the pager glides to
 /// the next card and the camera with it. Swiping to a card narrates that card instead; pause stops her mid-line and
@@ -12,27 +11,26 @@ import Observation
 /// her line's utterance id changed before it finished. The tour only ever stops its own line (`ownLine`), never the
 /// conversation's answer that paused it.
 @MainActor
-@Observable
-final class WalkthroughPlayer {
+final class WalkthroughPlayer: ObservableObject {
     /// The tour on screen, for the voice paths ("stop", the person starting to talk).
     static weak var current: WalkthroughPlayer?
 
-    private(set) var steps: [Walkthrough.Step] = []
+    @Published private(set) var steps: [Walkthrough.Step] = []
     /// The card being narrated (the pager scrolls to it; a swipe that settles sets it through `go(to:)`).
-    private(set) var index = 0
+    @Published private(set) var index = 0
     /// The pager's continuous position (1.5: halfway between the second and third cards). Only the hero reads it,
     /// so a swipe redraws the 3D view and nothing else.
-    var progress: Double = 0
-    private(set) var active = false
-    private(set) var playing = false
+    @Published var progress: Double = 0
+    @Published private(set) var active = false
+    @Published private(set) var playing = false
     /// The last card has been said: the play control replays from the start.
-    private(set) var finished = false
+    @Published private(set) var finished = false
 
-    @ObservationIgnored private var task: Task<Void, Never>?
+    private var task: Task<Void, Never>?
     /// The first card waits for Lea to finish what she is saying (the voice answer that asked for the tour).
-    @ObservationIgnored private var waitForLea = false
+    private var waitForLea = false
     /// The utterance of the card the tour last said (LeaVoice.utteranceID): the only speech the tour may stop.
-    @ObservationIgnored private var ownLine: Int?
+    private var ownLine: Int?
 
     /// The camera arrives before Lea starts talking about the spot.
     static let lead: Duration = .milliseconds(450)

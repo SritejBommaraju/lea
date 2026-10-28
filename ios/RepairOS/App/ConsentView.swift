@@ -45,7 +45,7 @@ struct ConsentView: View {
             .frame(maxWidth: 600, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .scrollBounceBehavior(.basedOnSize)
+        .bounceBasedOnSize()
         .safeAreaInset(edge: .bottom) {
             GlassBar {
                 if let onAnswer {

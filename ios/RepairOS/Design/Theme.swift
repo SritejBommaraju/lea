@@ -361,23 +361,25 @@ extension View {
 /// One haptic per meaningful moment, fired on the same frame as its visual. Nothing else buzzes.
 enum Haptic {
     /// The object is locked.
-    static let lock = SensoryFeedback.impact(weight: .medium, intensity: 0.9)
+    static let lock = HapticKind.impact(.medium, 0.9)
     /// A photo was accepted (the shot tick).
-    static let shot = SensoryFeedback.impact(flexibility: .rigid, intensity: 0.55)
+    static let shot = HapticKind.impact(.rigid, 0.55)
     /// A coverage row or the whole dome completed; the scan has enough.
-    static let milestone = SensoryFeedback.success
+    static let milestone = HapticKind.success
     /// A cue turned to caution or stop.
-    static let warn = SensoryFeedback.warning
+    static let warn = HapticKind.warning
     /// Primary button commit.
-    static let commit = SensoryFeedback.impact(weight: .light, intensity: 0.7)
+    static let commit = HapticKind.impact(.light, 0.7)
     /// The report landed with likely problems (same frame as the verdict rising and Lea starting to speak).
-    static let verdictProblems = SensoryFeedback.warning
+    static let verdictProblems = HapticKind.warning
     /// The report landed and nothing looked wrong.
-    static let verdictClear = SensoryFeedback.success
+    static let verdictClear = HapticKind.success
     /// A marker or a problem row chosen (the camera flies to it).
-    static let select = SensoryFeedback.selection
+    static let select = HapticKind.selection
+    /// The mic button and other light taps.
+    static let light = HapticKind.impact(.light, 1)
     /// Lea's move on the 3D model landed (once per move, never per frame).
-    static let leaShow = SensoryFeedback.selection
+    static let leaShow = HapticKind.selection
 }
 
 // MARK: - Symbols

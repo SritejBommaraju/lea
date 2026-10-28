@@ -1,6 +1,5 @@
 import AppIntents
 import Foundation
-import Observation
 
 /// "Hey Siri, scan with Lea": opens the app straight into a new scan with what's wrong filled in. Siri asks for it
 /// ("What's wrong with it?") and the home screen starts the scan with the answer as the person's description.
@@ -48,15 +47,14 @@ struct LeaShortcuts: AppShortcutsProvider {
 
 /// Where the intent leaves its request until the home screen picks it up (the app may still be launching).
 @MainActor
-@Observable
-final class IntentInbox {
+final class IntentInbox: ObservableObject {
     static let shared = IntentInbox()
-    private(set) var pending: String?
+    @Published private(set) var pending: String?
     /// Goes up on every request, so the home screen reacts even to the same words twice.
-    private(set) var requests = 0
+    @Published private(set) var requests = 0
 
     /// Goes up on every "Hey lea" from Siri (the home screen opens the conversation, listening).
-    private(set) var talks = 0
+    @Published private(set) var talks = 0
     /// Lea greets once when that conversation opens.
     private var greet = false
 
