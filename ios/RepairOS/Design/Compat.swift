@@ -100,9 +100,16 @@ extension View {
         if #available(iOS 17, *) { scrollClipDisabled() } else { self }
     }
 
-    /// A long list starts at its bottom (iOS 17); the callers also scroll to the newest line themselves.
-    @ViewBuilder func startsAtBottom() -> some View {
-        if #available(iOS 17, *) { defaultScrollAnchor(.bottom) } else { self }
+    /// A long list starts at its bottom (iOS 17); before, it scrolls to `id` (the newest line) once it has laid out.
+    @ViewBuilder func startsAtBottom<ID: Hashable>(_ proxy: ScrollViewProxy, scrollingTo id: ID?) -> some View {
+        if #available(iOS 17, *) {
+            defaultScrollAnchor(.bottom)
+        } else {
+            onAppear {
+                guard let id else { return }
+                DispatchQueue.main.async { proxy.scrollTo(id, anchor: .bottom) }
+            }
+        }
     }
 
     /// A width computed from the screen's width (what `containerRelativeFrame` gave on iOS 17 for a full-width parent).
@@ -184,6 +191,7 @@ struct CheckPopModifier<T: Equatable>: ViewModifier {
     let reduceMotion: Bool
     @State private var scale: CGFloat = 1
     @State private var opacity: Double = 0
+    @State private var fade: Task<Void, Never>?
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -207,8 +215,10 @@ struct CheckPopModifier<T: Equatable>: ViewModifier {
                 .onValueChange(of: trigger) {
                     scale = reduceMotion ? 1 : 0.7
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { scale = 1; opacity = 1 }
-                    Task { @MainActor in
+                    fade?.cancel()   // a newer tick owns the fade
+                    fade = Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(650))
+                        guard !Task.isCancelled else { return }
                         withAnimation(.linear(duration: reduceMotion ? 0.08 : 0.22)) { opacity = 0; scale = reduceMotion ? 1 : 0.94 }
                     }
                 }
@@ -223,6 +233,7 @@ struct SettleOnceModifier: ViewModifier {
     let trigger: Bool
     let reduceMotion: Bool
     @State private var scale: CGFloat = 1
+    @State private var settle: Task<Void, Never>?
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -244,8 +255,10 @@ struct SettleOnceModifier: ViewModifier {
                 .onValueChange(of: trigger) {
                     guard trigger, !reduceMotion else { return }
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) { scale = 1.04 }
-                    Task { @MainActor in
+                    settle?.cancel()
+                    settle = Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(180))
+                        guard !Task.isCancelled else { return }
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) { scale = 1 }
                     }
                 }
@@ -348,13 +361,22 @@ struct Watching<O: ObservableObject, Content: View>: View {
 
 // MARK: - Visibility, announcements and row groups
 
+private struct OnScreenKey: PreferenceKey {
+    static let defaultValue = true
+    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = nextValue() }
+}
+
 extension View {
     /// `visible` follows whether the view is on screen (scroll visibility is iOS 18; appear and disappear before).
     @ViewBuilder func tracksVisibility(_ visible: Binding<Bool>) -> some View {
         if #available(iOS 18, *) {
             onScrollVisibilityChange(threshold: 0.05) { visible.wrappedValue = $0 }
         } else {
-            onAppear { visible.wrappedValue = true }.onDisappear { visible.wrappedValue = false }
+            // Appear and disappear do not fire when a non-lazy stack scrolls a view off screen, so measure it.
+            background(GeometryReader { g in
+                Color.clear.preference(key: OnScreenKey.self, value: g.frame(in: .global).intersects(UIScreen.main.bounds))
+            })
+            .onPreferenceChange(OnScreenKey.self) { visible.wrappedValue = $0 }
         }
     }
 }

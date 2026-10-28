@@ -363,7 +363,7 @@ struct ConversationPanel: View {
                 .padding(.vertical, Spacing.s)
             }
             .bounceBasedOnSize()
-            .startsAtBottom()
+            .startsAtBottom(proxy, scrollingTo: convo.turns.last?.id)
             .onValueChange(of: convo.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
             .onValueChange(of: convo.heardSentence) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo(convo.turns.last?.id, anchor: .bottom) } }
             .onValueChange(of: isFailed) { _, failed in if failed { withAnimation(Motion.fade) { proxy.scrollTo("failed", anchor: .bottom) } } }
@@ -481,7 +481,7 @@ struct LeaTranscriptSheet: View {
                     .padding(Spacing.gutter)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .startsAtBottom()
+                .startsAtBottom(proxy, scrollingTo: "end")
                 // New words while the transcript is open: it follows the latest line.
                 .onValueChange(of: feed.turns.last?.text) { _, _ in withAnimation(Motion.fade) { proxy.scrollTo("end", anchor: .bottom) } }
             }
