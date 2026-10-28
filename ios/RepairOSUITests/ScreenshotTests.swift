@@ -47,9 +47,12 @@ final class ScreenshotTests: XCTestCase {
             let screen = current.label
             if screen == "done" { break }
             if screen == last || screen == "start" { Thread.sleep(forTimeInterval: 0.25); continue }
+            Thread.sleep(forTimeInterval: settle[screen] ?? 1.5)
+            // The label is read through a slow accessibility query; if the walk has moved on while it settled, this
+            // screen is gone, so do not file the next screen's picture under its name.
+            guard current.label == screen else { continue }
             last = screen
             lastChange = Date()
-            Thread.sleep(forTimeInterval: settle[screen] ?? 1.5)
             XCTAssertTrue(app.state == .runningForeground, "\(screen): the app is no longer running")
             shoot(app, stem: "\(screen)-\(device)-\(appearance)-\(text)", out: env["SCREENS_OUT"], audit: audit)
             taken.append(screen)
