@@ -123,11 +123,12 @@ enum BoxFitter {
     }
 
     /// A phone without LiDAR has no depth cloud, so `fit` finds nothing. ARKit's sparse feature points still land on
-    /// textured objects: the ones within `sparseRadius` of the tap and above the support are the object's footprint.
-    /// With too few of them (a plain, glossy or dark object) the box is a default one centred on the tap, and the
-    /// result says so (`measured` false): the person can tap the object to move it, and the session notes that the
-    /// size was assumed.
-    static let sparseRadius: Float = 0.20
+    /// textured objects: the ones close to the viewing ray (within `sparseRayRadius`), in front of the camera and
+    /// above the support, are the object's footprint. The ray hits the table BEHIND a raised object, so the table
+    /// hit is never used to place the box. With too few points (a plain, glossy or dark object) the box is a default
+    /// one where the ray crosses the middle of a default-height object, and the result says so (`measured` false):
+    /// the person can tap the object to move it, and the session notes that the size was assumed.
+    static let sparseRayRadius: Float = 0.10
     static let sparseMinPoints = 6
     /// The default footprint and height (m) of an object ARKit gave no points for: about a hand-held gadget.
     static let assumedSize = SIMD3<Float>(0.15, 0.10, 0.15)
@@ -139,24 +140,37 @@ enum BoxFitter {
         var pointsUsed: Int
     }
 
-    static func fitSparse(featurePoints: [SIMD3<Float>], tap: SIMD3<Float>, planeY: Float) -> SparseFit {
+    static func fitSparse(featurePoints: [SIMD3<Float>], rayOrigin: SIMD3<Float>, rayDirection: SIMD3<Float>,
+                          tap: SIMD3<Float>, planeY: Float) -> SparseFit {
+        let dir = simd_normalize(rayDirection)
         let near = featurePoints.filter { p in
             let above = p.y - planeY
-            let dx = p.x - tap.x, dz = p.z - tap.z
-            return above >= 0.01 && above <= maxAbovePlane && dx * dx + dz * dz <= sparseRadius * sparseRadius
+            guard above >= 0.01, above <= maxAbovePlane else { return false }
+            let v = p - rayOrigin
+            let along = simd_dot(v, dir)
+            return along > 0.05 && simd_length(v - along * dir) <= sparseRayRadius
         }
         if near.count >= sparseMinPoints {
             // Drop strays: a feature point on the wall behind or a cable beside it. Keep what lies within twice the
-            // median distance from the tap (at least 6 cm).
-            let distances = near.map { hypot($0.x - tap.x, $0.z - tap.z) }.sorted()
-            let keep = max(0.06, 2 * distances[distances.count / 2])
-            let core = near.filter { hypot($0.x - tap.x, $0.z - tap.z) <= keep }
+            // median distance from the points' own median position (at least 6 cm).
+            func median(_ v: [Float]) -> Float { v.sorted()[v.count / 2] }
+            let centre = SIMD2(median(near.map(\.x)), median(near.map(\.z)))
+            let distances = near.map { hypot($0.x - centre.x, $0.z - centre.y) }
+            let keep = max(0.06, 2 * median(distances))
+            let core = near.filter { hypot($0.x - centre.x, $0.z - centre.y) <= keep }
             if core.count >= sparseMinPoints, let fitted = box(around: core, planeY: planeY) {
                 return SparseFit(box: fitted, measured: true, pointsUsed: core.count)
             }
         }
+        // Default size, where the view ray crosses the middle of such an object (the table hit when the ray points
+        // level or up, which a person looking at a table does not).
         let size = assumedSize
-        let fallback = ObjectBox(center: SIMD3(tap.x, planeY + size.y / 2, tap.z), size: size, yaw: 0)
+        var centreXZ = SIMD2(tap.x, tap.z)
+        if dir.y < -0.05 {
+            let t = (planeY + size.y / 2 - rayOrigin.y) / dir.y
+            if t > 0 { centreXZ = SIMD2(rayOrigin.x + dir.x * t, rayOrigin.z + dir.z * t) }
+        }
+        let fallback = ObjectBox(center: SIMD3(centreXZ.x, planeY + size.y / 2, centreXZ.y), size: size, yaw: 0)
         return SparseFit(box: fallback, measured: false, pointsUsed: near.count)
     }
 

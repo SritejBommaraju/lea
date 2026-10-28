@@ -97,6 +97,8 @@ final class ScanSession: NSObject, ObservableObject {
     @Published var ghost: ProductGhost?
     /// The size of the object's box was assumed (no depth and too few feature points), not measured.
     @Published private(set) var boxAssumed = false
+    /// Photos taken back with Retake that could not be withdrawn (already uploaded): on file, not counted toward the cap.
+    private var retakenStills: Set<String> = []
     private var lockFailure: LockFailure?
     private enum LockFailure { case noSurface, noObject }
     private let analyzer = FrameAnalyzer()
@@ -419,7 +421,8 @@ final class ScanSession: NSObject, ObservableObject {
             var assumed = false
             var featureUsed = 0
             if fitted == nil, !lidar {
-                let sparse = BoxFitter.fitSparse(featurePoints: features, tap: hitPoint, planeY: planeY)
+                let sparse = BoxFitter.fitSparse(featurePoints: features, rayOrigin: origin, rayDirection: dir, tap: hitPoint,
+                                                 planeY: planeY)
                 fitted = sparse.box
                 assumed = !sparse.measured
                 featureUsed = sparse.pointsUsed
@@ -583,9 +586,15 @@ final class ScanSession: NSObject, ObservableObject {
     /// The on-device check of what this scan saved (QualityGate's session half): reads the folder, writes
     /// `scans/<scan_id>/quality.json`. `r` is the record `finish()` returned.
     func qualityReport(for r: SessionRecord) async -> QualityReport {
-        let store = self.storage, seconds = scanSeconds, lidar = hasLiDAR, assumed = boxAssumed, locked = box != nil
+        let store = self.storage, seconds = scanSeconds, lidar = hasLiDAR, locked = box != nil
         let free = DeviceHealth.freeBytes()
-        let sides: (done: Int, required: Int)? = dome.requiredFaces > 0 ? (dome.closeFaces.count, dome.requiredFaces) : nil
+        // A continuation starts with an empty dome: what the earlier visits found (close-up sides done, an assumed
+        // size) comes from the report they wrote, so the check judges the whole saved scan.
+        let earlier = continuing ? SessionQuality.read(scanDir: store.scanDir(r)) : nil
+        let assumed = boxAssumed || (earlier?.objectSizeAssumed ?? false)
+        let doneSides = max(dome.closeFaces.count, earlier?.coverage.closeUpSidesDone ?? 0)
+        let requiredSides = max(dome.requiredFaces, earlier?.coverage.closeUpSidesRequired ?? 0)
+        let sides: (done: Int, required: Int)? = requiredSides > 0 ? (min(doneSides, requiredSides), requiredSides) : nil
         let report = await Task.detached(priority: .userInitiated) {
             SessionQuality.inspect(storage: store, record: r, hasLiDAR: lidar, objectLocked: locked, objectSizeAssumed: assumed,
                                    scanSeconds: seconds, freeBytes: free, closeUpSides: sides)
@@ -596,8 +605,8 @@ final class ScanSession: NSObject, ObservableObject {
     }
 
     func recordQualityDecision(uploadedAnyway: Bool) {
-        SessionQuality.recordDecision(uploadedAnyway: uploadedAnyway, scanDir: storage.scanDir(record))
-        diag.log("quality_decision", ["uploaded_anyway": uploadedAnyway])
+        let saved = SessionQuality.recordDecision(uploadedAnyway: uploadedAnyway, scanDir: storage.scanDir(record))
+        diag.log("quality_decision", ["uploaded_anyway": uploadedAnyway, "saved": saved])
     }
 
     private func supportPlane() -> SupportPlane? {
@@ -643,6 +652,8 @@ final class ScanSession: NSObject, ObservableObject {
         let t = frame.timestamp
         // Turning it: every pose below is the camera relative to the object (Capture/Handheld).
         handheld?.feed(frame)
+        // Tracking, heat, storage first, on every frame: a frame taken as the position is lost must not be recorded.
+        updateAlerts(frame)
         let pose = handheld?.cameraInObject(frame.camera.transform, at: t) ?? frame.camera.transform
         recentPoses.append((t, pose))
         if let first = recentPoses.first, t - first.t > 0.3 { recentPoses.removeFirst() }
@@ -671,7 +682,6 @@ final class ScanSession: NSObject, ObservableObject {
         lastTick = t
         let m = pose
         if relocalizing, case .normal = frame.camera.trackingState { relocalized() }
-        updateAlerts(frame)
         refreshCue()
         if let shot = lastShot, Date().timeIntervalSince(shot.at) > Self.retakeWindow { lastShot = nil }
         centerDepth = Self.centerDepth(frame)
@@ -877,8 +887,8 @@ final class ScanSession: NSObject, ObservableObject {
         let worthStill = CaptureSelection.worthShooting(cell: cellHere, predictedPx: objDistance.map { DetailTarget.pxPerMm(fx: stillFx, distance: $0) },
                                                         best: cellBest)
         let facesLeft = max(0, dome.requiredFaces - dome.closeFaces.count)
-        let roomForOrbit = stills.count < CaptureSelection.maxStills - facesLeft
-        let roomForClose = faceWanted || stills.count < CaptureSelection.maxStills
+        let roomForOrbit = CaptureSelection.hasRoomForOrbit(kept: stills.count, retaken: retakenStills.count, facesLeft: facesLeft)
+        let roomForClose = faceWanted || CaptureSelection.hasRoomForClose(kept: stills.count, retaken: retakenStills.count)
         if closeMode && inClose && closeResolved, roomForClose, movedClose || retryFace, closeOK, steadyEnough, !capturing,
            closeResult.accept || closeResult.reason == "Keep the object in frame" {
             lastCloseShotPose = m
@@ -1296,6 +1306,8 @@ final class ScanSession: NSObject, ObservableObject {
         if withdrawn {
             stills.removeAll { $0 == shot.id }
             removeStillFiles(shot.id)
+        } else {
+            retakenStills.insert(shot.id)
         }
         if let cell = shot.cell {
             if shot.coveredCell { dome.uncover(cell) }

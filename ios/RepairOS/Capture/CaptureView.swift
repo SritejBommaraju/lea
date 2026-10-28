@@ -29,6 +29,8 @@ struct SessionFlowView: View {
     /// Bumped after a continuation so the report view starts over (it shows "Updating…" until the new report).
     @State private var reportVersion = 0
     @State private var live: LiveEvents?
+    /// The product picture of the latest scan, kept for the next one ("Keep scanning", "Scan the bottom").
+    @State private var ghostInUse: ProductGhost?
 
     init(record: SessionRecord, ghost: ProductGhost? = nil) {
         self.record = record
@@ -40,13 +42,15 @@ struct SessionFlowView: View {
     var body: some View {
         Group {
             if let scan, scan.continuing {
-                ScanView(scan: scan, live: live, close: { leaveContinuation(scan) }, keepScanning: { continueScanning() }) { r in
+                ScanView(scan: scan, live: live, close: { leaveContinuation(scan) },
+                         keepScanning: { continueScanning(carrying: scan.ghost) }) { r in
                     withAnimation(Motion.reveal) {
                         finished = r
                         self.scan = nil
                         reportVersion += 1
                     }
                 }
+                .id(ObjectIdentifier(scan))   // a new session starts with a clean review state
                 .transition(.opacity)
             } else if finished != nil || record.status != .capturing, let upload {
                 ReportView(record: current, upload: upload, close: { dismiss() })
@@ -63,9 +67,10 @@ struct SessionFlowView: View {
             } else if finished != nil || record.status != .capturing {
                 OfflineView(close: { dismiss() })
             } else if let scan {
-                ScanView(scan: scan, live: live, close: { dismiss() }, keepScanning: { continueScanning() }) { r in
+                ScanView(scan: scan, live: live, close: { dismiss() }, keepScanning: { continueScanning(carrying: scan.ghost) }) { r in
                     withAnimation(Motion.reveal) { finished = r }
                 }
+                .id(ObjectIdentifier(scan))
                     .environment(\.scanBottom, scan.hasLiDAR ? ScanBottomAction { r in if let r { finished = r; scanBottom(r) } } : nil)
                     .transition(.opacity)
             }
@@ -160,16 +165,21 @@ struct SessionFlowView: View {
         }
     }
 
-    private func continueScanning() {
+    /// `carrying`: the product picture the scan being left was showing (it may have arrived after the scan began).
+    private func continueScanning(carrying picture: ProductGhost? = nil) {
         guard canContinue else { return }
+        if let picture { ghostInUse = picture }
         let latest = app.storage.listSessions().first { $0.id == current.id } ?? current
-        scan = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        let s = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        s.ghost = ghostInUse ?? ghost
+        scan = s
     }
 
     /// "Scan the bottom": a continuation that is a quick scan of the flipped object (Capture/Handheld/FlipSegment).
     private func scanBottom(_ r: SessionRecord) {
         let latest = app.storage.listSessions().first { $0.id == r.id } ?? r
         let s = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        s.ghost = ghostInUse ?? ghost
         s.flip = FlipSegmentController(scan: s)
         LeaVoice.shared.dynamicCue(FlipSegmentController.prompt, diag: s.diag)
         withAnimation(Motion.reveal) { scan = s }

@@ -321,6 +321,15 @@ enum CaptureSelection {
         var sharpness: Double
     }
 
+    /// Room for another orbit photo: the kept photos that were not retaken, plus the close-up sides still to come,
+    /// stay under the cap. A retaken photo that was already uploaded stays on file but no longer takes a slot, or
+    /// retaking at the cap would erase a view and then refuse the new photo.
+    static func hasRoomForOrbit(kept: Int, retaken: Int, facesLeft: Int) -> Bool {
+        kept - retaken < maxStills - facesLeft
+    }
+
+    static func hasRoomForClose(kept: Int, retaken: Int) -> Bool { kept - retaken < maxStills }
+
     /// Before shooting: a new cell, or a clearly closer view of a covered one (predicted resolution).
     static func worthShooting(cell: Int?, predictedPx: Float?, best: [Int: Best]) -> Bool {
         guard let cell, let b = best[cell] else { return true }

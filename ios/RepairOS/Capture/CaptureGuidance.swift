@@ -216,7 +216,8 @@ struct CueDebouncer: Sendable {
         }
         let delay: TimeInterval = (text != nil && tone == .caution) ? Self.cautionDelay : 0
         let heldLongEnough = now - pendingSince >= delay
-        let leavingWarning = shown != nil && (shownTone == .caution) && now - shownSince < Self.minHold
+        // A stop cue (too close, back up) always shows at once; only quieter cues wait for the warning's minimum hold.
+        let leavingWarning = tone != .stop && shown != nil && shownTone == .caution && now - shownSince < Self.minHold
         if heldLongEnough, !leavingWarning {
             shown = text
             shownTone = tone

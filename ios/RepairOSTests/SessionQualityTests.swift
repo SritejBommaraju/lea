@@ -62,6 +62,26 @@ struct SessionQualityTests {
         #expect(side == 1 && top == 1)   // r0s01 and r1s01 are the same direction; the underside's b-cells are another scan
     }
 
+    @Test func missingSidesAndMissingTopAreBothReported() {
+        var f = goodFacts()
+        f.stills = (0..<5).map { still(String(format: "r0s%02d", $0)) }
+        let r = SessionQuality.evaluate(f)
+        #expect(ids(r).contains("coverage") && ids(r).contains("top"))
+    }
+
+    @Test func aReportThatCouldNotBeWrittenSaysSoOnTheReview() throws {
+        // A scan folder that does not exist: reading finds nothing and the write fails.
+        let root = FileManager.default.temporaryDirectory.appending(path: "lea_quality_nowrite_\(UUID().uuidString)")
+        let storage = ScanStorage(root: root)
+        let record = try storage.newSession(symptom: nil, engine: .arkit)
+        try FileManager.default.removeItem(at: storage.scanDir(record))
+        defer { try? FileManager.default.removeItem(at: root) }
+        let report = SessionQuality.inspect(storage: storage, record: record, hasLiDAR: false, objectLocked: false,
+                                            objectSizeAssumed: false, scanSeconds: nil, freeBytes: nil, closeUpSides: nil)
+        #expect(report.findings.contains { $0.id == "not_saved" })
+        #expect(!SessionQuality.recordDecision(uploadedAnyway: true, scanDir: storage.scanDir(record)))
+    }
+
     @Test func noPhotoFromAboveIsAskedFor() {
         var f = goodFacts()
         f.stills = (0..<10).map { still(String(format: "r%ds%02d", $0 % 2, $0)) }

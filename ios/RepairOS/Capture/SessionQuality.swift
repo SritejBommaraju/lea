@@ -171,7 +171,8 @@ enum SessionQuality {
             } else if side < sideTarget {
                 let msg = "Photos cover \(side) of \(sideTarget) sides. Walk the rest of the way around it, including the back."
                 add("coverage", side < minSides ? .blocker : .warning, msg)
-            } else if top == 0 {
+            }
+            if f.objectLocked, top == 0 {
                 add("top", .warning, "Nothing was photographed from above. Hold the phone over it and take a few from the top.")
             }
             if let done = f.closeUpSidesDone, let required = f.closeUpSidesRequired, required > 0, done < required {
@@ -307,12 +308,18 @@ enum SessionQuality {
     }
 
     /// Records what the person chose after seeing the findings (so the gateway can tell a reviewed scan from a
-    /// hurried one). Does nothing when there is no report.
-    static func recordDecision(uploadedAnyway: Bool, scanDir: URL) {
-        guard var report = read(scanDir: scanDir) else { return }
+    /// hurried one). False when there is no report or it could not be written.
+    @discardableResult
+    static func recordDecision(uploadedAnyway: Bool, scanDir: URL) -> Bool {
+        guard var report = read(scanDir: scanDir) else { return false }
         report.uploadedAnyway = uploadedAnyway
-        write(report, scanDir: scanDir)
+        return write(report, scanDir: scanDir)
     }
+
+    /// Said on the review when `quality.json` could not be written (the phone is out of room): the check still
+    /// shows, but the person knows the gateway will not have it.
+    static let notSavedNote = QualityFinding(id: "not_saved", severity: .note,
+                                             message: "This check could not be saved on the phone, so it will not be sent with the scan.")
 
     /// Reads the folder, judges it, writes `quality.json`. Off the main thread: it reads a few dozen small files.
     static func inspect(storage: ScanStorage, record: SessionRecord, hasLiDAR: Bool, objectLocked: Bool, objectSizeAssumed: Bool,
@@ -320,8 +327,10 @@ enum SessionQuality {
         let gathered = Self.facts(storage: storage, record: record, hasLiDAR: hasLiDAR, objectLocked: objectLocked,
                                   objectSizeAssumed: objectSizeAssumed, scanSeconds: scanSeconds, freeBytes: freeBytes,
                                   closeUpSides: closeUpSides)
-        let report = evaluate(gathered)
-        write(report, scanDir: storage.scanDir(record))
+        var report = evaluate(gathered)
+        if !write(report, scanDir: storage.scanDir(record)) {
+            report.findings.append(notSavedNote)
+        }
         return report
     }
 }

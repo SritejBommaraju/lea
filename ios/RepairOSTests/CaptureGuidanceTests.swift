@@ -110,6 +110,14 @@ struct CaptureGuidanceTests {
         #expect(d.update("Keep walking around it", tone: .guide, now: 2.3) == "Keep walking around it")
     }
 
+    @Test func aStopCueBypassesTheHoldOfAnOlderWarning() {
+        var d = CueDebouncer()
+        _ = d.update("Too far: move closer", tone: .caution, now: 0)
+        #expect(d.update("Too far: move closer", tone: .caution, now: 1) == "Too far: move closer")
+        // Moved too close a moment later: the stop cue is on screen at once, not after the warning's 1.2 s.
+        #expect(d.update("Too close: back up", tone: .stop, now: 1.2) == "Too close: back up")
+    }
+
     @Test func guidanceAndStopCuesAreNotDelayed() {
         var d = CueDebouncer()
         #expect(d.update("Walk slowly around it", tone: .guide, now: 0) == "Walk slowly around it")
@@ -223,31 +231,54 @@ struct CaptureGuidanceTests {
         #expect(!ScanProgress.main(dome: partial, keyframeSectors: 0, lidar: false).enough)
     }
 
-    @Test func theBoxComesFromFeaturePointsWhenThereIsNoDepth() {
-        let tap = SIMD3<Float>(0.5, 0, 0.5)
+    /// A camera 50 cm in front of and 15 cm above a small object at the origin, looking at its middle. The viewing ray
+    /// goes on to hit the table 25 cm BEHIND the object, so a box placed at that hit would miss the object.
+    private let rayOrigin = SIMD3<Float>(0, 0.15, 0.5)
+    private var rayDirection: SIMD3<Float> { simd_normalize(SIMD3(0, 0.05, 0) - rayOrigin) }
+    private var tableHit: SIMD3<Float> {
+        let t = (0 - rayOrigin.y) / rayDirection.y
+        return rayOrigin + rayDirection * t
+    }
+
+    @Test func theBoxComesFromFeaturePointsOnTheViewingRayWhenThereIsNoDepth() {
         var points: [SIMD3<Float>] = []
         for i in 0..<12 {
             let a = Float(i) * 0.5
-            points.append(SIMD3(tap.x + 0.04 * cos(a), 0.03 + 0.005 * Float(i), tap.z + 0.06 * sin(a)))
+            points.append(SIMD3(0.04 * cos(a), 0.03 + 0.005 * Float(i), 0.06 * sin(a)))
         }
-        // A stray on the wall behind and the table's own points are ignored.
-        points.append(SIMD3(tap.x + 0.19, 0.20, tap.z))
-        points.append(SIMD3(tap.x, 0.0, tap.z))
-        let fit = BoxFitter.fitSparse(featurePoints: points, tap: tap, planeY: 0)
+        // A point on a wall to the side and the table's own point are ignored.
+        points.append(SIMD3(0.19, 0.20, 0))
+        points.append(SIMD3(0, 0.0, 0))
+        let fit = BoxFitter.fitSparse(featurePoints: points, rayOrigin: rayOrigin, rayDirection: rayDirection, tap: tableHit, planeY: 0)
+        #expect(tableHit.z < -0.2)   // the table hit really is far behind the object
         #expect(fit.measured)
         #expect(fit.pointsUsed >= BoxFitter.sparseMinPoints)
         #expect(abs(fit.box.planeY) < 1e-5)
-        #expect(simd_distance(SIMD2(fit.box.center.x, fit.box.center.z), SIMD2(tap.x, tap.z)) < 0.05)
-        #expect(points.prefix(12).allSatisfy { fit.box.contains($0, margin: 0.01) })
+        #expect(simd_distance(SIMD2(fit.box.center.x, fit.box.center.z), SIMD2(0, 0)) < 0.05)
+        #expect(points.prefix(12).allSatisfy { fit.box.contains($0, margin: 0.02) })
     }
 
-    @Test func withTooFewPointsTheBoxIsADefaultAndSaysSo() {
-        let tap = SIMD3<Float>(1, 0, -1)
-        let fit = BoxFitter.fitSparse(featurePoints: [SIMD3(1.01, 0.05, -1), SIMD3(0.99, 0.06, -1.02)], tap: tap, planeY: 0)
+    @Test func withTooFewPointsTheBoxIsADefaultWhereTheRayMeetsTheObjectAndSaysSo() {
+        let fit = BoxFitter.fitSparse(featurePoints: [SIMD3(0.01, 0.05, 0), SIMD3(-0.01, 0.06, 0.02)], rayOrigin: rayOrigin,
+                                      rayDirection: rayDirection, tap: tableHit, planeY: 0)
         #expect(!fit.measured)
         #expect(fit.box.size == BoxFitter.assumedSize)
-        #expect(fit.box.center.x == tap.x && fit.box.center.z == tap.z && abs(fit.box.planeY) < 1e-6)
-        #expect(!BoxFitter.fitSparse(featurePoints: [], tap: tap, planeY: 0).measured)
+        // Where the ray crosses the middle of a default-height object, not at the table hit behind it.
+        #expect(abs(fit.box.center.x) < 1e-4 && abs(fit.box.center.z) < 1e-3 && abs(fit.box.planeY) < 1e-6)
+        #expect(!BoxFitter.fitSparse(featurePoints: [], rayOrigin: rayOrigin, rayDirection: rayDirection, tap: tableHit, planeY: 0).measured)
+        // A ray that points level has no object height to cross: the table hit is used.
+        let level = BoxFitter.fitSparse(featurePoints: [], rayOrigin: SIMD3(0, 0.3, 1), rayDirection: SIMD3(0, 0, -1),
+                                        tap: SIMD3(0.2, 0, -1), planeY: 0)
+        #expect(level.box.center.x == 0.2 && level.box.center.z == -1)
+    }
+
+    @Test func aRetakenPhotoThatStaysOnFileStopsCountingTowardTheCap() {
+        let cap = CaptureSelection.maxStills
+        // At the cap with 4 close-up sides still to come, there is no room; retaking one frees one slot.
+        #expect(!CaptureSelection.hasRoomForOrbit(kept: cap - 4, retaken: 0, facesLeft: 4))
+        #expect(CaptureSelection.hasRoomForOrbit(kept: cap - 4, retaken: 1, facesLeft: 4))
+        #expect(!CaptureSelection.hasRoomForClose(kept: cap, retaken: 0))
+        #expect(CaptureSelection.hasRoomForClose(kept: cap, retaken: 1))
     }
 
     // MARK: A capture that was cut off

@@ -110,29 +110,34 @@ struct CaptureReviewView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.l) {
-            Spacer()
-            Image(systemName: good ? "checkmark.circle" : "exclamationmark.triangle")
-                .font(.system(size: 34, weight: .regular))
-                .foregroundStyle(good ? Palette.good : Palette.caution)
-                .accessibilityHidden(true)
-            Text(good ? "Scan saved" : "Check this scan").display(.screen).foregroundStyle(Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text(Self.summary(report)).font(.body).foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: Spacing.m) {
-                ForEach(Array((report.problems + report.notes).prefix(5)), id: \.id) { finding in
-                    HStack(alignment: .top, spacing: Spacing.m) {
-                        Image(systemName: finding.severity == .note ? "info.circle" : "exclamationmark.circle")
-                            .foregroundStyle(finding.severity == .blocker ? Palette.danger
-                                             : (finding.severity == .warning ? Palette.caution : Palette.secondary))
-                            .accessibilityHidden(true)
-                        Text(finding.message).font(.body).foregroundStyle(Palette.ink)
-                            .fixedSize(horizontal: false, vertical: true)
+            // The words scroll (every problem is shown, at any text size); the buttons stay where a thumb reaches.
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.l) {
+                    Image(systemName: good ? "checkmark.circle" : "exclamationmark.triangle")
+                        .font(.system(size: 34, weight: .regular))
+                        .foregroundStyle(good ? Palette.good : Palette.caution)
+                        .accessibilityHidden(true)
+                    Text(good ? "Scan saved" : "Check this scan").display(.screen).foregroundStyle(Palette.ink)
+                        .accessibilityAddTraits(.isHeader)
+                    Text(Self.summary(report)).font(.body).foregroundStyle(Palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: Spacing.m) {
+                        ForEach(report.problems + report.notes, id: \.id) { finding in
+                            HStack(alignment: .top, spacing: Spacing.m) {
+                                Image(systemName: finding.severity == .note ? "info.circle" : "exclamationmark.circle")
+                                    .foregroundStyle(finding.severity == .blocker ? Palette.danger
+                                                     : (finding.severity == .warning ? Palette.caution : Palette.secondary))
+                                    .accessibilityHidden(true)
+                                Text(finding.message).font(.body).foregroundStyle(Palette.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .accessibilityElement(children: .combine)
+                        }
                     }
-                    .accessibilityElement(children: .combine)
                 }
+                .padding(.top, Spacing.xxl)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer()
             if good {
                 Button(action: onContinue) { Label("See the report", systemImage: "arrow.right") }
                     .buttonStyle(.primary)
