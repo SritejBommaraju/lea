@@ -245,7 +245,7 @@ struct ReportStageView: View {
     /// "Add a meter reading", and a line saying how many were sent. A meter reading is the only proof (I1, I2).
     private func meterReadingRow(_ open: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: Spacing.xs) {
-            Button(action: open) { Label("Add a meter reading", systemImage: "gauge.with.dots.needle.50percent") }
+            Button(action: open) { Label("Check it with your phone", systemImage: "gauge.with.dots.needle.50percent") }
                 .buttonStyle(.textAction)
             if meterReadingsSent > 0 {
                 Text(meterReadingsSent == 1 ? "1 meter reading sent. The report updates when it is judged."
@@ -830,7 +830,7 @@ struct StageNextStep: View {
             }
             .accessibilityElement(children: .combine)
             if let checkWithMeter {
-                Button(action: checkWithMeter) { Label("Check with the meter", systemImage: "gauge.with.dots.needle.50percent") }
+                Button(action: checkWithMeter) { Label("Check with your phone", systemImage: "gauge.with.dots.needle.50percent") }
                     .buttonStyle(.primary)
             }
         }

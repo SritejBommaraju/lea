@@ -138,7 +138,7 @@ struct FixPlanCard: View {
                 steps(plan?.steps ?? [])
             case .check:
                 Button { customer.openMeter(plan?.checkActionID) } label: {
-                    Label("Check with the meter", systemImage: "gauge.with.dots.needle.50percent")
+                    Label("Check with your phone", systemImage: "gauge.with.dots.needle.50percent")
                 }
                 .buttonStyle(.primary)
             case nil:

@@ -132,6 +132,10 @@ struct ReportModel: Sendable {
         /// The net and the two probe points of a meter step (`next_step.target`), so the meter sheet opens filled in.
         var net: String? = nil
         var pins: [String] = []
+        /// The parts the step is about (`next_step.target.part_refs`), so a phone-sensor reading can name its part.
+        var partRefs: [String] = []
+        /// Which phone check settles the step (`next_step.target.instrument`); nil: every check the product supports.
+        var instrument: String? = nil
         /// `on` or `off`: the power state the meter step is read in (`next_step.power_state`).
         var powerState: String? = nil
         /// What to watch out for before probing (`next_step.safety_notes`), in the design engine's words.
@@ -155,7 +159,7 @@ struct ReportModel: Sendable {
             case "request_closeup": "Take a closer photo"
             case "request_other_angle": "Take another angle"
             case "rescan": "Scan it again"
-            case "run_continuity_test", "run_resistance_test", "run_voltage_test": "Check it with a meter"
+            case "run_continuity_test", "run_resistance_test", "run_voltage_test": "Check it with your phone"
             case "ask_user": "Tell us more"
             default: "Next step"
             }
@@ -177,6 +181,9 @@ struct ReportModel: Sendable {
     var notInspected: [Gap]
     var insufficient: [Gap]
     var nextStep: NextStep?
+    /// How the product can check itself (report `self_test`): over Bluetooth and as blinks of its status LED. nil when
+    /// the design has no self-test.
+    var selfTest: SelfTest?
     /// The design the design engine judged this scan against (`design.project`); nil for a report it did not judge.
     var design: String?
     var limits: [String]
@@ -205,6 +212,13 @@ struct ReportModel: Sendable {
         var id: String
         var part: String
         var crop: String
+    }
+
+    /// The report's `self_test` block as the generated contract type; nil when absent or not valid.
+    static func selfTest(_ json: Any?) -> SelfTest? {
+        guard let json, JSONSerialization.isValidJSONObject(json),
+              let data = try? JSONSerialization.data(withJSONObject: json) else { return nil }
+        return try? JSON.decoder.decode(SelfTest.self, from: data)
     }
 
     init(json r: [String: Any]) {
@@ -239,10 +253,14 @@ struct ReportModel: Sendable {
             let target = n["target"] as? [String: Any]
             nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String,
                                 actionID: n["action_id"] as? String, net: (target?["net"] as? String)?.trimmedOrNil,
-                                pins: (target?["pins"] as? [String]) ?? [], powerState: n["power_state"] as? String,
+                                pins: (target?["pins"] as? [String]) ?? [],
+                                partRefs: (target?["part_refs"] as? [String] ?? []).compactMap(\.trimmedOrNil),
+                                instrument: (target?["instrument"] as? String)?.trimmedOrNil,
+                                powerState: n["power_state"] as? String,
                                 safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil),
                                 expected: ExpectedReading(json: n["expected"] as? [String: Any]))
         }
+        selfTest = Self.selfTest(r["self_test"])
         design = ((r["design"] as? [String: Any])?["project"] as? String)?.trimmedOrNil
         limits = r["limits"] as? [String] ?? []
         let capture = r["capture"] as? [String: Any] ?? [:]

@@ -15,9 +15,10 @@ Built at Cal Hacks. [How it works](#how-it-works) · [Run it](#run-it) · [Repo 
    Grain, which judges it with that design as context: which parts are missing, shifted or damaged, which parts the scan
    could not see (listed as not looked at, never as fine), and what to buy, remake or reseat. The report says so in
    words, with the fix.
-3. **Measure.** The report asks for the next meter check (net, probe points, power state, expected range) and opens the
-   meter sheet filled in. A reading, typed or read over Bluetooth from a Pokit Meter, goes back through Grain and the
-   report is re-made. Only a meter reading proves an electrical fault.
+3. **Check it with your phone.** The report asks for the next check and opens the sheet filled in. Nothing to buy: the
+   product checks itself and tells the phone over Bluetooth or by blinking its status light at the camera, or the phone's
+   own magnetometer, microphone and camera measure it, or you type what your own meter shows. The reading goes back
+   through Grain and the report is re-made. Only a measurement proves an electrical fault.
 4. **Ask Lea, fix it from the phone.** Tap and ask: "what does this wire do?", "is the main chip soldered?". Lea answers
    from the report and, inside a conversation, from what the camera shows. "Fix it with Grain" sends your words, with
    the context (symptom, flagged parts, readings, fixes so far), to Grain's agent, which changes the design and tells
@@ -45,7 +46,7 @@ iPhone app (SwiftUI, ARKit, Metal, SceneKit)
    ▼
 Gateway (FastAPI) ── SQLite + blob store
    ├─ complete scan ──zip of the session folder──> Grain (judges against the product's design) ──> report
-   ├─ meter reading ──/call──> Grain ──> report re-made
+   ├─ readings ───────/call──> Grain ──> report re-made
    ├─ Fix it ──chat──> Grain's agent (changes the design)
    └─ Voice: Claude (answers) + Cartesia (speech in and out)
 ```

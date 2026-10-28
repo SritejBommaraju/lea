@@ -373,6 +373,9 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
     step = next_step(plan, readings, fixes)
     if step:
         report["next_step"] = step
+    self_test = self_test_block((plan or {}).get("self_test"))
+    if self_test:
+        report["self_test"] = self_test
     safety = _safety(plan, step)
     if safety:
         report["safety"] = safety
@@ -439,6 +442,8 @@ def _take_reading(unmatched: list[Mapping[str, Any]], entry: Mapping[str, Any]) 
                     return unmatched.pop(i)
             return None
     net = _text(entry.get("net")).lower()
+    if not net:   # a reading about a part (a phone sensor) is never matched by a missing net
+        return None
     same = [i for i, r in enumerate(unmatched) if _text(r.get("net")).lower() == net]
     return unmatched.pop(same[0]) if len(same) == 1 else None
 
@@ -578,6 +583,8 @@ def _check_step(c: Mapping[str, Any]) -> dict:
     parts = [str(p) for p in c.get("parts") or [] if isinstance(p, str)]
     if parts:
         target["part_refs"] = parts
+    if _text(c.get("instrument")) in INSTRUMENTS:
+        target["instrument"] = _text(c["instrument"])
     if target:
         step["target"] = target
     if _text(c.get("why")):
@@ -588,6 +595,69 @@ def _check_step(c: Mapping[str, Any]) -> dict:
     if notes:
         step["safety_notes"] = notes
     return step
+
+
+# the phone checks a plan step may name (report next_step.target.instrument)
+INSTRUMENTS = ("selftest_ble", "selftest_led", "magnetometer", "audio", "flicker", "light", "led", "typed")
+# the blink code's long blinks for ok, fail and unknown when the design engine's plan states none (the self-test protocol)
+DEFAULT_LONG_BLINKS = (1, 2, 3)
+BLINK_TIMINGS = ("flash_on_ms", "flash_off_ms", "long_on_ms", "long_off_ms", "gap_ms", "preamble_flashes", "end_flashes")
+
+
+def _int(v: Any) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def self_test_block(raw: Any) -> dict | None:
+    """The product's self-test from the design engine's electrical plan, copied into the report so the phone never
+    hard-codes a UUID or a timing. Only what the report contract names is kept. A way to read the self-test (Bluetooth,
+    the status light) is kept only when its block is whole; a check the phone could not map (no index, a repeated index,
+    an unknown kind, no net) drops the whole self-test, because a result matched to the wrong net is worse than none."""
+    if not isinstance(raw, Mapping):
+        return None
+    checks: list[dict[str, Any]] = []
+    for c in raw.get("checks") or []:
+        if not isinstance(c, Mapping):
+            return None
+        index, kind, net = _int(c.get("index")), _text(c.get("kind")), _text(c.get("net"))
+        if index is None or index < 0 or kind not in ("rail", "output") or not net or any(x["index"] == index for x in checks):
+            return None
+        item: dict[str, Any] = {"index": index, "kind": kind, "net": net}
+        exp_in = c.get("expected") if isinstance(c.get("expected"), Mapping) else {}
+        expected = {k: _num(exp_in[k]) for k in ("volts_min", "volts_max") if _num(exp_in.get(k)) is not None}
+        if _text(exp_in.get("state")) in ("on", "off"):
+            expected["state"] = _text(exp_in["state"])
+        if expected:
+            item["expected"] = expected
+        checks.append(item)
+    if not checks:
+        return None
+    transports = [t for t in dict.fromkeys(raw.get("transports") or []) if t in ("ble", "led")]
+    out: dict[str, Any] = {"checks": checks}
+    ble = raw.get("ble") if isinstance(raw.get("ble"), Mapping) else {}
+    if "ble" in transports:
+        if all(_text(ble.get(k)) for k in ("service", "result", "control")):
+            out["ble"] = {k: _text(ble[k]) for k in ("service", "result", "control")}
+            if _text(ble.get("name_prefix")):
+                out["ble"]["name_prefix"] = _text(ble["name_prefix"])
+        else:
+            transports.remove("ble")
+    blink = raw.get("blink") if isinstance(raw.get("blink"), Mapping) else {}
+    if "led" in transports:
+        timings = blink.get("timings") if isinstance(blink.get("timings"), Mapping) else {}
+        if all(_int(timings.get(k)) is not None and timings[k] >= 1 for k in BLINK_TIMINGS):
+            counts = blink.get("long_blinks", list(DEFAULT_LONG_BLINKS))
+            if (isinstance(counts, list) and len(counts) == 3 and all(_int(n) is not None and n >= 1 for n in counts)
+                    and len(set(counts)) == 3):
+                out["blink"] = {"timings": {k: timings[k] for k in BLINK_TIMINGS}, "long_blinks": list(counts)}
+            else:
+                transports.remove("led")   # results that share a count cannot be told apart
+        else:
+            transports.remove("led")
+    if not transports:
+        return None
+    out["transports"] = transports
+    return out
 
 
 def _safety(plan: Mapping[str, Any] | None, step: Mapping[str, Any] | None) -> list[dict]:
