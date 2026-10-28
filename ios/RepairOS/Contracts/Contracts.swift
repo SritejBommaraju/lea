@@ -50,7 +50,8 @@ public struct Finding: Codable, Sendable {
     /// working or working right; safety = could hurt someone. Absent = not judged (treated as
     /// functional).
     public let severity: Severity?
-    /// Which stage produced it.
+    /// Which stage produced it. `grain`: the design engine judged it against the product's own
+    /// design (scan measurements, photos); a meter reading it compared stays `repairos.meter`.
     public let source: FindingSource
     /// Scan states (ok partly shifted missing, Phase 2), photo-check states (ok broken missing
     /// shifted damaged worn dirty loose unsure), wire states (unseated wrong_pin colour_mismatch
@@ -212,8 +213,10 @@ public enum Severity: String, Codable, Sendable {
     case safety = "safety"
 }
 
-/// Which stage produced it.
+/// Which stage produced it. `grain`: the design engine judged it against the product's own
+/// design (scan measurements, photos); a meter reading it compared stays `repairos.meter`.
 public enum FindingSource: String, Codable, Sendable {
+    case grain = "grain"
     case repairosMeter = "repairos.meter"
     case repairosOcr = "repairos.ocr"
     case repairosScan = "repairos.scan"
@@ -408,9 +411,11 @@ public struct MeterReadingExpected: Codable, Sendable {
 }
 
 /// report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the
-/// ~0 ohm rule for wires, fuses, closed switches.
+/// ~0 ohm rule for wires, fuses, closed switches; design_engine: the range the design
+/// engine's meter plan gave.
 public enum ExpectedSource: String, Codable, Sendable {
     case datasheet = "datasheet"
+    case designEngine = "design_engine"
     case repairosDerived = "repairos_derived"
     case reportJSONMinmax = "report_json_minmax"
 }
@@ -593,7 +598,8 @@ public struct NextActionExpected: Codable, Sendable {
     public let continuity: Bool?
     public let ohmsMax: Double?
     /// report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the
-    /// ~0 ohm rule for wires, fuses, closed switches.
+    /// ~0 ohm rule for wires, fuses, closed switches; design_engine: the range the design
+    /// engine's meter plan gave.
     public let source: ExpectedSource?
     public let voltsMax: Double?
     public let voltsMin: Double?
@@ -1246,6 +1252,9 @@ public struct Step: Codable, Sendable {
 /// or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No
 /// probability number appears anywhere: confidence is a word (I6). A vision finding is a
 /// suspect; only a meter reading proves or rules out (I1, I2).
+///
+/// A row judged by the design engine, or a summary it wrote, names the design it was judged
+/// against.
 // MARK: - Report
 public struct Report: Codable, Sendable {
     /// Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the
@@ -1263,6 +1272,10 @@ public struct Report: Codable, Sendable {
     /// working). Listed apart; they never make the verdict potential_issues on their own.
     public let cosmetic: [CosmeticElement]?
     public let createdAt: Date
+    /// Present when the design engine judged this scan against the product's own design;
+    /// required when a row names `grain` or the summary says it is not words only. `project` is
+    /// the design the scan was judged against.
+    public let design: Design?
     /// Regions a model judged: an issue, or `none` (looked at, no visible issue). Ranked in
     /// code, most likely problem first (repairos.report.build.rank_key); cosmetic issues are in
     /// `cosmetic`.
@@ -1327,6 +1340,7 @@ public struct Report: Codable, Sendable {
         case capture = "capture"
         case cosmetic = "cosmetic"
         case createdAt = "created_at"
+        case design = "design"
         case findings = "findings"
         case fix = "fix"
         case insufficientEvidence = "insufficient_evidence"
@@ -1349,12 +1363,13 @@ public struct Report: Codable, Sendable {
         case verdictReason = "verdict_reason"
     }
 
-    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, buildID: String?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
+    public init(bottomNotPlaced: [BottomNotPlacedOnTheModel]?, buildID: String?, capture: Capture, cosmetic: [CosmeticElement]?, createdAt: Date, design: Design?, findings: [CosmeticElement], fix: FixClass?, insufficientEvidence: [InsufficientEvidenceElement], limits: [String]?, mesh: Mesh?, models: Models, mostLikely: [String]?, nextStep: NextStep?, notInspected: [NotInspectedElement], object: Object?, referenceHints: ReferenceHints?, reportID: String, safety: [Safety]?, scanID: String, sessionID: String, setup: [CosmeticElement]?, summary: Summary, userLead: UserLead?, verdict: ReportVerdict, verdictReason: VerdictReason) {
         self.bottomNotPlaced = bottomNotPlaced
         self.buildID = buildID
         self.capture = capture
         self.cosmetic = cosmetic
         self.createdAt = createdAt
+        self.design = design
         self.findings = findings
         self.fix = fix
         self.insufficientEvidence = insufficientEvidence
@@ -1592,7 +1607,9 @@ public struct CosmeticElement: Codable, Sendable {
     /// missing (repairos.vision.assembly). Code decides it from the state, never a model word.
     public let category: Category?
     public let confidenceWord: ConfidenceWord
-    public let crop: Crop
+    /// The photo and box the region was seen in. Absent for a row the design engine judged from
+    /// the scan's measurements, not from a photo.
+    public let crop: Crop?
     /// The crops of the other findings in a collapsed row (`crop` is the first).
     public let crops: [Crop]?
     public let evidence: [String]
@@ -1605,7 +1622,8 @@ public struct CosmeticElement: Codable, Sendable {
     /// batteries in, then test again.'). Shown to the user.
     public let fix: String?
     /// Stages that looked at this region. A judged region always includes a state judge (vlm,
-    /// classifier or meter).
+    /// classifier, meter or grain). grain: the design engine judged it against the product's own
+    /// design (scan measurements, photos, readings).
     public let inspectedBy: [InspectedBy]
     /// none = a model looked and saw no issue. Every other value is Finding.state: a suspect.
     public let issue: Issue
@@ -1613,7 +1631,8 @@ public struct CosmeticElement: Codable, Sendable {
     public let location: Location
     /// Why the findings of a collapsed row are one issue.
     public let mergedBy: MergedBy?
-    /// Generic class (vision/generic_classes.py), never a product name.
+    /// Generic class (vision/generic_classes.py), never a product name. For a row judged by the
+    /// design engine: the design's own name for the part.
     public let partClass: String
     /// Plain words that let a person find the part in the photo.
     public let partWords: String?
@@ -1652,7 +1671,7 @@ public struct CosmeticElement: Codable, Sendable {
         case supersededIDS = "superseded_ids"
     }
 
-    public init(category: Category?, confidenceWord: ConfidenceWord, crop: Crop, crops: [Crop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: Severity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
+    public init(category: Category?, confidenceWord: ConfidenceWord, crop: Crop?, crops: [Crop]?, evidence: [String], findingID: String, findingIDS: [String]?, fix: String?, inspectedBy: [InspectedBy], issue: Issue, judgment: Judgment?, location: Location, mergedBy: MergedBy?, partClass: String, partWords: String?, proof: Proof, regions: Int?, severity: Severity?, subject: BottomNotPlacedSubject, supersededIDS: [String]?) {
         self.category = category
         self.confidenceWord = confidenceWord
         self.crop = crop
@@ -1683,6 +1702,8 @@ public enum ConfidenceWord: String, Codable, Sendable {
     case medium = "medium"
 }
 
+/// The photo and box the region was seen in. Absent for a row the design engine judged from
+/// the scan's measurements, not from a photo.
 // MARK: - Crop
 public struct Crop: Codable, Sendable {
     public let boxPx: [Int]
@@ -1706,6 +1727,7 @@ public struct Crop: Codable, Sendable {
 public enum InspectedBy: String, Codable, Sendable {
     case classifier = "classifier"
     case detector = "detector"
+    case grain = "grain"
     case meter = "meter"
     case ocr = "ocr"
     case vlm = "vlm"
@@ -1869,6 +1891,29 @@ public enum ProofStatus: String, Codable, Sendable {
     case confirmedByMeter = "confirmed_by_meter"
     case notMeasured = "not_measured"
     case ruledOutByMeter = "ruled_out_by_meter"
+}
+
+/// Present when the design engine judged this scan against the product's own design;
+/// required when a row names `grain` or the summary says it is not words only. `project` is
+/// the design the scan was judged against.
+// MARK: - Design
+public struct Design: Codable, Sendable {
+    public let engine: Engine
+    public let project: String
+
+    public enum CodingKeys: String, CodingKey {
+        case engine = "engine"
+        case project = "project"
+    }
+
+    public init(engine: Engine, project: String) {
+        self.engine = engine
+        self.project = project
+    }
+}
+
+public enum Engine: String, Codable, Sendable {
+    case grain = "grain"
 }
 
 /// Optional "Fix it": where to buy the part of the top finding, from a public shopping
@@ -2057,22 +2102,88 @@ public struct Models: Codable, Sendable {
 // MARK: - NextStep
 public struct NextStep: Codable, Sendable {
     public let actionID: String
+    /// What a good reading looks like, compared in code (S5).
+    public let expected: NextStepExpected?
     public let instruction: String
     public let kind: NextActionKind
+    /// off for continuity and resistance; on for voltage (S4).
+    public let powerState: NextActionPowerState?
     public let reason: String?
+    /// Shown before the step.
+    public let safetyNotes: [String]?
+    /// What the step is about, so the app can open the meter sheet filled in. Same fields as
+    /// next-action `target`.
+    public let target: NextStepTarget?
 
     public enum CodingKeys: String, CodingKey {
         case actionID = "action_id"
+        case expected = "expected"
         case instruction = "instruction"
         case kind = "kind"
+        case powerState = "power_state"
         case reason = "reason"
+        case safetyNotes = "safety_notes"
+        case target = "target"
     }
 
-    public init(actionID: String, instruction: String, kind: NextActionKind, reason: String?) {
+    public init(actionID: String, expected: NextStepExpected?, instruction: String, kind: NextActionKind, powerState: NextActionPowerState?, reason: String?, safetyNotes: [String]?, target: NextStepTarget?) {
         self.actionID = actionID
+        self.expected = expected
         self.instruction = instruction
         self.kind = kind
+        self.powerState = powerState
         self.reason = reason
+        self.safetyNotes = safetyNotes
+        self.target = target
+    }
+}
+
+/// What a good reading looks like, compared in code (S5).
+// MARK: - NextStepExpected
+public struct NextStepExpected: Codable, Sendable {
+    public let continuity: Bool?
+    public let ohmsMax: Double?
+    public let source: ExpectedSource?
+    public let voltsMax: Double?
+    public let voltsMin: Double?
+
+    public enum CodingKeys: String, CodingKey {
+        case continuity = "continuity"
+        case ohmsMax = "ohms_max"
+        case source = "source"
+        case voltsMax = "volts_max"
+        case voltsMin = "volts_min"
+    }
+
+    public init(continuity: Bool?, ohmsMax: Double?, source: ExpectedSource?, voltsMax: Double?, voltsMin: Double?) {
+        self.continuity = continuity
+        self.ohmsMax = ohmsMax
+        self.source = source
+        self.voltsMax = voltsMax
+        self.voltsMin = voltsMin
+    }
+}
+
+/// What the step is about, so the app can open the meter sheet filled in. Same fields as
+/// next-action `target`.
+// MARK: - NextStepTarget
+public struct NextStepTarget: Codable, Sendable {
+    /// Net name from the product's design.
+    public let net: String?
+    public let partRefs: [String]?
+    /// REF.PIN ids to probe.
+    public let pins: [String]?
+
+    public enum CodingKeys: String, CodingKey {
+        case net = "net"
+        case partRefs = "part_refs"
+        case pins = "pins"
+    }
+
+    public init(net: String?, partRefs: [String]?, pins: [String]?) {
+        self.net = net
+        self.partRefs = partRefs
+        self.pins = pins
     }
 }
 
@@ -2215,7 +2326,9 @@ public enum SafetyCode: String, Codable, Sendable {
 
 // MARK: - Summary
 public struct Summary: Codable, Sendable {
-    /// The writer received words only (S5); checked in code before the call.
+    /// true when the writer received words only (S5), checked in code before the call. false
+    /// when the text came from the design engine, which judged the scan against the product's
+    /// own design.
     public let fromWordsOnly: Bool
     /// Plain-language summary. No numbers.
     public let text: String

@@ -1,0 +1,12 @@
+{
+  "finding_id": "g_cover_1a2b3c4d",
+  "scan_id": "scan_7f3a",
+  "subject": { "kind": "part", "ref": "cover" },
+  "state": "missing",
+  "source": "grain",
+  "confidence": 0.8,
+  "is_proof": false,
+  "evidence": ["Design engine: not seen (mostly not covered).", "no scan points where the design puts the cover"],
+  "measurements": { "coverage": 0.0 },
+  "created_at": "2026-10-28T12:00:00Z"
+}

@@ -1,0 +1,6 @@
+{
+ "schema": "report",
+ "why": "a report judged by the design engine names the design it was judged against",
+ "base": "report.design_engine.json",
+ "patch": { "design": { "project": null } }
+}

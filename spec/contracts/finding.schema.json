@@ -64,9 +64,10 @@
         "repairos.wire_check",
         "repairos.ocr",
         "repairos.meter",
-        "repairos.user"
+        "repairos.user",
+        "grain"
       ],
-      "description": "Which stage produced it."
+      "description": "Which stage produced it. `grain`: the design engine judged it against the product's own design (scan measurements, photos); a meter reading it compared stays `repairos.meter`."
     },
     "confidence": {
       "type": "number",

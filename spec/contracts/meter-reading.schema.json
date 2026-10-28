@@ -32,7 +32,7 @@
         "ohms_max": { "type": "number", "minimum": 0 },
         "volts_min": { "type": "number" },
         "volts_max": { "type": "number" },
-        "source": { "type": "string", "enum": ["report_json_minmax", "repairos_derived", "datasheet"] }
+        "source": { "type": "string", "enum": ["report_json_minmax", "repairos_derived", "datasheet", "design_engine"] }
       }
     },
     "verdict": {
