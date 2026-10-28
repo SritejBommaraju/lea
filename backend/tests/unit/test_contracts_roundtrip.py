@@ -33,6 +33,9 @@ MODEL_CANNOT_EXPRESS = {
     "scan-package-moved-aligned-without-transform.json",   # segment if/then: aligned object_moved needs its transform
     "still-no-intrinsics-without-pose-unreliable.json",   # camera/intrinsics if/else on pose_reliable (photos)
     "still-no-pose-without-pose-unreliable.json",
+    "report-fix-plan-buy-without-options.json",           # fix_plan if/then: each action carries what it needs
+    "report-fix-plan-check-without-check-id.json",
+    "report-fix-plan-remake-without-part-file.json",
     # report (B9): if/then and contains rules; validate() and the STATE rules enforce them
     "report-looks-good-with-issue.json",
     "report-looks-good-with-uninspected-region.json",
