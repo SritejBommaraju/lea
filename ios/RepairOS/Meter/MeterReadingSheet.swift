@@ -11,15 +11,25 @@ struct MeterReadingContext: Identifiable {
     var pins: [String]
     /// What to watch out for before probing, shown above the probe points (the report's `next_step.safety_notes`).
     var safetyNotes: [String]
+    /// The design engine's own words for the check (`next_step.instruction`).
+    var instruction: String?
+    /// What a good reading looks like (`next_step.expected`), said before measuring and beside the verdict.
+    var expected: ExpectedReading?
 
     init(kind: MeterReadingKind = .continuity, net: String = "", pins: [String] = [], actionID: String? = nil,
-         safetyNotes: [String] = []) {
+         safetyNotes: [String] = [], instruction: String? = nil, expected: ExpectedReading? = nil) {
         self.kind = kind
         self.net = net
         self.pins = pins
         self.actionID = actionID
         self.safetyNotes = safetyNotes
+        self.instruction = instruction
+        self.expected = expected
     }
+
+    /// A check the report named: the net, the two probe points and the check's id are known, so the sheet walks the
+    /// customer through it and they only type what the meter shows (any meter, no Bluetooth needed).
+    var isGuided: Bool { actionID != nil && !net.isEmpty && pins.count == 2 }
 
     init(action: NextAction) {
         self.init(kind: Self.kind(forAction: action.kind.rawValue) ?? .continuity, net: action.target?.net ?? "",
@@ -28,7 +38,8 @@ struct MeterReadingContext: Identifiable {
 
     init(step: ReportModel.NextStep) {
         self.init(kind: Self.kind(forAction: step.kind) ?? .continuity, net: step.net ?? "", pins: step.pins,
-                  actionID: step.actionID, safetyNotes: step.safetyNotes)
+                  actionID: step.actionID, safetyNotes: step.safetyNotes, instruction: step.instruction,
+                  expected: step.expected)
     }
 
     static func kind(forAction kind: String) -> MeterReadingKind? {
@@ -127,6 +138,10 @@ struct MeterReadingSheet: View {
     @State private var beeps = true
     @State private var sending = false
     @State private var error: String?
+    /// The reading the gateway has accepted, and what the design engine said about it.
+    @State private var savedID: String?
+    @State private var verdict: ReadingVerdict?
+    @State private var slow = false
 
     init(context: MeterReadingContext, scanID: String, sessionID: String, gateway: GatewayClient?, sent: @escaping () -> Void) {
         self.context = context
@@ -143,52 +158,133 @@ struct MeterReadingSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("Measuring", selection: $kind) {
-                        Text("Continuity").tag(MeterReadingKind.continuity)
-                        Text("DC voltage").tag(MeterReadingKind.voltageDc)
-                        Text("Resistance").tag(MeterReadingKind.resistance)
+                if context.isGuided {
+                    guidedCheck
+                    typedSection
+                    meterSection
+                } else {
+                    Section {
+                        Picker("Measuring", selection: $kind) {
+                            Text("Continuity").tag(MeterReadingKind.continuity)
+                            Text("DC voltage").tag(MeterReadingKind.voltageDc)
+                            Text("Resistance").tag(MeterReadingKind.resistance)
+                        }
+                        .pickerStyle(.segmented)
                     }
-                    .pickerStyle(.segmented)
-                }
-                Section {
-                    Label(MeterReadingDraft.banner(kind),
-                          systemImage: kind == .voltageDc ? "bolt.fill" : "powerplug.fill")
-                        .font(.body.weight(.semibold))
-                        .accessibilityLabel("Power state: " + MeterReadingDraft.banner(kind))
-                    ForEach(context.safetyNotes.indices, id: \.self) { i in
-                        Label(context.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
-                            .font(.subheadline).foregroundStyle(Palette.caution)
+                    Section {
+                        Label(MeterReadingDraft.banner(kind),
+                              systemImage: kind == .voltageDc ? "bolt.fill" : "powerplug.fill")
+                            .font(.body.weight(.semibold))
+                            .accessibilityLabel("Power state: " + MeterReadingDraft.banner(kind))
+                        ForEach(context.safetyNotes.indices, id: \.self) { i in
+                            Label(context.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline).foregroundStyle(Palette.caution)
+                        }
                     }
+                    Section("Probe points") {
+                        TextField("Net name", text: $net).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        TextField(kind == .voltageDc ? "Probe + (for example J1.1)" : "First point (for example J1.1)", text: $pinA)
+                            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        TextField(kind == .voltageDc ? "Probe - (for example J1.2)" : "Second point", text: $pinB)
+                            .textInputAutocapitalization(.characters).autocorrectionDisabled()
+                    }
+                    meterSection
+                    typedSection
                 }
-                Section("Probe points") {
-                    TextField("Net name", text: $net).textInputAutocapitalization(.characters).autocorrectionDisabled()
-                    TextField(kind == .voltageDc ? "Probe + (for example J1.1)" : "First point (for example J1.1)", text: $pinA)
-                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                    TextField(kind == .voltageDc ? "Probe - (for example J1.2)" : "Second point", text: $pinB)
-                        .textInputAutocapitalization(.characters).autocorrectionDisabled()
-                }
-                meterSection
-                typedSection
+                verdictSection
                 if let error {
-                    Section { Text(error).foregroundStyle(.red) }
+                    Section { Text(error).foregroundStyle(Palette.danger) }
                 }
             }
+            // The form is read-only while a reading is on its way and after it is saved; the toolbar's Done stays live.
+            .disabled(sending || savedID != nil)
             .navigationTitle("Meter reading")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
-            .disabled(sending)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(savedID == nil ? "Cancel" : "Done") { dismiss() }.fontWeight(savedID == nil ? .regular : .semibold)
+                }
+            }
             .onValueChange(of: kind) { _, new in
                 if link.phase == .ready || link.phase == .measuring { link.start(kind: new) }
             }
             .onDisappear { link.stop() }
+            .task(id: savedID) { await waitForVerdict() }
+        }
+    }
+
+    // MARK: The check, in plain words (a check the report named)
+
+    /// What to do, in order: the power state first, then the dial, the two places to touch, and what a good reading is.
+    @ViewBuilder private var guidedCheck: some View {
+        Section {
+            Label(MeterReadingDraft.banner(kind), systemImage: kind == .voltageDc ? "bolt.fill" : "powerplug.fill")
+                .font(.body.weight(.semibold))
+                .accessibilityLabel("Power state: " + MeterReadingDraft.banner(kind))
+            ForEach(context.safetyNotes.indices, id: \.self) { i in
+                Label(context.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline).foregroundStyle(Palette.caution)
+            }
+        }
+        Section("Do this") {
+            if let words = context.instruction?.trimmedOrNil {
+                Text(ReportWords.display(words)).font(.subheadline)
+            }
+            Text(MeterWords.dial(kind))
+            ForEach(MeterWords.probes(pins: context.pins, kind: kind), id: \.self) { line in
+                Label(line, systemImage: "scope")
+            }
+            if let good = context.expected?.words {
+                Text("A good reading: \(good).").font(.subheadline.weight(.semibold))
+            }
+        }
+    }
+
+    // MARK: Grain's answer
+
+    @ViewBuilder private var verdictSection: some View {
+        if savedID != nil {
+            let v = verdict ?? ReadingVerdict(state: "pending")
+            Section("Grain's answer") {
+                HStack(spacing: 12) {
+                    switch v.outcome {
+                    case .pass: Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.good)
+                    case .fail: Image(systemName: "xmark.octagon.fill").foregroundStyle(Palette.danger)
+                    case .unjudged:
+                        if v.state == "pending" { ProgressView() } else { Image(systemName: "questionmark.circle").foregroundStyle(Palette.secondary) }
+                    }
+                    Text(v.headline(expected: context.expected)).font(.body.weight(.semibold))
+                }
+                .accessibilityElement(children: .combine)
+                ForEach(v.notes.indices, id: \.self) { Text(v.notes[$0]).font(.footnote).foregroundStyle(Palette.secondary) }
+                if slow, v.state == "pending" {
+                    Text("Taking longer than usual. The report updates when Grain answers.").font(.footnote).foregroundStyle(Palette.secondary)
+                }
+                Text("Your reading is saved. The report updates with it.").font(.footnote).foregroundStyle(Palette.secondary)
+            }
+        }
+    }
+
+    /// Asks the gateway for the verdict every two seconds for two minutes; after that the report is where it appears.
+    private func waitForVerdict() async {
+        guard let id = savedID, let gateway else { return }
+        verdict = ReadingVerdict(state: "pending")
+        slow = false
+        for round in 0..<60 {
+            if let v = try? await gateway.readingVerdict(id: id) {
+                verdict = v
+                if v.isFinal { return }
+            }
+            if round == 15 { slow = true }
+            try? await Task.sleep(for: .seconds(2))
+            if Task.isCancelled { return }
         }
     }
 
     // MARK: Bluetooth meter
 
     @ViewBuilder private var meterSection: some View {
-        Section(link.profileName) {
+        Section(context.isGuided ? "Or use a \(link.profileName)" : link.profileName) {
             switch link.phase {
             case .off, .lost:
                 Button("Connect \(link.profileName)") { error = nil; link.start(kind: kind) }
@@ -246,7 +342,7 @@ struct MeterReadingSheet: View {
     // MARK: Typed
 
     @ViewBuilder private var typedSection: some View {
-        Section("Or type what the meter shows") {
+        Section(context.isGuided ? "What does your meter show?" : "Or type what the meter shows") {
             switch kind {
             case .continuity:
                 Picker("The meter", selection: $beeps) {
@@ -259,7 +355,11 @@ struct MeterReadingSheet: View {
             case .resistance:
                 TextField("Ohms (for example 120)", text: $typed).keyboardType(.numbersAndPunctuation)
             }
-            Button("Send typed reading") {
+            if context.isGuided {
+                Text("Any multimeter works: type what it shows. A Bluetooth meter below fills it in for you.")
+                    .font(.footnote).foregroundStyle(Palette.secondary)
+            }
+            Button(context.isGuided ? "Save reading" : "Send typed reading") {
                 if let v = MeterReadingDraft.value(typed: typed, kind: kind, beeps: beeps) {
                     Task { await send(v, meter: nil, raw: kind == .continuity ? (beeps ? "beeps" : "no beep") : typed) }
                 } else {
@@ -282,7 +382,7 @@ struct MeterReadingSheet: View {
         do {
             try await gateway.postReading(reading)
             sent()
-            dismiss()
+            savedID = reading.readingID
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }

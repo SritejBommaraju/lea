@@ -42,6 +42,9 @@ struct ReportStageView: View {
     var askDesign: (() -> Void)? = nil
     /// Meter readings sent from this report so far.
     var meterReadingsSent = 0
+    /// The customer's side of the report: the design's picture, each fix as a card, "Did this fix it?" and the meter
+    /// check button. nil when there is no gateway (Demo replay): the report then reads as before.
+    var customer: CustomerContext? = nil
 
     @Environment(\.cropSource) private var cropSource
     @State private var bottomZoom: BottomZoom?
@@ -236,6 +239,13 @@ struct ReportStageView: View {
                     .font(.subheadline).foregroundStyle(Palette.secondary)
             }
         }
+    }
+
+    /// The "Check with the meter" button for a meter step, when there is a gateway to send the reading to.
+    private func meterCheck(for step: ReportModel.NextStep) -> (() -> Void)? {
+        guard let customer, ReportWords.isMeterStep(step) else { return nil }
+        let actionID = step.actionID
+        return { customer.openMeter(actionID) }
     }
 
     /// The numbered problems and setup rows, in marker order (the detail's previous / next).
@@ -552,14 +562,20 @@ struct ReportStageView: View {
                 .offset(y: phase >= 2 || reduceMotion ? 0 : 24)
             // Safety is never delayed, faded or moved (M13).
             if !report.safety.isEmpty { StageSafetyCard(notes: report.safety) }
+            if let customer, report.design != nil, !report.mostLikely.isEmpty {
+                DesignPicture(scanID: customer.scanID, gateway: customer.gateway)
+            }
             VStack(alignment: .leading, spacing: Spacing.xl) {
                 if !report.mostLikely.isEmpty {
                     VStack(alignment: .leading, spacing: Spacing.m) {
                         SectionHeader("Most likely problems", count: report.mostLikely.count)
                         ForEach(Array(report.mostLikely.enumerated()), id: \.element.id) { i, p in
-                            problemRow(p, number: i + 1, proxy: proxy)
-                                .opacity(phase >= 3 ? 1 : 0)
-                                .animation(reduceMotion ? Motion.fade : Motion.standard.delay(Double(min(i, 2)) * 0.04), value: phase)
+                            VStack(alignment: .leading, spacing: Spacing.s) {
+                                problemRow(p, number: i + 1, proxy: proxy)
+                                if let customer, p.fixPlan != nil || p.fix != nil { FixPlanCard(problem: p, customer: customer) }
+                            }
+                            .opacity(phase >= 3 ? 1 : 0)
+                            .animation(reduceMotion ? Motion.fade : Motion.standard.delay(Double(min(i, 2)) * 0.04), value: phase)
                         }
                     }
                 }
@@ -568,7 +584,7 @@ struct ReportStageView: View {
                     // Not enough to call it: the next step is already the headline, so it isn't repeated. A request for
                     // more photos is not shown at all (the owner, 2026-10-25): Lea asks in conversation when she must.
                     if let next = report.nextStep, report.verdict != .insufficientEvidence, !ReportWords.isCaptureRequest(next) {
-                        StageNextStep(step: next)
+                        StageNextStep(step: next, checkWithMeter: meterCheck(for: next))
                     }
                     if let addMeterReading { meterReadingRow(addMeterReading) }
                     if let lead = report.userLead { UserLeadCard(lead: lead) }
@@ -630,17 +646,20 @@ struct ReportStageView: View {
             ForEach(Array(report.setup.enumerated()), id: \.element.id) { i, p in
                 let number = StageMarks.setupNumber(report, i)
                 let located = isPhotoHero ? p.cropStill != nil : p.point != nil
-                if located {
-                    Button {
-                        withAnimation(Motion.standard) { proxy.scrollTo("stage", anchor: .top) }
-                        focus = p.id
-                    } label: {
-                        StageSetupRow(problem: p, number: number, located: true, selected: focus == p.id)
-                    }
-                    .buttonStyle(PressableCardStyle())
-                } else {
-                    NavigationLink(value: p.id) { StageSetupRow(problem: p, number: number, located: false) }
+                VStack(alignment: .leading, spacing: Spacing.s) {
+                    if located {
+                        Button {
+                            withAnimation(Motion.standard) { proxy.scrollTo("stage", anchor: .top) }
+                            focus = p.id
+                        } label: {
+                            StageSetupRow(problem: p, number: number, located: true, selected: focus == p.id)
+                        }
                         .buttonStyle(PressableCardStyle())
+                    } else {
+                        NavigationLink(value: p.id) { StageSetupRow(problem: p, number: number, located: false) }
+                            .buttonStyle(PressableCardStyle())
+                    }
+                    if let customer, p.fixPlan != nil { FixPlanCard(problem: p, customer: customer) }
                 }
             }
         }
@@ -772,22 +791,30 @@ enum StageMarks {
 /// No "Next step" above it (an eyebrow) and no button: its action is in the pinned bar.
 struct StageNextStep: View {
     let step: ReportModel.NextStep
+    /// Opens the meter sheet filled in for this step (a meter step with a gateway to send the reading to).
+    var checkWithMeter: (() -> Void)? = nil
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
-            SectionHeader(Walkthrough.specificTitle(step) ?? step.title)
-            Text(ReportWords.display(step.instruction)).font(.body).foregroundStyle(Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-            if let reason = step.reason?.trimmedOrNil {
-                Text(ReportWords.display(reason)).font(.subheadline).foregroundStyle(Palette.secondary)
+            VStack(alignment: .leading, spacing: Spacing.s) {
+                SectionHeader(Walkthrough.specificTitle(step) ?? step.title)
+                Text(ReportWords.display(step.instruction)).font(.body).foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
+                if let reason = step.reason?.trimmedOrNil {
+                    Text(ReportWords.display(reason)).font(.subheadline).foregroundStyle(Palette.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ForEach(step.safetyNotes.indices, id: \.self) { i in
+                    Label(step.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
+                        .font(.subheadline).foregroundStyle(Palette.caution)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            ForEach(step.safetyNotes.indices, id: \.self) { i in
-                Label(step.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
-                    .font(.subheadline).foregroundStyle(Palette.caution)
-                    .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+            if let checkWithMeter {
+                Button(action: checkWithMeter) { Label("Check with the meter", systemImage: "gauge.with.dots.needle.50percent") }
+                    .buttonStyle(.primary)
             }
         }
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -819,6 +846,9 @@ struct ReportStageWaiting: View {
     let pending: Int
     /// Findings already seen live (LiveEvents), when known.
     var found: Int?
+    /// When the scan finished uploading (nil: not yet, or not known): after it the line says what Grain is doing and
+    /// admits when it takes longer than usual.
+    var waitingSince: Date? = nil
 
     var body: some View {
         ZStack {
@@ -833,7 +863,17 @@ struct ReportStageWaiting: View {
             }
             VStack(spacing: Spacing.m) {
                 Spacer()
-                StageStatus(text: line)
+                TimelineView(.periodic(from: .now, by: 15)) { timeline in
+                    let arrival = arrivalState(at: timeline.date)
+                    VStack(spacing: Spacing.xs) {
+                        StageStatus(text: arrival?.title ?? line)
+                        if let detail = arrival?.detail {
+                            Text(detail).font(.footnote).foregroundStyle(Palette.chalk.opacity(0.75))
+                                .multilineTextAlignment(.center).padding(.horizontal, Spacing.gutter)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
                 if let found, found > 0 {
                     Text(found == 1 ? "1 thing to look at so far" : "\(found) things to look at so far")
                         .font(.subheadline).foregroundStyle(Palette.chalk.opacity(0.75))
@@ -848,6 +888,13 @@ struct ReportStageWaiting: View {
         .toolbarColorScheme(.dark, for: .navigationBar)
     }
 
+    /// What the person is told once the scan is up (nil while it is still being sent).
+    private func arrivalState(at now: Date) -> ReportArrival? {
+        guard progress.step != .upload, waitingSince != nil || progress.step == .judge else { return nil }
+        return ReportArrival.state(step: progress.step, uploaded: uploaded, pending: pending,
+                                   waited: waitingSince.map { now.timeIntervalSince($0) } ?? 0, error: nil)
+    }
+
     private var line: String {
         switch progress.step {
         case .upload:
@@ -857,6 +904,7 @@ struct ReportStageWaiting: View {
                 : "Looking at each photo"
         case .weigh: "Weighing what it saw"
         case .write: "Writing it up"
+        case .judge: "Grain is looking at it"
         }
     }
 

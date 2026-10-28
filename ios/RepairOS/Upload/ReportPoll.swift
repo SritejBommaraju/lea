@@ -34,3 +34,37 @@ enum ReportPoll {
         }
     }
 }
+
+/// What the person is told while the report is on its way, as a pure function of where the scan is and how long Grain
+/// has had it. Three honest states instead of a spinner: still sending, "Uploaded. Grain is looking at it." and, once
+/// it has been longer than usual, "Taking longer than usual" (with the minutes); a failure says why and offers a retry.
+struct ReportArrival: Equatable {
+    /// After this long the line admits it is taking longer than usual.
+    static let slowAfter: TimeInterval = 5 * 60
+
+    enum Phase: Equatable { case sending, looking, slow, failed }
+
+    var phase: Phase
+    var title: String
+    var detail: String?
+
+    static func state(step: PipelineProgress.Step, uploaded: Int, pending: Int, waited: TimeInterval,
+                      error: String?) -> ReportArrival {
+        if let error {
+            return ReportArrival(phase: .failed, title: "Something went wrong", detail: error)
+        }
+        if step == .upload {
+            let total = uploaded + pending
+            return ReportArrival(phase: .sending, title: total > 0 ? "Sending your scan: \(min(uploaded + 1, total)) of \(total)" : "Sending your scan",
+                                 detail: nil)
+        }
+        let leave = "You can leave this screen. The report appears in Scans when it is ready."
+        if waited >= slowAfter {
+            let minutes = Int(waited / 60)
+            return ReportArrival(phase: .slow, title: "Taking longer than usual",
+                                 detail: "Grain has had your scan for \(minutes) minutes and is still working. \(leave)")
+        }
+        return ReportArrival(phase: .looking, title: "Uploaded. Grain is looking at it.",
+                             detail: "This usually takes a few minutes. \(leave)")
+    }
+}

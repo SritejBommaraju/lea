@@ -46,6 +46,10 @@ struct ReportView: View {
     @State private var meterContext: MeterReadingContext?
     @State private var meterReadingsSent = 0
     @State private var showFixWithGrain = false
+    /// The customer's answers to "Did this fix it?": kept on the phone until the gateway has them.
+    @StateObject private var outcomes = OutcomeBoard()
+    /// When the scan finished uploading: how long Grain has been looking at it (ReportArrival).
+    @State private var waitingSince: Date?
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -74,12 +78,14 @@ struct ReportView: View {
                                         meterContext = report.nextStep.map { MeterReadingContext(step: $0) } ?? MeterReadingContext()
                                     },
                                     askDesign: gateway == nil || report.design == nil ? nil : { showFixWithGrain = true },
-                                    meterReadingsSent: meterReadingsSent)
+                                    meterReadingsSent: meterReadingsSent,
+                                    customer: customerContext)
                         .transition(.opacity)
                 } else if error == nil {
                     // While the Mac works: the person's own scan on the stage, one line of progress.
                     ReportStageWaiting(model: model, progress: progress, uploaded: upload?.uploadedFiles ?? 0,
-                                       pending: upload?.pending.count ?? 0, found: live?.areasChecked)
+                                       pending: upload?.pending.count ?? 0, found: live?.areasChecked,
+                                       waitingSince: waitingSince)
                 } else {
                     ReportProgressView(progress: progress, uploaded: upload?.uploadedFiles ?? 0,
                                        pending: upload?.pending.count ?? 0, error: error, retry: retry)
@@ -115,7 +121,9 @@ struct ReportView: View {
                 }
             }
             .sheet(isPresented: $showFixWithGrain) {
-                FixWithGrainSheet(scanID: record.scanID, symptom: record.symptom, gateway: gateway)
+                FixWithGrainSheet(scanID: record.scanID, symptom: record.symptom,
+                                  context: report.map { CustomerWords.fixContext($0, symptom: record.symptom, readingsSent: meterReadingsSent) } ?? [],
+                                  gateway: gateway)
             }
             .sheet(item: $meterContext) { ctx in
                 MeterReadingSheet(context: ctx, scanID: record.scanID,
@@ -133,6 +141,10 @@ struct ReportView: View {
                 }
             }
             .task { await run() }
+            .task(id: record.scanID) {
+                outcomes.configure(scanID: record.scanID, directory: gateway == nil ? nil : app.storage.dir(record), gateway: gateway)
+            }
+            .onDisappear { outcomes.stop() }
             .task(id: report == nil) { await fetchMesh(rev: nil) }
             .task(id: live?.meshRev) { if let rev = live?.meshRev { await fetchMesh(rev: rev) } }
             .task(id: heroChoice) { await fetchMesh(rev: nil) }
@@ -146,6 +158,19 @@ struct ReportView: View {
         }
         .tint(Palette.accent)
         .environment(\.cropSource, CropSource.saved(in: CropSource.dir(app.storage.dir(record)), fallback: gateway.map(CropSource.gateway)))
+    }
+
+    /// The customer's side of the report (the design's picture, fix cards, "Did this fix it?", the meter check): only
+    /// with a gateway to fetch from and send to.
+    private var customerContext: CustomerContext? {
+        guard let gateway else { return nil }
+        return CustomerContext(scanID: record.scanID, gateway: gateway, outcomes: outcomes) { id in
+            if let step = report?.nextStep, id == nil || step.actionID == id {
+                meterContext = MeterReadingContext(step: step)
+            } else {
+                meterContext = MeterReadingContext()
+            }
+        }
     }
 
     /// What the object is, for the stage: the person's own correction first, then whichever identification names the
@@ -332,6 +357,7 @@ struct ReportView: View {
             progress.step = .upload
             try await upload.complete()
             progress.step = .inspect
+            waitingSince = waitingSince ?? Date()
             while true {
                 let p = try await gateway.pipeline(scanID: record.scanID)
                 progress.update(p)
@@ -403,6 +429,8 @@ enum FixSearch {
 struct PipelineProgress: Equatable {
     enum Step: Int, CaseIterable {
         case upload, inspect, weigh, write
+        /// The design engine is comparing the scan with the product's design (pipeline stage `design_engine`).
+        case judge
 
         var title: String {
             switch self {
@@ -410,6 +438,7 @@ struct PipelineProgress: Equatable {
             case .inspect: "Inspecting each photo"
             case .weigh: "Weighing the evidence"
             case .write: "Writing the report"
+            case .judge: "Grain is looking at it"
             }
         }
     }
@@ -425,6 +454,7 @@ struct PipelineProgress: Equatable {
             guard let status = (stages[k] as? [String: Any])?["status"] as? String else { return false }
             return status != "pending"
         }
+        if started("design_engine") { step = .judge; return }
         if started("report") { step = .write }
         else if started("fuse") || started("locate") { step = .weigh }
         else { step = .inspect }
@@ -460,7 +490,7 @@ struct ReportProgressView: View {
                         .textSelection(.enabled)
                 }
                 VStack(spacing: 0) {
-                    ForEach(PipelineProgress.Step.allCases, id: \.self) { step in
+                    ForEach(rows, id: \.self) { step in
                         if step != .upload { Rectangle().fill(Palette.hairline).frame(height: Line.hairline) }
                         StepRow(number: step.rawValue + 1, title: step.title, detail: detail(step), state: state(step))
                     }
@@ -487,6 +517,11 @@ struct ReportProgressView: View {
         case .inspect: progress.stillsTotal > 0 ? Double(progress.stillsDone) / Double(progress.stillsTotal) : nil
         default: nil
         }
+    }
+
+    /// The steps a run goes through: sending, then the design engine's look; the older four only for an older run.
+    private var rows: [PipelineProgress.Step] {
+        progress.step == .judge ? [.upload, .judge] : [.upload, .inspect, .weigh, .write]
     }
 
     private func state(_ step: PipelineProgress.Step) -> StepRow.State {

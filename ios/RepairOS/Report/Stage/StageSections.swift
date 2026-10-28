@@ -13,11 +13,11 @@ struct StageVerdictHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.s) {
-            Text(ReportWords.headline(report))
+            Text(CustomerWords.verdictSentence(report) ?? ReportWords.headline(report))
                 .display(.hero)
                 .foregroundStyle(Palette.ink)
                 .fixedSize(horizontal: false, vertical: true)
-            if let sentence = ReportWords.sentence(report).map(ReportWords.display) {
+            if CustomerWords.verdictSentence(report) == nil, let sentence = ReportWords.sentence(report).map(ReportWords.display) {
                 Text(sentence).font(.body).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if !meta.isEmpty {

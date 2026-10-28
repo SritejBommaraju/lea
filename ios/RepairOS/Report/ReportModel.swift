@@ -83,6 +83,14 @@ struct ReportModel: Sendable {
         var isSetup: Bool = false
         /// The plain fix for a setup state ("Put the batteries in, then test again.").
         var fix: String? = nil
+        /// The report's issue code for the row ("missing", "loose"), for the customer's sentence.
+        var issueCode: String = ""
+        /// The design engine's own confidence word (high, medium, low), before it is turned into words.
+        var confidenceWord: String? = nil
+        /// The fix as data (report `fix_plan`): what to do, buy, print or measure.
+        var fixPlan: FixPlan? = nil
+        /// What the person said after trying the fix (report `outcome`).
+        var outcome: OutcomeAnswer? = nil
     }
 
     /// A region nobody looked at (not_inspected) or that could not be judged (insufficient_evidence).
@@ -126,6 +134,8 @@ struct ReportModel: Sendable {
         var powerState: String? = nil
         /// What to watch out for before probing (`next_step.safety_notes`), in the design engine's words.
         var safetyNotes: [String] = []
+        /// What a good reading looks like (`next_step.expected`): the design's own range for the check.
+        var expected: ExpectedReading? = nil
 
         var symbol: String {
             switch kind {
@@ -228,7 +238,8 @@ struct ReportModel: Sendable {
             nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String,
                                 actionID: n["action_id"] as? String, net: (target?["net"] as? String)?.trimmedOrNil,
                                 pins: (target?["pins"] as? [String]) ?? [], powerState: n["power_state"] as? String,
-                                safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil))
+                                safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil),
+                                expected: ExpectedReading(json: n["expected"] as? [String: Any]))
         }
         design = ((r["design"] as? [String: Any])?["project"] as? String)?.trimmedOrNil
         limits = r["limits"] as? [String] ?? []
@@ -327,7 +338,11 @@ struct ReportModel: Sendable {
             cropStill: (f["crop"] as? [String: Any])?["still_id"] as? String,
             cropBox: ((f["crop"] as? [String: Any])?["box_px"] as? [NSNumber])?.map(\.doubleValue),
             isSetup: f["category"] as? String == "setup",
-            fix: (f["fix"] as? String)?.trimmedOrNil)
+            fix: (f["fix"] as? String)?.trimmedOrNil,
+            issueCode: f["issue"] as? String ?? "",
+            confidenceWord: f["confidence_word"] as? String,
+            fixPlan: FixPlan(json: f["fix_plan"] as? [String: Any]),
+            outcome: OutcomeAnswer(json: f["outcome"] as? [String: Any]))
     }
 
     private static func gap(_ g: [String: Any]) -> Gap {
