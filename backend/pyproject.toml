@@ -20,6 +20,11 @@ dependencies = [
     "uvicorn==0.54.0",
     # The design engine client (repairos.grain) and Cartesia: httpx2 (BSD-3), pinned as in requirements.lock.
     "httpx2==2.16.0",
+    # Lea's answers (repairos.voice): anthropic Apache-2.0 (MIT before 2.0.0). Importers and the report export: numpy
+    # BSD-3-Clause, pillow MIT-CMU (permissive).
+    "anthropic==2.3.0",
+    "numpy==2.5.4",
+    "pillow==13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -28,35 +33,14 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
 ]
-# Phase 1 perception (M1, M3, B8): `uv pip install -e 'backend[vision]'`. Not in
-# requirements.lock yet. Licences: transformers Apache-2.0, torch BSD-3-Clause (bundles Apache/BSD/MIT/BSL-1.0
-# parts), pillow MIT-CMU (permissive), anthropic Apache-2.0 (MIT before 2.0.0), numpy
-# BSD-3-Clause. Transitive tqdm is MPL-2.0 AND MIT: flag for the licence check (B15). Weights: Grounding DINO tiny
-# and OWLv2 base, both Apache-2.0, revisions pinned in their slot packages.
-vision = [
-    "transformers==5.20.2",
-    "torch==2.14.1",
-    "pillow==13.0.0",
-    "numpy==2.5.4",
-    "anthropic==2.3.0",
-]
-# Defect classifier training and its benchmark (M7): `uv pip install -e 'backend[vision,train]'`. Not in
-# requirements.lock (run `make lock` when it joins). Licences: pyarrow Apache-2.0 (reads the Hugging Face parquet
-# mirrors). Heads train with torch + numpy from the vision extra; no scikit-learn.
-train = [
-    "pyarrow==21.0.0",
-]
 
-# Capture geometry (B12 fusion, locate ray casting, B13 later): `uv pip install -e 'backend[geometry]'`. Not in
-# requirements.lock yet. open3d MIT (wheel bundles its MIT/BSD/Apache 3rd-party code); its pip deps (dash, flask,
-# werkzeug, nbformat, ipywidgets, configargparse and their tree) are MIT, BSD, Apache-2.0 or ISC, except transitive
-# certifi, MPL-2.0: flag for the licence check (B15). Without it the importer and locate fall back to numpy.
+# Capture geometry (the importers' TSDF fusion): `uv pip install -e 'backend[geometry]'`. Not in requirements.lock.
+# open3d MIT (wheel bundles its MIT/BSD/Apache 3rd-party code); its pip deps (dash, flask, werkzeug, nbformat,
+# ipywidgets, configargparse and their tree) are MIT, BSD, Apache-2.0 or ISC, except transitive certifi, MPL-2.0: flag
+# for the licence check (B15). Without it the importers fall back to a numpy voxel fusion.
 geometry = [
     "open3d==0.20.0",
 ]
-# Mac reconstruction merge (repairos.recon) needs no extra: it uses Apple's joint reconstruction plus ICP. The
-# optional SIFT bridge runs only if cv2 is already importable; we do not depend on it because the
-# opencv-python(-headless) wheels bundle LGPL dylibs (FFmpeg, GnuTLS), which fail the licence allowlist.
 
 [tool.hatch.build.targets.wheel]
 packages = ["repairos"]

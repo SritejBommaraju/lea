@@ -257,10 +257,6 @@ struct WriterTests {
         #expect(host == 300)
     }
 
-    @Test func cameraConventionFlip() {
-        let m = matrix_identity_float4x4 * Reconstruction.flipYZ
-        #expect(m.columns.2.z == -1 && m.columns.1.y == -1 && m.columns.0.x == 1)
-    }
 }
 
 struct StillSharpnessTests {

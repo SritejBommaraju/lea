@@ -1,5 +1,5 @@
 """Load a recorded session into the configured STATE and BLOB slots through the same transitions the gateway uses,
-and score the findings the pipeline wrote against truth.json."""
+and score findings against truth.json (`score`)."""
 from __future__ import annotations
 
 from pathlib import Path

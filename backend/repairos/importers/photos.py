@@ -6,8 +6,8 @@
 
 Plain photos have no AR session: no camera pose, no depth, no world frame. So the session holds one scan package
 with `depth_source: none` and no keyframes, and every photo becomes an `unguided` still with `pose_reliable: false`
-and no `camera` (still.schema.json allows that only when pose_reliable is false). Nothing is made up: the pipeline
-detects and judges on the photos, and the report says the location was not computed.
+and no `camera` (still.schema.json allows that only when pose_reliable is false). Nothing is made up: the design
+engine judges the photos, and the report says the location was not computed.
 
 Per photo:
 - HEIC/HEIF is decoded with macOS `sips` into a lossless PNG (EXIF kept for reading); JPEG is read as is.

@@ -1,6 +1,6 @@
-<!-- Title: start with the task id, e.g. "B10 Pipeline orchestrator". Squash-merge keeps it; the build tools count the task done. -->
+<!-- Title: start with the task id, e.g. "B16 Design engine client". Squash-merge keeps it; the build tools count the task done. -->
 
-**Task:** <!-- e.g. B10 (PLAN.md §7) -->
+**Task:** <!-- e.g. B16 (PLAN.md §7) -->
 **Stream:** <!-- app | modeling | build -->
 
 ## What changed

@@ -16,7 +16,7 @@ import doctor  # noqa: E402
 import next as next_tool  # noqa: E402
 import status as status_tool  # noqa: E402
 
-STEPS = [{"id": "jev_key", "what": "w", "how": "h", "check": "env_jev"},
+STEPS = [{"id": "grain_key", "what": "w", "how": "h", "check": "env_grain"},
          {"id": "test_products", "what": "w", "how": "h", "check": "none"}]
 
 
@@ -54,6 +54,14 @@ class Validation(unittest.TestCase):
                        "B6: needs title", "MS1: unknown task B99"):
             self.assertTrue(any(needle in e for e in errs), needle)
 
+    def test_removed_tasks_are_kept_out_of_work(self):
+        data = registry(task("B1", status="removed"), task("B2", depends_on=["B1"]), task("B3"),
+                        milestones=[{"id": "MS1", "requires": ["B1"]}])
+        errs = _lib.validate_tasks(data)
+        self.assertIn("B2: depends on removed task B1", errs)
+        self.assertIn("milestone MS1: requires removed task B1", errs)
+        self.assertEqual([t["id"] for t in _lib.open_tasks(data)], ["B2", "B3"])
+
     def test_done_task_needs_done_deps(self):
         errs = _lib.validate_tasks(registry(task("B1"), task("B2", status="done", depends_on=["B1"])))
         self.assertIn("B2: done but its dependency B1 is not", errs)
@@ -61,13 +69,13 @@ class Validation(unittest.TestCase):
 
 class Ready(unittest.TestCase):
     def setUp(self):
-        self.data = registry(task("B1", status="done"), task("B2", depends_on=["B1"], human=["jev_key"]),
+        self.data = registry(task("B1", status="done"), task("B2", depends_on=["B1"], human=["grain_key"]),
                              task("B3", depends_on=["B2"]), task("M1", stream="modeling", status="blocked"),
                              task("A1", stream="app", human=["test_products"]),
                              task("M2", stream="modeling", status="doing", branch="x/m2"))
 
     def plan(self, jev_ok):
-        res = {"jev_key": (jev_ok, ""), "test_products": (None, "manual")}
+        res = {"grain_key": (jev_ok, ""), "test_products": (None, "manual")}
         return next_tool.plan(self.data, results=res)
 
     def test_ready_per_stream(self):
@@ -80,24 +88,24 @@ class Ready(unittest.TestCase):
     def test_missing_human_step_waits(self):
         p = self.plan(False)
         self.assertEqual(p["build"]["ready"], [])
-        self.assertEqual(p["build"]["waiting"][0]["missing"], ["jev_key"])
+        self.assertEqual(p["build"]["waiting"][0]["missing"], ["grain_key"])
 
     def test_stream_filter(self):
         self.assertEqual(set(next_tool.plan(self.data, stream="app", results={})), {"app"})
 
     def test_human_steps_only_for_open_tasks(self):
         self.data["by_id"]["B2"]["status"] = "done"
-        self.assertNotIn("jev_key", _lib.required_human_steps(self.data))
+        self.assertNotIn("grain_key", _lib.required_human_steps(self.data))
 
     def test_doctor_offline_reports_missing_keys(self):
         rows, actions = doctor.collect(self.data, offline=True, env={})
-        self.assertEqual({r[0] for r in actions}, {"jev_key", "test_products"})
-        rows, actions = doctor.collect(self.data, stream="build", offline=True, env={"TYPESAFE_KEY": "x"})
+        self.assertEqual({r[0] for r in actions}, {"grain_key", "test_products"})
+        rows, actions = doctor.collect(self.data, stream="build", offline=True, env={"GRAIN_URL": "x", "GRAIN_API_KEY": "x"})
         self.assertEqual(actions, [])
 
     def test_status_renders_milestones(self):
         self.data["milestones"] = [{"id": "MS1", "title": "m", "requires": ["B1", "B2"]}]
-        text = status_tool.render(self.data, {"jev_key": (True, ""), "test_products": (None, "")})
+        text = status_tool.render(self.data, {"grain_key": (True, ""), "test_products": (None, "")})
         self.assertIn("| MS1 | m | 1/2 |", text)
         self.assertIn("| B3 | after B2 |", text)
         self.assertIn("| M1 | blocked |", text)
@@ -119,7 +127,7 @@ class RealFiles(unittest.TestCase):
     def test_registry_is_valid(self):
         data = _lib.load_tasks(merged=False)
         self.assertEqual(_lib.validate_tasks(data), [])
-        self.assertTrue(all(len([t for t in data["tasks"] if t["stream"] == s["id"]]) <= 15
+        self.assertTrue(all(len([t for t in data["tasks"] if t["stream"] == s["id"] and t["status"] != "removed"]) <= 15
                             for s in data["streams"]))
 
     def test_plan_lists_the_same_tasks(self):
@@ -138,8 +146,8 @@ class RealFiles(unittest.TestCase):
     def test_providers_resolve(self):
         p = _lib.load_providers(environ={})
         self.assertEqual(p["profile"], "phase1")
-        self.assertEqual(p["slots"]["DET"], "owlv2")
-        self.assertEqual(_lib.load_providers(environ={"REPAIROS_SLOT_DET": "gdino"})["slots"]["DET"], "gdino")
+        self.assertEqual(p["slots"]["STATE"], "sqlite")
+        self.assertEqual(_lib.load_providers(environ={"REPAIROS_SLOT_STATE": "other"})["slots"]["STATE"], "other")
 
     def test_task_slots_exist_in_providers(self):
         selected = _lib.load_providers(environ={})["slots"]

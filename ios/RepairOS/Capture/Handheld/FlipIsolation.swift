@@ -1,8 +1,8 @@
 import Foundation
 import simd
 
-// "Scan the bottom": the object alone, before FlipAligner lines the two scans up. The same steps as the server's
-// segment_align (backend/repairos/recon/segment_align.py), on the phone's fused in-box cloud instead of per frame.
+// "Scan the bottom": the object alone, before FlipAligner lines the two scans up. The steps the server's segment_align
+// took (removed with the backend reconstruction, 2026-10-28), on the phone's fused in-box cloud instead of per frame.
 // Measured on four real flips (2026-10-25): the locked box is 3-4x the object and its floor sits 1-47 mm below the
 // table, so "above the floor + 4 mm" kept the table: the main scan's cloud was 10-27% object and FlipAligner matched
 // table to table. Here:

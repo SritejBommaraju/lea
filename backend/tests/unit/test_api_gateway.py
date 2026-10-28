@@ -211,16 +211,14 @@ def test_scan_package_upload_validated_and_recorded(gw):
     sid = new_session(gw)
     pkg = make_scan(gw, sid)
     status, out, _ = gw.req("POST", "/v1/scans", pkg)
-    assert status == 201 and out["rev"] == 1 and out["jobs"]
-    status, again, _ = gw.req("POST", "/v1/scans", copy.deepcopy(pkg))  # retry: same row, no second job
-    assert status == 201 and again["rev"] == 1 and again["jobs"] == out["jobs"]
-    job = asyncio.run(gw.state.get_job(out["jobs"][0]))
-    assert job.kind == "detect" and job.attempts == 0 and job.scan_id == pkg["scan_id"]
+    assert status == 201 and out["rev"] == 1 and "jobs" not in out   # nothing is queued: the design engine judges at /complete
+    status, again, _ = gw.req("POST", "/v1/scans", copy.deepcopy(pkg))  # retry: same row
+    assert status == 201 and again["rev"] == 1
     status, got, _ = gw.req("GET", f"/v1/scans/{pkg['scan_id']}")
     assert status == 200 and got["scan"] == pkg
     st = make_still(gw, pkg)
     status, out, _ = gw.req("POST", "/v1/stills", st)
-    assert status == 201 and out["jobs"]
+    assert status == 201 and "jobs" not in out and out["scan_pending"] is False
     rd = {**ex("meter-reading"), "session_id": sid, "scan_id": pkg["scan_id"]}
     assert gw.req("POST", "/v1/readings", rd)[0] == 201
     status, full, _ = gw.req("GET", f"/v1/sessions/{sid}")

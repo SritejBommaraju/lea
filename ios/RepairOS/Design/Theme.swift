@@ -313,8 +313,7 @@ enum Motion {
         reduceMotion ? fade : animation
     }
 
-    /// SceneKit timings for Lea moving the 3D model (DESIGN §6, the redesign plan §3.2). One curve for every move:
-    /// the one `RecreationScene.move` already uses.
+    /// SceneKit timings for Lea moving the 3D model (DESIGN §6, the redesign plan §3.2). One curve for every move.
     enum Scene {
         /// Fly to a part (`show`, a resolved `point`, a chosen marker); scale 0.6-1.0 s by angular distance.
         static let fly: Double = 0.8

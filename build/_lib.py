@@ -23,7 +23,7 @@ TASKS = ROOT / "build" / "tasks.yaml"
 PROVIDERS = ROOT / "config" / "providers.yaml"
 ENV_FILE = ROOT / "backend" / ".env"
 
-STATUSES = ("todo", "doing", "done", "blocked")
+STATUSES = ("todo", "doing", "done", "blocked", "removed")
 PHASES = (1, 2)
 DEFAULT_PROFILE = "phase1"
 TASK_DEFAULTS = {"status": "todo", "phase": 1, "depends_on": [], "owns": [], "human": [], "slots": [],
@@ -181,7 +181,8 @@ def load_tasks(path: Path = TASKS, merged: bool = True) -> dict:
     data = prepare_tasks(parse_yaml_subset(path.read_text(encoding="utf-8")))
     if merged:
         for tid in merged_tasks(set(data["by_id"])):
-            data["by_id"][tid]["status"] = "done"
+            if data["by_id"][tid]["status"] != "removed":   # a removed task stays removed whatever its history says
+                data["by_id"][tid]["status"] = "done"
     return data
 
 
@@ -224,6 +225,8 @@ def validate_tasks(data: dict) -> list[str]:
         for d in t["depends_on"]:
             if d not in by_id:
                 errs.append(f"{tid}: unknown dependency {d}")
+            elif by_id[d]["status"] == "removed" and t["status"] != "removed":
+                errs.append(f"{tid}: depends on removed task {d}")
             elif t["phase"] == 1 and by_id[d]["phase"] != 1:
                 errs.append(f"{tid}: Phase 1 task depends on Phase 2 task {d}")
             elif t["status"] == "done" and by_id[d]["status"] != "done":
@@ -240,6 +243,8 @@ def validate_tasks(data: dict) -> list[str]:
         for r in m.get("requires") or []:
             if r not in by_id:
                 errs.append(f"milestone {m['id']}: unknown task {r}")
+            elif by_id[r]["status"] == "removed":
+                errs.append(f"milestone {m['id']}: requires removed task {r}")
     state: dict[str, int] = {}
 
     def visit(n, stack):
@@ -293,7 +298,8 @@ def deps_done(task: dict, by_id: dict) -> bool:
 
 
 def open_tasks(data: dict, stream: str | None = None) -> list[dict]:
-    return [t for t in data["tasks"] if t["status"] != "done" and (stream is None or t["stream"] == stream)]
+    return [t for t in data["tasks"] if t["status"] not in ("done", "removed")
+            and (stream is None or t["stream"] == stream)]
 
 
 def required_human_steps(data: dict, task_ids=None, stream: str | None = None) -> dict[str, set[str]]:
@@ -408,12 +414,8 @@ def run_checks(needed: set[str], offline: bool = False, env: dict | None = None,
     if "gh_auth" in needed:
         rc, out = _run(["gh", "auth", "status"])
         res["gh_auth"] = (rc == 0, _first(out, 80) or "gh not found")
-    if "env_jev" in needed:
-        ok, d = _env_check(env, ["TYPESAFE_KEY"])
-        if ok and not offline:
-            reach, detail = _http_ok("https://api.typesafe.ai/")
-            ok, d = reach, d + f"; api.typesafe.ai: {detail}"
-        res["env_jev"] = (ok, d)
+    if "env_grain" in needed:
+        res["env_grain"] = _env_check(env, ["GRAIN_URL", "GRAIN_API_KEY"])
     if "env_anthropic" in needed:
         res["env_anthropic"] = _env_check(env, ["ANTHROPIC_API_KEY"])
     if "device" in needed:

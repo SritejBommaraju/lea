@@ -2,33 +2,33 @@
 
 **Who.** Rohan, driving coding agents.
 
-**Delivers.** Everything that is not the app or the models: contracts and codegen, config and registry, the
-gateway, state and blobs, sessions and replay, Jev fusion (all built); the report contract, the Phase 1 pipeline
-orchestrator, report generation, the import fallback, pose-graph refinement, CI and the licence check (to build).
+**Delivers.** Everything that is not the app or the data: contracts and codegen, config and registry, the gateway, state
+and blobs, sessions, the design engine client and the report built from its answer, the import fallback, CI and the
+licence check. The Phase 1 pipeline, Jev fusion and the LLM slot were removed on 2026-10-28 (PLAN.md §10).
 
 **Owns.** `backend/**` except the modeling paths ([modeling-benchmark.md](modeling-benchmark.md)); `build/**`,
 `config/**`, `tools/**`, `spec/contracts/**` (a contract change is its own PR), `.github/**`,
 `samples/README.md`, `samples/session.schema.json`.
 
-**Contracts.** Receives `scan-package`, `still`, `meter-reading` from the app and vision `finding`s from the
-modeling slots. Produces `suspect`, `next-action` and the `report` (B9).
+**Contracts.** Receives `scan-package`, `still`, `meter-reading` from the app. Produces `finding`s (source `grain`, or
+`repairos.meter` for a row a reading settled) and the `report` (B9).
 
 ## Tasks, in order
 
 | Id | What | Deps |
 |---|---|---|
-| B1-B8 | Scaffold, contracts, config, state and blobs, gateway, sessions, Jev fusion, LLM slot | done |
+| B1-B6 | Scaffold, contracts, config, state and blobs, gateway, sessions | done |
 | B9 | `report` contract | B2 |
-| B10 | Phase 1 pipeline orchestrator | B9 |
-| B11 | Report generation: verdict in code, plain words by Claude, route and SSE | B9, B10 |
 | B12 | Import fallback: Stray Scanner first; 3D Scanner App after a terms check| B6 |
-| B13 | Backend pose-graph refinement with Open3D and OpenCV, only if on-phone drift correction falls short | B6 |
 | B14 | CI: `make check` on every PR | B1 |
 | B15 | Licence check against the L2 allowlist | B14 |
+| B16 | Design engine (Grain): client, report from its answer, readings, Fix it | B5 |
 
-"Done when" for each: [PLAN.md](../PLAN.md) §7. Milestone MS1 (replay to report) is this stream's.
+B7, B8, B10, B11 and B13 are removed (PLAN.md §7).
 
-**Setup (doctor items).** `dev_tools`, `repo_access`, `jev_key`, `anthropic_key`; `test_products` for B12.
+"Done when" for each: [PLAN.md](../PLAN.md) §7. Milestone MS3 (report on the phone) is shared with the app stream.
 
-**Done when.** `make replay` on a recorded real session writes a valid report with zero honesty violations;
-the gateway serves it to the app; `make check` runs on every PR.
+**Setup (doctor items).** `dev_tools`, `repo_access`, `grain_key`, `anthropic_key`; `test_products` for B12.
+
+**Done when.** A completed scan is judged by the design engine and the gateway serves the report to the app;
+`make check` runs on every PR.

@@ -5,7 +5,7 @@ For every person on the team and every coding agent working for them.
 ## What this is
 
 LEA (RepairOS in the code) is an iPhone app plus a backend. It scans any hardware object with LiDAR, guides
-full-resolution close-ups, finds defects with our models and writes a report with evidence. The plan, the invariants and every task are in [PLAN.md](PLAN.md).
+full-resolution close-ups, has the design engine (Grain) judge the scan against the product's own design and writes a report with the fix. The plan, the invariants and every task are in [PLAN.md](PLAN.md).
 
 ## Read order
 
@@ -32,7 +32,7 @@ make hooks                              # pre-commit guard
 4. Build test-first, inside the task's `owns` paths (PLAN.md §7, `build/tasks.yaml`).
 5. `make test`, `make contracts` and, if you touched a schema, `make codegen` then `make codegen-check`.
 6. `git fetch origin && git rebase origin/main`, then a PR to `main`. The title starts with the task id
-   (`B10 Pipeline orchestrator`); squash-merge keeps it and the tools count the task done.
+   (`B16 Design engine client`); squash-merge keeps it and the tools count the task done.
 
 Stuck on a missing key, device or service: say so in the channel and pick another task. Never fake around it.
 
@@ -43,10 +43,10 @@ Stuck on a missing key, device or service: say so in the channel and pick anothe
   (`tools/guard_proprietary.py`) enforces it.
 - **Nothing fake.** No fakes, stubs or mocks of missing services, devices or data. Recorded real captures and
   responses in tests are fine.
-- **Any product.** No product names, refs or class lists in code; the one generic vocabulary is
-  `backend/repairos/vision/generic_classes.py`.
-- **Honest output.** Vision is a suspect and only a meter reading is proof; not looked at is `not_inspected`,
-  never `ok`; `insufficient_evidence` always has a reason; Jev judges and code decides.
+- **Any product.** No product names, refs or class lists in code; the design engine names the parts from the
+  product's own design.
+- **Honest output.** A scan or photo finding is a suspect and only a meter reading is proof; not looked at is
+  `not_inspected`, never `ok`; `insufficient_evidence` always has a reason; the design engine judges and code decides.
 - **Secrets only in `backend/.env`.** The phone never holds a key.
 - **Licence-clean.** Permissive code, weights and data only (PLAN.md invariant L2).
 - **Stay in your owned paths.** A contract change is its own PR. A behaviour change updates PLAN.md in the

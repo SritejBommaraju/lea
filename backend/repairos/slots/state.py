@@ -25,9 +25,9 @@ ID_FIELDS: dict[str, str] = {
     "report": "report_id",
 }
 # internal kinds (no contract schema): id field
-# pipeline-run: one per scan, the Phase 1 pipeline's stage results and error state (task B10, repairos.pipeline)
+# pipeline-run: one per scan, the run row of the design engine's judgement (status, stage, error; api/app.py)
 INTERNAL_KINDS: dict[str, str] = {"session": "session_id", "device": "token_sha256", "pipeline-run": "run_id",
-                                  "story": "session_id"}   # story: what the person said is wrong (pipeline/story.py)
+                                  "story": "session_id"}   # story: no longer written (the Phase 1 story/identify routes were removed)
 
 TRANSITIONS = (
     "session.create", "device.pair",

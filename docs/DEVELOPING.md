@@ -15,14 +15,13 @@ milestones and every task.
 
 - **iOS app**: guided LiDAR scan with live coverage on our own ARKit pipeline, guided full-resolution close-ups, resumable
   upload, the report screen.
-- **Detection pipeline**: OWLv2 zero-shot detector (Grounding DINO as the alternative), full-resolution crops, a
-  trained defect classifier (planned), Claude VLM for explanations and unclear cases, OCR for labels, Jev
-  judgments with the decisions made in code, then the report.
+- **Design engine**: the product was designed in Grain, which judges the scan, photos and meter readings against that
+  design; the report is built from its answer, with the fix (what to buy, remake or reseat) and the next meter check.
+  "Fix it with Grain" asks it to change the design from the phone.
 - **Benchmark**: labelled real captures with held-out products. Every target comes from its measurements.
 
-Built so far: the gateway, state and blobs, recorded sessions and replay, the detector slots, crops, the VLM and
-LLM slots, Jev fusion, contracts with codegen, the provider registry and config. Not built yet: the iOS app, the
-pipeline orchestrator, the report, the classifier and the benchmark. Live status: [build/STATUS.md](../build/STATUS.md).
+Built so far: the gateway, state and blobs, recorded sessions, contracts with codegen, the provider registry and config,
+the design engine client and the report built from its answer, Lea's voice. Live status: [build/STATUS.md](../build/STATUS.md).
 
 ## Quickstart
 
@@ -32,7 +31,7 @@ iPhone.
 ```
 make bootstrap                          # backend/.venv from backend/requirements.lock
 make hooks                              # pre-commit guard: blocks private files
-cp backend/.env.example backend/.env    # then add TYPESAFE_KEY and ANTHROPIC_API_KEY (never commit it)
+cp backend/.env.example backend/.env    # then add GRAIN_URL, GRAIN_API_KEY and ANTHROPIC_API_KEY (never commit it)
 make test                               # backend unit + conformance tests
 make run-gateway                        # FastAPI gateway on :8000, the only server the phone talks to
 ```
@@ -48,7 +47,7 @@ and prints HUMAN ACTION NEEDED for steps only a person can do.
 | `python3 -I build/doctor.py [--offline]` | Prerequisites for the open tasks |
 | `python3 -I build/status.py` | Rewrites `build/STATUS.md` |
 | `make contracts`, `make codegen-check` | Schemas vs examples; generated code has no drift |
-| `make replay SESSION=<id>`, `make sessions-check` | Replay or validate recorded real sessions |
+| `make replay SESSION=<id>`, `make sessions-check` | Load or validate recorded real sessions |
 | `make check` | Contracts, codegen drift, guard and tests |
 
 Three streams: [App](../areas/app.md), [Modeling + benchmark](../areas/modeling-benchmark.md) and

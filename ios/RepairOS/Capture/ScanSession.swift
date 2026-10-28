@@ -465,9 +465,6 @@ final class ScanSession: NSObject {
                 supportingPlaneRemoved: box != nil ? true : nil, symptom: record.symptom, units: .m,
                 voxelMm: nil)
             try JSON.encoder.encode(pkg).write(to: storage.scanPackageURL(record), options: .atomic)
-            // The instant photo-real shell (Report/Recreation), built in the background now that capture has ended.
-            let sessionDir = storage.dir(record), scanID = record.scanID
-            Task { @MainActor in RecreationCenter.shared.buildShell(sessionDir: sessionDir, scanID: scanID, force: true) }
             r.stillIDs = record.stillIDs + stills
             r.status = .captured
             if let objectName { r.objectName = objectName }

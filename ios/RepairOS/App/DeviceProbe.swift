@@ -1,5 +1,4 @@
 import ARKit
-import RealityKit
 import SwiftUI
 import AVFoundation
 import Foundation
@@ -13,16 +12,12 @@ struct DeviceCapabilities: Sendable {
     let worldTracking: Bool
     /// Rear LiDAR depth.
     let sceneDepth: Bool
-    /// Apple Object Capture (LiDAR phones). Decides the engine: Object Capture when true, posed stills otherwise.
-    let objectCapture: Bool
     let meshReconstruction: Bool
     let rearCameras: [String]
     let videoFormats: [String]
 
-    /// Our ARKit scanner by default; Object Capture only when the developer flag turned it on.
-    var engine: EngineKind {
-        objectCapture && UserDefaults.standard.bool(forKey: "useObjectCapture") ? .objectCapture : .arkit
-    }
+    /// Our ARKit scanner.
+    var engine: EngineKind { .arkit }
 
     var contract: Device {
         Device(appVersion: "repairos/\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0")",
@@ -45,7 +40,6 @@ struct DeviceCapabilities: Sendable {
             ios: UIDevice.current.systemVersion,
             worldTracking: ARWorldTrackingConfiguration.isSupported,
             sceneDepth: ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth),
-            objectCapture: ObjectCaptureSession.isSupported,
             meshReconstruction: ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh),
             rearCameras: rear,
             videoFormats: ARWorldTrackingConfiguration.supportedVideoFormats.map(\.label)

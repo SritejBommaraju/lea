@@ -4,7 +4,7 @@ VENV  := backend/.venv
 PY    := $(VENV)/bin/python
 UV    := $(shell command -v uv 2>/dev/null)
 
-.PHONY: bootstrap lock codegen codegen-check contracts check test replay sessions-check eval run-gateway run-workers doctor next status hooks guard
+.PHONY: bootstrap lock codegen codegen-check contracts check test replay sessions-check run-gateway doctor next status hooks guard
 
 bootstrap: ## create backend/.venv (Python 3.12) and install the backend with dev deps from the lock file
 ifdef UV
@@ -19,7 +19,7 @@ endif
 	@if [ ! -f backend/.env ]; then echo "backend/.env missing: cp backend/.env.example backend/.env and fill in the keys"; fi
 
 lock: ## re-pin every dependency (needs uv)
-	uv pip compile --python 3.12 backend/pyproject.toml --extra dev --extra vision -o backend/requirements.lock
+	uv pip compile --python 3.12 --universal backend/pyproject.toml --extra dev -o backend/requirements.lock
 
 codegen: ## spec/contracts -> Pydantic (backend/repairos/contracts) + Swift (ios/RepairOS/Contracts); needs uv + npx
 	python3 -I tools/codegen/codegen.py
@@ -35,22 +35,15 @@ check: contracts codegen-check guard test ## everything that exists today (licen
 test: ## backend unit + conformance tests (pytest)
 	$(VENV)/bin/pytest backend/tests
 
-replay: ## run the pipeline on one recorded session (task B6)
+replay: ## validate one recorded session and load it into a fresh state and blob store (task B6); judges nothing
 	@test -n "$(SESSION)" || { echo "usage: make replay SESSION=<session_id under samples/sessions/ | session folder path>"; exit 2; }
 	$(PY) tools/replay.py --session $(SESSION)
 
 sessions-check: ## validate every non-held-out recorded session in samples/sessions/ (task B6)
 	$(PY) tools/replay.py --check --all
 
-eval: ## score recorded sessions on the benchmark (task M5)
-	@test -f eval/score.py || { echo "make eval: eval/score.py not built yet (task M5)"; exit 1; }
-	$(PY) eval/score.py
-
 run-gateway: ## FastAPI gateway on :8000 (task B5)
 	cd backend && .venv/bin/uvicorn repairos.main:app --reload --host $${GATEWAY_HOST:-0.0.0.0} --port 8000
-
-run-workers: ## Phase 1 pipeline worker on the STATE job queue (task B10); ARGS="--once" drains the queue and exits
-	cd backend && .venv/bin/python -m repairos.pipeline.worker $(ARGS)
 
 doctor: ## human prerequisites of the open tasks (HUMAN ACTION NEEDED)
 	python3 -I build/doctor.py

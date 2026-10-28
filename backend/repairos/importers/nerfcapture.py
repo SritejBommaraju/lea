@@ -14,7 +14,7 @@ What the app's code does (DatasetWriter.swift, Utils.swift at commit 312cb01):
 - fl_x, fl_y, cx, cy are `ARFrame.camera.intrinsics` in pixels of the w x h image.
 - The depth PNG is the float depth map drawn through Core Image into an 8-bit image and resized to the colour
   image's size: values are clipped and colour-managed, not millimetres. It is **not used**; the scan is written with
-  `depth_source: none` and no point cloud (locate with `repairos.locate.triangulate` across stills).
+  `depth_source: none` and no point cloud (the design engine judges such a scan from its stills).
 - The tracking state is not recorded (written as `unknown`).
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ import numpy as np
 from repairos.importers import images
 from repairos.importers.images import ImportFormatError
 from repairos.importers.session import CaptureMeta, ImportedFrame, ImportResult, write_session
-from repairos.locate.camera import Pinhole, Pose
+from repairos.importers.camera import Pinhole, Pose
 
 IMAGE_EXTS = ("", ".png", ".jpg", ".jpeg")
 

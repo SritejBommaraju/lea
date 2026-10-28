@@ -4,7 +4,7 @@ import simd
 // Lea moves the report's 3D model while she answers (POST /v1/voice/converse J events): "Where's the battery
 // cover?" flies the camera to it, circles it and zooms in; "show me the bottom", "turn it around", "zoom in",
 // "reset". The gateway only sends parts the scan located; the phone still ignores an id it does not know. Pure
-// value types and maths here (unit-tested); ReportStageView applies a plan, the heroes (RecreationView, ModelView)
+// value types and maths here (unit-tested); ReportStageView applies a plan, the hero (ModelView)
 // move their cameras.
 
 /// Which side of the object to look at. `around`: the opposite side from the camera now; `reset`: the whole object.

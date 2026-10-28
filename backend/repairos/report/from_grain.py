@@ -29,11 +29,13 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
+from repairos.report import report_id_for
+
 SOURCE = "grain"
 ENGINE_NAME = "design engine (Grain)"
 NOT_RUN = "not run (the design engine judged this scan)"
 
-# The same word bands the earlier pipeline used (fusion/words.py), kept here so this module stands alone.
+# Word bands for coverage and confidence (I6: words, never numbers).
 COVERAGE_BANDS = ((0.3, "mostly not covered"), (0.8, "partly covered"), (None, "well covered"))
 CONFIDENCE_BANDS = ((0.35, "low"), (0.7, "medium"), (None, "high"))
 MAINS_ABOVE_V = 50.0   # IEC 61140: above 50 V AC / 120 V DC a shock is a hazard, so the step says so
@@ -319,7 +321,7 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
 
     summary = _text(call.get("summary")) or reason["text"]
     report: dict[str, Any] = {
-        "report_id": f"rep_{scan['scan_id']}", "scan_id": scan["scan_id"], "session_id": scan["session_id"],
+        "report_id": report_id_for(scan["scan_id"]), "scan_id": scan["scan_id"], "session_id": scan["session_id"],
         "build_id": uuid.uuid4().hex, "created_at": _now(now),
         "verdict": verdict, "verdict_reason": reason,
         "summary": {"text": summary, "written_by": ENGINE_NAME, "from_words_only": False},
@@ -571,7 +573,7 @@ def unknown_design(*, scan: Mapping[str, Any], stills: int = 0, now: datetime | 
     text = ("Lea does not know which product this is, so there is no design to compare the scan with. "
             "Enter the product's design id (printed on it) and scan again.")
     return {
-        "report_id": f"rep_{scan['scan_id']}", "scan_id": scan["scan_id"], "session_id": scan["session_id"],
+        "report_id": report_id_for(scan["scan_id"]), "scan_id": scan["scan_id"], "session_id": scan["session_id"],
         "build_id": uuid.uuid4().hex, "created_at": _now(now), "verdict": "insufficient_evidence",
         "verdict_reason": {"code": "no_regions", "rule": "G0", "text": text},
         "summary": {"text": text, "written_by": "repairos", "from_words_only": False},

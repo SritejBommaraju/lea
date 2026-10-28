@@ -3,8 +3,8 @@
 # Format: strict YAML subset (build/_lib.py parses it, stdlib only): two-space indent, `key: value`, flow lists
 # `[a, b]`, strings with ':' or '#' double-quoted, no multi-line scalars.
 #
-# Task fields: id, title, stream (app | modeling | build), phase (1), status (todo | doing | done | blocked),
-#   branch (for doing: where the work lives),
+# Task fields: id, title, stream (app | modeling | build), phase (1), status (todo | doing | done | blocked | removed),
+#   branch (for doing: where the work lives), removed (the task and its code were taken out; see PLAN.md),
 #   depends_on, owns, human (ids from human_steps), slots (["SLOT=impl"] the task implements; the conformance
 #   runner reads it), done_when.
 # A task whose id leads a commit subject on main counts as done (squash-merge keeps the PR title).
@@ -30,12 +30,12 @@ human_steps:
     what: "gh logged in with access to the repo"
     how: "gh auth login"
     check: gh_auth
-  - id: jev_key
-    what: "TYPESAFE_KEY in backend/.env (Jev fusion)"
-    how: "Owner creates the key in the TypeSafe console; put TYPESAFE_KEY=... in backend/.env"
-    check: env_jev
+  - id: grain_key
+    what: "GRAIN_URL and GRAIN_API_KEY in backend/.env (the design engine that judges scans)"
+    how: "Owner creates a key for the design engine; put GRAIN_URL=... and GRAIN_API_KEY=... in backend/.env"
+    check: env_grain
   - id: anthropic_key
-    what: "ANTHROPIC_API_KEY in backend/.env (VLM, LLM, report text)"
+    what: "ANTHROPIC_API_KEY in backend/.env (Lea's spoken answers)"
     how: "Owner creates the key; put ANTHROPIC_API_KEY=... in backend/.env"
     check: env_anthropic
   - id: xcode
@@ -58,30 +58,14 @@ human_steps:
     what: "A multimeter for optional meter evidence"
     how: "Any DMM with continuity and DC volts"
     check: none
-  - id: train_compute
-    what: "Owner decision: where the defect classifier trains and on what budget"
-    how: "Owner answers the PLAN.md §11 question"
-    check: none
 
 milestones:
-  - id: MS1
-    title: "Replay to report"
-    requires: [B9, B10, B11]
   - id: MS2
     title: "Capture on device"
     requires: [A1, A2, A3, A4]
   - id: MS3
     title: "Report on the phone"
-    requires: [A5, A6, B11]
-  - id: MS4
-    title: "Benchmark baseline"
-    requires: [M4, M5]
-  - id: MS5
-    title: "Classifier earns its slot"
-    requires: [M6, M7]
-  - id: MS6
-    title: "Phase 1 done"
-    requires: [A1, A2, A3, A4, A5, A6, A7, M1, M2, M3, M4, M5, M6, M7, M8, M9, B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12, B13, B14, B15]
+    requires: [A5, A6, B16]
 
 tasks:
   # ---------------------------------------------------------------- App (iOS)
@@ -119,7 +103,7 @@ tasks:
     title: "Report screen (live via SSE)"
     stream: app
     phase: 1
-    depends_on: [A4, B11]
+    depends_on: [A4, B16]
     owns: [ios/RepairOS/Report/**]
     done_when: "Renders verdict, findings with crops and confidence words, not_inspected, insufficient_evidence reasons; no probability numbers"
   - id: A6
@@ -129,7 +113,7 @@ tasks:
     depends_on: [A5]
     owns: [ios/RepairOS/Meter/**]
     human: [multimeter]
-    done_when: "Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out"
+    done_when: "Power state shown before probe points (S4); the sheet opens filled in from the report's next step; a reading shows the check it answered proven or ruled out"
   - id: A7
     title: "First-run usability pass"
     stream: app
@@ -152,28 +136,23 @@ tasks:
     title: "Detector slot: OWLv2 default, Grounding DINO alternative, generic vocabulary, prompts, tiling"
     stream: modeling
     phase: 1
-    status: done
-    owns: [backend/repairos/slots/detector.py, backend/repairos/slots/det_*/**, backend/repairos/vision/generic_classes.py, backend/repairos/vision/prompts.py, backend/repairos/vision/tiling.py, backend/tests/conformance/det/**]
-    slots: [DET=owlv2, DET=gdino]
-    done_when: "Built"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: the detector slot belonged to the Phase 1 pipeline (PLAN.md section 7)"
   - id: M2
     title: "Full-res crops from detector boxes"
     stream: modeling
     phase: 1
-    status: done
-    depends_on: [M1]
-    owns: [backend/repairos/vision/crops.py]
-    done_when: "Built"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: crops belonged to the Phase 1 pipeline (PLAN.md section 7)"
   - id: M3
     title: "VLM crop checks and per-still inspection into findings"
     stream: modeling
     phase: 1
-    status: done
-    depends_on: [M2]
-    owns: [backend/repairos/slots/vlm.py, backend/repairos/slots/vlm_*/**, backend/repairos/vision/inspect.py, backend/tests/conformance/vlm/**]
-    human: [anthropic_key]
-    slots: [VLM=anthropic]
-    done_when: "Built"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: the VLM crop checks belonged to the Phase 1 pipeline (PLAN.md section 7)"
   - id: M4
     title: "Benchmark data: labelled real sessions, known-good units, held-out products"
     stream: modeling
@@ -185,40 +164,37 @@ tasks:
     title: "Benchmark runner make eval"
     stream: modeling
     phase: 1
-    depends_on: [M4, B10]
-    owns: [eval/**]
-    done_when: "Per-split precision and recall by defect type, verdict accuracy, honesty violations, calibration, latency per stage; one results file per run"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: it scored the Phase 1 pipeline (PLAN.md section 7)"
   - id: M6
     title: "Defect dataset: licence-clean public data plus our labelled crops"
     stream: modeling
     phase: 1
-    depends_on: [M4]
-    owns: [training/data/**, licenses/datasets.json]
-    done_when: "Every source passes L2; no held-out product in training data"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: it fed the defect classifier (PLAN.md section 7)"
   - id: M7
     title: "Defect classifier, CLS slot: frozen DINOv2 + trained head, licence-clean data, benchmarked against Claude"
     stream: modeling
     phase: 1
-    status: doing
-    branch: rohan/defect-classifier
-    depends_on: [M5, M6]
-    owns: [backend/repairos/slots/classifier.py, backend/repairos/slots/cls_*/**, backend/tests/conformance/cls/**, training/models/**]
-    human: [train_compute]
-    done_when: "Conformance passes on real crops; make eval reports it against the Claude VLM-only baseline (MS5 decides)"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: the classifier belonged to the Phase 1 pipeline (PLAN.md section 7)"
   - id: M8
     title: "OCR of labels and markings on crops"
     stream: modeling
     phase: 1
-    depends_on: [M2]
-    owns: [backend/repairos/slots/ocr.py, backend/repairos/slots/ocrb_*/**, backend/tests/conformance/ocrb/**]
-    done_when: "Conformance on real label crops; text reaches findings and the report as state (A9)"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: OCR on detector crops belonged to the Phase 1 pipeline (PLAN.md section 7)"
   - id: M9
     title: "Detector choice measured on the benchmark"
     stream: modeling
     phase: 1
-    depends_on: [M5]
-    owns: [eval/results/detector/**]
-    done_when: "OWLv2 vs Grounding DINO on recall and latency; the DET default in config follows the numbers"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: it chose between detectors (PLAN.md section 7)"
 
   # ---------------------------------------------------------------- Build execution
   - id: B1
@@ -274,22 +250,16 @@ tasks:
     title: "Fusion via Jev: word state, questions, suspects, next action in code, meter override"
     stream: build
     phase: 1
-    status: done
-    depends_on: [B2]
-    owns: [backend/repairos/fusion/**, backend/repairos/slots/fusion.py, backend/repairos/slots/fusion_jev/**, tools/jev_smoke.py]
-    human: [jev_key]
-    slots: [FUSION=jev]
-    done_when: "Built"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: fusion belonged to the Phase 1 pipeline (PLAN.md section 7)"
   - id: B8
     title: "LLM slot (Claude Sonnet)"
     stream: build
     phase: 1
-    status: done
-    depends_on: [B3]
-    owns: [backend/repairos/slots/llm.py, backend/repairos/slots/llm_anthropic/**]
-    human: [anthropic_key]
-    slots: [LLM=anthropic]
-    done_when: "Built"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: its only users were the Phase 1 report text and fusion (PLAN.md section 7)"
   - id: B9
     title: "report contract: verdict, findings with crop refs and confidence words, not_inspected, reasons"
     stream: build
@@ -301,18 +271,16 @@ tasks:
     title: "Phase 1 pipeline orchestrator"
     stream: build
     phase: 1
-    depends_on: [B9]
-    owns: [backend/repairos/pipeline/**, backend/tests/unit/test_pipeline.py]
-    human: [jev_key, anthropic_key]
-    done_when: "MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: the Phase 1 pipeline was stripped (PLAN.md section 7)"
   - id: B11
     title: "Report generation: verdict in code, plain words by Claude, report route and SSE event"
     stream: build
     phase: 1
-    depends_on: [B9, B10]
-    owns: [backend/repairos/report/**, backend/tests/unit/test_report.py]
-    human: [anthropic_key]
-    done_when: "The report validates; the verdict rule is a tested truth table; A5 renders it"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: the Phase 1 report builder was replaced by the design engine report (PLAN.md section 7)"
   - id: B12
     title: "Import fallback: Stray Scanner first; 3D Scanner App after a terms check"
     stream: build
@@ -325,9 +293,9 @@ tasks:
     title: "Backend pose-graph refinement (loop closure) with Open3D and OpenCV, if on-phone drift correction falls short"
     stream: build
     phase: 1
-    depends_on: [B6]
-    owns: [backend/repairos/recon/**, backend/tests/unit/test_recon.py]
-    done_when: "Loop-closure residual and point-to-plane error are reported per session and are lower than with raw ARKit poses"
+    status: removed
+    owns: [none]
+    done_when: "Removed 2026-10-28: backend reconstruction was stripped with the Phase 1 pipeline (PLAN.md section 7)"
   - id: B14
     title: "CI: make check on every PR"
     stream: build
@@ -342,3 +310,12 @@ tasks:
     depends_on: [B14]
     owns: [tools/licence_check.py, licenses/weights.json]
     done_when: "Part of make check; fails on a disallowed licence"
+  - id: B16
+    title: "Design engine (Grain): client, report from its answer, readings, Fix it with Grain"
+    stream: build
+    phase: 1
+    status: done
+    depends_on: [B5]
+    owns: [backend/repairos/grain/**, backend/repairos/report/from_grain.py, backend/repairos/api/**]
+    human: [grain_key]
+    done_when: "A completed scan is judged against the product's design and the report is built from the answer; readings go through the design engine; the customer can ask it to change the design from the phone"

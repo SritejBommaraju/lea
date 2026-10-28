@@ -14,7 +14,7 @@ request `key` more than `repeat_per_minute` times in 60 s: a loop asking the sam
 breaker for `breaker_cooldown_s` (longer when the rolling window needs longer to free up), and every call while it is
 open raises `breaker_open` at once. Refused calls are not counted as spent; they are counted as `blocked`.
 
-Caps live in config/pipeline.yaml under `spend:` (REPAIROS_PIPELINE_CONFIG points elsewhere), per service, plus a
+Caps live in config/spend.yaml under `spend:` (REPAIROS_SPEND_CONFIG points elsewhere), per service, plus a
 `default` block for a service the file does not name. Counters live in one small SQLite file shared by every process
 (gateway, worker, live bridge): REPAIROS_SPEND_DB, else $REPAIROS_DATA_DIR/spend.sqlite3, else <repo>/data. WAL mode
 and BEGIN IMMEDIATE make check-and-record atomic across threads and processes; restarts keep the counters. No network.
@@ -69,7 +69,7 @@ _cfg_cache: tuple[str, float, dict] | None = None
 
 
 def config_path() -> Path:
-    return Path(os.environ.get("REPAIROS_PIPELINE_CONFIG") or ROOT / "config" / "pipeline.yaml")
+    return Path(os.environ.get("REPAIROS_SPEND_CONFIG") or ROOT / "config" / "spend.yaml")
 
 
 def _num(where: str, k: str, v: Any, *, allow_none: bool) -> float | None:

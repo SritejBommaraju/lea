@@ -50,20 +50,18 @@ xcrun devicectl device process launch --device <udid> com.rohankilaru.repairos [
 Developer launch flags: `--record-raw-frames` (Turn it: save the tracker's input at 5 Hz, ≤ 600 frames, in
 `<session>/raw/` for `tools/handheld/run.sh replay`), `--turn-it` (start the scanner in Turn it), `--handheld-no-segmentation` / `--handheld-hand-pose` (Turn it's
 person mask: Vision hand pose instead of, or with, ARKit segmentation), `--gateway <url> --pairing-code <code>` (pair without typing), `--autostart-scan` (open a
-scan at launch), `--auto-scan` (press Scan after 3 s), `--run-still-probe`, `--object-capture` /
-`--no-object-capture` (Apple Object Capture engine, off by default), `--open-session <session_id>` (open a saved scan
+scan at launch), `--auto-scan` (press Scan after 3 s), `--run-still-probe`, `--open-session <session_id>` (open a saved scan
 at its report), `--show-on-object` (with it: open "Show on object" once the report is up), `--demo-replay` (with it:
 play it as a Demo replay), `--demo-replay-session <session_id>` (turn Demo replay on for that scan). Unit tests run on
 the simulator; shut it down after (`xcrun simctl shutdown all`).
 
 ## The report
 
-**Report stage** (`Report/Stage/`, on by default; `--old-report` shows the previous layout): the scan sits on a dark stage with the report sheet over it. The hero is the photo-real recreation (`Report/Recreation/`: the phone's shell, built when a report opens, or the gateway's on `recreation_ready`) when the scan has one, else the hero below. Markers are kept apart on screen; the lasso button circles a spot to look closer at (saved in `<session>/inspect_targets.json`; Continue scanning aims its "Move closer here" marker there). Gallery: `--ui-screen stage|stage-landing|stage-wait|stage-old --ui-session <dir>` (`--ui-build-shell`, `--ui-blobs <dir>`).
+**Report stage** (`Report/Stage/`, on by default; `--old-report` shows the previous layout): the scan sits on a dark stage with the report sheet over it. The hero is the one below. (The photo-real recreation and Apple Object Capture were removed on 2026-10-28.) Markers are kept apart on screen; the lasso button circles a spot to look closer at (saved in `<session>/inspect_targets.json`; Continue scanning aims its "Move closer here" marker there). Gallery: `--ui-screen stage|stage-landing|stage-wait|stage-old --ui-session <dir>` (`--ui-blobs <dir>`).
 
-The hero at the top follows the backend's choice (`hero` in `mesh_ready`, `/pipeline`, the report's `mesh`):
-`points` = its cleaned cloud (`GET /v1/scans/{id}/cloud`), `mesh` = its mesh (`GET /v1/scans/{id}/mesh`, cropped to the
-locked box), `photos` = the best still with the numbered crop boxes and a strip of the others; until it chooses, the
-phone's own cloud. The 3D view turns slowly until touched and shows the top three problems; "+N" lists the rest.
+The hero at the top is the phone's own cloud, or the best still with the numbered crop boxes and a strip of the
+others (`photos`). The gateway no longer builds a mesh or a cloud (`hero` in `mesh_ready`, `/pipeline` and the report's
+`mesh` are not sent; the code that would fetch them stays inert until the report no longer carries them). The 3D view turns slowly until touched and shows the top three problems; "+N" lists the rest.
 **Show on object** puts the numbered problems on the real object, from whichever lands first: the saved
 `world.arworldmap` relocalising, or the object alignment (`Report/ObjectAligner.swift`: live LiDAR points around the
 view registered to the saved in-box cloud, gravity + plane start, 24-yaw search, 4-DOF point-to-plane ICP, accepted on

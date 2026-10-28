@@ -131,18 +131,6 @@ struct GatewayClient: Sendable {
         try await send("GET", "v1/scans/\(scanID)/cloud", expect: [200]).0
     }
 
-    /// GET /v1/scans/{id}/recreation: the photo-real recreation (Report/Recreation), its kind, revision, file format
-    /// and the object's centre + radius for framing (`X-Recreation-*`). 404 until it is built.
-    /// `bottomSegments`: flipped segments the server registered and fused in (`X-Recreation-Bottom`): the model is
-    /// closed underneath, so the viewer may turn it over.
-    func recreation(scanID: String) async throws -> (data: Data, kind: String, rev: Int, format: String, focusCenter: [Float]?, focusRadius: Float?, bottomSegments: Int) {
-        let (data, http) = try await send("GET", "v1/scans/\(scanID)/recreation", expect: [200])
-        let focus = http.value(forHTTPHeaderField: "X-Recreation-Focus")?.split(separator: ",").compactMap { Float($0) }
-        return (data, http.value(forHTTPHeaderField: "X-Recreation-Kind") ?? "", Int(http.value(forHTTPHeaderField: "X-Recreation-Rev") ?? "") ?? 0,
-                http.value(forHTTPHeaderField: "X-Recreation-Format") ?? "", focus.map { Array($0.prefix(3)) },
-                focus.flatMap { $0.count == 4 ? $0[3] : nil }, Int(http.value(forHTTPHeaderField: "X-Recreation-Bottom") ?? "") ?? 0)
-    }
-
     /// GET /v1/sessions/{id}/events (server-sent events), resuming after `lastEventID`.
     func eventsRequest(sessionID: String, lastEventID: String?) -> URLRequest {
         var req = request("GET", "v1/sessions/\(sessionID)/events", auth: true)

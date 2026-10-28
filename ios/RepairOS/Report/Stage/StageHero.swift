@@ -1,11 +1,12 @@
 import SwiftUI
 
 /// What the dark stage shows. `.automatic` picks the 3D view or the photo hero from the report's model source;
-/// `.custom` hosts any other hero (the photo-real recreation, Report/Recreation) with the same markers and focus:
+/// `.custom` hosts any other hero with the same markers and focus (none is wired in since the photo-real
+/// recreation was removed, 2026-10-28):
 ///
-///     ReportStageView(..., hero: .custom { ctx in AnyView(RecreationView(source: src, markers: ctx.markers, focus: ctx.focus,
-///                                                                      onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe,
-///                                                                      tour: ctx.tour, cue: ctx.cue)) })
+///     ReportStageView(..., hero: .custom { ctx in AnyView(MyHero(markers: ctx.markers, focus: ctx.focus,
+///                                                              onMarkerTap: ctx.select, onLoaded: ctx.ready,
+///                                                              probe: ctx.probe, tour: ctx.tour, cue: ctx.cue)) })
 enum StageHero {
     case automatic
     case custom((StageHeroContext) -> AnyView)

@@ -4,22 +4,17 @@
 # in backend/repairos/slots/<slot>_<impl>/. Override one slot from the shell: REPAIROS_SLOT_<SLOT>=<impl>
 # (dev only; a release build refuses overrides). `none` = slot off; nothing is called.
 # A change of default is a PLAN.md §10 decision row. Format: strict YAML subset, one `SLOT: impl` per line.
+#
+# Scans are judged by the design engine (Grain, repairos.grain), which is not a slot: GRAIN_URL / GRAIN_API_KEY in
+# backend/.env. The detection, classifier, VLM and fusion slots were removed with the Phase 1 pipeline (2026-10-28).
 
-version: 3
-updated: 2026-10-24
+version: 4
+updated: 2026-10-28
 
 profile: phase1
 
 profiles:
   phase1:
-    DET: owlv2       # OWLv2 base, zero-shot (built). gdino = Grounding DINO tiny swap-in (built). M9 measures both
-    VLM: anthropic   # Claude crop judge (built); models, effort, checklists: config/vlm.yaml
-    LLM: anthropic   # Claude Sonnet for plain-word report text (built)
-    FUSION: jev      # Jev judgments, decisions in code (built). No fallback: Jev down is a blocker
-    CLS: none        # dinov2 = DINOv2 defect classifier (built, M7). Not selected: it did not beat VLM-only on
-                     # held-out data (eval/defects/REPORT.md). Opt in: REPAIROS_SLOT_CLS=dinov2. MS5 re-decides
-    OCRB: none       # label and marking OCR on crops, planned (M8)
     STATE: sqlite    # one SQLite file under data/ (built)
     BLOB: local      # content-addressed files under data/blobs/ (built)
     HOST: local_mac  # the dev laptop; dev only, a release build refuses it
-

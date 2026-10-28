@@ -6,7 +6,7 @@
 
 Supported (both MIT): Stray Scanner (LiDAR: video, depth, confidence, poses -> fused PLY + keyframe stills) and
 NeRFCapture offline (any ARKit iPhone: posed images -> stills, `depth_source: none`, no PLY). Frame conventions:
-`repairos.locate.camera`; per-app details: `repairos.importers.stray`, `repairos.importers.nerfcapture`.
+`repairos.importers.camera`; per-app details: `repairos.importers.stray`, `repairos.importers.nerfcapture`.
 """
 from __future__ import annotations
 

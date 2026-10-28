@@ -159,7 +159,7 @@ struct SettingsView: View {
 
                     Section("This phone") {
                         let c = app.capabilities
-                        LabeledContent("Scan method", value: c.engine == .objectCapture ? "LiDAR (Object Capture)" : "Motion-tracked")
+                        LabeledContent("Scan method", value: "Motion-tracked")
                         LabeledContent("LiDAR depth", value: c.sceneDepth ? "Yes" : "No")
                         NavigationLink("Diagnostics") { DiagnosticsView() }
                     }

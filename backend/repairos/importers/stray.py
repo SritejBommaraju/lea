@@ -45,7 +45,7 @@ from repairos.importers.images import ImportFormatError
 from repairos.importers.keyframes import select_keyframes
 from repairos.importers.ply import mesh_ply_bytes, ply_bytes
 from repairos.importers.session import CaptureMeta, ImportedFrame, ImportResult, write_session
-from repairos.locate.camera import Pinhole, Pose, opencv_to_arkit_camera, quat_to_matrix
+from repairos.importers.camera import Pinhole, Pose, opencv_to_arkit_camera, quat_to_matrix
 
 POSE_COLUMNS = ("x", "y", "z", "qx", "qy", "qz", "qw")
 INTRINSIC_COLUMNS = ("fx", "fy", "cx", "cy")
