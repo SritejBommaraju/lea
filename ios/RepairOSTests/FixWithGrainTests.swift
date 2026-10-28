@@ -13,6 +13,9 @@ struct FixWithGrainTests {
         let context = MeterReadingContext(step: step)
         #expect(context.kind == .voltageDc && context.net == "VIN" && context.pins == ["J1.1", "J1.2"])
         #expect(context.actionID == "chk_power_in")
+        // the design's warning travels with the step, to the report card and the meter sheet
+        #expect(step.safetyNotes == ["Keep the probes apart; the product is powered."])
+        #expect(context.safetyNotes == step.safetyNotes)
     }
 
     @Test func aRowWithNoPhotoReadsWithoutACrop() throws {

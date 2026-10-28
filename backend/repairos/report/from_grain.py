@@ -131,18 +131,19 @@ def _bom_of(fix: Mapping[str, Any], fetched: Mapping[str, Any]) -> dict | None:
     return dict(got) if isinstance(got, Mapping) else None
 
 
-def photo_states(call: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
-    """part -> (state, note) from the photo judge's observations, only states the report can show."""
+def photo_states(call: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """part -> {state, note, confidence} from the photo judge's observations, only fault states the report can show."""
     photos = call.get("photos") or {}
     judgement = photos.get("judgement") if isinstance(photos, Mapping) else None
     obs = (judgement or {}).get("observations") if isinstance(judgement, Mapping) else None
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for o in obs or []:
         if not isinstance(o, Mapping):
             continue
         part, state = _text(o.get("part")), _text(o.get("state")).lower()
         if part and state in PHOTO_STATES and part not in out:
-            out[part] = (state, _first(o.get("note"), o.get("why"), o.get("detail")))
+            out[part] = {"state": state, "note": _first(o.get("note"), o.get("why"), o.get("detail")),
+                         "confidence": o.get("confidence")}
     return out
 
 
@@ -189,11 +190,27 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
         cov = coverage_words(_num(p.get("coverage")))
         why = _text(p.get("why"))
         subject = {"kind": "part", "ref": name}
-        if verdict == "not_visible":
+        fix = fix_by_part.get(name)
+        seen_in_photo = photo.get(name)
+        if verdict == "not_visible" and seen_in_photo is None:
             not_inspected.append({"finding_id": new_id("", name), "subject": subject, "part_class": name,
                                   "reason": why or "The scan could not see this part from outside, so it was not looked at."})
             continue
-        fix = fix_by_part.get(name)
+        if seen_in_photo is not None and verdict in ("ok", "not_visible"):
+            # the scan found it as designed (or could not see it) but the photos show a fault: the fault stands
+            evidence = [f"Design engine, from the photos: {seen_in_photo['state']}.", seen_in_photo["note"],
+                        f"The scan matches the design for this part ({cov})." if verdict == "ok" and cov else
+                        "The scan matches the design for this part." if verdict == "ok" else why]
+            row = {"finding_id": new_id("", name), "subject": subject, "part_class": name,
+                   "issue": seen_in_photo["state"],
+                   "confidence_word": confidence_word(seen_in_photo["confidence"] or (fix or {}).get("confidence")),
+                   "evidence": [x for x in dict.fromkeys(evidence) if x], "inspected_by": [SOURCE],
+                   "location": location("Found in the photos; no point in the scan."),
+                   "proof": {"status": "not_measured"}}
+            if fix:
+                _apply_fix(row, fix, bom_rows, part_urls)
+            findings.append(row)
+            continue
         if verdict == "ok":
             row = {"finding_id": new_id("", name), "subject": subject, "part_class": name, "issue": "none",
                    "confidence_word": {"mostly not covered": "low", "partly covered": "medium",
@@ -212,6 +229,8 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
         evidence = [f"Design engine: {verdict.replace('_', ' ')}" + (f" ({cov})" if cov else "") + "."]
         if why:
             evidence.append(why)
+        if seen_in_photo is not None:
+            evidence.append(f"The photos also show it {seen_in_photo['state']}." + (f" {seen_in_photo['note']}" if seen_in_photo["note"] else ""))
         row = {"finding_id": new_id("", name), "subject": subject, "part_class": name, "issue": issue,
                "confidence_word": confidence_word((fix or {}).get("confidence")), "evidence": evidence,
                "inspected_by": [SOURCE], "location": location(), "proof": {"status": "not_measured"}}
@@ -238,14 +257,26 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
                                                       else "The design engine could not decide this part."),
                                  "inspected_by": [SOURCE]})
             continue
-        state, note = photo.get(name, (ACTION_ISSUE[action], ""))
+        seen = photo.get(name) or {"state": ACTION_ISSUE[action], "note": "", "confidence": None}
+        state, note = seen["state"], seen["note"]
         evidence = [x for x in (f"Design engine, from the photos: {state}." if name in photo else
                                 f"Design engine: {_text(f.get('problem')) or state}.", note, detail) if x]
         row = {"finding_id": new_id("", name), "subject": subject, "part_class": name, "issue": state,
-               "confidence_word": confidence_word(f.get("confidence")), "evidence": list(dict.fromkeys(evidence)),
+               "confidence_word": confidence_word(f.get("confidence") or seen["confidence"]),
+               "evidence": list(dict.fromkeys(evidence)),
                "inspected_by": [SOURCE], "location": location("Found in the photos; no point in the scan."),
                "proof": {"status": "not_measured"}}
         _apply_fix(row, f, bom_rows, part_urls)
+        findings.append(row)
+    for name, seen in photo.items():   # a fault only the photos show, with no scan verdict and no fix
+        if name in seen_parts:
+            continue
+        seen_parts.add(name)
+        row = {"finding_id": new_id("", name), "subject": {"kind": "part", "ref": name}, "part_class": name,
+               "issue": seen["state"], "confidence_word": confidence_word(seen["confidence"]),
+               "evidence": [x for x in (f"Design engine, from the photos: {seen['state']}.", seen["note"]) if x],
+               "inspected_by": [SOURCE], "location": location("Found in the photos; no point in the scan."),
+               "proof": {"status": "not_measured"}}
         findings.append(row)
 
     # 3. meter readings, judged by the design engine against the design's expected values
@@ -287,7 +318,11 @@ def build(*, scan: Mapping[str, Any], project: str, call: Mapping[str, Any], pla
                              "inspected_by": ["meter", SOURCE], "location": location("A meter reading has no place on the scan."),
                              "proof": {"status": "ruled_out_by_meter", **proof_base}})
         else:
-            reason = READING_UNJUDGED.get(verdict) or f"The design engine's verdict on this reading, {verdict or 'none'}, is not one this report can show."
+            if rid is None and (verdict in READING_ISSUE or verdict == "ok"):
+                reason = ("The design engine judged a reading on this net, but it could not tell which of your readings "
+                          "it was about, so nothing is shown as proven.")
+            else:
+                reason = READING_UNJUDGED.get(verdict) or f"The design engine's verdict on this reading, {verdict or 'none'}, is not one this report can show."
             insufficient.append({"finding_id": new_id("net_", net), "subject": subject, "part_class": "net", "reason":
                                  " ".join([*lines[:1], reason]) if lines else reason, "inspected_by": ["meter", SOURCE]})
 
@@ -391,18 +426,19 @@ def findings_of(report: Mapping[str, Any]) -> list[dict[str, Any]]:
 
 
 def _take_reading(unmatched: list[Mapping[str, Any]], entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
-    """The stored reading an `electrical.readings` entry answers: by id when the engine echoes it, else by net."""
+    """The stored reading an `electrical.readings` entry answers, or None. An id the engine echoes must match; without
+    one the net decides, but only when exactly one unanswered reading is on it (two readings on one net are told apart by
+    their ids, never by order), so a verdict is never proof for a reading it may not be about."""
     for key in ("id", "reading_id"):
         wanted = _text(entry.get(key))
         if wanted:
             for i, r in enumerate(unmatched):
                 if r.get("reading_id") == wanted:
                     return unmatched.pop(i)
+            return None
     net = _text(entry.get("net")).lower()
-    for i, r in enumerate(unmatched):
-        if _text(r.get("net")).lower() == net:
-            return unmatched.pop(i)
-    return None
+    same = [i for i, r in enumerate(unmatched) if _text(r.get("net")).lower() == net]
+    return unmatched.pop(same[0]) if len(same) == 1 else None
 
 
 def _entries(call: Mapping[str, Any]) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
@@ -574,7 +610,7 @@ def unknown_design(*, scan: Mapping[str, Any], stills: int = 0, now: datetime | 
         "report_id": f"rep_{scan['scan_id']}", "scan_id": scan["scan_id"], "session_id": scan["session_id"],
         "build_id": uuid.uuid4().hex, "created_at": _now(now), "verdict": "insufficient_evidence",
         "verdict_reason": {"code": "no_regions", "rule": "G0", "text": text},
-        "summary": {"text": text, "written_by": "repairos", "from_words_only": False},
+        "summary": {"text": text, "written_by": "repairos", "from_words_only": True},
         "findings": [], "not_inspected": [], "insufficient_evidence": [], "limits": list(LIMITS),
         "capture": {"depth_source": "lidar" if (scan.get("depth_source") or "lidar") == "lidar" else "none",
                     "stills": stills, "stills_inspected": 0, "keyframes": len(scan.get("keyframes") or []),

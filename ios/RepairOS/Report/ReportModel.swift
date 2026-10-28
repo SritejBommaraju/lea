@@ -124,6 +124,8 @@ struct ReportModel: Sendable {
         var pins: [String] = []
         /// `on` or `off`: the power state the meter step is read in (`next_step.power_state`).
         var powerState: String? = nil
+        /// What to watch out for before probing (`next_step.safety_notes`), in the design engine's words.
+        var safetyNotes: [String] = []
 
         var symbol: String {
             switch kind {
@@ -225,7 +227,8 @@ struct ReportModel: Sendable {
             let target = n["target"] as? [String: Any]
             nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String,
                                 actionID: n["action_id"] as? String, net: (target?["net"] as? String)?.trimmedOrNil,
-                                pins: (target?["pins"] as? [String]) ?? [], powerState: n["power_state"] as? String)
+                                pins: (target?["pins"] as? [String]) ?? [], powerState: n["power_state"] as? String,
+                                safetyNotes: (n["safety_notes"] as? [String] ?? []).compactMap(\.trimmedOrNil))
         }
         design = ((r["design"] as? [String: Any])?["project"] as? String)?.trimmedOrNil
         limits = r["limits"] as? [String] ?? []

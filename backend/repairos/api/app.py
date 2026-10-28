@@ -128,6 +128,25 @@ SPEND_POLL_S = 1.0          # how often an event stream looks for new spend aler
 SPEND_REPLAY_S = 300.0      # a new stream first gets the spend alerts of the last few minutes (a pause still on)
 
 
+INTERRUPTED = ("the gateway restarted while the design engine was judging this scan: nothing was lost on the phone, "
+               "send the scan again")
+
+
+async def fail_interrupted_runs(store) -> int:
+    """Runs the design engine was judging when the gateway stopped are failed at start-up, with a reason the phone shows:
+    the work lived in memory, so without this the run would stay `running` for ever and the phone would wait."""
+    n = 0
+    for row in await store.list(RUN_KIND):
+        d = row.data
+        if d.get("status") == "running" and ((d.get("stages") or {}).get("design_engine") or {}).get("status") == "running":
+            await store.transition(RUN_KIND, row.id, "pipeline.update", {
+                "scan_id": d.get("scan_id"), "session_id": d.get("session_id"), "status": "failed",
+                "finished_at": _now(), "error": {"message": INTERRUPTED, "stage": "design_engine"},
+                "stages": {"design_engine": {"status": "failed", "error": INTERRUPTED}}})
+            n += 1
+    return n
+
+
 class SpendAlerts:
     """New rows of repairos.spend's alert table as SSE `spend_alert` chunks, for one event stream. Alerts carry no
     `id:` field, so a client's Last-Event-ID (the session's row cursor) is never moved by them; `alert_id` in the
@@ -216,6 +235,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             reg = default_registry()
             app.state.store = state or reg.slot("STATE")
             app.state.blobs = blobs or reg.slot("BLOB")
+        await fail_interrupted_runs(app.state.store)
         yield
 
     app = FastAPI(title="RepairOS gateway", version="0.1.0", lifespan=lifespan)
@@ -592,6 +612,14 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         await app.state.store.transition("pipeline-run", f"run_{scan_id}", "pipeline.update",
                                          {"scan_id": scan_id, "session_id": session_id, **patch})
 
+    async def _input_key(scan_id: str) -> str:
+        """What a judgement of this scan is made from: the scan package, its stills and its readings."""
+        st = app.state.store
+        scan = (await st.get("scan-package", scan_id)).data
+        body = [scan, sorted(r.id for r in await st.list("still", scan_id=scan_id)),
+                sorted(r.id for r in await st.list("meter-reading", scan_id=scan_id))]
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
     async def _grain_publish(scan_id: str, reading_id: str | None = None) -> None:
         """Judge the scan against its design and publish the report (reading_id None: upload + judge), or forward one
         reading and re-make the report. One judgement of a scan at a time. A failure is the run's error, never a
@@ -609,6 +637,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                               key=lambda r: (r["recorded_at"], r["reading_id"]))
             stills = len(await st.list("still", scan_id=scan_id))
             await _run_patch(scan_id, sid, {"status": "running", "started_at": _now(), "error": None,
+                                            "input_key": await _input_key(scan_id),
                                             "stages": {"design_engine": {"status": "running"}}})
             try:
                 if reading_id is None:
@@ -670,8 +699,17 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         scan = await _get(request, "scan-package", scan_id)
         if design_engine().enabled:
             n = len(await store(request).list("still", scan_id=scan_id))
+            out = {"scan_id": scan_id, "job_id": f"grain_{scan_id}", "stills": n}
+            key = await _input_key(scan_id)
+            run = await _run(request, scan_id)
+            if run and run.get("input_key") == key and run.get("status") in ("running", "done"):
+                return out   # a retry (a lost answer, a double tap): the same inputs are being judged, or were
+            # Marked running before the answer goes out, so a second request that follows at once sees it.
+            await _run_patch(scan_id, scan["session_id"], {"status": "running", "started_at": _now(), "error": None,
+                                                           "input_key": key,
+                                                           "stages": {"design_engine": {"status": "running"}}})
             _spawn(_grain_publish(scan_id))
-            return {"scan_id": scan_id, "job_id": f"grain_{scan_id}", "stills": n}
+            return out
         stills = sorted(r.id for r in await store(request).list("still", scan_id=scan_id))
         digest = hashlib.sha256(f"{scan_id}:{','.join(stills)}".encode()).hexdigest()[:16]
         job_id = await store(request).enqueue(Job(kind="pipeline", job_id=f"job_pipeline_{digest}",

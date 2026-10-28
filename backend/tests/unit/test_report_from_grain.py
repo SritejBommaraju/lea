@@ -273,3 +273,59 @@ def test_the_same_judgement_keeps_its_finding_id_and_a_changed_one_gets_a_new_on
     assert by_part(c, "rear_wheel")["finding_id"] != by_part(a, "rear_wheel")["finding_id"]
     assert by_part(c, "cover")["finding_id"] == by_part(a, "cover")["finding_id"]
     assert a["most_likely"][0] == by_part(a, "rear_wheel")["finding_id"]
+
+
+# --- review fixes (Greptile on PR #48): photos merge with the scan, a verdict never lands on a guessed reading
+def with_photos(*observations, parts=None):
+    call = copy.deepcopy(CALL)
+    call["photos"] = {"judgement": {"observations": list(observations)}}
+    if parts is not None:
+        call["diagnosis"] = {"parts": parts}
+    return call
+
+
+def test_a_fault_the_photos_show_in_a_part_the_scan_found_fine_stands():
+    call = with_photos({"part": "front_wheel", "state": "damaged", "note": "the tyre is split", "confidence": "high"})
+    r = build(call)
+    row = by_part(r, "front_wheel")
+    assert row["issue"] == "damaged" and row["confidence_word"] == "high" and row["proof"] == {"status": "not_measured"}
+    assert "the tyre is split" in row["evidence"] and any("matches the design" in x for x in row["evidence"])
+    assert row["finding_id"] in r["most_likely"] or r["verdict"] == "potential_issues"
+
+
+def test_photos_add_to_a_part_the_scan_already_flagged_and_can_judge_one_it_could_not_see():
+    call = with_photos({"part": "cover", "state": "dirty", "note": "grease on the seat"},
+                       {"part": "board", "state": "worn", "note": "burnt pad"})
+    r = build(call)
+    cover = by_part(r, "cover")
+    assert cover["issue"] == "shifted" and any("also show it dirty" in x for x in cover["evidence"])
+    assert by_part(r, "board")["issue"] == "worn" and r["not_inspected"] == []   # the photos did look at it
+
+
+def test_a_photo_only_fault_with_no_fix_and_no_scan_verdict_is_kept():
+    r = build(with_photos({"part": "strap", "state": "loose", "note": "hangs by one screw"}))
+    row = by_part(r, "strap")
+    assert row["issue"] == "loose" and row["inspected_by"] == ["grain"] and row["confidence_word"] == "medium"
+
+
+def test_a_verdict_is_never_given_to_a_reading_it_may_not_be_about():
+    call = copy.deepcopy(CALL)
+    call["electrical"] = {"readings": [{"net": "GND", "verdict": "open", "findings": []}], "findings": []}
+    two = [reading("rd_a", "GND", "continuity", {"continuity": False}, pins=["J1.2", "U1.4"], power="off"),
+           reading("rd_b", "GND", "continuity", {"continuity": True}, pins=["J2.2", "U2.4"], power="off")]
+    r = build(call, readings=two)
+    assert not [f for f in r["findings"] if f["proof"]["status"] != "not_measured"]   # two readings, no id: no proof
+    assert any("could not tell which of your readings" in x["reason"] for x in r["insufficient_evidence"])
+    call["electrical"]["readings"][0]["id"] = "rd_zzz"   # an id the engine echoes must match one of ours
+    r2 = build(call, readings=two[:1])
+    assert not [f for f in r2["findings"] if f["proof"]["status"] != "not_measured"]
+    call["electrical"]["readings"][0]["id"] = "rd_b"
+    r3 = build(call, readings=two)
+    proven = [f for f in r3["findings"] if f["proof"]["status"] == "confirmed_by_meter"]
+    assert [f["proof"]["reading_id"] for f in proven] == ["rd_b"]
+
+
+def test_the_unknown_design_report_is_plain_words_and_validates():
+    r = from_grain.unknown_design(scan=SCAN)
+    contracts.validate("report", r)
+    assert r["summary"]["from_words_only"] is True and "design" not in r
