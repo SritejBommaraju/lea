@@ -19,7 +19,8 @@ final class ScanSession: NSObject, ObservableObject {
 
     // UI state (≤ 10 Hz).
     @Published private(set) var stage: Stage = .ready
-    @Published private(set) var cue: String?
+    /// What the screen shows: the session's own cue after `CueDebouncer` (a warning must last before it is shown).
+    @Published private(set) var displayCue: String?
     @Published private(set) var stills: [String] = []
     @Published private(set) var shotTick = 0
     @Published private(set) var lockTick = 0
@@ -58,6 +59,48 @@ final class ScanSession: NSObject, ObservableObject {
     let sight = LeaSight()
     @Published private(set) var renderer: PointCloudRenderer?
     @Published private(set) var torch: Torch
+    /// What the capture logic wants to say right now. Writing it feeds the debouncer; the screen reads `displayCue`.
+    private var proposedCue: String?
+    private var cue: String? {
+        get { proposedCue }
+        set {
+            proposedCue = newValue
+            refreshCue()
+        }
+    }
+    private var cueDebouncer = CueDebouncer()
+    private func refreshCue() {
+        let tone = proposedCue.map { CueStyle.look($0).tone } ?? .guide
+        let shown = cueDebouncer.update(proposedCue, tone: tone, now: ProcessInfo.processInfo.systemUptime)
+        if shown != displayCue { displayCue = shown }
+    }
+    // Interruptions and the phone's own health (CaptureGuidance): one alert at a time replaces every cue.
+    @Published private(set) var alert: CaptureAlert?
+    private var alerts = AlertBoard()
+    private var hadNormalTracking = false
+    private var lastStorageCheck: TimeInterval = -.infinity
+    /// The cue wording for a close-up of a named side ("Move closer to the left side (2 of 5)"), when one is wanted.
+    @Published private(set) var closeupPrompt: CloseupPrompt?
+    /// The last photo taken, for one-tap Retake (cleared after `retakeWindow` seconds).
+    @Published private(set) var lastShot: LastShot?
+    static let retakeWindow: TimeInterval = 8
+    struct LastShot: Equatable, Sendable {
+        var id: String
+        var cell: Int?
+        var coveredCell: Bool
+        var face: Int?
+        var coveredFace: Bool
+        var close: Bool
+        var at: Date
+    }
+    /// A picture of the product being scanned, set by the App layer when it has one (`ProductGhost`).
+    @Published var ghost: ProductGhost?
+    /// The size of the object's box was assumed (no depth and too few feature points), not measured.
+    @Published private(set) var boxAssumed = false
+    /// Photos taken back with Retake that could not be withdrawn (already uploaded): on file, not counted toward the cap.
+    private var retakenStills: Set<String> = []
+    private var lockFailure: LockFailure?
+    private enum LockFailure { case noSurface, noObject }
     private let analyzer = FrameAnalyzer()
     private let recorder: FrameRecorder
     /// 0 = the object as it stands; the flip step (later) starts 1.
@@ -81,6 +124,7 @@ final class ScanSession: NSObject, ObservableObject {
     private var rejects: [String: Int] = [:]
     private var started = Date()
     private var scanTapped: Date?
+    private var finishedAt: Date?
     private var lockedAt: Date?
     private var firstPointsAt: Date?
     private var planeAnchorID: UUID?
@@ -125,6 +169,9 @@ final class ScanSession: NSObject, ObservableObject {
     static let pointsGoal = 20_000
     static let stillsGoal = 12
     static let autoLockTries = 8
+    /// Without LiDAR ARKit needs the phone to move over the table before it finds the surface: about 10 s of tries.
+    static let autoLockTriesNoLiDAR = 40
+    nonisolated static let findTableCue = "Move the phone slowly so it can find the table"
     /// "Nearly still" over the last ~150 ms (fast shutter + no motion = sharp stills).
     static let stillWindow: TimeInterval = 0.15
     static let maxStillLinear: Float = 0.06            // m/s
@@ -181,6 +228,17 @@ final class ScanSession: NSObject, ObservableObject {
         renderer = PointCloudRenderer(session: session)
         recorder.onWritten = { [weak self] kf in
             self?.upload?.sendAhead([kf.imageFile, kf.depthFile, kf.confidenceFile].compactMap { $0 })
+        }
+        if !continuing {
+            // The app was closed or killed mid-capture and this scan is opened again: its earlier photos and
+            // keyframes are still in the folder (in the old run's world frame). Number the new ones after them so
+            // nothing is overwritten.
+            let left = ExistingCapture.find(stillsDir: storage.stillsDir(record), scanDir: storage.scanDir(record), scanID: record.scanID)
+            if !left.isEmpty {
+                stillOffset = left.highestStill
+                recorder.startIndex(left.keyframeCount)
+                diag.log("capture_found_earlier_run", ["stills": left.highestStill, "keyframes": left.keyframeCount])
+            }
         }
         if continuing {
             previous = (try? Data(contentsOf: storage.scanPackageURL(record))).flatMap { try? JSON.decoder.decode(ScanPackage.self, from: $0) }
@@ -266,6 +324,7 @@ final class ScanSession: NSObject, ObservableObject {
         guard stage == .ready else { return }
         scanTapped = Date()
         lockAttempts = 0
+        lockFailure = nil
         diag.log("scan_tapped", ["since_start_s": Int(Date().timeIntervalSince(started))])
         if relocalizing {
             // Still matching the saved map: start as soon as it matches (or gives up).
@@ -344,6 +403,7 @@ final class ScanSession: NSObject, ObservableObject {
         let query = ARRaycastQuery(origin: origin, direction: dir, allowing: .existingPlaneGeometry, alignment: .horizontal)
         let estimated = ARRaycastQuery(origin: origin, direction: dir, allowing: .estimatedPlane, alignment: .horizontal)
         guard let hit = session.raycast(query).first ?? session.raycast(estimated).first else {
+            lockFailure = .noSurface
             return lockFailed("no support plane under the \(auto ? "centre" : "tap")", t0, auto: auto)
         }
         let hitPoint = SIMD3(hit.worldTransform.columns.3.x, hit.worldTransform.columns.3.y, hit.worldTransform.columns.3.z)
@@ -352,11 +412,24 @@ final class ScanSession: NSObject, ObservableObject {
         let anchorID = plane?.identifier
         let cloud = renderer.points()
         let pts = cloud.map(\.0), cols = cloud.map(\.1)
+        // No LiDAR, no cloud: the object's box comes from ARKit's feature points (or a default size).
+        let lidar = hasLiDAR
+        let features = lidar ? [] : (frame.rawFeaturePoints?.points ?? [])
         Task.detached(priority: .userInitiated) {
-            let fitted = BoxFitter.fit(points: pts, colors: cols, tap: hitPoint, planeY: planeY, rayOrigin: origin,
+            var fitted = BoxFitter.fit(points: pts, colors: cols, tap: hitPoint, planeY: planeY, rayOrigin: origin,
                                        rayDirection: dir, refinePlane: anchorID == nil)
+            var assumed = false
+            var featureUsed = 0
+            if fitted == nil, !lidar {
+                let sparse = BoxFitter.fitSparse(featurePoints: features, rayOrigin: origin, rayDirection: dir, tap: hitPoint,
+                                                 planeY: planeY)
+                fitted = sparse.box
+                assumed = !sparse.measured
+                featureUsed = sparse.pointsUsed
+            }
             let used = fitted.map { b in pts.filter { b.contains($0) }.count } ?? 0
-            await self.locked(fitted, t0: t0, points: pts.count, used: used, auto: auto, anchor: anchorID)
+            await self.locked(fitted, t0: t0, points: pts.count, used: used, auto: auto, anchor: anchorID,
+                              assumed: assumed, featurePoints: featureUsed)
         }
     }
 
@@ -370,7 +443,10 @@ final class ScanSession: NSObject, ObservableObject {
         diag.log("lock_failed", ["segment": segment, "auto": auto, "attempt": lockAttempts, "reason": why,
                                  "lock_ms": Int(Date().timeIntervalSince(t0) * 1000)])
         guard box == nil else { return }
-        if auto, lockAttempts < Self.autoLockTries {
+        if lockFailure == nil { lockFailure = .noObject }
+        if auto, lockAttempts < (hasLiDAR ? Self.autoLockTries : Self.autoLockTriesNoLiDAR) {
+            // Still looking for the table (no LiDAR: ARKit needs the phone to move): say so while it tries.
+            if lockFailure == .noSurface { cue = Self.findTableCue }
             Task {
                 try? await Task.sleep(for: .milliseconds(250))
                 self.autoLock()
@@ -379,11 +455,17 @@ final class ScanSession: NSObject, ObservableObject {
         }
         // Never stuck: scan the whole view and keep shooting; a tap can still lock the object.
         stage = .scanning
-        cue = "Tap the object to focus on it"
+        cue = lockFailure == .noSurface ? "Move the phone slowly over the table, then tap the object" : "Tap the object to focus on it"
     }
 
-    private func locked(_ fitted: ObjectBox?, t0: Date, points n: Int, used: Int, auto: Bool, anchor: UUID?) {
-        guard let fitted else { return lockFailed("no object cluster (\(n) cloud points)", t0, auto: auto) }
+    private func locked(_ fitted: ObjectBox?, t0: Date, points n: Int, used: Int, auto: Bool, anchor: UUID?,
+                        assumed: Bool = false, featurePoints: Int = 0) {
+        guard let fitted else {
+            lockFailure = .noObject
+            return lockFailed("no object cluster (\(n) cloud points)", t0, auto: auto)
+        }
+        lockFailure = nil
+        boxAssumed = assumed
         box = fitted
         setRequiredFaces()
         planeAnchorID = anchor ?? planeAnchorID
@@ -395,6 +477,7 @@ final class ScanSession: NSObject, ObservableObject {
         diag.log("lock", ["segment": segment, "auto": auto, "attempt": lockAttempts, "lock_ms": Int(Date().timeIntervalSince(t0) * 1000),
                           "since_scan_tap_ms": scanTapped.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1,
                           "cloud_points": n, "points_in_box": used, "plane_anchor": anchor != nil,
+                          "lidar": hasLiDAR, "box_assumed": assumed, "feature_points": featurePoints,
                           "size_cm": [fitted.size.x, fitted.size.y, fitted.size.z].map { ($0 * 1000).rounded() / 10 }])
     }
 
@@ -404,6 +487,7 @@ final class ScanSession: NSObject, ObservableObject {
     /// upload. Returns the updated record.
     func finish() async -> SessionRecord {
         stage = .finishing
+        finishedAt = Date()
         closeTarget = nil
         boxRect = nil
         renderer?.beginFinish()
@@ -496,6 +580,35 @@ final class ScanSession: NSObject, ObservableObject {
         return r
     }
 
+    /// How long the person scanned: Scan tapped to Done.
+    var scanSeconds: Double? { scanTapped.map { (finishedAt ?? Date()).timeIntervalSince($0) } }
+
+    /// The on-device check of what this scan saved (QualityGate's session half): reads the folder, writes
+    /// `scans/<scan_id>/quality.json`. `r` is the record `finish()` returned.
+    func qualityReport(for r: SessionRecord) async -> QualityReport {
+        let store = self.storage, seconds = scanSeconds, lidar = hasLiDAR, locked = box != nil
+        let free = DeviceHealth.freeBytes()
+        // A continuation starts with an empty dome: what the earlier visits found (close-up sides done, an assumed
+        // size) comes from the report they wrote, so the check judges the whole saved scan.
+        let earlier = continuing ? SessionQuality.read(scanDir: store.scanDir(r)) : nil
+        let assumed = boxAssumed || (earlier?.objectSizeAssumed ?? false)
+        let doneSides = max(dome.closeFaces.count, earlier?.coverage.closeUpSidesDone ?? 0)
+        let requiredSides = max(dome.requiredFaces, earlier?.coverage.closeUpSidesRequired ?? 0)
+        let sides: (done: Int, required: Int)? = requiredSides > 0 ? (min(doneSides, requiredSides), requiredSides) : nil
+        let report = await Task.detached(priority: .userInitiated) {
+            SessionQuality.inspect(storage: store, record: r, hasLiDAR: lidar, objectLocked: locked, objectSizeAssumed: assumed,
+                                   scanSeconds: seconds, freeBytes: free, closeUpSides: sides)
+        }.value
+        diag.log("quality", ["verdict": report.verdict.rawValue, "stills": report.stills.count, "side_sectors": report.coverage.sideSectors,
+                             "findings": report.findings.map(\.id)])
+        return report
+    }
+
+    func recordQualityDecision(uploadedAnyway: Bool) {
+        let saved = SessionQuality.recordDecision(uploadedAnyway: uploadedAnyway, scanDir: storage.scanDir(record))
+        diag.log("quality_decision", ["uploaded_anyway": uploadedAnyway, "saved": saved])
+    }
+
     private func supportPlane() -> SupportPlane? {
         guard let anchors = session.currentFrame?.anchors else { return nil }
         let planes = anchors.compactMap { $0 as? ARPlaneAnchor }
@@ -539,10 +652,13 @@ final class ScanSession: NSObject, ObservableObject {
         let t = frame.timestamp
         // Turning it: every pose below is the camera relative to the object (Capture/Handheld).
         handheld?.feed(frame)
+        // Tracking, heat, storage first, on every frame: a frame taken as the position is lost must not be recorded.
+        updateAlerts(frame)
         let pose = handheld?.cameraInObject(frame.camera.transform, at: t) ?? frame.camera.transform
         recentPoses.append((t, pose))
         if let first = recentPoses.first, t - first.t > 0.3 { recentPoses.removeFirst() }
-        if hasLiDAR, !enough, stage == .scanning || stage == .locking, t - lastRecord >= Self.recordInterval,
+        if hasLiDAR, !enough, stage == .scanning || stage == .locking, !alerts.pausesShooting(now: ProcessInfo.processInfo.systemUptime),
+           t - lastRecord >= Self.recordInterval,
            lastKeyframePose.map({ Self.moved(from: $0, to: pose, move: Self.keyframeMove, turn: Self.keyframeTurn) }) ?? true,
            handheld?.allowsKeyframe(at: t) ?? true {
             lastRecord = t
@@ -566,6 +682,8 @@ final class ScanSession: NSObject, ObservableObject {
         lastTick = t
         let m = pose
         if relocalizing, case .normal = frame.camera.trackingState { relocalized() }
+        refreshCue()
+        if let shot = lastShot, Date().timeIntervalSince(shot.at) > Self.retakeWindow { lastShot = nil }
         centerDepth = Self.centerDepth(frame)
         exposure.update(time: t)
         if let last = lastPose, t > last.t {
@@ -627,6 +745,9 @@ final class ScanSession: NSObject, ObservableObject {
             if cue != Self.enoughCue { cue = Self.enoughCue }
             return
         }
+        // The camera was taken away, the position is lost, the phone is full or too hot: take nothing until it clears
+        // (the alert says what to do; what was taken stays in the session).
+        if alerts.pausesShooting(now: ProcessInfo.processInfo.systemUptime) { return }
         // Motion over the last ~150 ms: "nearly still" gates the shot and lets the shutter lengthen (less noise);
         // the predicted blur (rotation plus sideways motion seen at this distance, in still pixels) caps it.
         let motion = motion(now: t)
@@ -691,15 +812,19 @@ final class ScanSession: NSObject, ObservableObject {
             || (viewDistance.map { DetailTarget.pxPerMm(fx: stillFx, distance: $0) >= closePxTarget } ?? false)
         // This side's orbit photo is in: time to steer to a face still missing its close-up (before that, a face
         // in view only gets its close-up when the person is already that close).
-        let hereCovered = box.flatMap { CoverageDome.cell(camera: cam, box: $0) }.map { dome.isCovered($0) } ?? false
+        let hereCellNow = box.flatMap { CoverageDome.cell(camera: cam, box: $0) }
+        let hereCovered = hereCellNow.map { dome.isCovered($0) } ?? false
         let callClose = wantDetail || (faceWanted && hereCovered)
         let steerToFace = missingFace != nil && !closeMode && (hereCovered || dome.count >= CoverageDome.doneCells)
         // Noise up close: more light, or hold still so the shutter can lengthen.
         let darkClose = closeMode && exposure.active && exposure.iso > Self.closeMaxISO
+        // Which side the "Move closer here" cue is about (named in words on screen), when it is about one.
+        var promptFace: Int?
         if box != nil || cue == nil || cue == lastResult?.reason || cue?.hasPrefix("Move closer:") == true {
             // The detail rule's cue wins over everything else: getting close is the fix for most of the rejects too.
             if callClose, !inClose, (viewDistance ?? 1) > band.upperBound {
                 cue = "Move closer here"
+                promptFace = faceWanted ? faceHere : nil
                 // Anchor the marker once; move it only when the detail spot is clearly elsewhere (> 4 cm).
                 if let spot = spotAhead(cameraToWorld: m) {
                     if closeTarget.map({ simd_distance($0, spot) > 0.04 }) ?? true {
@@ -711,6 +836,7 @@ final class ScanSession: NSObject, ObservableObject {
             } else if steerToFace, let face = missingFace, let box {
                 // A face still needs its close-up: the marker sits on it.
                 cue = "Move closer here"
+                promptFace = face
                 let spot = CoverageDome.faceCenter(face, box: box)
                 if closeTarget.map({ simd_distance($0, spot) > 0.02 }) ?? true {
                     closeTarget = spot
@@ -736,10 +862,23 @@ final class ScanSession: NSObject, ObservableObject {
                 cue = orbitCue ?? "Keep walking around it"
             }
         }
+        let prompt: CloseupPrompt? = {
+            guard cue == "Move closer here", let face = promptFace, let box else { return nil }
+            return CloseupPrompt.make(face: face, box: box, camera: cam, dome: dome)
+        }()
+        if prompt != closeupPrompt { closeupPrompt = prompt }
         if let c = handheld?.cue(replacing: cue, covered: dome.count) ?? flip?.cue(replacing: cue) { cue = c }
         // The steady cue carries the one progress number, and where to go next once this side is in.
         if box != nil, cue == nil || Self.steadyCues.contains(cue ?? "") {
-            let next = hereCovered ? nextCell.flatMap { c in box.map { CoverageDome.guidance(to: c, cameraToWorld: m, box: $0) } } : nil
+            // Walking round: "walk left around it" in the person's terms; turning it in the hand keeps the old words.
+            var next: String?
+            if hereCovered, let c = nextCell, let box {
+                if handheld == nil, let here = hereCellNow {
+                    next = CoverageDome.walkCue(fromSector: here % CoverageDome.sectors, ring: here / CoverageDome.sectors, to: c)
+                } else {
+                    next = CoverageDome.guidance(to: c, cameraToWorld: m, box: box)
+                }
+            }
             cue = Self.progressCue(scanProgress.percent, next ?? cue ?? "Keep going")
         }
         // Selection: an orbit still only for a view cell without one, or a clearly closer view of it; at most
@@ -748,8 +887,8 @@ final class ScanSession: NSObject, ObservableObject {
         let worthStill = CaptureSelection.worthShooting(cell: cellHere, predictedPx: objDistance.map { DetailTarget.pxPerMm(fx: stillFx, distance: $0) },
                                                         best: cellBest)
         let facesLeft = max(0, dome.requiredFaces - dome.closeFaces.count)
-        let roomForOrbit = stills.count < CaptureSelection.maxStills - facesLeft
-        let roomForClose = faceWanted || stills.count < CaptureSelection.maxStills
+        let roomForOrbit = CaptureSelection.hasRoomForOrbit(kept: stills.count, retaken: retakenStills.count, facesLeft: facesLeft)
+        let roomForClose = faceWanted || CaptureSelection.hasRoomForClose(kept: stills.count, retaken: retakenStills.count)
         if closeMode && inClose && closeResolved, roomForClose, movedClose || retryFace, closeOK, steadyEnough, !capturing,
            closeResult.accept || closeResult.reason == "Keep the object in frame" {
             lastCloseShotPose = m
@@ -800,7 +939,7 @@ final class ScanSession: NSObject, ObservableObject {
         let elapsed = lockedAt.map { Date().timeIntervalSince($0) } ?? 0
         let p = flip.map { ScanProgress.flip(dome: dome, keyframeSectors: sectors, linedUp: $0.aligned, elapsed: elapsed,
                                              keyframes: keptKeyframePoses.count) }
-            ?? ScanProgress.main(dome: dome, keyframeSectors: sectors)
+            ?? ScanProgress.main(dome: dome, keyframeSectors: sectors, lidar: hasLiDAR)
         if p != scanProgress { scanProgress = p }
         if p.enough, !enough { reachedEnough() }
     }
@@ -813,6 +952,8 @@ final class ScanSession: NSObject, ObservableObject {
         closeTarget = nil
         renderer?.marker = nil
         cue = Self.enoughCue
+        closeupPrompt = nil
+        lastShot = nil
         LeaVoice.shared.dynamicCue(flip == nil ? "Got it, that's enough. Tap Done, or scan the bottom." : "Got it, that's the bottom. Tap Done.",
                                    diag: diag)
         diag.log("enough", selectionSummary())
@@ -1004,7 +1145,7 @@ final class ScanSession: NSObject, ObservableObject {
     }
 
     private func fire(auto: Bool, lowLight: Bool? = nil, shot: ShotContext, gate: (Double, Double?)? = nil) async {
-        guard !capturing, stage == .scanning, !enough else { return }
+        guard !capturing, stage == .scanning, !enough, !alerts.pausesShooting(now: ProcessInfo.processInfo.systemUptime) else { return }
         capturing = true
         defer { capturing = false }
         let close = shot.close
@@ -1111,7 +1252,9 @@ final class ScanSession: NSObject, ObservableObject {
                                             "new_px_mm": pxPerMm.map { ($0 * 10).rounded() / 10 } ?? -1])
             }
             let wasDone = dome.isDone
+            var coveredCell = false, coveredFace = false
             if let cell, orbitDetail {
+                coveredCell = true
                 let ring = cell / CoverageDome.sectors
                 let ringBefore = (0..<CoverageDome.sectors).allSatisfy { dome.isCovered(ring * CoverageDome.sectors + $0) }
                 dome.cover(cell)
@@ -1121,8 +1264,11 @@ final class ScanSession: NSObject, ObservableObject {
             // A face's close-up counts once the photo resolves close-up detail.
             if let f = faceShot, detail, f < dome.requiredFaces, !dome.isFaceCovered(f) {
                 dome.coverFace(f)
+                coveredFace = true
                 milestoneTick += 1
             }
+            lastShot = LastShot(id: id, cell: cell, coveredCell: coveredCell, face: faceShot, coveredFace: coveredFace,
+                                close: close, at: Date())
             if !wasDone && dome.isDone { milestoneTick += 1 }
             if close {
                 closeTarget = nil
@@ -1146,6 +1292,74 @@ final class ScanSession: NSObject, ObservableObject {
             upload?.enqueueStill(id)
         } catch {
             diag.log("still_failed", ["error": error.localizedDescription])
+        }
+    }
+
+    // MARK: - Retake
+
+    /// One tap: take the last photo back and let the same view (or close-up side) be shot again. A photo that is
+    /// already uploaded stays (the backend keeps the best one per view); the view still counts as open.
+    func retakeLast() {
+        guard let shot = lastShot, stage == .scanning, !enough else { return }
+        lastShot = nil
+        let withdrawn = upload?.withdrawStill(shot.id) ?? false
+        if withdrawn {
+            stills.removeAll { $0 == shot.id }
+            removeStillFiles(shot.id)
+        } else {
+            retakenStills.insert(shot.id)
+        }
+        if let cell = shot.cell {
+            if shot.coveredCell { dome.uncover(cell) }
+            if cellBest[cell]?.id == shot.id { cellBest[cell] = nil }
+        }
+        if let face = shot.face, shot.coveredFace { dome.uncoverFace(face) }
+        if shot.close { closeStills = max(0, closeStills - 1) }
+        lastStillPose = nil
+        lastCloseShotPose = nil
+        lastCloseShotTime = -.infinity
+        diag.log("still_retaken", ["id": shot.id, "withdrawn": withdrawn, "close": shot.close])
+    }
+
+    // MARK: - Alerts
+
+    /// Checked at ~10 Hz: tracking, heat, Low Power Mode and (every 5 s) free storage.
+    private func updateAlerts(_ frame: ARFrame) {
+        let now = ProcessInfo.processInfo.systemUptime
+        if case .normal = frame.camera.trackingState { hadNormalTracking = true }
+        // A continuation finding its place again has its own cue; it is not "lost".
+        alerts.set(.tracking, to: relocalizing ? nil : TrackingAdvice.alert(frame.camera.trackingState, hadNormal: hadNormalTracking), now: now)
+        alerts.set(.thermal, to: DeviceHealth.thermal(ProcessInfo.processInfo.thermalState), now: now)
+        alerts.set(.power, to: DeviceHealth.power(lowPowerMode: ProcessInfo.processInfo.isLowPowerModeEnabled), now: now)
+        if now - lastStorageCheck >= 5 {
+            lastStorageCheck = now
+            alerts.set(.storage, to: DeviceHealth.storage(freeBytes: DeviceHealth.freeBytes()), now: now)
+        }
+        publishAlert(now: now)
+    }
+
+    private func publishAlert(now: TimeInterval) {
+        let current = alerts.current(now: now)
+        guard current != alert else { return }
+        alert = current
+        diag.log("alert", ["alert": current.map { "\($0)" } ?? "none", "stage": "\(stage)", "stills": stills.count])
+    }
+
+    /// The camera was taken (a call, Siri, another app, the lock screen) or came back.
+    fileprivate func cameraInterrupted(_ begun: Bool) {
+        let now = ProcessInfo.processInfo.systemUptime
+        alerts.set(.camera, to: begun ? .interrupted : nil, now: now)
+        publishAlert(now: now)
+        if begun {
+            torch.off()
+            return
+        }
+        // Back: ARKit looks for its old position by itself. The fast shutter is set again once the camera runs.
+        exposure.stop()
+        Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard self.stage == .scanning || self.stage == .locking || self.stage == .ready else { return }
+            self.exposure.start()
         }
     }
 
@@ -1211,11 +1425,17 @@ extension ScanSession: ARSessionDelegate {
     }
 
     nonisolated func sessionWasInterrupted(_ session: ARSession) {
-        Task { @MainActor in self.diag.log("interrupted") }
+        Task { @MainActor in
+            self.diag.log("interrupted", ["stage": "\(self.stage)", "stills": self.stills.count])
+            self.cameraInterrupted(true)
+        }
     }
 
     nonisolated func sessionInterruptionEnded(_ session: ARSession) {
-        Task { @MainActor in self.diag.log("interruption_ended") }
+        Task { @MainActor in
+            self.diag.log("interruption_ended", ["stage": "\(self.stage)", "stills": self.stills.count])
+            self.cameraInterrupted(false)
+        }
     }
 
     nonisolated func sessionShouldAttemptRelocalization(_ session: ARSession) -> Bool { true }

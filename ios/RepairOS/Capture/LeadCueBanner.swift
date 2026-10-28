@@ -6,11 +6,15 @@ import SwiftUI
 /// findings still come from the photos.
 struct LeadCueBanner: View {
     let lead: LiveEvents.Lead?
+    /// Hidden while a warning or alert is the one cue on screen (`CueArbiter`); the lead comes back when it clears.
+    var muted = false
+    /// Tells the screen whether a lead is up, so the steady cue can make room for it (one cue at a time).
+    var showing: Binding<Bool> = .constant(false)
     @State private var shown: LiveEvents.Lead?
 
     var body: some View {
         Group {
-            if let shown {
+            if let shown, !muted {
                 // Same anatomy as CueBanner (a disc + words on a smoke capsule), with Lea's mark: it is Lea speaking,
                 // a lead, not a rule.
                 HStack(spacing: 10) {
@@ -32,6 +36,7 @@ struct LeadCueBanner: View {
             }
         }
         .allowsHitTesting(false)
+        .onValueChange(of: shown, initial: true) { _, now in showing.wrappedValue = now != nil }
         .task(id: lead) {
             guard let lead else { return }
             withAnimation(Motion.standard) { shown = lead }

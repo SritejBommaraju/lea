@@ -50,6 +50,9 @@ struct CoverageDome: Sendable, Equatable {
     }
 
     mutating func cover(_ cell: Int) { covered.insert(cell) }
+    /// Takes a cell back (the photo that covered it was retaken).
+    mutating func uncover(_ cell: Int) { covered.remove(cell) }
+    mutating func uncoverFace(_ face: Int) { closeFaces.remove(face) }
     func isCovered(_ cell: Int) -> Bool { covered.contains(cell) }
     mutating func coverFace(_ face: Int) { closeFaces.insert(face) }
     func isFaceCovered(_ face: Int) -> Bool { closeFaces.contains(face) }
@@ -268,11 +271,19 @@ struct ScanProgress: Equatable, Sendable {
 
     var percent: Int { Int((value * 100).rounded(.down)) }
 
-    static func main(dome: CoverageDome, keyframeSectors: Int) -> ScanProgress {
+    /// - Parameter lidar: the phone records depth keyframes. Without LiDAR there are none, so the mesh share would
+    ///   stay at zero and the scan could never pass 65 % (or 75 % with close-ups): the photos and close-ups carry the
+    ///   whole number instead (0.65 + 0.35 and 0.5 + 0.25 + 0.25 rescaled to 1).
+    static func main(dome: CoverageDome, keyframeSectors: Int, lidar: Bool = true) -> ScanProgress {
         let views = Double(min(dome.sideSectors, sideSectors) + min(dome.topSectors, topSectors)) / Double(sideSectors + topSectors)
-        let mesh = Double(min(keyframeSectors, meshSectors)) / Double(meshSectors)
+        let mesh = lidar ? Double(min(keyframeSectors, meshSectors)) / Double(meshSectors) : 0
         let faces: Double? = dome.requiredFaces > 0 ? Double(min(dome.closeFaces.count, dome.requiredFaces)) / Double(dome.requiredFaces) : nil
-        let value = faces.map { 0.5 * views + 0.25 * $0 + 0.25 * mesh } ?? (0.65 * views + 0.35 * mesh)
+        let value: Double
+        if lidar {
+            value = faces.map { 0.5 * views + 0.25 * $0 + 0.25 * mesh } ?? (0.65 * views + 0.35 * mesh)
+        } else {
+            value = faces.map { (0.5 * views + 0.25 * $0) / 0.75 } ?? views
+        }
         let enough = value >= 1 - 1e-9 || (value >= goodEnough && dome.facesDone)
         return ScanProgress(views: views, faces: faces, mesh: mesh, linedUp: nil, value: value, enough: enough)
     }
@@ -309,6 +320,15 @@ enum CaptureSelection {
         var pxPerMm: Float
         var sharpness: Double
     }
+
+    /// Room for another orbit photo: the kept photos that were not retaken, plus the close-up sides still to come,
+    /// stay under the cap. A retaken photo that was already uploaded stays on file but no longer takes a slot, or
+    /// retaking at the cap would erase a view and then refuse the new photo.
+    static func hasRoomForOrbit(kept: Int, retaken: Int, facesLeft: Int) -> Bool {
+        kept - retaken < maxStills - facesLeft
+    }
+
+    static func hasRoomForClose(kept: Int, retaken: Int) -> Bool { kept - retaken < maxStills }
 
     /// Before shooting: a new cell, or a clearly closer view of a covered one (predicted resolution).
     static func worthShooting(cell: Int?, predictedPx: Float?, best: [Int: Best]) -> Bool {

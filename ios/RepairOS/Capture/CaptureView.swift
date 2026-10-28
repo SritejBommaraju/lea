@@ -20,30 +20,42 @@ struct SessionFlowView: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     let record: SessionRecord
+    /// A picture of the product being scanned, when the App layer has one (see `ProductGhost`). It can also be set
+    /// later on the running scan (`scan.ghost`).
+    let ghost: ProductGhost?
     @State private var scan: ScanSession?
     @State private var upload: UploadQueue?
     @State private var finished: SessionRecord?
     /// Bumped after a continuation so the report view starts over (it shows "Updating…" until the new report).
     @State private var reportVersion = 0
     @State private var live: LiveEvents?
+    /// The product picture of the latest scan, kept for the next one ("Keep scanning", "Scan the bottom").
+    @State private var ghostInUse: ProductGhost?
+
+    init(record: SessionRecord, ghost: ProductGhost? = nil) {
+        self.record = record
+        self.ghost = ghost
+    }
 
     private var current: SessionRecord { finished ?? record }
 
     var body: some View {
         Group {
             if let scan, scan.continuing {
-                ScanView(scan: scan, live: live, close: { leaveContinuation(scan) }) { r in
+                ScanView(scan: scan, live: live, close: { leaveContinuation(scan) },
+                         keepScanning: { continueScanning(carrying: scan.ghost) }) { r in
                     withAnimation(Motion.reveal) {
                         finished = r
                         self.scan = nil
                         reportVersion += 1
                     }
                 }
+                .id(ObjectIdentifier(scan))   // a new session starts with a clean review state
                 .transition(.opacity)
             } else if finished != nil || record.status != .capturing, let upload {
                 ReportView(record: current, upload: upload, close: { dismiss() })
                     .id(reportVersion)
-                    .environment(\.continueScan, canContinue ? ContinueScanAction(run: continueScanning) : nil)
+                    .environment(\.continueScan, canContinue ? ContinueScanAction(run: { continueScanning() }) : nil)
                     .environment(\.scanBottom, canContinue ? ScanBottomAction { _ in scanBottom(current) } : nil)   // Capture/Handheld/FlipSegment
                     .environment(\.liveEvents, live)
                     // The Done gather hands over to the same cloud on the report's dark stage: a plain fade, no zoom.
@@ -55,7 +67,10 @@ struct SessionFlowView: View {
             } else if finished != nil || record.status != .capturing {
                 OfflineView(close: { dismiss() })
             } else if let scan {
-                ScanView(scan: scan, live: live, close: { dismiss() }) { r in withAnimation(Motion.reveal) { finished = r } }
+                ScanView(scan: scan, live: live, close: { dismiss() }, keepScanning: { continueScanning(carrying: scan.ghost) }) { r in
+                    withAnimation(Motion.reveal) { finished = r }
+                }
+                .id(ObjectIdentifier(scan))
                     .environment(\.scanBottom, scan.hasLiDAR ? ScanBottomAction { r in if let r { finished = r; scanBottom(r) } } : nil)
                     .transition(.opacity)
             }
@@ -82,7 +97,12 @@ struct SessionFlowView: View {
                 live = events
             }
             guard record.status == .capturing else { return }
-            scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
+            let s = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
+            s.ghost = ghost
+            #if DEBUG
+            if s.ghost == nil, CommandLine.arguments.contains("--demo-ghost") { s.ghost = .demo }   // gallery / screenshot job
+            #endif
+            scan = s
         }
     }
 
@@ -112,7 +132,8 @@ struct SessionFlowView: View {
             }
             live["progress"] = "\(Int(scan.progress * 100))%"
             live["close-ups taken"] = "\(scan.stills.count)"
-            if let cue = scan.cue { live["on-screen cue"] = cue }
+            if let alert = scan.alert { live["alert"] = alert.text }
+            if let cue = scan.displayCue { live["on-screen cue"] = cue }
             if scan.relocalizing { live["tracking"] = "lost; finding its place again" }
             if scan.flip != nil { live["part"] = "the bottom: the object is turned over for its underside" }
             if scan.enough { live["enough"] = "yes: they can tap Done" }
@@ -144,15 +165,21 @@ struct SessionFlowView: View {
         }
     }
 
-    private func continueScanning() {
+    /// `carrying`: the product picture the scan being left was showing (it may have arrived after the scan began).
+    private func continueScanning(carrying picture: ProductGhost? = nil) {
+        guard canContinue else { return }
+        if let picture { ghostInUse = picture }
         let latest = app.storage.listSessions().first { $0.id == current.id } ?? current
-        scan = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        let s = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        s.ghost = ghostInUse ?? ghost
+        scan = s
     }
 
     /// "Scan the bottom": a continuation that is a quick scan of the flipped object (Capture/Handheld/FlipSegment).
     private func scanBottom(_ r: SessionRecord) {
         let latest = app.storage.listSessions().first { $0.id == r.id } ?? r
         let s = ScanSession(record: latest, storage: app.storage, upload: upload, probe: app.stillProbe, continuing: true)
+        s.ghost = ghostInUse ?? ghost
         s.flip = FlipSegmentController(scan: s)
         LeaVoice.shared.dynamicCue(FlipSegmentController.prompt, diag: s.diag)
         withAnimation(Motion.reveal) { scan = s }
@@ -190,8 +217,14 @@ struct ScanView: View {
     @ObservedObject var scan: ScanSession
     @ObservedOptional var live: LiveEvents?
     let close: () -> Void
+    /// Back to the scanner for the same scan (from the review after Done); nil where that is not possible.
+    let keepScanning: (() -> Void)?
     let finished: (SessionRecord) -> Void
 
+    /// The review shown after Done: what was captured and what is wrong with it (`CaptureReviewView`).
+    @State private var review: (record: SessionRecord, report: QualityReport)?
+    @State private var leadShowing = false
+    @State private var ghostOverlay = true
     @State private var doneTick = 0
     @State private var warnTick = 0
     @State private var correcting = false
@@ -201,10 +234,12 @@ struct ScanView: View {
     @State private var identitySaid = IdentitySpeech.Said()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(scan: ScanSession, live: LiveEvents? = nil, close: @escaping () -> Void, finished: @escaping (SessionRecord) -> Void) {
+    init(scan: ScanSession, live: LiveEvents? = nil, close: @escaping () -> Void, keepScanning: (() -> Void)? = nil,
+         finished: @escaping (SessionRecord) -> Void) {
         self.scan = scan
         _live = ObservedOptional(wrappedValue: live)
         self.close = close
+        self.keepScanning = keepScanning
         self.finished = finished
     }
 
@@ -244,6 +279,9 @@ struct ScanView: View {
                         }
                     }
                 brackets(in: geo.size)
+                if let ghost = scan.ghost, ghostOverlay, scan.stage == .scanning, !scan.dome.isDone, let rect = scan.boxRect {
+                    GhostOnObject(ghost: ghost, rect: rect)
+                }
             }
             .ignoresSafeArea()
 
@@ -259,13 +297,15 @@ struct ScanView: View {
                     if scan.stage == .scanning || scan.stage == .locking {
                         identityChip
                         Spacer(minLength: Spacing.s)
-                        DomeDial(cells: cells, here: scan.hereSector, done: scan.dome.isDone)
+                        coverageIndicator
                             .transition(.opacity)
                     }
                 }
-                LeadCueBanner(lead: live?.lead)   // what the person suspects: where to look closely
+                // One cue at a time: an alert beats a warning, a warning beats a lead, a lead beats "keep walking".
+                LeadCueBanner(lead: live?.lead, muted: cueWinner != .lead, showing: $leadShowing)   // what the person suspects
                 Spacer()
                 CueBanner(text: cue.text, symbol: cue.symbol, tone: cue.tone)
+                    .opacity(cueWinner == .lead ? 0 : 1)
                     .allowsHitTesting(false)
                 // No photo / areas counters here: the shot tick confirms each photo; the report counts the rest.
                 HandheldModeChip(scan: scan, wanted: $turnWanted)
@@ -274,6 +314,16 @@ struct ScanView: View {
             }
             .padding(.horizontal, Spacing.l)
             .padding(.vertical, Spacing.s)
+            .overlay(alignment: .leading) {
+                if let ghost = scan.ghost, scan.stage != .finishing {
+                    GhostCorner(ghost: ghost, overlayOn: $ghostOverlay)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if scan.lastShot != nil, !scan.enough, scan.stage == .scanning {
+                    retakeChip.transition(.opacity)
+                }
+            }
             .opacity(scan.stage == .finishing ? 0.0 : 1)
             .overlay(alignment: .bottom) {
                 if scan.stage == .finishing {
@@ -282,13 +332,24 @@ struct ScanView: View {
                         .transition(.opacity)
                 }
             }
+            if let review {
+                CaptureReviewView(report: review.report, onContinue: {
+                    if !review.report.problems.isEmpty { scan.recordQualityDecision(uploadedAnyway: true) }
+                    finished(review.record)
+                }, onKeepScanning: keepScanning.map { keep in {
+                    scan.recordQualityDecision(uploadedAnyway: false)
+                    finished(review.record)
+                    keep()
+                } })
+                .transition(.opacity)
+            }
         }
         .motion(Motion.standard, value: scan.stage)
         .haptic(Haptic.milestone, trigger: scan.milestoneTick)
         .haptic(Haptic.commit, trigger: doneTick)
         .haptic(Haptic.warn, trigger: warnTick)
         .onValueChange(of: cue.tone) { _, tone in if tone == .stop { warnTick += 1 } }
-        .onValueChange(of: cue.text, initial: true) { _, text in LeaVoice.shared.cueChanged(text, diag: scan.diag) }   // Voice/VoiceCues
+        .onValueChange(of: spokenCue, initial: true) { _, text in LeaVoice.shared.cueChanged(text, diag: scan.diag) }   // Voice/VoiceCues
         .alert("Battery is low", isPresented: .constant(scan.batteryQuestion)) {
             Button("Use the light") { scan.answerBattery(true) }
             Button("No light", role: .cancel) { scan.answerBattery(false) }
@@ -319,8 +380,35 @@ struct ScanView: View {
 
     // MARK: Pieces
 
-    private var cells: [CellState] {
-        (0..<CoverageDome.cellCount).map { scan.dome.isCovered($0) ? .covered : ($0 == scan.nextCell ? .next : .missing) }
+    /// The sectors with a photo from the side, for the ring.
+    private var seenSectors: Set<Int> {
+        Set(scan.dome.covered.filter { $0 / CoverageDome.sectors < CoverageDome.rings - 1 }.map { $0 % CoverageDome.sectors })
+    }
+
+    /// The ring of sides seen, with the plain count under it ("5 of 8 sides"; close-ups when the object needs them).
+    private var coverageIndicator: some View {
+        VStack(alignment: .trailing, spacing: Spacing.xs) {
+            SideRing(seen: seenSectors, here: scan.hereSector, next: scan.nextCell.map { $0 % CoverageDome.sectors },
+                     done: scan.dome.isDone, count: scan.dome.sideSectors, target: ScanProgress.sideSectors)
+            Text(CoverageSummary.sides(scan.dome)).font(.caption2.weight(.semibold)).foregroundStyle(Palette.chalk)
+                .padding(.horizontal, 8).padding(.vertical, 3).background { SmokeFill(shape: Capsule()) }
+            if let closeUps = CoverageSummary.closeUps(scan.dome) {
+                Text(closeUps).font(.caption2.weight(.semibold)).foregroundStyle(Palette.chalk)
+                    .padding(.horizontal, 8).padding(.vertical, 3).background { SmokeFill(shape: Capsule()) }
+            }
+        }
+        .dynamicTypeSize(...DynamicTypeSize.accessibility1)
+    }
+
+    /// Retake the last photo: one tap, shown for a few seconds after each photo.
+    private var retakeChip: some View {
+        Button { scan.retakeLast() } label: {
+            Label("Retake", systemImage: "arrow.counterclockwise").cameraChip()
+        }
+        .buttonStyle(PressableCardStyle())
+        .frame(minHeight: 44)
+        .accessibilityLabel("Retake the last photo")
+        .accessibilityHint("Takes the last photo back so it can be taken again")
     }
 
     /// The lock brackets: centred while searching, then on the object's projected box (≤ 10 Hz, eased between).
@@ -371,16 +459,36 @@ struct ScanView: View {
         .contentTransition(.numericText())
     }
 
-    private var cue: (text: String, symbol: String, tone: CueBanner.Tone) {
+    /// The session's own cue for the stage (what the capture logic wants said), before alerts and close-up wording.
+    private var stageCue: (text: String, symbol: String, tone: CueBanner.Tone) {
         switch scan.stage {
-        case .ready: return CueStyle.look(scan.cue ?? (scan.flip != nil ? FlipSegmentController.prompt : "Point at the object"))
-        case .locking: return CueStyle.look(scan.cue ?? "Finding the object…")
+        case .ready: return CueStyle.look(scan.displayCue ?? (scan.flip != nil ? FlipSegmentController.prompt : "Point at the object"))
+        case .locking: return CueStyle.look(scan.displayCue ?? "Finding the object…")
         case .scanning:
-            if let c = scan.cue { return CueStyle.look(c) }
+            if let c = scan.displayCue { return CueStyle.look(c) }
             return scan.dome.isDone ? ("All sides covered", "checkmark", .good) : CueStyle.look(scan.handheld == nil ? "Walk slowly around it" : "Hold it up and turn it slowly")
         case .finishing: return ("Scan saved", "checkmark", .good)
         case .failed(let m): return (m, "xmark", .stop)
         }
+    }
+
+    /// What the banner shows: an alert (camera taken, position lost, storage, heat) replaces everything; a close-up
+    /// cue names the side to photograph.
+    private var cue: (text: String, symbol: String, tone: CueBanner.Tone) {
+        if isFailed { return stageCue }
+        if let alert = scan.alert { return (alert.text, alert.symbol, alert.tone) }
+        var c = stageCue
+        if c.text == "Move closer here", let prompt = scan.closeupPrompt { c.text = prompt.sentence }
+        return c
+    }
+
+    private var isFailed: Bool { if case .failed = scan.stage { return true } else { return false } }
+
+    /// What Lea may say: the session's cue by its own words (never an alert, never the close-up sentence).
+    private var spokenCue: String? { scan.alert == nil ? stageCue.text : nil }
+
+    private var cueWinner: CueArbiter.Winner {
+        CueArbiter.winner(alert: scan.alert, cueTone: stageCue.tone, leadShowing: leadShowing)
     }
 
     @ViewBuilder private var button: some View {
@@ -412,9 +520,14 @@ struct ScanView: View {
         let start = Date()
         Task {
             let record = await scan.finish()
+            // Saving failed: stay on the failed screen (its Close button) instead of opening a report for a scan
+            // that is not on the phone.
+            if case .failed = scan.stage { return }
             let left = PointCloudRenderer.finishDuration + 0.2 - Date().timeIntervalSince(start)
             if left > 0 { try? await Task.sleep(for: .seconds(left)) }
-            finished(record)
+            // Check what was saved before the report is asked for; a good scan shows its counts and one button.
+            let report = await scan.qualityReport(for: record)
+            withAnimation(Motion.reveal) { review = (record, report) }
         }
     }
 }
@@ -444,6 +557,8 @@ enum CueStyle {
         "Too close: back up": ("arrow.down.backward.and.arrow.up.forward", .stop),
         "Blurry: hold still": ("tortoise.fill", .caution),
         "Move slowly": ("tortoise.fill", .caution),
+        ScanSession.findTableCue: ("viewfinder", .guide),
+        "Move the phone slowly over the table, then tap the object": ("viewfinder", .caution),
     ]
 }
 
