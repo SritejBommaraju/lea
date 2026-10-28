@@ -39,6 +39,7 @@ class Source(StrEnum):
     report_json_minmax = 'report_json_minmax'
     repairos_derived = 'repairos_derived'
     datasheet = 'datasheet'
+    design_engine = 'design_engine'
 
 
 class Expected(BaseModel):

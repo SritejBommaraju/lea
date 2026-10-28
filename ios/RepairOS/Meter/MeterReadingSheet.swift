@@ -9,12 +9,16 @@ struct MeterReadingContext: Identifiable {
     var kind: MeterReadingKind
     var net: String
     var pins: [String]
+    /// What to watch out for before probing, shown above the probe points (the report's `next_step.safety_notes`).
+    var safetyNotes: [String]
 
-    init(kind: MeterReadingKind = .continuity, net: String = "", pins: [String] = [], actionID: String? = nil) {
+    init(kind: MeterReadingKind = .continuity, net: String = "", pins: [String] = [], actionID: String? = nil,
+         safetyNotes: [String] = []) {
         self.kind = kind
         self.net = net
         self.pins = pins
         self.actionID = actionID
+        self.safetyNotes = safetyNotes
     }
 
     init(action: NextAction) {
@@ -24,7 +28,7 @@ struct MeterReadingContext: Identifiable {
 
     init(step: ReportModel.NextStep) {
         self.init(kind: Self.kind(forAction: step.kind) ?? .continuity, net: step.net ?? "", pins: step.pins,
-                  actionID: step.actionID)
+                  actionID: step.actionID, safetyNotes: step.safetyNotes)
     }
 
     static func kind(forAction kind: String) -> MeterReadingKind? {
@@ -152,6 +156,10 @@ struct MeterReadingSheet: View {
                           systemImage: kind == .voltageDc ? "bolt.fill" : "powerplug.fill")
                         .font(.body.weight(.semibold))
                         .accessibilityLabel("Power state: " + MeterReadingDraft.banner(kind))
+                    ForEach(context.safetyNotes.indices, id: \.self) { i in
+                        Label(context.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline).foregroundStyle(Palette.caution)
+                    }
                 }
                 Section("Probe points") {
                     TextField("Net name", text: $net).textInputAutocapitalization(.characters).autocorrectionDisabled()

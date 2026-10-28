@@ -784,6 +784,11 @@ struct StageNextStep: View {
                 Text(ReportWords.display(reason)).font(.subheadline).foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            ForEach(step.safetyNotes.indices, id: \.self) { i in
+                Label(step.safetyNotes[i], systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline).foregroundStyle(Palette.caution)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .combine)
     }

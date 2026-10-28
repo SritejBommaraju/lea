@@ -27,7 +27,7 @@ from repairos.slots.blob_local import LocalBlobStore
 from repairos.slots.state_sqlite import SqliteState
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_api_gateway import CODE, Client, ex, make_scan, serve  # noqa: E402
+from test_api_gateway import CODE, Client, ex, make_scan, make_still, serve  # noqa: E402
 from test_report_from_grain import CALL, PLAN  # noqa: E402
 
 BASE = "http://design.test"
@@ -367,3 +367,55 @@ def test_without_a_design_engine_complete_says_so_and_nothing_else_judges(tmp_pa
         assert status == 409 and "no design engine configured" in out["detail"]
         assert c.req("GET", f"/v1/scans/{pkg['scan_id']}/report")[0] == 404   # no run, no report
         assert c.req("POST", f"/v1/scans/{pkg['scan_id']}/fix", {"message": "help"})[0] == 409
+
+
+def test_a_retried_complete_judges_once_and_changed_inputs_judge_again(tmp_path):
+    t = Recorder(answers())
+    with serve(gateway(tmp_path, t)) as c:
+        paired(c)
+        _, session, _ = c.req("POST", "/v1/sessions", {"product": "demo_product"})
+        pkg = make_scan(c, session["session_id"])
+        c.req("POST", "/v1/scans", pkg)
+        path = f"/v1/scans/{pkg['scan_id']}/complete"
+        assert c.req("POST", path)[0] == 202 and c.req("POST", path)[0] == 202   # a double tap, or a lost answer
+        report_rev(c, pkg["scan_id"], 1)
+        assert c.req("POST", path)[0] == 202   # and again after it finished: same inputs
+        time.sleep(0.3)
+        assert len(t.of("POST", "/projects/demo_product/scans")) == 1 and len(t.of("POST", "/call")) == 1
+        # a reading is judged on its own; the judgement then covers it, so complete does not repeat it
+        reading = {**ex("meter-reading"), "session_id": session["session_id"], "scan_id": pkg["scan_id"],
+                   "reading_id": "rd_x", "kind": "voltage_dc", "net": "VIN", "value": {"volts": 4.9}, "power_state": "on"}
+        reading.pop("pins", None)
+        c.req("POST", "/v1/readings", reading)
+        report_rev(c, pkg["scan_id"], 2)
+        assert c.req("POST", path)[0] == 202
+        time.sleep(0.3)
+        assert len(t.of("POST", "/projects/demo_product/scans")) == 1 and len(t.of("POST", "/call")) == 2
+        # a new still changes what the judgement is made from: complete judges again
+        assert c.req("POST", "/v1/stills", make_still(c, pkg))[0] == 201
+        assert c.req("POST", path)[0] == 202
+        wait_for(lambda: len(t.of("POST", "/projects/demo_product/scans")) == 2, "a second upload")
+
+
+def test_runs_the_gateway_lost_in_a_restart_are_failed_with_a_reason(tmp_path):
+    from repairos.api.app import INTERRUPTED, fail_interrupted_runs
+
+    t = Recorder(answers())
+    app = gateway(tmp_path, t)
+    state = app.state.store
+    with serve(app) as c:
+        paired(c)
+        _, session, _ = c.req("POST", "/v1/sessions", {"product": "demo_product"})
+        pkg = make_scan(c, session["session_id"])
+        c.req("POST", "/v1/scans", pkg)
+        import asyncio
+
+        async def interrupted():
+            await state.transition("pipeline-run", f"run_{pkg['scan_id']}", "pipeline.update", {
+                "scan_id": pkg["scan_id"], "session_id": session["session_id"], "status": "running",
+                "stages": {"design_engine": {"status": "running"}}})
+        asyncio.run(interrupted())
+        assert asyncio.run(fail_interrupted_runs(state)) == 1
+        status, run, _ = c.req("GET", f"/v1/scans/{pkg['scan_id']}/pipeline")
+        assert run["status"] == "failed" and run["error"] == {"message": INTERRUPTED, "stage": "design_engine"}
+        assert asyncio.run(fail_interrupted_runs(state)) == 0   # only runs that were running

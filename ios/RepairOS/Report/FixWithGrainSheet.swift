@@ -75,7 +75,7 @@ struct FixWithGrainSheet: View {
                             Text("Grain is waiting for your answer. Reply above and send again.")
                                 .font(.footnote).foregroundStyle(Palette.secondary)
                         }
-                        ForEach(reply.errors, id: \.self) { Text($0).font(.footnote).foregroundStyle(Palette.danger) }
+                        ForEach(reply.errors.indices, id: \.self) { Text(reply.errors[$0]).font(.footnote).foregroundStyle(Palette.danger) }
                     }
                 }
                 if let error {

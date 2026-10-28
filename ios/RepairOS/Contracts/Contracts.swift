@@ -389,7 +389,7 @@ public enum Condition: String, Codable, Sendable {
 public struct MeterReadingExpected: Codable, Sendable {
     public let continuity: Bool?
     public let ohmsMax: Double?
-    public let source: PurpleSource?
+    public let source: ExpectedSource?
     public let voltsMax: Double?
     public let voltsMin: Double?
 
@@ -401,7 +401,7 @@ public struct MeterReadingExpected: Codable, Sendable {
         case voltsMin = "volts_min"
     }
 
-    public init(continuity: Bool?, ohmsMax: Double?, source: PurpleSource?, voltsMax: Double?, voltsMin: Double?) {
+    public init(continuity: Bool?, ohmsMax: Double?, source: ExpectedSource?, voltsMax: Double?, voltsMin: Double?) {
         self.continuity = continuity
         self.ohmsMax = ohmsMax
         self.source = source
@@ -411,9 +411,11 @@ public struct MeterReadingExpected: Codable, Sendable {
 }
 
 /// report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the
-/// ~0 ohm rule for wires, fuses, closed switches.
-public enum PurpleSource: String, Codable, Sendable {
+/// ~0 ohm rule for wires, fuses, closed switches; design_engine: the range the design
+/// engine's meter plan gave.
+public enum ExpectedSource: String, Codable, Sendable {
     case datasheet = "datasheet"
+    case designEngine = "design_engine"
     case repairosDerived = "repairos_derived"
     case reportJSONMinmax = "report_json_minmax"
 }
@@ -596,8 +598,9 @@ public struct NextActionExpected: Codable, Sendable {
     public let continuity: Bool?
     public let ohmsMax: Double?
     /// report_json_minmax: range read from the SPICE report by RepairOS; repairos_derived: the
-    /// ~0 ohm rule for wires, fuses, closed switches.
-    public let source: PurpleSource?
+    /// ~0 ohm rule for wires, fuses, closed switches; design_engine: the range the design
+    /// engine's meter plan gave.
+    public let source: ExpectedSource?
     public let voltsMax: Double?
     public let voltsMin: Double?
 
@@ -609,7 +612,7 @@ public struct NextActionExpected: Codable, Sendable {
         case voltsMin = "volts_min"
     }
 
-    public init(continuity: Bool?, ohmsMax: Double?, source: PurpleSource?, voltsMax: Double?, voltsMin: Double?) {
+    public init(continuity: Bool?, ohmsMax: Double?, source: ExpectedSource?, voltsMax: Double?, voltsMin: Double?) {
         self.continuity = continuity
         self.ohmsMax = ohmsMax
         self.source = source
@@ -1249,6 +1252,9 @@ public struct Step: Codable, Sendable {
 /// or `insufficient_evidence` (looked at, could not be judged, with the reason, I4). No
 /// probability number appears anywhere: confidence is a word (I6). A vision finding is a
 /// suspect; only a meter reading proves or rules out (I1, I2).
+///
+/// A row judged by the design engine, or a summary it wrote, names the design it was judged
+/// against.
 // MARK: - Report
 public struct Report: Codable, Sendable {
     /// Findings from a flipped (object-moved) segment, the mini-scan of the bottom, that the
@@ -1266,8 +1272,9 @@ public struct Report: Codable, Sendable {
     /// working). Listed apart; they never make the verdict potential_issues on their own.
     public let cosmetic: [CosmeticElement]?
     public let createdAt: Date
-    /// Present when the design engine judged this scan against the product's own design.
-    /// `project` is the design the scan was judged against.
+    /// Present when the design engine judged this scan against the product's own design;
+    /// required when a row names `grain` or the summary says it is not words only. `project` is
+    /// the design the scan was judged against.
     public let design: Design?
     /// Regions a model judged: an issue, or `none` (looked at, no visible issue). Ranked in
     /// code, most likely problem first (repairos.report.build.rank_key); cosmetic issues are in
@@ -1886,8 +1893,9 @@ public enum ProofStatus: String, Codable, Sendable {
     case ruledOutByMeter = "ruled_out_by_meter"
 }
 
-/// Present when the design engine judged this scan against the product's own design.
-/// `project` is the design the scan was judged against.
+/// Present when the design engine judged this scan against the product's own design;
+/// required when a row names `grain` or the summary says it is not words only. `project` is
+/// the design the scan was judged against.
 // MARK: - Design
 public struct Design: Codable, Sendable {
     public let engine: Engine
@@ -2135,7 +2143,7 @@ public struct NextStep: Codable, Sendable {
 public struct NextStepExpected: Codable, Sendable {
     public let continuity: Bool?
     public let ohmsMax: Double?
-    public let source: FluffySource?
+    public let source: ExpectedSource?
     public let voltsMax: Double?
     public let voltsMin: Double?
 
@@ -2147,20 +2155,13 @@ public struct NextStepExpected: Codable, Sendable {
         case voltsMin = "volts_min"
     }
 
-    public init(continuity: Bool?, ohmsMax: Double?, source: FluffySource?, voltsMax: Double?, voltsMin: Double?) {
+    public init(continuity: Bool?, ohmsMax: Double?, source: ExpectedSource?, voltsMax: Double?, voltsMin: Double?) {
         self.continuity = continuity
         self.ohmsMax = ohmsMax
         self.source = source
         self.voltsMax = voltsMax
         self.voltsMin = voltsMin
     }
-}
-
-public enum FluffySource: String, Codable, Sendable {
-    case datasheet = "datasheet"
-    case designEngine = "design_engine"
-    case repairosDerived = "repairos_derived"
-    case reportJSONMinmax = "report_json_minmax"
 }
 
 /// What the step is about, so the app can open the meter sheet filled in. Same fields as

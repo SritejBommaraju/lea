@@ -1,0 +1,6 @@
+{
+ "schema": "report",
+ "why": "a row judged by the design engine needs the design object, not only a project inside it",
+ "base": "report.design_engine.json",
+ "patch": { "design": null }
+}
