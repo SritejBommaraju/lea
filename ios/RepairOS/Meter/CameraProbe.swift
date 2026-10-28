@@ -72,10 +72,9 @@ final class CameraProbe: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate,
         guard !Task.isCancelled else { throw CameraProbeError.stopped }
         setWanted(true)
         guard await Self.authorized() else { throw CameraProbeError.denied }
-        guard !Task.isCancelled else {
-            setWanted(false)
-            throw CameraProbeError.stopped
-        }
+        // Cancelled while the permission prompt was up: the stop() that cancelled it already cleared `wanted`, and a start
+        // that came after that stop owns it now, so this one must not touch it.
+        guard !Task.isCancelled else { throw CameraProbeError.stopped }
         buffer.clear()
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Double, Error>) in
             queue.async {
