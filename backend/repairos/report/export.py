@@ -12,9 +12,20 @@ import html
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from repairos.fusion import words
-from repairos.report.safety import LIMITS
-
+LIMITS = [
+    "A phone scan sees the outside of the product only. Parts inside are listed as not looked at, never as fine.",
+    "A scan or a photo shows a suspect; only a meter reading proves an electrical fault.",
+]
+# The report's `issue` values in words (spec/contracts/report.schema.json finding.issue).
+ISSUE_WORDS = {
+    "partly": "only partly seen or partly present", "missing": "missing", "shifted": "out of its expected position",
+    "damaged": "damaged", "broken": "broken", "worn": "worn", "dirty": "dirty or contaminated", "loose": "loose",
+    "unseated": "connector not fully seated", "reversed": "fitted the wrong way round",
+    "wrong_pin": "wire on the wrong pin", "colour_mismatch": "wire colour differs from the expected colour",
+    "open": "open circuit", "short": "short circuit", "out_of_range": "reading outside the expected range",
+    "unexpected_part": "a part that is not in the expected design",
+    "unexpected_wire": "a wire that is not in the expected design",
+}
 TITLE = {"looks_good": "No visible problems found", "potential_issues": "Potential issues",
          "no_problems_seen": "No problems seen",
          "insufficient_evidence": "Not enough evidence"}
@@ -24,7 +35,7 @@ NOT_PROOF = "vision suspect, not proof"
 
 
 def _issue(e: Mapping[str, Any]) -> str:
-    return "no visible issue" if e["issue"] == "none" else words.FINDING_STATE[e["issue"]]
+    return "no visible issue" if e["issue"] == "none" else ISSUE_WORDS.get(e["issue"], e["issue"].replace("_", " "))
 
 
 def _where(loc: Mapping[str, Any] | None) -> str:
@@ -82,6 +93,11 @@ def _why_first(e: Mapping[str, Any]) -> str:
     return ", ".join(bits)
 
 
+def _written_by(report: Mapping[str, Any]) -> str:
+    s = report["summary"]
+    return f"Summary written by {s['written_by']}" + (" from words only." if s["from_words_only"] else ".")
+
+
 def to_markdown(report: Mapping[str, Any]) -> str:
     out = [f"# Inspection report: {TITLE[report['verdict']]}", "",
            f"Scan `{report['scan_id']}`, report `{report['report_id']}`, {report['created_at']}", "",
@@ -124,8 +140,7 @@ def to_markdown(report: Mapping[str, Any]) -> str:
             f"- Scan keyframes: {cap['keyframes']}; coverage: {cap['coverage_words']}",
             "", "## Models", ""]
     out += [f"- {k.replace('_', ' ')}: {v}" for k, v in m.items()]
-    out += [f"- summary written by {report['summary']['written_by']} from words only", "",
-            "## What photos cannot tell", ""]
+    out += [_written_by(report), "", "## What photos cannot tell", ""]
     out += [f"- {line}" for line in report.get("limits") or LIMITS] + [""]
     return "\n".join(out)
 
@@ -215,7 +230,7 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
                  f"Close-up stills: {cap['stills']} received, {cap['stills_inspected']} with a judged region. "
                  f"Scan coverage: {esc(cap['coverage_words'])}.<br>"
                  + "<br>".join(f"{esc(k.replace('_', ' '))}: {esc(v)}" for k, v in report["models"].items())
-                 + f"<br>Summary written by {esc(report['summary']['written_by'])} from words only."
+                 + f"<br>{esc(_written_by(report))}"
                  "</p>")
     parts.append("<h2>What photos cannot tell</h2><ul>"
                  + "".join(f"<li>{esc(line)}</li>" for line in report.get("limits") or LIMITS) + "</ul>")
@@ -225,7 +240,7 @@ def to_html(report: Mapping[str, Any], crop_image: Callable[[str], bytes | None]
 
 
 def crop_thumbnail(data: bytes, max_side: int = 360) -> bytes:
-    """A small JPEG of a crop for the export (Pillow, from the vision extra)."""
+    """A small JPEG of a crop for the export (Pillow)."""
     import io
 
     from PIL import Image

@@ -11,8 +11,8 @@ from repairos.config import MissingSettingError, Settings, enforce_release, rele
 
 ROOT = Path(__file__).resolve().parents[3]
 SECRET = "sk-test-not-a-real-key-7f3a"
-PHASE1 = {"DET": "owlv2", "FUSION": "jev", "STATE": "sqlite", "HOST": "local_mac"}
-RELEASE_OK = {"DET": "owlv2", "FUSION": "jev", "STATE": "sqlite", "HOST": "server"}
+PHASE1 = {"STATE": "sqlite", "BLOB": "local", "HOST": "local_mac"}
+RELEASE_OK = {"STATE": "sqlite", "BLOB": "local", "HOST": "server"}
 
 
 @pytest.fixture
@@ -24,37 +24,37 @@ def clean_env(monkeypatch):
 
 def test_loads_from_env_file_and_environment_wins(tmp_path, clean_env):
     env = tmp_path / ".env"
-    env.write_text(f"BRIGHTDATA_SERP_ZONE=from-file\nANTHROPIC_API_KEY={SECRET}\nTYPESAFE_KEY=\n", encoding="utf-8")
-    clean_env.setenv("BRIGHTDATA_SERP_ZONE", "from-env")
+    env.write_text(f"GRAIN_PROJECT=from-file\nANTHROPIC_API_KEY={SECRET}\nGRAIN_API_KEY=\n", encoding="utf-8")
+    clean_env.setenv("GRAIN_PROJECT", "from-env")
     s = Settings(_env_file=env)
-    assert s.brightdata_serp_zone == "from-env"
+    assert s.grain_project == "from-env"
     assert s.require("ANTHROPIC_API_KEY") == SECRET
-    assert s.typesafe_key is None  # empty value = missing, not ""
+    assert s.grain_api_key is None  # empty value = missing, not ""
 
 
 def test_missing_key_is_a_typed_error_naming_the_key(tmp_path, clean_env):
     s = Settings(_env_file=tmp_path / "absent.env")
     with pytest.raises(MissingSettingError) as err:
-        s.require("TYPESAFE_KEY", "FUSION=jev")
-    assert err.value.key == "TYPESAFE_KEY"
-    assert "TYPESAFE_KEY" in str(err.value)
+        s.require("GRAIN_API_KEY", "the design engine")
+    assert err.value.key == "GRAIN_API_KEY"
+    assert "GRAIN_API_KEY" in str(err.value)
 
 
 def test_secrets_never_in_repr_logs_or_errors(tmp_path, clean_env, caplog):
     env = tmp_path / ".env"
-    env.write_text(f"BRIGHTDATA_API_KEY={SECRET}\nANTHROPIC_API_KEY={SECRET}\nTYPESAFE_KEY={SECRET}\n", encoding="utf-8")
+    env.write_text(f"CARTESIA_API_KEY={SECRET}\nANTHROPIC_API_KEY={SECRET}\nGRAIN_API_KEY={SECRET}\n", encoding="utf-8")
     s = Settings(_env_file=env)
     with caplog.at_level(logging.INFO):
         logging.getLogger("repairos.test").info("settings %s %r %s", s, s, s.redact())
     texts = [repr(s), str(s), str(s.redact()), caplog.text, s.model_dump_json()]
     try:
-        s.require("BRIGHTDATA_SERP_ZONE")
+        s.require("GRAIN_PROJECT")
     except MissingSettingError as e:
         texts.append(str(e))
     for t in texts:
         assert SECRET not in t
-    assert s.redact()["BRIGHTDATA_API_KEY"] == "***"
-    assert s.redact()["BRIGHTDATA_SERP_ZONE"] is None
+    assert s.redact()["GRAIN_API_KEY"] == "***"
+    assert s.redact()["GRAIN_PROJECT"] is None
 
 
 def test_release_with_the_dev_host_exits_with_a_clear_message():
@@ -65,9 +65,9 @@ def test_release_with_the_dev_host_exits_with_a_clear_message():
 
 def test_release_refuses_the_phase1_profile_and_slot_overrides():
     assert any("HOST=local_mac" in p for p in release_problems(PHASE1, environ={}))
-    assert any("REPAIROS_SLOT_DET" in p for p in release_problems(RELEASE_OK, environ={"REPAIROS_SLOT_DET": "gdino"}))
+    assert any("REPAIROS_SLOT_STATE" in p for p in release_problems(RELEASE_OK, environ={"REPAIROS_SLOT_STATE": "other"}))
     assert release_problems(RELEASE_OK, environ={}) == []
-    enforce_release(PHASE1, release=False, environ={"REPAIROS_SLOT_DET": "gdino"})  # dev build: allowed
+    enforce_release(PHASE1, release=False, environ={"REPAIROS_SLOT_STATE": "other"})  # dev build: allowed
 
 
 def test_env_example_lists_every_setting_and_every_doctor_key():

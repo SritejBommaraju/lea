@@ -60,8 +60,6 @@ final class AppState {
             UserDefaults.standard.set(true, forKey: DemoReplay.unlockedKey)
             UserDefaults.standard.set(id, forKey: DemoReplay.sessionKey)
         }
-        if args.contains("--object-capture") { UserDefaults.standard.set(true, forKey: "useObjectCapture") }
-        if args.contains("--no-object-capture") { UserDefaults.standard.set(false, forKey: "useObjectCapture") }
         capabilities = DeviceCapabilities.current()
         writeDiagnostics()
     }

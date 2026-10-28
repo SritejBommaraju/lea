@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from repairos.locate.camera import FLIP_YZ, Pinhole, Pose, backproject
+from repairos.importers.camera import FLIP_YZ, Pinhole, Pose, backproject
 
 SPACING_LIMITS_M = (0.001, 0.02)
 TSDF_TRUNC_VOXELS = 5          # truncation distance in voxels (Open3D's examples use 3-5x the voxel)

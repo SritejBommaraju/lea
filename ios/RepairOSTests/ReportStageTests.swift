@@ -145,36 +145,6 @@ struct ProblemRingTests {
         #expect(ReportModel.extent(["status": "failed", "region_min_m": [0, 0, 0], "region_max_m": [1, 1, 1]]) == nil)
         #expect(ReportModel.extent(["status": "computed", "point_m": [0, 0, 0]]) == nil)
     }
-
-    @MainActor @Test func aBadgeWinsATapAndARingOnlyInsideItsCircle() {
-        let stage = RecreationStage()
-        let ring = SCNNode(geometry: SCNPlane(width: 0.026, height: 0.026))   // a 10 mm ring: 13 mm half-width plane
-        ring.name = "ring:a"
-        let badge = SCNNode(geometry: SCNPlane(width: 0.01, height: 0.01))
-        badge.name = "marker:b"
-        #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0.003, 0))]) == "a")        // inside the circle
-        #expect(stage.markerID(atHit: [(ring, SIMD3(0.0125, 0.0125, 0))]) == nil)      // a clear corner
-        #expect(stage.markerID(atHit: [(ring, SIMD3(0.002, 0, 0)), (badge, nil)]) == "b")   // a badge first
-    }
-
-    /// A goal straight above (a part at the top centre) is clamped to the range the camera can reach, so the move
-    /// settles and the display link stops.
-    @MainActor @Test func aCameraGoalStaysWithinTheReachableElevation() {
-        let above = CameraRig.Orbit(eye: SIMD3(0, 0.5, 0.0001), look: SIMD3(0, 0, 0))
-        #expect(above.elevation > CameraRig.maxElevation)
-        let goal = CameraRig.reachable(above)
-        #expect(goal.elevation == CameraRig.maxElevation)
-        #expect(goal.azimuth == above.azimuth && goal.distance == above.distance && goal.target == above.target)
-        let below = CameraRig.reachable(CameraRig.Orbit(eye: SIMD3(0, -0.5, 0.0001), look: SIMD3(0, 0, 0)))
-        #expect(below.elevation == -CameraRig.maxElevation)
-        let side = CameraRig.Orbit(eye: SIMD3(0.3, 0.2, 0.3), look: SIMD3(0, 0, 0))
-        #expect(CameraRig.reachable(side) == side)
-    }
-
-    @MainActor @Test func ringTextureDraws() {
-        #expect(RecreationStage.ring(rgb: SIMD3(0.9, 0.3, 0.2)) != nil)
-        #expect(RecreationStage.ring(rgb: FixedHex.rgb(FixedHex.next)) != nil)
-    }
 }
 
 /// What Lea says when the object is identified during the scan (Capture/CaptureView IdentitySpeech).
@@ -228,16 +198,12 @@ struct IdentitySpeechTests {
     }
 }
 
-/// Greptile PR #31: a reopened report never polls the pipeline; its cached choice of photos still keeps the
-/// recreation (a blob for a small object) off the stage.
+/// A reopened report never polls the run; its cached choice of hero still counts as much as a live one.
 struct StageHeroChoiceTests {
     @Test func aSavedReportStillHonoursPhotos() {
         let cached = ReportModel(json: ["verdict": "no_issues_found", "mesh": ["hero": "photos", "rev": 2] as [String: Any]])
         let hero = ReportView.heroChoice(live: nil, pipeline: nil, cached: cached.hero)
         #expect(hero == "photos")
-        #expect(!ReportView.showsRecreation(hero: hero, available: true))
-        #expect(ReportView.showsRecreation(hero: ReportView.heroChoice(live: nil, pipeline: nil, cached: "mesh"), available: true))
-        #expect(!ReportView.showsRecreation(hero: "mesh", available: false))
         #expect(ReportView.heroChoice(live: "mesh", pipeline: "photos", cached: "photos") == "mesh")   // live first
     }
 }
@@ -258,8 +224,8 @@ struct PhotoHeroPathTests {
     @Test func photosHeroNeverWaitsOnFindings() throws {
         let r = Self.report
         #expect(r.mostLikely.isEmpty && StageMarks.photoMarks(r).isEmpty)
-        // The backend chose photos: no recreation, the photo hero.
-        #expect(!ReportView.showsRecreation(hero: ReportView.heroChoice(live: nil, pipeline: nil, cached: r.hero), available: true))
+        // The backend chose photos: the photo hero.
+        #expect(ReportView.heroChoice(live: nil, pipeline: nil, cached: r.hero) == "photos")
         let dir = FileManager.default.temporaryDirectory.appending(path: "photo-hero-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

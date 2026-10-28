@@ -4,8 +4,8 @@ One suite per slot in `backend/tests/conformance/<slot>/` (slot id in lower case
 the slot. The same assertions run for every implementation, on recorded real data.
 
 ```
-pytest backend/tests/conformance/det                # the implementation config/providers.yaml selects
-pytest backend/tests/conformance/det --impl gdino   # a named implementation
+pytest backend/tests/conformance/state                # the implementation config/providers.yaml selects
+pytest backend/tests/conformance/state --impl sqlite  # a named implementation
 ```
 
 Tests take the `impl` fixture (`conftest.py`): it loads the implementation through the registry and skips with

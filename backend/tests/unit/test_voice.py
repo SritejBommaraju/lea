@@ -453,23 +453,6 @@ def test_converse_during_a_scan_sees_the_screen_and_never_offers_a_scan(gw):
     assert len(parse_live(json.dumps({f"k{i}": "v" for i in range(20)}))) == 16
 
 
-def test_before_a_scan_lea_knows_the_product_the_label_photo_identified(gw):
-    import asyncio
-
-    c = gw()
-    sid = c.post("/v1/sessions", json={"symptom": "it stopped spinning"}).json()["session_id"]
-    asyncio.run(c.state.put("story", {"session_id": sid, "said": [], "brief": {
-        "status": "done", "name": "Desk fan 40", "brand": "Breeze", "model": "DF-40",
-        "known_issues": [{"area": "speed switch", "why": "Owners report it wears out."}]}}))
-    c.post(f"/v1/voice/converse?audio=none&scan_id=scan_future&session_id={sid}", json={"text": "what is it again"})
-    first = c.claude.bodies[0]["messages"][0]["content"]
-    assert '"name": "Desk fan 40"' in first and '"brand": "Breeze"' in first and "speed switch" in first
-    assert "<story>it stopped spinning</story>" in first
-    # Without the session id the future scan has nothing to ground on.
-    c.post("/v1/voice/converse?audio=none&scan_id=scan_other", json={"text": "what is it"})
-    assert "not identified" in c.claude.bodies[1]["messages"][0]["content"]
-
-
 def test_marks_are_parsed_out_of_speech_and_never_split():
     from repairos.voice.conversation import SentenceSplitter
     sp = SentenceSplitter()
@@ -560,28 +543,6 @@ def test_measure_marker_asks_the_phone_to_measure_only_on_a_look_turn(gw):
     events = [p for k, p in frames(c.post("/v1/voice/converse?audio=none", json={"text": "how wide"}).content)
               if k == "J"]
     assert not [e for e in events if e["type"] == "measure"]   # no photo: nothing to measure on
-
-
-def test_a_look_turn_during_a_scan_hears_what_was_inspected_so_far(gw):
-    import urllib.parse
-    c = gw()
-    sid = c.post("/v1/sessions", json={"symptom": "it rattles"}).json()["session_id"]
-    up = Uploader(c)
-    pkg = make_scan(up, sid)
-    assert c.post("/v1/scans", json=pkg).status_code == 201
-    st = make_still(up, pkg)
-    assert c.post("/v1/stills", json=st).status_code == 201
-    f = json.loads((EXAMPLES / "finding.json").read_text(encoding="utf-8"))
-    f.update(finding_id="f_live_a", scan_id=pkg["scan_id"], state="loose", part_words="the cord's strain relief")
-    f["evidence_refs"]["still_ids"] = [st["still_id"]]
-    asyncio.run(c.state.transition("finding", f["finding_id"], "finding.create", f))
-    ref = urllib.parse.quote(_jpeg(c, b"insp"))
-    c.post(f"/v1/voice/converse?audio=none&scan_id={pkg['scan_id']}&image={ref}", json={"text": "anything yet"})
-    asked = c.claude.bodies[0]["messages"][-1]["content"][-1]["text"]
-    assert "inspected so far: the cord's strain relief: loose" in asked
-    # Words-only turns stay lean (no store read for them).
-    c.post(f"/v1/voice/converse?audio=none&scan_id={pkg['scan_id']}", json={"text": "ok"})
-    assert "inspected so far" not in c.claude.bodies[1]["messages"][-1]["content"]
 
 
 def test_persona_keeps_looking_turns_honest():
@@ -811,39 +772,17 @@ def test_live_tts_and_stt(tmp_path):
     asyncio.run(go())
 
 
-# ------------------------------------------------------------------ report turns: evidence, the 3D model, search
+# ------------------------------------------------------------------ report turns: the 3D model, search
 def publish_scan_with_model(c, *, object_words=None, story="the X button sticks", scan_id: str | None = None) -> str:
-    """A published report on a scan Lea can look at: a dense coloured cloud (a plane 30 cm in front of the still's
-    camera), a decodable still with that pose, and two findings: f_example_a (not located) and f_example_b (located,
-    no issue)."""
-    import io
-
-    import numpy as np
-    from PIL import Image
-
-    from repairos.importers.ply import ply_bytes
-    from repairos.locate.camera import Pose
-
+    """A published report on a scan Lea can talk about: two findings, f_example_a (not located) and f_example_b
+    (located, no issue)."""
     sid = c.post("/v1/sessions", json={"symptom": story}).json()["session_id"]
     up = Uploader(c)
-    st_example = json.loads((EXAMPLES / "still.json").read_text(encoding="utf-8"))
-    pose = Pose.from_contract(st_example["camera"])
-    g = np.linspace(-0.08, 0.08, 120)
-    xx, yy = np.meshgrid(g, g)
-    local = np.stack([xx.ravel(), yy.ravel(), np.full(xx.size, -0.3)], axis=1)      # camera frame: 30 cm ahead
-    xyz = pose.to_world(local).astype(np.float32)
-    rgb = np.tile(np.array([[60, 160, 90]], np.uint8), (len(xyz), 1))
     pkg = make_scan(up, sid)
     if scan_id:
         pkg["scan_id"] = scan_id
-    pkg["points_file"] = up.upload(ply_bytes(xyz, rgb))
-    pkg["point_count"] = len(xyz)
-    pkg.pop("crop_box", None)
     assert c.post("/v1/scans", json=pkg).status_code == 201
     st = make_still(up, pkg)
-    buf = io.BytesIO()
-    Image.new("RGB", (st["width_px"], st["height_px"]), (90, 90, 100)).save(buf, "JPEG")
-    st["image_file"] = up.upload(buf.getvalue(), "image/jpeg")
     st.pop("segment", None)
     if scan_id:
         st["still_id"] = f"{scan_id}_s7"
@@ -855,7 +794,6 @@ def publish_scan_with_model(c, *, object_words=None, story="the X button sticks"
     f["evidence_refs"]["still_ids"] = [st["still_id"]]
     fb = {**copy.deepcopy(f), "finding_id": "f_example_b" + tag, "state": "ok"}
     rep = report_example(scan_id, sid)
-    rep["findings"][1]["location"]["point_m"] = [float(v) for v in xyz[len(xyz) // 2 + 60]]
     for row, fid in zip(rep["findings"], (f["finding_id"], fb["finding_id"])):
         row["finding_id"] = fid
     rep["most_likely"] = [x if not isinstance(x, str) else f["finding_id"] for x in rep.get("most_likely") or []]
@@ -872,7 +810,7 @@ def publish_scan_with_model(c, *, object_words=None, story="the X button sticks"
 
 
 def streamed(c) -> list[dict]:
-    """The streamed answer requests (the part index is a separate, non-streamed call)."""
+    """The streamed answer requests."""
     return [b for b in c.claude.bodies if b.get("stream")]
 
 
@@ -892,9 +830,9 @@ def test_stage_markers_are_parsed_out_of_speech():
     out += sp.feed('<view side="sideways"/><zoom dir="far"/><point photo="s4" x="1.4" y="0.5"/><show part="a b"/>Done.')
     out += sp.flush()
     assert out == ["The battery cover is on the back.", "Here is the top.", "The X button is here.", "Done."]
+    # a <point> marker is never spoken, and never a move: pointing into a photo or render was removed with the 3D index
     assert sp.stage == [{"type": "show", "part": "f_ab12"}, {"type": "view", "side": "top"},
-                        {"type": "zoom", "dir": "in"},
-                        {"type": "point", "photo": "s4", "x": 0.41, "y": 0.55, "label": "X button"}]
+                        {"type": "zoom", "dir": "in"}]
 
 
 def test_voice_facts_leave_out_counts_and_coverage():
@@ -923,52 +861,6 @@ def test_located_parts_list_every_located_finding_without_numbers():
     assert seen == [{"id": "f_example_b", "part": "capacitor", "where": rows[0].get("where"),
                      "photos_showed": "no issue"}] or (seen[0]["id"] == "f_example_b" and "point" not in seen[0])
     assert "0.02" not in json.dumps(seen) and "s1" not in json.dumps(seen)
-
-
-def test_report_turn_sees_photos_and_views_and_moves_the_model(gw):
-    c = gw()
-    scan_id = publish_scan_with_model(c)
-    c.claude.deltas = ['<show part="f_example_b"/>The capacitor sits ', 'on the board. <view side="top"/>Here is the top. ',
-                       '<show part="f_nope"/><zoom dir="in"/>Closer now.']
-    events = ask(c, scan_id, "where is the capacitor")
-    kinds = [(e["type"], e.get("text") or e.get("part") or e.get("side") or e.get("dir")) for e in events
-             if e["type"] in ("sentence", "show", "view", "zoom")]
-    assert kinds == [("sentence", "The capacitor sits on the board."), ("show", "f_example_b"),
-                     ("sentence", "Here is the top."), ("view", "top"), ("sentence", "Closer now."), ("zoom", "in")]
-    photo = next(e for e in events if e["type"] == "photo")      # the real photo of the spot, ringed
-    assert photo["for"] == "f_example_b"
-    got = c.get(f"/v1/blobs/{photo['crop']}")
-    assert got.status_code == 200 and got.content[:3] == b"\xff\xd8\xff"
-    body = streamed(c)[0]
-    first = body["messages"][0]["content"]
-    first = first if isinstance(first, str) else next(b["text"] for b in first if b["type"] == "text" and "<scan>" in b["text"])
-    parts = json.loads(first.split("<parts>")[1].split("</parts>")[0])
-    assert [p["id"] for p in parts] == ["f_example_b"] and "point" not in parts[0]
-    last = body["messages"][-1]["content"]
-    captions = [b["text"] for b in last if b["type"] == "text"]
-    assert any(t.startswith("Photo s7") for t in captions) and any(t.startswith("View v1") for t in captions)
-    assert sum(1 for b in last if b["type"] == "image") <= 3 and body["model"] == "claude-haiku-5-5"
-    hist = c.get(f"/v1/voice/conversation?scan_id={scan_id}").json()["turns"]
-    assert "<" not in hist[1]["text"]                             # markers never reach the words
-
-
-def test_a_point_marker_lands_on_the_model_and_a_repeat_is_a_lookup(gw):
-    c = gw()
-    scan_id = publish_scan_with_model(c)
-    c.claude.deltas = ['<point photo="s7" x="0.5" y="0.5" label="X button"/>The X button is right here. ',
-                       '<point photo="s9" x="0.5" y="0.5" label="ghost"/>That one is not in the photos.']
-    events = ask(c, scan_id, "where is the X button")
-    pts = [e for e in events if e["type"] == "point"]
-    assert len(pts) == 1 and pts[0]["id"] == "pt_1" and pts[0]["label"] == "X button"
-    assert all(isinstance(pts[0][k], float) for k in ("x", "y", "z")) and pts[0]["radius"] > 0
-    assert any(e["type"] == "photo" and e["for"] == "pt_1" for e in events)
-    c.claude.deltas = ['<show part="pt_1"/>Same spot as before.']
-    events = ask(c, scan_id, "show me the X button again")
-    again = [e for e in events if e["type"] == "point"]
-    assert again and again[0]["id"] == "pt_1" and again[0]["x"] == pts[0]["x"]
-    first = streamed(c)[-1]["messages"][0]["content"]
-    first = first if isinstance(first, str) else next(b["text"] for b in first if b["type"] == "text" and "<parts>" in b["text"])
-    assert '"id":"pt_1"' in first and "X button" in first
 
 
 def test_during_a_scan_the_report_model_is_not_moved(gw):
@@ -1007,46 +899,13 @@ def test_searches_are_counted_from_usage():
     assert web_search_tool("claude-sonnet-5-5")["type"] == "web_search_20260209"
 
 
-def test_the_part_index_is_built_once_per_scan_in_the_background(gw, tmp_path):
-    import time as _t
-    c = gw()
-    c.claude.text = json.dumps({"parts": [{"label": "A2", "kind": "pin", "photo": "s7", "x": 0.5, "y": 0.5,
-                                           "note": "analog input 2"}]})
-    scan_id = publish_scan_with_model(c)
-    c.get(f"/v1/voice/conversation?scan_id={scan_id}")     # the report opens
-    c.get(f"/v1/voice/conversation?scan_id={scan_id}")
-    index = tmp_path / "voice_index" / f"{scan_id}.json"
-    for _ in range(100):
-        if index.exists():
-            break
-        _t.sleep(0.05)
-    out = json.loads(index.read_text())
-    assert out["status"] == "done" and [e["label"] for e in out["entries"]] == ["A2"]
-    calls = [b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]
-    listing = [b for b in calls if "parts" in b["output_config"]["format"]["schema"]["properties"]]
-    refine = [b for b in calls if "items" in b["output_config"]["format"]["schema"]["properties"]]
-    assert len(listing) == 1 and listing[0]["model"] == "claude-sonnet-5-5"
-    assert len(refine) == 2 and out["calls"] == 3          # two zoom passes on the one photo, in the same job
-    # The fake answers no refine: the spot stays a region, never a tight ring on a guess.
-    assert out["entries"][0]["precision"] == "coarse" and out["entries"][0]["radius"] == 0.03
-    c.claude.deltas = ['<show part="ix_1"/>A2 is on the analog header, third from the left.']
-    events = ask(c, scan_id, "where is A2")
-    assert any(e["type"] == "point" and e["id"] == "ix_1" and e["label"] == "A2" for e in events)
-    # Pointing in a photo at a part the index already names: the index's place, not a new guess.
-    c.claude.deltas = ['<point photo="s7" x="0.9" y="0.9" label="a2"/>That is A2.']
-    events = ask(c, scan_id, "and where is A2 again")
-    assert [e["id"] for e in events if e["type"] == "point"] == ["ix_1"]
-    assert len([b for b in c.claude.bodies if not b.get("stream") and b.get("output_config", {}).get("format")]) == 3
-
-
 def test_persona_answers_confidently_and_keeps_the_hard_rules():
     p = " ".join(PERSONA.split())
     for words in ("Answer the question they asked first", "Partial evidence is enough",
                   "Never mention photo counts, coverage, blur", "Never invent a defect",
                   "Never say a part was checked or is fine when nothing shows it", "Partial evidence never clears a part",
                   "Say where a wire goes only when you can see it attached at both ends", "from its colour",
-                  "<show part=", "<point photo=", '<view side="top"/>', '<zoom dir="in"/>',
-                  "a render of the 3D reconstruction of this real object", "name it in a few words",
+                  "<show part=", '<view side="top"/>', '<zoom dir="in"/>', "name it in a few words",
                   "nothing you have shows that spot at all", "never add a second pass", "even in the middle of a sentence"):
         assert words in p, words
     assert "but that photo was dark" not in p
@@ -1067,54 +926,6 @@ def test_a_repeated_sentence_is_not_spoken_but_its_move_happens(gw):
     assert {"type": "show", "part": "f_example_b"} in events
 
 
-def test_ring_size_follows_how_sure_the_spot_is():
-    from repairos.voice.evidence import ring_for
-    p, r, word = ring_for([0, 0, 0], 0.004, True)
-    assert word == "confirmed in a second photo" and r == 0.012
-    assert ring_for([0, 0, 0], 0.03, True)[1:] == (0.03, "second photo disagrees")
-    assert ring_for([0, 0, 0], 0.2, True)[1] == 0.04
-    assert ring_for([0, 0, 0], None, True)[1:] == (0.014, "refined in one photo")
-    assert ring_for([0, 0, 0], None, False)[1:] == (0.03, "coarse")
-
-
-def test_refine_maps_a_crop_answer_back_to_the_model():
-    """refine_points with a real crop pipeline and a recorded-shape answer: the crop centre maps back onto the
-    surface point under it (synthetic plane, known pose)."""
-    import asyncio as _a
-    import io
-
-    import numpy as np
-    from PIL import Image
-
-    from repairos.voice import views as V
-    from repairos.voice.evidence import refine_points
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_voice_views import plane, still
-
-    s = plane()
-    st = still()
-    buf = io.BytesIO()
-    Image.new("RGB", (800, 600), (100, 100, 100)).save(buf, "JPEG")
-    img = buf.getvalue()
-
-    class Fake:   # answers every crop with its centre
-        class beta:
-            class messages:
-                @staticmethod
-                async def create(**kw):
-                    n = sum(1 for b in kw["messages"][0]["content"] if b["type"] == "image")
-                    from types import SimpleNamespace as NS
-                    text = json.dumps({"items": [{"crop": k + 1, "seen": True, "x": 0.5, "y": 0.5} for k in range(n)]})
-                    return NS(stop_reason="end_turn", content=[NS(type="text", text=text)], usage=None, model="m")
-    target = np.array([0.03, 0.02, -0.5])
-    x, y, _ = V.project_upright(st, target)
-    out, calls = _a.run(refine_points(s, [st], lambda _s: img, [{"label": "A2", "point": [0, 0, -0.5],
-                                                                 "still_id": st["still_id"], "x": x, "y": y}],
-                                      client=Fake(), model="claude-sonnet-5-5", scan_id="t", verify=False))
-    assert calls == 2 and out[0]["precision"] == "refined in one photo"
-    assert np.linalg.norm(np.asarray(out[0]["point"]) - target) < 0.004
-
-
 def test_image_names_and_ids_are_never_spoken():
     from repairos.voice.conversation import unspeakable
     assert unspeakable("In photo s2 it's the red button on the left.") == "It's the red button on the left."
@@ -1125,31 +936,6 @@ def test_image_names_and_ids_are_never_spoken():
     sp = SentenceSplitter()
     out = sp.feed("In photo s2 the X button is the blue one. ") + sp.flush()
     assert out == ["The X button is the blue one."]
-
-
-def test_photo_only_parts_show_their_photo_and_are_placed_when_the_surface_changes(gw, tmp_path):
-    import asyncio as _a
-    c = gw()
-    scan_id = publish_scan_with_model(c)
-    still_id = c.state and _a.run(c.state.list("still", scan_id=scan_id))[0].data["still_id"]
-    index = tmp_path / "voice_index" / f"{scan_id}.json"
-    index.parent.mkdir(parents=True, exist_ok=True)
-    entry = {"id": "ix_1", "label": "A2", "part": "A2 pin", "kind": "pin", "point": None, "radius": 0.006,
-             "precision": "pin read in a close-up", "still_id": still_id, "x": 0.5, "y": 0.5}
-    index.write_text(json.dumps({"status": "done", "entries": [entry], "surface_key": "an older surface"}))
-    c.claude.deltas = ['<show part="ix_1"/>A2 is on the analog header.']
-    events = ask(c, scan_id, "where is A2")
-    # The surface changed since the index was written: A2 got its 3D point from its photo and pixel.
-    placed = json.loads(index.read_text())
-    assert placed["surface_key"] != "an older surface" and placed["entries"][0]["point"] is not None
-    assert any(e["type"] == "point" and e["id"] == "ix_1" for e in events)
-    assert any(e["type"] == "photo" and e["for"] == "ix_1" for e in events)
-    # On a surface that can't take it, the spot stays photo-only: its photo, the whole object, no ring.
-    off = {**entry, "x": 0.01, "y": 0.01}
-    index.write_text(json.dumps({"status": "done", "entries": [off], "surface_key": "older again"}))
-    events = ask(c, scan_id, "and where is A2 now")
-    assert {"type": "view", "side": "reset"} in events and not [e for e in events if e["type"] == "point"]
-    assert any(e["type"] == "photo" and e["for"] == "ix_1" for e in events)
 
 
 def test_punctuation_around_a_removed_marker_is_tidied():
@@ -1169,202 +955,3 @@ def test_persona_never_clears_what_was_not_photographed():
 
 
 # --- Greptile on PR #34: frames, index revisions and retries, refinement failures, pins, second-photo checks ----------
-
-def _plane_still(sid: str, eye=(0.0, 0.0, 0.0), look=(0.0, 0.0, -0.5)):
-    import io
-
-    from PIL import Image
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from test_voice_views import plane, still
-    buf = io.BytesIO()
-    Image.new("RGB", (800, 600), (100, 100, 100)).save(buf, "JPEG")
-    return plane(), still(eye=eye, look=look, sid=sid), buf.getvalue()
-
-
-class _Recorded:
-    """A recorded-shape Messages client: each call's JSON text from `answer(content)`, or the exception it raises."""
-
-    def __init__(self, answer):
-        outer = self
-
-        class _M:
-            @staticmethod
-            async def create(**kw):
-                from types import SimpleNamespace as NS
-                text = outer.answer(kw["messages"][0]["content"])
-                return NS(stop_reason="end_turn", content=[NS(type="text", text=json.dumps(text))], usage=None, model="m")
-        self.answer = answer
-        self.beta = type("B", (), {"messages": _M})
-
-
-def test_stills_of_continuations_and_registered_flips_are_usable():
-    """Lea uses close-ups from a continuation ARKit relocalised (same frame) and from a flipped bottom the server
-    registered (restated into segment 0's frame); an unaligned segment's photos stay out."""
-    import numpy as np
-
-    from repairos.voice import views as V
-    base = {"camera": {"frame": "arkit_world", "position_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1]},
-            "intrinsics": {"fx": 1, "fy": 1, "cx": 0, "cy": 0}, "image_file": "blob://x"}
-    stills = [{**base, "still_id": f"s{k}", "segment": k} for k in range(4)]
-    stills[3]["pose_reliable"] = False   # a flipped bottom: its own frame as recorded
-    move = np.eye(4)
-    move[:3, 3] = [0.1, 0, 0]
-    marked = V.in_scan_frame(stills, {0, 1}, {3: move})
-    assert [V.usable(s) for s in marked] == [True, True, False, True]
-    assert marked[3]["camera"]["position_m"][0] == pytest.approx(0.1)
-    assert [V.usable(s) for s in stills] == [True, False, False, False]   # unmarked: segment 0 only, as before
-
-
-def test_a_bottom_the_merge_gate_refused_is_never_placed_on_the_model(tmp_path):
-    """Evidence.stills follows the merge gate the model is built with (segments.merged_transforms): a registered
-    bottom whose merge the gate refused keeps its photos out of model-point lookup; a merged one is restated."""
-    import numpy as np
-
-    from repairos.pipeline.run import Context, _update
-    from repairos.voice import views as V
-    from repairos.voice.evidence import Evidence
-
-    state, blobs = SqliteState(tmp_path / "s.db"), LocalBlobStore(tmp_path / "b")
-    box = {"frame": "arkit_world", "center_m": [0, 0.03, 0], "extent_m": [0.1, 0.05, 0.1],
-           "quaternion_xyzw": [0, 0, 0, 1]}
-    scan = {"scan_id": "scan_gate", "product_id": "p", "session_id": "sess_gate",
-            "captured_at": "2026-10-25T01:00:00Z", "device": {"model": "iPhone17,2", "ios": "26.5"},
-            "frame": "arkit_world", "units": "m", "depth_source": "lidar", "pose_source": "arkit", "voxel_mm": 3.0,
-            "gravity_arkit_world": [0, -1, 0], "points_file": blobs.put(b"ply", "application/x-ply"),
-            "point_count": 1, "crop_box": box, "keyframes": [],
-            "segments": [{"segment": k, "reason": "flipped", "object_moved": True, "aligned": False, "crop_box": box}
-                         for k in (1, 2)]}
-    move = np.eye(4)
-    move[:3, 3] = [0.1, 0, 0]
-    t = list(move.reshape(-1))
-
-    async def seed():
-        await state.transition("session", "sess_gate", "session.create", {"session_id": "sess_gate"})
-        row = await state.transition("scan-package", "scan_gate", "scan.create", scan)
-        for k in (0, 1, 2):
-            await state.put("still", {
-                "still_id": f"scan_gate_s{k}", "scan_id": "scan_gate", "session_id": "sess_gate", "kind": "unguided",
-                "captured_at": "2026-10-25T01:01:00Z", "image_file": blobs.put(b"jpeg", "image/jpeg"),
-                "width_px": 64, "height_px": 48, "pose_reliable": k == 0, "segment": k, "targets": [],
-                "camera": {"frame": "arkit_world", "position_m": [0, 0, 0], "quaternion_xyzw": [0, 0, 0, 1]},
-                "intrinsics": {"fx": 50.0, "fy": 50.0, "cx": 32.0, "cy": 24.0}, "tracking_state": "normal"})
-        rec = {"status": "done", "scan_rev": row.rev, "segments": [
-            {"segment": 1, "aligned": True, "transform": t, "merge": {"ok": False, "why": "the bottom floats"}},
-            {"segment": 2, "aligned": True, "transform": t, "merge": {"ok": True}}]}
-        await _update(Context(state=state, blobs=blobs), scan, {"segments": rec})
-        app = type("App", (), {"state": type("S", (), {"store": state, "blobs": blobs})})
-        return await Evidence(app, tmp_path).stills("scan_gate")
-    got = {s["still_id"]: s for s in asyncio.run(seed())}
-    assert [V.usable(got[f"scan_gate_s{k}"]) for k in (0, 1, 2)] == [True, False, True]
-    assert got["scan_gate_s1"]["camera"]["position_m"] == [0, 0, 0]          # never restated by a refused fit
-    assert got["scan_gate_s2"]["camera"]["position_m"][0] == pytest.approx(0.1)
-
-
-def test_part_index_is_rebuilt_for_new_photos_and_failures_are_retried(tmp_path):
-    from repairos.voice.evidence import INDEX_MAX_ATTEMPTS, INDEX_RETRY_S, Evidence
-
-    due = Evidence.index_due
-    assert due(None, "a", "k", 0)
-    assert not due({"status": "done", "inputs": "a"}, "a", "k2", 0)          # a new surface only re-places entries
-    assert due({"status": "done", "inputs": "a"}, "b", "k", 0)               # new close-ups: listed again
-    assert not due({"status": "done"}, "b", "k", 0)                          # written before inputs were kept
-    assert not due({"status": "skipped", "inputs": "a", "surface_key": "k"}, "a", "k", 0)
-    assert due({"status": "skipped", "inputs": "a", "surface_key": "k"}, "a", "k2", 0)
-    failed = {"status": "failed", "inputs": "a", "attempt": {"inputs": "a", "at": 1000.0, "n": 1}}
-    assert not due(failed, "a", "k", 1000 + INDEX_RETRY_S - 1) and due(failed, "a", "k", 1000 + INDEX_RETRY_S)
-    second = {**failed, "attempt": {"inputs": "a", "at": 1000.0, "n": 2}}
-    assert not due(second, "a", "k", 1000 + INDEX_RETRY_S) and due(second, "a", "k", 1000 + 2 * INDEX_RETRY_S)
-    spent = {**failed, "attempt": {"inputs": "a", "at": 0.0, "n": INDEX_MAX_ATTEMPTS}}
-    assert not due(spent, "a", "k", 1e9) and due(spent, "b", "k", 0)
-    ev = Evidence(None, tmp_path)
-    ev._record("scan_x", {"status": "done", "entries": [{"id": "ix_1"}], "surface_key": "k"}, "a")
-    ev._record("scan_x", {"status": "failed", "reason": "timeout", "entries": []}, "b")
-    kept = ev._read("scan_x")
-    assert kept["status"] == "done" and kept["entries"] == [{"id": "ix_1"}] and kept["inputs"] == "a"
-    assert kept["attempt"]["inputs"] == "b" and kept["attempt"]["n"] == 1
-    ev._record("scan_x", {"status": "failed", "reason": "timeout", "entries": []}, "b")
-    assert ev._read("scan_x")["attempt"]["n"] == 2 and ev.index("scan_x") == [{"id": "ix_1"}]
-
-
-def test_a_failed_refinement_keeps_the_coarse_part():
-    import asyncio as _a
-
-    from repairos.voice.evidence import COARSE_RADIUS_M, refine_points
-
-    s, st, img = _plane_still("scan_rf_s1")
-
-    def fail(_content):
-        raise TimeoutError("refine timed out")
-    stats: dict = {}
-    item = {"label": "A2", "point": [0.01, 0.0, -0.5], "still_id": st["still_id"], "x": 0.51, "y": 0.5}
-    out, calls = _a.run(refine_points(s, [st], lambda _s: img, [item], client=_Recorded(fail), model="m",
-                                      scan_id="rf", verify=False, stats=stats))
-    assert calls == 0 and stats["refine_errors"] == 2
-    assert out[0]["point"].tolist() == item["point"] and out[0]["radius"] == COARSE_RADIUS_M
-
-
-def test_a_crop_pixel_off_the_surface_keeps_the_coarse_ring():
-    """The close-up found the part where the model has no surface: the old guess keeps its coarse ring (never a
-    tight ring on a point the close-up did not place); the photo's pixel is the refined one."""
-    import asyncio as _a
-
-    from repairos.voice.evidence import COARSE_RADIUS_M, refine_points
-
-    s, st, img = _plane_still("scan_off_s1")
-
-    def corner(content):
-        n = sum(1 for b in content if b["type"] == "image")
-        return {"items": [{"crop": k + 1, "seen": True, "x": 0.0, "y": 0.0} for k in range(n)]}
-    item = {"label": "A2", "point": [0.0, 0.0, -0.5], "still_id": st["still_id"], "x": 0.5, "y": 0.5}
-    out, _ = _a.run(refine_points(s, [st], lambda _s: img, [item], client=_Recorded(corner), model="m",
-                                  scan_id="off", sides=(0.9,), verify=False))
-    assert out[0]["precision"] == "coarse" and out[0]["radius"] == COARSE_RADIUS_M
-    assert out[0]["point"].tolist() == item["point"] and out[0]["xy"][0] < 0.2
-
-
-def test_the_second_photo_is_checked_against_the_final_point(monkeypatch):
-    """The last pass moves the point; the second photo shows the part where the earlier point projects. Measured
-    against the final point, the two photos disagree: never a tight 'confirmed' ring."""
-    import asyncio as _a
-
-    from repairos.voice import evidence as E
-    from repairos.voice import views as V
-
-    s, a, img = _plane_still("scan_fp_s1")
-    b = {**_plane_still("scan_fp_s2", eye=(0.12, 0.0, 0.0), look=(0.0, 0.0, -0.5))[1], "sharpness": 50.0}
-    real = V.refine_crop
-
-    def tagged(st, image, x, y, side, *rest):   # the crop's photo and window, for the recorded answers
-        _, rect = real(st, image, x, y, side, *rest)
-        return f"{st['still_id']}|{side:.3f}".encode(), rect
-    monkeypatch.setattr(V, "refine_crop", tagged)
-
-    async def ask(_client, _model, _scan, crops, _name):
-        out = []
-        for _label, tag in crops:
-            sid, side = tag.decode().split("|")
-            last = float(side) < 0.3
-            out.append((0.8, 0.5) if sid == a["still_id"] and last else (0.5, 0.5))
-        return out
-    monkeypatch.setattr(E, "ask_crops", ask)
-    item = {"label": "A2", "point": [0.0, 0.0, -0.5], "still_id": a["still_id"], "x": 0.5, "y": 0.5}
-    out, _ = _a.run(E.refine_points(s, [a, b], lambda _s: img, [item], client=None, model="m", scan_id="fp"))
-    assert abs(out[0]["point"][0]) > E.AGREE_M                      # the last pass moved it
-    assert out[0]["precision"] == "second photo disagrees" and out[0]["radius"] > E.TIGHT_MIN_M
-
-
-def test_the_same_pin_label_on_two_headers_is_two_pins():
-    """Boards print GND on several headers: two readings are one pin only in the same place."""
-    import asyncio as _a
-
-    from repairos.voice.evidence import header_pins
-
-    s, st, img = _plane_still("scan_hp_s1")
-    gnd = _Recorded(lambda _c: {"pins": [{"label": "GND", "x": 0.5, "y": 0.5}]})
-    headers = [{"label": "power header", "kind": "header", "still_id": st["still_id"], "x": 0.4, "y": 0.5},
-               {"label": "digital header", "kind": "header", "still_id": st["still_id"], "x": 0.6, "y": 0.5}]
-    pins, calls = _a.run(header_pins(s, [st], lambda _s: img, headers, client=gnd, model="m", scan_id="hp"))
-    assert calls == 2 and [p["where"] for p in pins] == ["on the power header", "on the digital header"]
-    overlap = [headers[0], {**headers[1], "x": 0.402}]   # two crops of one place: one pin
-    pins, _ = _a.run(header_pins(s, [st], lambda _s: img, overlap, client=gnd, model="m", scan_id="hp"))
-    assert len(pins) == 1

@@ -2,7 +2,7 @@
 upload write, through `repairos.sessions.writer.SessionWriter`.
 
 Each imported keyframe is written twice: as a ScanPackage keyframe (the scan) and as an `unguided` Still (the photo
-the detector looks at), with the same pose and intrinsics. `import.json` next to session.json records where the
+the design engine looks at), with the same pose and intrinsics. `import.json` next to session.json records where the
 session came from and every assumption the importer had to make.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from repairos.locate.camera import Pinhole, Pose
+from repairos.importers.camera import Pinhole, Pose
 from repairos.sessions import ids
 from repairos.sessions.layout import ext_for
 from repairos.sessions.writer import SessionWriter

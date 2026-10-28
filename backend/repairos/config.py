@@ -33,13 +33,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore", env_ignore_empty=True,
                                       case_sensitive=False)
 
-    # Jev / TypeSafe (FUSION=jev)
-    typesafe_key: SecretStr | None = None
-    # LLM / VLM slots
+    # Lea's answers (repairos.voice): Claude
     anthropic_api_key: SecretStr | None = None
-    # Reference hints (optional; no key = off): Bright Data SERP API (repairos.references)
-    brightdata_api_key: SecretStr | None = None
-    brightdata_serp_zone: str | None = None
     # Lea's voice (optional; no key = the phone's own voice): Cartesia TTS/STT (repairos.voice)
     cartesia_api_key: SecretStr | None = None
     # The design engine (Grain; repairos.grain): where the product's design lives and judges. No URL = off.
@@ -52,7 +47,7 @@ class Settings(BaseSettings):
     repairos_providers_path: Path = PROVIDERS_FILE
 
     def require(self, key: str, why: str = "") -> str:
-        """The value of `key` (e.g. "TYPESAFE_KEY"), or MissingSettingError naming the key."""
+        """The value of `key` (e.g. "ANTHROPIC_API_KEY"), or MissingSettingError naming the key."""
         value = getattr(self, key.lower())
         if value is None or (isinstance(value, SecretStr) and not value.get_secret_value()) or value == "":
             raise MissingSettingError(key.upper(), why)

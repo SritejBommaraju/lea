@@ -21,14 +21,13 @@ struct SessionFlowView: View {
     @Environment(\.dismiss) private var dismiss
     let record: SessionRecord
     @State private var scan: ScanSession?
-    @State private var flow: ObjectCaptureFlow?
     @State private var upload: UploadQueue?
     @State private var finished: SessionRecord?
     /// Bumped after a continuation so the report view starts over (it shows "Updating…" until the new report).
     @State private var reportVersion = 0
     @State private var live: LiveEvents?
 
-    private var current: SessionRecord { finished ?? flow?.record ?? record }
+    private var current: SessionRecord { finished ?? record }
 
     var body: some View {
         Group {
@@ -55,8 +54,6 @@ struct SessionFlowView: View {
                 ReportView(record: current, upload: nil, close: { dismiss() }, offline: true)
             } else if finished != nil || record.status != .capturing {
                 OfflineView(close: { dismiss() })
-            } else if let flow {
-                ObjectCaptureFlowView(flow: flow, close: { dismiss() }) { finished = flow.record }
             } else if let scan {
                 ScanView(scan: scan, live: live, close: { dismiss() }) { r in withAnimation(Motion.reveal) { finished = r } }
                     .environment(\.scanBottom, scan.hasLiDAR ? ScanBottomAction { r in if let r { finished = r; scanBottom(r) } } : nil)
@@ -75,7 +72,7 @@ struct SessionFlowView: View {
         }
         .onDisappear { live?.stop() }
         .onAppear {
-            guard upload == nil, flow == nil, scan == nil else { return }
+            guard upload == nil, scan == nil else { return }
             if let gateway = app.gateway, app.isPaired {
                 let q = UploadQueue(record: record, storage: app.storage, gateway: gateway)
                 if record.status != .capturing { q.enqueueAll(stillIDs: record.stillIDs, scanReady: true) }
@@ -85,17 +82,12 @@ struct SessionFlowView: View {
                 live = events
             }
             guard record.status == .capturing else { return }
-            if record.engine == .objectCapture && ObjectCaptureFlow.isSupported {
-                flow = ObjectCaptureFlow(record: record, storage: app.storage, upload: upload, launchedAt: app.launchedAt)
-            } else {
-                scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
-            }
+            scan = ScanSession(record: record, storage: app.storage, upload: upload, probe: app.stillProbe)
         }
     }
 
-    /// Our ARKit scanner lets Lea see: each turn carries the camera's photos (Voice/LeaSight). Object Capture keeps
-    /// its camera to itself, so there Lea talks without seeing. The scan is read at each turn (a continued scan is a
-    /// new ScanSession).
+    /// Our ARKit scanner lets Lea see: each turn carries the camera's photos (Voice/LeaSight). The scan is read at each
+    /// turn (a continued scan is a new ScanSession).
     private func eyesForLea(_ gateway: GatewayClient) -> LeaEyes? {
         guard scan != nil else { return nil }
         return ScanEyes(scan: { self.scan }, gateway: gateway)
@@ -104,7 +96,7 @@ struct SessionFlowView: View {
     /// A capture is on screen (not the report).
     private var capturing: Bool {
         if let scan, scan.continuing { return true }
-        return finished == nil && record.status == .capturing && (flow != nil || scan != nil)
+        return finished == nil && record.status == .capturing && scan != nil
     }
 
     /// What Lea is told at each turn while scanning: the stage, the on-screen cue, progress and close-ups.
@@ -125,22 +117,6 @@ struct SessionFlowView: View {
             if scan.flip != nil { live["part"] = "the bottom: the object is turned over for its underside" }
             if scan.enough { live["enough"] = "yes: they can tap Done" }
             if let circled = scan.sight.circled { live["circled on screen"] = circled }
-        } else if let flow {
-            live["stage"] = switch flow.step {
-            case .starting: "starting the camera"
-            case .ready, .detecting: "framing the object"
-            case .capturing: "capturing: walking around it"
-            case .closeups: "close-ups: they tap anything that looks damaged or important"
-            case .finishing: "saving"
-            case .photosOnly: "photos only"
-            case .reconstructing(let s): "building the model: \(s)"
-            case .done: "done"
-            case .failed(let why): "stopped: \(why)"
-            }
-            live["photos"] = "\(flow.shots)"
-            live["close-ups taken"] = "\(flow.closeupShots)"
-            if let cue = flow.cue { live["on-screen cue"] = cue }
-            if flow.lightBlocked { live["light"] = "too dark to continue" }
         }
         return live
     }

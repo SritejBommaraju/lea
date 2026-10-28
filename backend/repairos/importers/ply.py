@@ -2,7 +2,34 @@
 `uchar red, green, blue` + optional `uchar confidence, views` (samples/README.md)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
+
+from repairos.sessions import files
+
+_NP_TYPES = {"char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1", "short": "<i2", "int16": "<i2",
+             "ushort": "<u2", "uint16": "<u2", "int": "<i4", "int32": "<i4", "uint": "<u4", "uint32": "<u4",
+             "float": "<f4", "float32": "<f4", "double": "<f8", "float64": "<f8"}
+
+
+def read_ply(path: str | Path) -> dict[str, np.ndarray]:
+    """The vertex properties of a binary little-endian PLY (the session format) as arrays by name."""
+    path = Path(path)
+    with path.open("rb") as f:
+        h = files.ply_header(f, path.stat().st_size)
+        f.seek(0)
+        head = f.read(h["header_bytes"]).decode("ascii", "replace")
+        types = []
+        in_vertex = False
+        for line in head.splitlines():
+            parts = line.split()
+            if parts[:1] == ["element"]:
+                in_vertex = parts[1] == "vertex"
+            elif parts[:1] == ["property"] and in_vertex:
+                types.append((parts[2], _NP_TYPES[parts[1]]))
+        data = np.fromfile(f, dtype=np.dtype(types), count=h["vertex_count"])
+    return {name: data[name] for name, _ in types}
 
 
 def ply_bytes(xyz: np.ndarray, rgb: np.ndarray, *, confidence: np.ndarray | None = None,

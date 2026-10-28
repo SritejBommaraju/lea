@@ -342,7 +342,7 @@ struct EvidencePhoto: View {
 
 // MARK: - Textures for SceneKit and RealityKit
 
-/// The stage's marks as images for the 3D heroes (RecreationScene, ModelView, AR), drawn with CoreGraphics so they can
+/// The stage's marks as images for the 3D heroes (ModelView, AR), drawn with CoreGraphics so they can
 /// be made off the main actor: the `Marker` (a dark-surface disc outlined in the tone, the number in the display face)
 /// and the `FocusRingStyle` ring (the tone over a keyline, solid; no glow). Colours are the
 /// fixed stage values (the dark-mode tones; `next` for a part or point that is not a finding).

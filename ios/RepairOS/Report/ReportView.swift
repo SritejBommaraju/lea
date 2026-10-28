@@ -52,20 +52,6 @@ struct ReportView: View {
 
     private var gateway: GatewayClient? { offline ? nil : app.gateway }
 
-    /// The photo-real recreation (Report/Recreation) when this scan has one (the phone's shell, else the server's);
-    /// otherwise the stage picks the 3D view or the photo hero itself. Not when the pipeline chose photos: the object is
-    /// too small or flat for LiDAR (a 7 cm board is a blob; the owner's Arduino, 2026-10-25), and the sharp stills
-    /// with their numbered marks are the honest view.
-    private var stageHero: StageHero {
-        let dir = RecreationCenter.scanDir(sessionDir: app.storage.dir(record), scanID: record.scanID)
-        guard Self.showsRecreation(hero: heroChoice, available: RecreationCenter.shared.available(dir)) else { return .automatic }
-        return .custom { ctx in
-            AnyView(RecreationView(source: .scan(dir), markers: ctx.markers, focus: ctx.focus,
-                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour,
-                                   cue: ctx.cue))
-        }
-    }
-
     var body: some View {
         NavigationStack {
             Group {
@@ -77,7 +63,7 @@ struct ReportView: View {
                                     fixSearching: fixSearching && live?.fix == nil && live?.fixEnded == nil && report.fix == nil,
                                     fixUnavailable: (fixLimited || live?.fixEnded == "limited") && live?.fix == nil && report.fix == nil,
                                     fresh: landedFresh, voiceStarted: voiceStarted, walkthrough: walkthrough, leaCue: leaCue,
-                                    hero: stageHero, captions: talking ? captions : nil,
+                                    captions: talking ? captions : nil,
                                     identity: Self.identity(corrected: record.objectName, report: report.objectWords,
                                                             live: live?.identity?.words),
                                     addMeterReading: gateway == nil ? nil : {
@@ -143,15 +129,6 @@ struct ReportView: View {
                 }
             }
             .task { await run() }
-            // A shell for older scans that have none (built off the main actor, once), and the server's better
-            // recreation whenever it announces a new revision.
-            .task { RecreationCenter.shared.buildShell(sessionDir: app.storage.dir(record), scanID: record.scanID) }
-            .task(id: live?.recreationRev) {
-                if let gateway {
-                    await RecreationCenter.shared.fetchGateway(gateway, sessionDir: app.storage.dir(record), scanID: record.scanID,
-                                                               rev: live?.recreationRev)
-                }
-            }
             .task(id: report == nil) { await fetchMesh(rev: nil) }
             .task(id: live?.meshRev) { if let rev = live?.meshRev { await fetchMesh(rev: rev) } }
             .task(id: heroChoice) { await fetchMesh(rev: nil) }
@@ -295,9 +272,6 @@ struct ReportView: View {
 
     /// A reopened report never polls the pipeline, so the cached report's choice has to count as much as a live one.
     nonisolated static func heroChoice(live: String?, pipeline: String?, cached: String?) -> String? { live ?? pipeline ?? cached }
-
-    /// The recreation leads only when there is one and the backend did not choose the photos.
-    nonisolated static func showsRecreation(hero: String?, available: Bool) -> Bool { available && hero != "photos" }
 
     /// Follows the backend's hero choice: fetches its cleaned cloud (`points`) or its mesh (`mesh`), cached beside the
     /// scan; `photos` needs nothing. `rev`: a newer revision was announced (live `mesh_ready` or the pipeline's

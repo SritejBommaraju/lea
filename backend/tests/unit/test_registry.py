@@ -89,7 +89,7 @@ def test_release_build_refuses_dev_only_profile(toy):
 def test_real_providers_file_resolves_phase1_by_default():
     name, slots = resolve_slots(ROOT / "config" / "providers.yaml", environ={})
     assert name == "phase1"
-    assert slots["DET"] == "owlv2" and slots["FUSION"] == "jev" and slots["STATE"] == "sqlite"
+    assert slots == {"STATE": "sqlite", "BLOB": "local", "HOST": "local_mac"}
 
 
 def test_registry_matches_build_tools_resolution():
@@ -98,7 +98,7 @@ def test_registry_matches_build_tools_resolution():
         import _lib
     finally:
         sys.path.pop(0)
-    env = {"REPAIROS_SLOT_DET": "gdino"}
+    env = {"REPAIROS_SLOT_BLOB": "other"}
     assert resolve_slots(ROOT / "config" / "providers.yaml", environ=env)[1] == _lib.load_providers(environ=env)["slots"]
 
 
@@ -111,16 +111,12 @@ def _conformance_conftest():
 
 def test_conformance_runner_names_missing_human_prerequisites():
     conf = _conformance_conftest()
-    missing = conf.missing_prerequisites("FUSION", "jev", env={})
-    assert any(m.startswith("jev_key:") for m in missing)
-    assert conf.missing_prerequisites("FUSION", "jev", env={"TYPESAFE_KEY": "x"}) == []
     assert conf.missing_prerequisites("STATE", "sqlite", env={}) == []
-    assert conf.slot_of(ROOT / "backend/tests/conformance/det/test_x.py") == "DET"
+    assert conf.slot_of(ROOT / "backend/tests/conformance/state/test_x.py") == "STATE"
 
 
 LAZY_IMPL = '''
 from repairos.registry import register
-from repairos.slots.detector import Detection
 
 
 @register("DET", "lazy")
@@ -131,7 +127,7 @@ class Impl:
         import heavy_ml_lib  # stands in for torch/transformers: imported only when the impl is built
 
     def detect(self, image, prompts, min_score=None):
-        return [Detection(box=(0.0, 0.0, 1.0, 1.0), label=prompts[0], score=0.5)]
+        return [prompts[0]]
 '''
 
 
@@ -143,14 +139,14 @@ def test_det_impl_heavy_imports_are_lazy(toy):
     assert "heavy_ml_lib" not in sys.modules
     det = reg.slot("DET")
     assert "heavy_ml_lib" in sys.modules
-    assert det.detect(None, ["connector"])[0].label == "connector"
+    assert det.detect(None, ["connector"]) == ["connector"]
     del sys.modules["heavy_ml_lib"]
 
 
 def test_backend_registry_never_imports_torch_or_transformers():
     import subprocess
 
-    code = ("import sys; from repairos.registry import Registry; r = Registry(); r.selected('DET'); "
+    code = ("import sys; from repairos.registry import Registry; r = Registry(); r.selected('STATE'); "
             "assert 'torch' not in sys.modules and 'transformers' not in sys.modules")
     res = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
     assert res.returncode == 0, res.stderr

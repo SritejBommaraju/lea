@@ -26,7 +26,7 @@ def render(data, results) -> str:
              "Do not edit by hand.", "",
              "| Stream | Done | In progress | Ready | Not ready yet | Total |", "|---|---|---|---|---|---|"]
     for s in data["streams"]:
-        ts = [t for t in data["tasks"] if t["stream"] == s["id"]]
+        ts = [t for t in data["tasks"] if t["stream"] == s["id"] and t["status"] != "removed"]
         n = {k: sum(t["status"] == k for t in ts) for k in ("done", "doing")}
         lines.append(f"| {s['name']} | {n['done']} | {n['doing']} | {sum(t['id'] in ready for t in ts)} | "
                      f"{len(ts) - n['done'] - n['doing'] - sum(t['id'] in ready for t in ts)} | {len(ts)} |")
@@ -36,7 +36,7 @@ def render(data, results) -> str:
         lines.append(f"| {m['id']} | {m['title']} | {done}/{total}{' (met)' if done == total else ''} |")
     for s in data["streams"]:
         lines += ["", f"## {s['name']}", "", "| Task | State | Title |", "|---|---|---|"]
-        for t in (t for t in data["tasks"] if t["stream"] == s["id"]):
+        for t in (t for t in data["tasks"] if t["stream"] == s["id"] and t["status"] != "removed"):
             if t["status"] == "done":
                 state = "done"
             elif t["status"] == "doing":
@@ -49,6 +49,10 @@ def render(data, results) -> str:
             else:
                 state = "after " + ", ".join(d for d in t["depends_on"] if by_id[d]["status"] != "done")
             lines.append(f"| {t['id']} | {state} | {t['title']} |")
+    removed = [t for t in data["tasks"] if t["status"] == "removed"]
+    if removed:
+        lines += ["", "## Removed", "", "| Task | Title |", "|---|---|"]
+        lines += [f"| {t['id']} | {t['title']} |" for t in removed]
     return "\n".join(lines) + "\n"
 
 

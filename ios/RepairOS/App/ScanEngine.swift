@@ -1,17 +1,16 @@
 import Foundation
 
 enum EngineKind: String, Codable, Sendable {
-    /// Default: our ARKit scanner (tap-to-lock, coverage dome, auto 12 MP stills; LiDAR points when present).
+    /// Our ARKit scanner (tap-to-lock, coverage dome, auto 12 MP stills; LiDAR points when present).
     case arkit
-    /// Apple Object Capture, behind the `--object-capture` developer flag only.
-    case objectCapture
 
-    var title: String {
-        switch self {
-        case .arkit: "Scan"
-        case .objectCapture: "Object Capture scan"
-        }
+    /// A record saved by the removed Object Capture engine (`objectCapture`) opens as a normal scan.
+    init(from decoder: Decoder) throws {
+        _ = try decoder.singleValueContainer().decode(String.self)
+        self = .arkit
     }
+
+    var title: String { "Scan" }
 }
 
 extension SIMD3 where Scalar == Float {

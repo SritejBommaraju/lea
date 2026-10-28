@@ -312,8 +312,3 @@ def test_cli_imports_and_prints_the_replay_command(folder, tmp_path, capsys):
 def test_cli_reports_a_bad_folder(tmp_path, capsys):
     assert _cli().main([str(tmp_path / "nope"), "--out", str(tmp_path / "sess_20261024_x")]) == 1
     assert "import failed" in capsys.readouterr().err
-
-
-def test_locate_refuses_a_still_without_pose_instead_of_crashing():
-    from repairos.locate.locate import _pose_problem
-    assert "no camera pose" in _pose_problem({"kind": "unguided", "pose_reliable": False})

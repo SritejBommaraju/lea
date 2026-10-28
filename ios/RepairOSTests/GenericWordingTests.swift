@@ -10,7 +10,7 @@ struct GenericWordingTests {
                             "wire", "wires", "connector", "connectors", "screw", "screws", "fuse", "fuses", "board",
                             "boards", "pcb", "socket", "terminal", "terminals", "motor", "hinge", "lens"]
     /// Capture-flow source folders (the report renders the backend's own words and is not checked here).
-    static let folders = ["App", "Capture", "Closeups", "ObjectCapture", "Upload", "Design", "Voice"]
+    static let folders = ["App", "Capture", "Closeups", "Upload", "Design", "Voice"]
 
     @Test func captureStringsNameNoPartKinds() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()

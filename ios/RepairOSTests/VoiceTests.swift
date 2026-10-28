@@ -117,12 +117,6 @@ struct ReportSpeechTests {
                 == "Nothing looked wrong in what I could see clearly.")
     }
 
-    @Test func productBriefIsSpokenBriefly() {
-        let b = ProductBrief(json: ["name": "Apple 20W USB-C adapter", "brand": "Apple", "category": "charger",
-                                    "known_issues": [["area": "USB-C port", "why": "debris stops it seating"]]])
-        #expect(b?.spoken == "This looks like Apple 20W USB-C adapter. Owners often report trouble with the USB-C port, so we'll look closely there.")
-    }
-
     @Test func acronymsKeepTheirCase() {
         #expect(ReportSpeech.lowerFirst("USB socket") == "USB socket")
         #expect(ReportSpeech.lowerFirst("Housing") == "housing")

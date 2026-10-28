@@ -17,11 +17,10 @@ from repairos.importers.fuse import Open3DFuser, VoxelFuser, make_fuser, measure
 from repairos.importers.images import ImportFormatError, jpeg_bytes, sharpness
 from repairos.importers.keyframes import select_keyframes
 from repairos.importers.nerfcapture import nerfcapture_pose
-from repairos.importers.ply import mesh_ply_bytes, ply_bytes
+from repairos.importers.ply import mesh_ply_bytes, ply_bytes, read_ply
 from repairos.importers.session import CaptureMeta, ImportedFrame, write_session
 from repairos.importers.stray import align_video, read_camera_matrix, read_odometry, video_ticks
-from repairos.locate import locate, read_ply
-from repairos.locate.camera import Pinhole, Pose, pixel_rays
+from repairos.importers.camera import Pinhole, Pose, pixel_rays
 from repairos.sessions import files
 from repairos.sessions.reader import open_session
 
@@ -223,7 +222,7 @@ def _frames(with_depth: bool):
                           depth_png=png16, conf_png=png16) for i, p in enumerate(POSES)]
 
 
-def test_lidar_import_session_validates_and_locates(tmp_path):
+def test_lidar_import_session_validates(tmp_path):
     res_f = _fuse(VoxelFuser(0.003, min_views=2))
     ply = ply_bytes(res_f["xyz"], np.full((len(res_f["xyz"]), 3), 128, np.uint8))
     res = write_session(tmp_path, meta=CaptureMeta(device_model="iPhone15,2", ios="18.1"),
@@ -237,13 +236,6 @@ def test_lidar_import_session_validates_and_locates(tmp_path):
     assert len(stills) == len(POSES) and all(st["kind"] == "unguided" and st["targets"] == [] for st in stills)
     assert stills[0]["tracking_state"] == "unknown" and "pose_reliable" not in stills[0]
     assert s.meta["source"] == "converter" and (res.path / "import.json").is_file()
-    # a still's pose sees the box where the scan has it
-    top = np.array([0.10, 0.06, -0.575])
-    from repairos.locate.camera import project
-    pose = Pose.from_contract(stills[0]["camera"])
-    uv, _ = project(top[None], pose, CAM)
-    loc = locate(pkg, stills[0], (uv[0, 0] - 30, uv[0, 1] - 30, uv[0, 0] + 30, uv[0, 1] + 30), base_dir=s.dir)
-    assert loc is not None and np.linalg.norm(np.array(loc.point_m) - top) < 0.008
 
 
 def test_no_lidar_import_session_has_no_ply_and_validates(tmp_path):
@@ -257,23 +249,3 @@ def test_no_lidar_import_session_has_no_ply_and_validates(tmp_path):
     with pytest.raises(ValueError):
         write_session(tmp_path, meta=CaptureMeta(), captured_at=datetime.now(UTC), frames=_frames(False),
                       depth_source="none", ply=b"ply\n", point_count=1, voxel_mm=3, provenance={})
-
-
-@pytest.mark.skipif(not open3d_available(), reason="Open3D not installed (the geometry extra)")
-def test_locate_on_the_fused_mesh_and_points_agree(tmp_path):
-    from repairos.locate import ScanCloud
-    from repairos.locate.camera import project
-
-    res = _fuse(Open3DFuser(0.003))
-    (tmp_path / "m.ply").write_bytes(mesh_ply_bytes(res["mesh"]["vertices"], res["mesh"]["faces"]))
-    cloud = ScanCloud(res["xyz"], "scan_00c0ffee", mesh_file=tmp_path / "m.ply")
-    top = np.array([0.10, 0.06, -0.575])
-    uv, _ = project(top[None], POSES[1], CAM)
-    st = {"still_id": "s1", "camera": POSES[1].to_contract(), "width_px": CAM.width, "height_px": CAM.height,
-          "intrinsics": {"fx": CAM.fx, "fy": CAM.fy, "cx": CAM.cx, "cy": CAM.cy}, "tracking_state": "normal"}
-    box = (uv[0, 0] - 40, uv[0, 1] - 40, uv[0, 0] + 40, uv[0, 1] + 40)
-    mesh_loc, pts_loc = locate(cloud, st, box), locate(cloud, st, box, method="points")
-    assert mesh_loc.method == "ray_cast_mesh" and pts_loc.method == "ray_cast_point_cloud"
-    assert np.linalg.norm(np.array(mesh_loc.point_m) - top) < 0.003
-    assert np.linalg.norm(np.array(mesh_loc.point_m) - np.array(pts_loc.point_m)) < 0.003
-    assert np.dot(mesh_loc.normal, [0, 1, 0]) > 0.95

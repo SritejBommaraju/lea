@@ -355,7 +355,7 @@ def test_a_design_engine_error_is_the_runs_error_and_never_a_report(tmp_path):
         assert c.req("GET", f"/v1/scans/{pkg['scan_id']}/report")[0] == 409
 
 
-def test_without_a_design_engine_complete_still_queues_the_pipeline(tmp_path):
+def test_without_a_design_engine_complete_says_so_and_nothing_else_judges(tmp_path):
     state, blobs = SqliteState(tmp_path / "state.sqlite3"), LocalBlobStore(tmp_path / "blobs")
     app = create_app(state, blobs, pairing_code=CODE, recordings=tmp_path / "sessions", grain=GrainClient(None))
     with serve(app) as c:
@@ -364,7 +364,8 @@ def test_without_a_design_engine_complete_still_queues_the_pipeline(tmp_path):
         pkg = make_scan(c, session["session_id"])
         c.req("POST", "/v1/scans", pkg)
         status, out, _ = c.req("POST", f"/v1/scans/{pkg['scan_id']}/complete")
-        assert status == 202 and out["job_id"].startswith("job_pipeline_")
+        assert status == 409 and "no design engine configured" in out["detail"]
+        assert c.req("GET", f"/v1/scans/{pkg['scan_id']}/report")[0] == 404   # no run, no report
         assert c.req("POST", f"/v1/scans/{pkg['scan_id']}/fix", {"message": "help"})[0] == 409
 
 

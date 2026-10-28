@@ -7,25 +7,26 @@ status: [build/STATUS.md](build/STATUS.md); streams: [areas/](areas/README.md).
 
 1. Scan **any** hardware object with an iPhone's LiDAR, with live coverage guidance and coaching.
 2. The app then guides you through full-resolution close-up photos of what matters.
-3. Our models find what a 3D scanner cannot: wiring faults, chip and board issues, breakage, defects, plus labels and markings (OCR).
-4. You get a **report**: "looks good" or "potential issues", each finding with its photo evidence and a confidence in words.
+3. The design engine (Grain) judges the scan and photos with the product's own design as context: geometry, nets, harness, SPICE, BOM. LEA itself no longer judges without a design (removed 2026-10-28, §10).
+4. You get a **report**: "no problems seen" or "potential issues", each finding with its confidence in words and the fix (what to buy, remake or reseat).
 5. What was not looked at is `not_inspected`; what cannot be decided is `insufficient_evidence` with the reason. A multimeter reading, if you have one, proves an electrical fault.
+6. From the phone you can ask Grain to change the design ("Fix it with Grain").
 
 ## 2. Phase 1 scope
 
 **In**
 - iOS app: LiDAR scan, guided close-ups, resumable upload, report screen, optional meter-reading entry (typed, or read from a Bluetooth meter such as the Pokit Meter).
-- Backend: gateway, state, blobs, recorded sessions and replay (built), the Phase 1 pipeline, report generation, pose refinement if on-phone drift correction falls short.
-- Detection: OWLv2 zero-shot detector (Grounding DINO swap-in), full-res crops, a trained defect classifier, Claude VLM for explanations and unclear cases, OCR, Jev judgments with decisions in code.
+- Backend: gateway, state, blobs, recorded sessions (built), the design engine client and the report built from its answer.
 - Benchmark: labelled real captures with held-out products; every target comes from its measurements.
 - Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after checking its terms.
 - **Design engine (Grain)**: a customer's product was designed in Grain (geometry, nets, harness, SPICE, BOM), so Grain judges the scan with that design as context and the phone captures and asks. With `GRAIN_URL` set, `POST /v1/scans/{id}/complete` zips the scan's session folder, posts it to Grain (`/projects/{p}/scans`), asks `/call` for the judgement with the symptom, fetches the meter plan and builds the report from the answer (`report/from_grain.py`); the Phase 1 pipeline does not run for that scan. A session names its product (`product`, the Grain project id; `GRAIN_PROJECT` is the default); with neither the report says the design is unknown and nothing is called. A meter reading goes to Grain through `/call` and the report is re-made. `POST /v1/scans/{id}/fix` sends the customer's words, with the scan's context, to Grain's chat so the design can be changed from the phone. Every Grain answer is saved under the session's `grain/` folder. A Grain error is the run's error, never a verdict. The report rows Grain judges carry `inspected_by: ["grain"]` (a row a meter reading settled: `["meter", "grain"]`, proof as before) and are stored as findings with source `grain`.
 
 **Out (Phase 1)**
 - Reference designs, design alignment and expected electrical values come from the design engine (In, above). Our own replacement-part selection, simulation checks, repair plans and shopping stay out (Phase 2, §9).
-- AR probe labels and a meter wizard; speech; segmenters and renderers.
-- SpacetimeDB, GPU hosting, multi-user deployment. One laptop runs the backend.
-- Training anything except the defect classifier.
+- A detection pipeline of our own: detector, crops, defect classifier, VLM crop checks, OCR, Jev fusion, backend reconstruction, the live mirror and GPU hosting were removed on 2026-10-28 (§10). The design engine judges.
+- AR probe labels and a meter wizard; segmenters and renderers.
+- Multi-user deployment. One CPU host (or a laptop) runs the gateway.
+- Training anything.
 
 ## 3. Architecture
 
@@ -35,33 +36,23 @@ flowchart LR
     scan["LiDAR scan"] --> close["Guided full-res close-ups"] --> up["Resumable upload"]
     meter["Meter reading, optional"]
     screen["Report screen"]
+    fixit["Fix it with Grain"]
   end
   imp["Stray Scanner export"] -->|"importer"| gw
   up --> gw["Gateway, FastAPI"]
   meter --> gw
+  fixit --> gw
   gw <--> st[("State SQLite and blobs on disk")]
-  gw --> orch["Phase 1 pipeline orchestrator"]
-  orch --> pose["Pose refinement if needed"]
-  subgraph Pipe["Detection pipeline"]
-    det["Detector OWLv2, Grounding DINO alt"] --> crops["Full-res crops"]
-    crops --> cls["Defect classifier, planned"]
-    cls --> vlm["Claude VLM explains and settles unclear cases"]
-    crops --> ocr["OCR labels and markings, planned"]
-    vlm --> find["Findings, suspects only"]
-    ocr --> find
-    find --> jev["Jev judgments in words"]
-    jev --> code["Code decides: ranking, next action, meter override"]
-  end
-  orch --> det
-  pose -->|"coverage"| code
-  code --> rep["Report builder"]
+  gw -->|"zip of the session folder, readings, chat"| grain["Design engine, Grain: judges against the product's design"]
+  grain --> rep["Report built from its answer"]
   rep --> screen
 ```
 
-The phone talks only to the gateway. [config/providers.yaml](config/providers.yaml) picks every slot's provider.
-With a design engine configured (`GRAIN_URL`), the gateway sends each completed scan to Grain instead of the Phase 1
-pipeline: `complete` -> zip of the session folder -> Grain judges against the product's design -> report; readings and
-"Fix it with Grain" go through the gateway too. The phone never holds the key (A6).
+The phone talks only to the gateway. [config/providers.yaml](config/providers.yaml) picks the state and blob providers.
+With the design engine configured (`GRAIN_URL`), the gateway sends each completed scan to Grain: `complete` -> zip of the
+session folder -> Grain judges against the product's design -> report; readings and "Fix it with Grain" go through the
+gateway too. Without it `complete` answers 409 "no design engine configured": nothing else judges a scan. The phone
+never holds the key (A6).
 
 ## 4. Data contracts
 
@@ -70,8 +61,8 @@ Swift from them, `make contracts` checks every example.
 
 | Use | Schemas |
 |---|---|
-| Phase 1, in use | `scan-package`, `still`, `finding`, `suspect`, `next-action`, `meter-reading` |
-| Phase 1, planned | `report` (task B9) |
+| Phase 1, in use | `scan-package`, `still`, `finding`, `meter-reading`, `report` |
+| Kept, no producer since 2026-10-28 | `suspect`, `next-action` (the Phase 1 pipeline wrote them; the design engine report carries its own next step) |
 | Phase 2 | `repair-plan`, `part-on-hand`, `shopping-quote` |
 
 Recorded sessions: [samples/README.md](samples/README.md) and `samples/session.schema.json`.
@@ -82,7 +73,7 @@ Code that cannot keep one stops and says so. The ids are the ones code comments 
 
 1. **A10 Proprietary material stays out.** Nothing under `private/` (gitignored) is committed; `tools/guard_proprietary.py` enforces it.
 2. **GEN3 Nothing fake.** No mocks, stubs or fakes of missing services, devices or data; a missing key or device is HUMAN ACTION NEEDED.
-3. **GEN1 Any product.** No product names, refs or class lists in code; one generic vocabulary in `vision/generic_classes.py`; held-out products measure it (GEN2).
+3. **GEN1 Any product.** No product names, refs or class lists in code; the design engine names the parts, from the product's own design; held-out products measure it (GEN2).
 4. **I1/I2 Vision is a suspect; the meter is proof.** Only a meter reading makes `is_proof` true or calls an electrical fault proven.
 5. **I3 Not looked at means `not_inspected`,** never `ok`.
 6. **I4 `insufficient_evidence` is a real answer** and always carries a reason.
@@ -95,36 +86,27 @@ Code that cannot keep one stops and says so. The ids are the ones code comments 
 
 ## 6. Phase 1 milestones
 
-Acceptance tests work on any product. No target is invented: MS4 measures the baseline and sets the targets.
+Acceptance tests work on any product. No target is invented.
 
 | Id | Milestone | Acceptance test | Needs |
 |---|---|---|---|
-| MS1 | Replay to report | `make replay SESSION=<id>` on a recorded real session writes a report that validates against `report`; every detected region ends as exactly one of finding, `not_inspected` or `insufficient_evidence`; 0 regions shown `ok` that no model looked at. | B9, B10, B11 |
 | MS2 | Capture on device | On a product nobody developed against, the app scans, guides close-ups and uploads a session that passes `make sessions-check`; an upload cut mid-way resumes without re-sending finished chunks. | A1-A4 |
-| MS3 | Report on the phone | The report for that session shows in the app: verdict, each finding's crop, confidence words, `not_inspected` and `insufficient_evidence` with reasons; a meter reading on a suspect marks it proven or ruled out. | A5, A6, B11 |
-| MS4 | Benchmark baseline | `make eval` prints per-split metrics (tuned vs held-out products) for the current pipeline; the numbers and the targets chosen from them are committed with the eval results. | M4, M5 |
-| MS5 | Classifier earns its slot | The classifier is selected in config only if, on held-out products, it beats the MS4 baseline on the primary metric with 0 honesty violations. | M6, M7 |
-| MS6 | Phase 1 done | On held-out products, app to report meets the MS4 targets with 0 honesty violations; first-time users go from scan to report without help (A7). | all Phase 1 tasks |
+| MS3 | Report on the phone | A scan of a product with a design in Grain shows in the app: verdict, each finding with confidence words and its fix, `not_inspected` and `insufficient_evidence` with reasons; a meter reading on the next step marks its check proven or ruled out. | A5, A6, B16 |
 
-## 6a. Order of work (critical review, 2026-10-24)
+MS1 (replay to report), MS4 (benchmark baseline), MS5 (classifier earns its slot) and MS6 (Phase 1 done) measured the removed
+pipeline and were taken out on 2026-10-28 (§10).
 
-Scope is locked to: **real scan, good findings, clear report.** Work in this order:
+## 6a. Order of work
 
-1. **Real data first.** 5 to 10 plain iPhone Camera photos of a real broken device go through `tools/import_photos.py` and `make replay` (detection and report; no 3D location without poses); read the real report before polishing anything. Recording-app imports stay developer tools only.
-2. **Detection quality.** Per-part checklists in the crop prompt, Sonnet as the crop judge, crops ranked by defect likelihood, `unknown_part` handling; each kept only if it helps on the held-out benchmark (`eval/defects/`).
-3. **App MVP:** A1 shell, A3 guided close-ups, A4 upload, A5 report screen, with A2 as a basic LiDAR/positioning layer.
-4. **App polish:** live mesh, coverage map, coaching, drift correction (A2 full, A8).
-5. **Later:** few-shot anomaly and zero-shot scorers, broader data, the learning loop, Jev-vs-code measurement on real sessions.
+Superseded 2026-10-28 by §2: the design engine judges, the phone captures and asks. The order that stands: real data first
+(`tools/import_photos.py` and recorded sessions), then the app MVP (capture, upload, report, meter, Fix it), then scan polish.
 
-A labelled real test set (20 to 30 photos of real broken devices, labelled by a person) is the scorecard for steps 1 to 3.
-
-Product rules added by the same review:
-- **Honest verdict wording.** The app shows `looks_good` as "No visible problems found", never "looks good". Photos cannot see dead chips, shorts or firmware faults; for "does not power on" style symptoms the report always suggests the meter check (A6 moves into the MVP).
+Product rules kept from the 2026-10-24 review:
+- **Honest verdict wording.** The app shows `looks_good` as "No visible problems found", never "looks good". For "does not power on" style symptoms the report always suggests the meter check.
 - **Safety gate before inside close-ups.** Unplug, wait for capacitors to discharge, stop on a swollen battery; shown before the app asks for photos inside an enclosure.
-- **Privacy.** The phone strips location and other EXIF metadata before upload; a one-time consent screen names the AI services that see the photos (Anthropic, TypeSafe) and says that Lea sees the camera while you talk to her during a scan.
+- **Privacy.** The phone strips location and other EXIF metadata before upload; a one-time consent screen names the AI services that see the photos and says that Lea sees the camera while you talk to her during a scan.
 - **Camera frames for Lea only inside a conversation.** While scanning, camera frames go to Lea (gateway, then Anthropic) only inside a conversation window: from the start of a turn (after "Hey Lea", hold to talk, typing or a hands-free follow-up) until 12 s after her answer. Never before the wake word, never between conversations. A small "Lea is looking" label shows while the window is open. At most 3 frames per turn (768 px, JPEG), and a per-scan cap on looking turns (`lea_voice_look_turns_per_scan`); the Anthropic spend guard counts every one.
-- **Service down is an error, not a verdict.** If Jev or Claude is unreachable the app shows "service unavailable, retry", never a report.
-
+- **Service down is an error, not a verdict.** If the design engine or Claude is unreachable the app shows "service unavailable, retry", never a report.
 
 ## 7. Tasks
 
@@ -144,7 +126,7 @@ and Apple samples. Never `arkit-3dgs-scanner` (non-commercial), `record3d` (LGPL
 | A2 | LiDAR scan: `ARWorldTrackingConfiguration` with `sceneReconstruction = .mesh` (live overlay), `sceneDepth` and confidence into a voxel hash with per-voxel hit counts (coverage heat map), own keyframe picker (sharpness score), real-time drift correction (ARKit anchor updates plus our keyframe-level correction where feasible), coaching cues in Apple's Feedback vocabulary (too fast, too close or far, low light, out of view); as fast as quality allows | `ios/RepairOS/Capture/**` | Any table-top object exports a valid `scan-package` (binary PLY in metres, poses, intrinsics, keyframe depth) with live coverage shown | A1 |
 | A3 | Guided close-ups via `captureHighResolutionFrame` in the same AR session and world frame; 48 MP when the probe allows, else 12 MP, asking the user only on a trade-off (such as speed); targets from uncovered regions | `ios/RepairOS/Closeups/**` | Every still is a valid `still` at full resolution with pose and intrinsics, linked to the scan; the app shows what is still uncovered | A2 |
 | A4 | Upload: chunked, content-hashed, resumable | `ios/RepairOS/Upload/**` | An upload cut mid-way finishes without re-sending done chunks; the gateway session passes `make sessions-check` | A1 |
-| A5 | Report screen (live via SSE) | `ios/RepairOS/Report/**` | Renders verdict, findings with crops and confidence words, `not_inspected`, `insufficient_evidence` reasons; never shows a probability number | A4, B11 |
+| A5 | Report screen (live via SSE) | `ios/RepairOS/Report/**` | Renders verdict, findings with confidence words (crops when a row has a photo), `not_inspected`, `insufficient_evidence` reasons; never shows a probability number | A4, B16 |
 | A6 | Optional meter reading entry | `ios/RepairOS/Meter/**` | Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out; the reading is typed or read over Bluetooth LE from a snap-on meter (Pokit Meter first; `source: ble` with a `meter` object) | A5 |
 | A7 | First-run usability pass | `ios/RepairOS/**` (fixes) | People new to the app go from scan to report without help; what they hit is fixed or filed | A5 |
 | A8 | No-LiDAR mode for any ARKit iPhone: world-tracking poses + guided stills without `sceneDepth` (the NeRFCapture pattern, MIT); geometry and scale from the backend (photo reconstruction or monocular depth) when needed; the scan package records its depth source | `ios/RepairOS/Capture/**` | On a non-LiDAR iPhone, a real object goes from scan to report; the report states what it cannot claim without depth (e.g. sizes) | A2 |
@@ -153,17 +135,17 @@ and Apple samples. Never `arkit-3dgs-scanner` (non-commercial), `record3d` (LGPL
 
 | Id | What | Owns | Done when | Deps |
 |---|---|---|---|---|
-| M1 | Detector slot: OWLv2 default, Grounding DINO alternative, generic vocabulary, prompts, tiling | `slots/detector.py`, `slots/det_*/`, `vision/{generic_classes,prompts,tiling}.py` | **Done** | - |
-| M2 | Full-res crops from detector boxes | `vision/crops.py` | **Done** | M1 |
-| M3 | VLM crop checks (Claude Sonnet with per-part checklists, `config/vlm.yaml`; overlapping crops merged) and per-still inspection into findings | `slots/vlm*.py`, `slots/vlm_*/`, `vision/inspect.py` | **Done** | M2 |
+| M1 | ~~Detector slot: OWLv2 default, Grounding DINO alternative, generic vocabulary, prompts, tiling~~ | - | **Removed 2026-10-28**: the detector slot belonged to the Phase 1 pipeline. | - |
+| M2 | ~~Full-res crops from detector boxes~~ | - | **Removed 2026-10-28**: crops belonged to the Phase 1 pipeline. | - |
+| M3 | ~~VLM crop checks (Claude Sonnet with per-part checklists, `config/vlm.yaml`; overlapping crops merged) and per-still inspection into findings~~ | - | **Removed 2026-10-28**: the VLM crop checks belonged to the Phase 1 pipeline. | - |
 | M4 | Benchmark data: labelled real sessions across product kinds, known-good units, held-out products split by object and session | `samples/sessions/**` | `make sessions-check` passes; held-out products are never used for tuning or training | - |
-| M5 | Benchmark runner `make eval` | `eval/**` | Per-split precision and recall by defect type, verdict accuracy, honesty violations, calibration of confidence words, latency per stage; one results file per run | M4, B10 |
-| M6 | Defect dataset: licence-clean public data plus our labelled crops | `training/data/**`, `licenses/datasets.json` | Every source passes L2; no held-out product in training data | M4 |
-| M7 | Defect classifier, CLS slot: frozen DINOv2 backbone with a trained head, licence-clean data, benchmarked against Claude. **In progress** on branch `rohan/defect-classifier` | `slots/classifier.py`, `slots/cls_*/`, `training/models/**` | Conformance passes on real crops; `make eval` reports it against the Claude VLM-only baseline (MS5 decides) | M5, M6 |
-| M8 | OCR of labels and markings on crops | `slots/ocr.py`, `slots/ocrb_*/` | Conformance on real label crops; text reaches findings and the report as state (A9) | M2 |
-| M9 | Detector choice measured | `config/providers.yaml` (DET line) | OWLv2 vs Grounding DINO on the benchmark (recall, latency); the default follows the numbers | M5 |
+| M5 | ~~Benchmark runner `make eval`~~ | - | **Removed 2026-10-28**: it scored the Phase 1 pipeline. | - |
+| M6 | ~~Defect dataset: licence-clean public data plus our labelled crops~~ | - | **Removed 2026-10-28**: it fed the defect classifier. | - |
+| M7 | ~~Defect classifier, CLS slot: frozen DINOv2 backbone with a trained head, licence-clean data, benchmarked against Claude. **In progress** on branch `rohan/defect-classifier`~~ | - | **Removed 2026-10-28**: the classifier belonged to the Phase 1 pipeline. | - |
+| M8 | ~~OCR of labels and markings on crops~~ | - | **Removed 2026-10-28**: OCR on detector crops belonged to the Phase 1 pipeline. | - |
+| M9 | ~~Detector choice measured~~ | - | **Removed 2026-10-28**: it chose between detectors. | - |
 
-Paths are under `backend/repairos/` unless they start with a top-level folder.
+Paths are under `backend/repairos/` unless they start with a top-level folder. M1-M3 and M5-M9 were removed with the pipeline: the stream keeps M4, the real captures.
 
 ### Build execution (Rohan + agents)
 
@@ -175,29 +157,30 @@ Paths are under `backend/repairos/` unless they start with a top-level folder.
 | B4 | State (SQLite, invariant row rules) and blobs (local, content-addressed) | `slots/state*`, `slots/blob*` | **Done** | B3 |
 | B5 | Gateway: pairing, resumable uploads, ingestion, reads, SSE | `api/**` | **Done** | B2, B4 |
 | B6 | Recorded sessions and replay (`make replay`, `make sessions-check`) | `sessions/**`, `tools/replay.py`, `samples/README.md` | **Done** | B5 |
-| B7 | Fusion via Jev: word state, questions, suspects, next action in code, meter override | `fusion/**`, `slots/fusion*`, `tools/jev_smoke.py` | **Done** | B2 |
-| B8 | LLM slot (Claude Sonnet) | `slots/llm*` | **Done** | B3 |
-| B9 | `report` contract: verdict (`looks_good`, `potential_issues`, `insufficient_evidence`), findings with crop refs and confidence words, `not_inspected` regions, reasons | `spec/contracts/report*`, generated code | `make contracts` and `make codegen-check` pass; invalid examples show an uninspected region cannot be `ok` and `insufficient_evidence` needs a reason | B2 |
-| B10 | Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report | `pipeline/**`, `make run-workers` | MS1 passes on a recorded real session; runs when an upload completes; a stage failure is an error, never a silent default | B9 |
-| B11 | Report generation: code picks the verdict, Claude writes plain words from words only (S5); `GET /v1/scans/{id}/report` and an SSE event | `report/**`, report route in `api/app.py` | The report validates; the verdict rule is a tested truth table; A5 renders it | B9, B10 |
+| B7 | ~~Fusion via Jev: word state, questions, suspects, next action in code, meter override~~ | - | **Removed 2026-10-28**: fusion belonged to the Phase 1 pipeline. | - |
+| B8 | ~~LLM slot (Claude Sonnet)~~ | - | **Removed 2026-10-28**: its only users were the Phase 1 report text and fusion. | - |
+| B9 | `report` contract: verdict (`looks_good`, `potential_issues`, `insufficient_evidence`, `no_problems_seen`), findings with confidence words (crop refs when a row has a photo), `not_inspected` regions, reasons | `spec/contracts/report*`, generated code | `make contracts` and `make codegen-check` pass; invalid examples show an uninspected region cannot be `ok` and `insufficient_evidence` needs a reason | B2 |
+| B10 | ~~Phase 1 pipeline orchestrator: detect, crops, classifier when selected, VLM, OCR, findings, Jev, code decisions, report~~ | - | **Removed 2026-10-28**: the Phase 1 pipeline was stripped. | - |
+| B11 | ~~Report generation: code picks the verdict, Claude writes plain words from words only (S5); `GET /v1/scans/{id}/report` and an SSE event~~ | - | **Removed 2026-10-28**: the Phase 1 report builder was replaced by the design engine report. | - |
 | B12 | Import fallback: Stray Scanner (MIT) first; 3D Scanner App "All Data" only after its terms are checked | `tools/import_capture.py` | A real Stray Scanner export imports into a session that passes `make sessions-check`; no closed third-party app capture is used for training or benchmarking | B6 |
-| B13 | Backend pose-graph refinement (loop closure) with Open3D and OpenCV, seeded with ARKit poses, then re-fusion; used only if on-phone drift correction (A2) measures not good enough | `recon/**` | On recorded sessions, loop-closure residual and point-to-plane error are reported per session and are lower than with raw ARKit poses | B6 |
+| B13 | ~~Backend pose-graph refinement (loop closure) with Open3D and OpenCV, seeded with ARKit poses, then re-fusion; used only if on-phone drift correction (A2) measures not good enough~~ | - | **Removed 2026-10-28**: backend reconstruction was stripped with the Phase 1 pipeline. | - |
 | B14 | CI: `make check` on every PR | `.github/workflows/**` | Every PR shows the check; red blocks merge | B1 |
 | B15 | Licence check of dependencies and weights against the L2 allowlist | `tools/licence_check.py`, `licenses/weights.json` | Part of `make check`; fails on a disallowed licence | B14 |
+| B16 | Design engine (Grain): client, report from its answer, readings, Fix it with Grain | `grain/**`, `report/from_grain.py`, `api/**` | **Done**: a completed scan is judged against the product's design and the report is built from the answer; readings go through the design engine; the customer can ask it to change the design from the phone | B5 |
 
 ## 8. Already built
 
-- **Gateway** (`api/app.py`): pairing, resumable content-hashed uploads, validated ingestion of scans, stills and readings, reads, SSE; every received object is also saved as a replayable session.
+- **Gateway** (`api/app.py`): pairing, resumable content-hashed uploads, validated ingestion of scans, stills and readings, reads, SSE; every received object is also saved as a replayable session. `complete`, readings and Fix it go to the design engine.
 - **State and blobs**: SQLite whose transitions enforce I1-I4 and S4; content-addressed local blobs.
-- **Sessions and replay**: format, reader, writer, validator, `make replay`, `make sessions-check`; the pipeline stage says `not_built` until B10.
-- **Detector slots**: OWLv2 (default) and Grounding DINO, zero-shot, tiled for 12 MP stills, one generic vocabulary.
-- **Crops and VLM**: full-res crops; Claude Sonnet crop checks with per-part checklists (`vision/checklists.py`, `config/vlm.yaml`); overlapping crops merged; `vision/inspect.py` turns a still into findings. Measured in `eval/defects/QUICKWINS.md`: held-out recall 36 % to 84 % at 95 % precision.
-- **LLM**: Claude Sonnet slot.
-- **Jev fusion**: evidence to words, questions in one place, suspect ranking, next-action truth table in code, meter override; not-inspected subjects decided in code; requests split to fit Jev's context limits and sent in parallel (`fusion/batches.py`); `tools/jev_smoke.py`.
-- **Contracts and codegen**: 19 schemas with examples; Pydantic and Swift generation with a drift check.
-- **Registry and config**: providers from `config/providers.yaml`; typed settings with redacted secrets; release lockout.
+- **Sessions**: format, reader, writer, validator, `make replay` (validate and load), `make sessions-check`.
+- **Design engine** (`grain/`, `report/from_grain.py`): the Grain client, the zip of a session folder, the report built from its answer, readings through `/call`, the Fix it message.
+- **Importers**: Stray Scanner, NeRFCapture, plain photos (developer tools).
+- **Voice** (`voice/`): Lea's answers from the report, Cartesia speech, camera looks inside a conversation.
+- **Spend guards** (`spend.py`, `config/spend.yaml`): caps for Claude and Cartesia.
+- **Contracts and codegen**: 10 schemas with examples; Pydantic and Swift generation with a drift check.
+- **Registry and config**: state and blob providers from `config/providers.yaml`; typed settings with redacted secrets; release lockout.
 - **Tooling**: proprietary guard and hook; `build/doctor.py`, `next.py`, `status.py`.
-- **Report stage (iOS)**: the report on a dark stage (`ios/RepairOS/Report/Stage/`): verdict led by the top finding, markers kept apart on screen, one "couldn't check" card, circle to inspect, landing timed to Lea's voice; the hero is the photo-real recreation when the scan has one, else the 3D view or photo hero (`RedesignFlags.reportStage`, `--old-report` to compare).
+- **Report stage (iOS)**: the report on a dark stage (`ios/RepairOS/Report/Stage/`): verdict led by the top finding, markers on the object, one "couldn't check" card, circle to inspect, landing timed to Lea's voice; the hero is the 3D view from the phone's own scan, else the photos.
 
 ## 9. Phase 2 (later)
 
@@ -241,16 +224,13 @@ Phase 1 is done.
 | 2026-10-25 | Thin objects get a photo slab (`repairos.recreation.flat`). A real board scan (scan_9fe6...) kept 57 of 30,861 points: the old horizontal cut was twice a "noise" measured on a band that the board itself filled (5.8 mm, so an 11.6 mm cut kept 774 of 24,289 in-box points; the object pieces 57), and the per-frame cut still keeps only 2,392 (the board's 1.6 mm and low parts sit in the cut band; its depth is mostly medium confidence). Now, when the object's LiDAR points lie mostly within 2 cm of the table (95th percentile), the posed full-resolution stills are rectified onto the measured table, the footprint is the part of the most top-down still whose colour is far from the table's (Mahalanobis 4, opened 3 mm, kept within 6 mm of the LiDAR footprint), fitted as its main-body rectangle when it fills it (rows at least 70% of the typical width: connectors and glints at the edge drop out), else its hull; the slab is that outline up to the measured thickness, its top textured at 0.1 mm from that one still (blending would smear raised parts), checked by a second still landing within 4 mm. It is the recreation (`flat_slab`, USDZ) and the report's mesh and cloud (hero = points); an identity's size is only compared. On the board: 54.0 x 66.0 mm measured (UNO R3 53.4 x 68.6), 3.55 mm thick, second still 1.7 mm off, labels readable; the USB and barrel jacks that overhang the board are not modelled. | Coordinator |
 | 2026-10-25 | A flipped thin object's side-cue question (`recreation.flat_flip.ask_sides`) no longer asks for three fixed features (a USB shell, a barrel jack, a gapped header: one board's layout). The model names up to four features of its own that show from both faces and sit off the middle of an edge (`cues`: name, edge and half per photo), and the same rule decides (a pose backed by a cue sure on both faces, none sure elsewhere, silhouettes and holes not against it). Recorded per-photo answers are still read. Not yet re-run live on a real flip. | Coordinator |
 | 2026-10-28 | Grain judges; the phone captures and asks. Customers test and diagnose hardware they received, and every such product was designed in Grain, so LEA stops judging without a design: the scan, photos and meter readings go to Grain, which judges them against the product's own geometry, nets, harness, SPICE and BOM, and the customer can ask Grain to change the design from the phone ("Fix it with Grain"). The Phase 1 detection pipeline is stripped in a following PR. Contract changes (a report row with no photo, `grain` as a judge and a finding source, the meter step's net and probe points, the report's `design`) were their own PR. | Owner |
+| 2026-10-28 | The second brain is stripped (PR "Strip the Phase 1 detection pipeline"). Removed: `pipeline/`, the detector, classifier, VLM, fusion and OCR slots and their config, `vision/`, `fusion/`, `recon/`, `recreation/`, `locate/`, `live/`, `references/`, the Phase 1 report builder, the Runpod GPU deploy, SpacetimeDB, `eval/defects`, `eval/assembly`, `training/`, `tools/recon-cli`; on iOS the photo-real recreation (`Report/Recreation/`) and Object Capture (`ObjectCapture/`). Why: Grain judges with the design as context, so a second judge without it only disagrees; and the code was about half the repo. Kept: `importers/` (developer tools), `sessions/`, `report/` (export and the design engine report), `api/`, `contracts/`, `voice/`, `grain/`, and on iOS Report, Stage, markers on the object, Capture, Closeups, Upload, Meter, Voice. `locate/camera.py` moved to `importers/camera.py` because the importers use it. | Owner |
 
 ## 11. Open questions
 
 | Question | Owner |
 |---|---|
+| How do we score the design engine's judgement against the labelled captures (the benchmark that MS4 was)? | Modeling + Owner |
+| A gateway route that serves the design engine's part files, so the phone can open a "remake it" link without the key? | Build |
 | Who runs the App and the Modeling + benchmark streams? | Owner |
-| Should close-up targets come from an on-device detector in Phase 1, and for which classes (connector, chip, wire, damage, label)? | App + Modeling |
-| OCR on the phone (Apple Vision) or on backend crops? Decide by M5 numbers. | Modeling |
-| Where and on what budget does the classifier train (M7)? | Owner |
-| Which public defect datasets pass L2 (M6)? | Modeling |
-| The benchmark's primary metric, and the Phase 1 targets set at MS4. | Modeling + Owner |
 | Is the report only in the app, or also shareable (PDF or link)? | Owner |
-| Is Jev's latency per scan acceptable? Measured in M5. | Build (Rohan) |

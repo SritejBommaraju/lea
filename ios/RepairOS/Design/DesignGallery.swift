@@ -4,7 +4,7 @@ import SwiftUI
 
 /// DEBUG only: opens one screen straight from launch arguments, for simulator screenshots and design review.
 ///
-///     --ui-screen home|progress|settings|pairing|consent|talk|recreation
+///     --ui-screen home|progress|settings|pairing|consent|talk
 ///     --ui-screen report [--ui-record <session id>] [--ui-ask]
 ///                           the real report screen for a session saved in the app, offline (its top bar, sheet and,
 ///                           with `--ui-ask`, the pinned Ask Lea bar).
@@ -63,16 +63,11 @@ enum UIGallery {
                             GalleryLeaReplay(sessionDir: dir) { cue, feed in
                                 ReportStageView(report: report, symptom: CommandLine.arguments.contains("--ui-no-story") ? nil : sessionSymptom(dir),
                                                 model: sessionModel(dir), sessionDir: dir, openFull: {}, fresh: screen == "stage-landing",
-                                                walkthrough: walk, leaCue: cue, hero: sessionHero(dir), captions: feed,
+                                                walkthrough: walk, leaCue: cue, captions: feed,
                                                 focus: focusFirst ? report.mostLikely.first?.id : nil)
                             }
                         }
                             .toolbar(.hidden, for: .navigationBar)   // the report draws its own controls over the stage
-                            // `--ui-build-shell`: build the phone's recreation shell for this session (next launch shows it).
-                            .task {
-                                guard CommandLine.arguments.contains("--ui-build-shell"), let id = sessionScanID(dir) else { return }
-                                RecreationCenter.shared.buildShell(sessionDir: dir, scanID: id)
-                            }
                     }
                 }
                 .tint(Palette.accent)
@@ -90,7 +85,6 @@ enum UIGallery {
                 if let record = value("--ui-record").flatMap({ id in app.sessions.first { $0.id == id } }) ?? app.sessions.first {
                     ReportView(record: record, upload: nil, close: {}, offline: true)
                 }
-            case "recreation": RecreationGalleryScreen()   // Report/Recreation (photo-real 3D)
             case "settings": SettingsView()
             case "pairing": PairingView()
             case "consent": ConsentView { _ in }
@@ -131,17 +125,6 @@ enum UIGallery {
         let json = (try? Data(contentsOf: dir.appending(path: "report.json")))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
         return json?["scan_id"] as? String
-    }
-
-    /// The recreation hero when the session's scan has one (same rule as ReportView.stageHero).
-    @MainActor static func sessionHero(_ dir: URL) -> StageHero {
-        guard let id = sessionScanID(dir) else { return .automatic }
-        let scanDir = RecreationCenter.scanDir(sessionDir: dir, scanID: id)
-        guard RecreationCenter.shared.available(scanDir) else { return .automatic }
-        return .custom { ctx in
-            AnyView(RecreationView(source: .scan(scanDir), markers: ctx.markers, focus: ctx.focus,
-                                   onMarkerTap: ctx.select, onLoaded: ctx.ready, probe: ctx.probe, tour: ctx.tour))
-        }
     }
 
     /// The session's own 3D: the first scan folder holding a model.

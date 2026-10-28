@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-TARGETS = {"bootstrap", "codegen", "codegen-check", "check", "test", "replay", "eval", "run-gateway", "run-workers",
+TARGETS = {"bootstrap", "codegen", "codegen-check", "check", "test", "replay", "run-gateway",
            "doctor", "next", "status", "hooks", "guard", "contracts", "sessions-check"}
 
 

@@ -4,14 +4,13 @@ One folder per **real** capture of one physical unit (PLAN.md task B6). The back
 by replaying these. No synthetic product, no made-up readings (GEN3). Product facts live here, never in code (GEN1).
 
 ```
-make replay SESSION=<session_id | folder path>   # validate, load into a fresh STATE/BLOB, run the pipeline, score
+make replay SESSION=<session_id | folder path>   # validate, load into a fresh STATE/BLOB (judges nothing)
 make sessions-check                              # validate every non-held-out session (CI)
 ```
 
-Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store), `summary.json` with per-stage
-timing, the findings, the score against `truth.json` and each scan's report, and `report_<scan_id>.json` (validated
-against `spec/contracts/report.schema.json`), `.md` and `.html`. The pipeline (B10, `repairos.pipeline.run_session`)
-calls the configured detector, Claude and Jev; a stage that fails fails the replay with the stage and the error.
+Replay writes `data/replay/<session_id>/` (its own SQLite state and blob store) and `summary.json` with per-stage
+timing and the counts of what was loaded. It makes no report: scans are judged by the design engine when the gateway is
+told a scan is complete.
 
 ## Where sessions come from
 
@@ -42,7 +41,7 @@ calls the configured detector, Claude and Jev; a stage that fails fails the repl
   converted with macOS `sips`; every photo is turned upright and re-encoded once at full resolution, JPEG quality
   92, with **all EXIF, GPS, XMP and other metadata removed** (only the ICC colour profile stays). Photos have no
   AR session, so the scan has `depth_source: none` and no keyframes, and each photo is an `unguided` still with
-  `pose_reliable: false` and no `camera`: detection, Jev and the report run, and every finding's location says
+  `pose_reliable: false` and no `camera`: the design engine judges the photos, and every finding's location says
   "not computed". Intrinsics are estimated from the EXIF 35 mm-equivalent focal length when it is there (else left
   out). `import.json` lists each photo's source file, capture time and its source, the intrinsics source (`exif`
   or `unknown`), what metadata was removed (GPS included), and what was skipped (videos, other files, duplicates,
@@ -117,8 +116,9 @@ raises `HeldoutSession` for anyone else, so no test or tuning run can see them.
 
 Written by the person who induced (or ruled out) faults on the real unit. `subject` and `fault` use the Finding
 contract's `subject` and `state`. `negatives: true` means no induced fault: every non-ok finding is a false alarm.
-Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, `not_inspected_missing`,
-`false_alarms`.
+`ingest.score` compares a list of findings with it (`caught`, `missed`, `fault_kind_match`, `not_inspected_reported`,
+`not_inspected_missing`, `false_alarms`); nothing calls it yet: scoring the design engine's judgement is an open
+question (PLAN.md §11).
 
 ## Gateway upload protocol (what the phone does, A4)
 
@@ -133,16 +133,14 @@ Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, 
 4. `POST /v1/scans` with the ScanPackage whose file fields are those refs; then `POST /v1/stills`, `POST
    /v1/readings`. Bodies are validated against the contracts and the files against the table above (422 with the
    schema path or the list of problems). Posting the same object again is a no-op.
-5. `POST /v1/scans/<scan_id>/complete` once the scan and every still are posted: with a design engine configured
-   (GRAIN_URL) it uploads the scan's session folder as a zip, asks for the judgement against the product's design and
-   publishes the report (no pipeline run); otherwise it queues the pipeline run (stills
-   are already being inspected as they arrive; `make run-workers` runs the worker). `POST /v1/readings` then forwards
-   the reading to the design engine and the report is re-made; `POST /v1/scans/<scan_id>/fix {"message": "..."}`
-   relays the customer's request to the design engine's agent with the scan's context and returns its reply. `GET /v1/scans/<id>/pipeline`
-   gives the stage statuses and, after a failure, the stage and the error. `GET /v1/scans/<id>/report` is the
-   report (404 while it is made, 409 when the pipeline failed); `GET /v1/scans/<id>/report/export?format=html|md`
-   a printable copy.
+5. `POST /v1/scans/<scan_id>/complete` once the scan and every still are posted: it uploads the scan's session folder as
+   a zip to the design engine (GRAIN_URL), asks for the judgement against the product's design and publishes the report;
+   without a design engine it answers 409. `POST /v1/readings` then forwards the reading to the design engine and the
+   report is re-made; `POST /v1/scans/<scan_id>/fix {"message": "..."}` relays the customer's request to the design
+   engine's agent with the scan's context and returns its reply. `GET /v1/scans/<id>/pipeline` gives the run's status
+   and, after a failure, the stage and the error. `GET /v1/scans/<id>/report` is the report (404 while it is made, 409
+   when the run failed); `GET /v1/scans/<id>/report/export?format=html|md` a printable copy.
 6. `GET /v1/sessions/<id>/events` (SSE; reconnect with `Last-Event-ID`) streams every row change: findings,
-   suspects, next actions, the pipeline run, the report; plus `event: report_ready` when a report is published and
+   the run, the report; plus `event: report_ready` when a report is published and
    `event: pipeline_failed` when a run fails. `GET /v1/sessions/<id>`, `/v1/scans/<id>`, `/v1/findings/<id>`, `/v1/suspects/<id>`
    read state. OpenAPI at `/openapi.json`.

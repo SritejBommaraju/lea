@@ -1,9 +1,11 @@
-"""FastAPI gateway (PLAN.md task B5, Phase 1): the only server the phone talks to.
+"""FastAPI gateway (PLAN.md task B5): the only server the phone talks to.
 
 Device pairing, chunked resumable blob uploads (content-hashed), scan package / still / reading ingestion
-validated with repairos.contracts.validate() plus the capture files themselves, read endpoints, SSE live events, the pipeline trigger and the report (B10, B11).
-Every write goes through StateStore.transition (PLAN.md invariants I1-I4 enforced there). Every object received is also written
-into a session folder (data/sessions/<session_id>/, the samples/README.md layout) so a real run is replayable.
+validated with repairos.contracts.validate() plus the capture files themselves, read endpoints, SSE live events, and
+the design engine: a completed scan is judged against the product's design (repairos.grain) and the report is built
+from its answer (PLAN.md section 2). Every write goes through StateStore.transition (PLAN.md invariants I1-I4 enforced
+there). Every object received is also written into a session folder (data/sessions/<session_id>/, the
+samples/README.md layout) so a real run is replayable.
 The gateway imports slot Protocols only; implementations come from the registry.
 """
 from __future__ import annotations
@@ -40,17 +42,14 @@ from repairos.sessions.layout import ext_for, file_values
 from repairos.sessions.writer import SessionWriter
 from repairos.slots.blob import (REF_PREFIX, BlobError, BlobNotFound, BlobStore, HashMismatch, OffsetMismatch,
                                  is_sha256, ref_of)
-from repairos.slots.state import InvariantViolation, Job, NotFound, RevConflict, StateError
+from repairos.slots.state import InvariantViolation, NotFound, RevConflict, StateError
 
 log = logging.getLogger("repairos.api")
 MAX_BLOB_BYTES = 4 << 30
 SSE_POLL_S = 0.25
 SSE_KEEPALIVE_S = 15.0
 _RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
-# Jobs queued when an object arrives; the pipeline workers (B10, `make run-workers`) consume them. The whole run
-# (fusion, locations, report) is queued by POST /v1/scans/{scan_id}/complete once the upload is complete.
-JOBS_ON = {"scan-package": ["detect"], "still": ["detect"]}
-REPORT_KIND, RUN_KIND = "report", "pipeline-run"
+REPORT_KIND, RUN_KIND = "report", "pipeline-run"   # the run row is the design engine's progress for a scan
 
 
 def finite_json(o: Any) -> Any:
@@ -69,53 +68,9 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def identified_payload(scan_id: str, ident: dict) -> dict:
-    return {"scan_id": scan_id, "category": ident.get("category") or "unknown", "brand": ident.get("brand") or None,
-            "model": ident.get("model") or None, "confidence": ident.get("confidence") or "low",
-            "label_visible": bool(ident.get("label_visible")), "label_text": ident.get("label_text") or None}
-
-
-def mesh_payload(scan_id: str, mesh: dict) -> dict:
-    out = {"scan_id": scan_id, "mesh_url": f"/v1/scans/{scan_id}/mesh?rev={mesh['rev']}", "mesh_rev": mesh["rev"],
-           "format": mesh["format"], "triangles": mesh["triangles"], "frame": "arkit_world",
-           "hero": mesh.get("hero") or "mesh", "hero_reason": mesh.get("hero_reason")}
-    if mesh.get("cloud_ref"):
-        out.update(cloud_url=f"/v1/scans/{scan_id}/cloud?rev={mesh['rev']}", cloud_points=mesh.get("cloud_points"))
-    return out
-
-
 def _named_event(ev) -> tuple[str, dict] | None:
     """The app-level SSE event a row change means, besides its `<kind>.<op>` event: `report_ready` when a report is
-    published, `pipeline_failed` when a run fails (the stage and the error), and from the run row's one-write
-    `announce` marker: `identified` (what the object is), `progress` (live counts after each still), `mesh_ready`
-    (the 3D mesh was built or rebuilt), `fix_ready` (where to buy the top finding's part: repairos.references.parts)."""
-    if ev.kind == RUN_KIND and ev.row.get("announce"):
-        sid, what = ev.row["scan_id"], ev.row["announce"]
-        if what == "identified" and ev.row.get("identity"):
-            return "identified", identified_payload(sid, ev.row["identity"])
-        if what == "progress" and ev.row.get("progress"):
-            return "progress", {"scan_id": sid, **{k: v for k, v in ev.row["progress"].items() if k != "at"}}
-        if what == "mesh_ready" and (ev.row.get("mesh") or {}).get("status") == "done":
-            return "mesh_ready", mesh_payload(sid, ev.row["mesh"])
-        if what == "recreation_ready" and (ev.row.get("recreation") or {}).get("status") == "done":
-            from repairos.recreation.service import payload as recreation_payload
-            return "recreation_ready", recreation_payload(sid, ev.row["recreation"])
-        if what == "lead":
-            from repairos.pipeline.story import lead_payload
-            p = lead_payload(sid, ev.row)
-            if p:
-                return "lead", p
-        if what == "fix_ready" and ev.row.get("fix"):
-            from repairos.references.parts import payload
-            fix = ev.row["fix"]
-            if fix.get("options"):
-                return "fix_ready", {**payload(sid, fix), "status": "done"}
-            return "fix_ready", {"scan_id": sid, "status": fix.get("status") or "none", "options": []}
-    if ev.kind == "story" and ev.row.get("announce") == "product_brief":
-        from repairos.pipeline.story import brief_payload
-        p = brief_payload(ev.row["session_id"], ev.row)
-        if p:
-            return "product_brief", p
+    published, `pipeline_failed` when a run fails (the stage and the error)."""
     if ev.kind == REPORT_KIND:
         return "report_ready", {"scan_id": ev.row["scan_id"], "report_id": ev.row["report_id"],
                                 "verdict": ev.row["verdict"], "rev": ev.rev}
@@ -188,18 +143,6 @@ class NewSession(BaseModel):
     product_id: str | None = None
     make_model: str | None = None
     symptom: str | None = None
-
-
-class Story(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    text: str = Field(min_length=1, max_length=4000)
-    source: Literal["typed", "voice"] = "typed"
-    scan_id: str | None = None
-
-
-class IdentifyPhoto(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    image: str = Field(pattern=r"^blob://sha256:[0-9a-f]{64}$")
 
 
 class FixRequest(BaseModel):
@@ -455,20 +398,6 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             raise HTTPException(404, f"no session {session_id} (POST /v1/sessions first)")
         return row
 
-    async def _jobs(request: Request, kind: str, data: dict, rev: int | None = None) -> list[str]:
-        """Queue the stages for a new object. Job ids are derived from the object, so a retried upload queues
-        nothing new (enqueue is idempotent per job_id)."""
-        oid = data.get("still_id") or data["scan_id"]
-        key = f"{kind}:{oid}" + (f":rev{rev}" if rev and rev > 1 else "")   # a re-posted package is new work
-        out = []
-        for job_kind in JOBS_ON.get(kind, []):
-            if kind == "still" and data.get("kind") == "label":
-                job_kind = "ocr"
-            job_id = f"job_{job_kind}_{hashlib.sha256(key.encode()).hexdigest()[:16]}"
-            out.append(await store(request).enqueue(Job(kind=job_kind, job_id=job_id, session_id=data.get("session_id"),
-                                                        scan_id=data.get("scan_id"), inputs={"kind": kind, "id": oid})))
-        return out
-
     # --------------------------------------------------------------- writes
     @app.post("/v1/sessions", status_code=201)
     async def create_session(body: NewSession, request: Request, _d: Device):
@@ -478,43 +407,11 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
         recorder(request, sid).write_session({**data, "source": "gateway", "split": "unassigned"})
         return row.data
 
-    @app.post("/v1/sessions/{session_id}/story", status_code=202)
-    async def post_story(session_id: str, body: Story, request: Request, _d: Device):
-        """What the person thinks is wrong, typed or spoken (the voice agent posts each utterance). Kept on the
-        session as a lead, never a fact: the worker reads it into a hypothesis, sends the live event `lead` per
-        place worth a close look, and the report's `user_lead` says what the photos showed. 202: queued."""
-        from repairos.pipeline.story import job_key, record_story
-
-        await _session(request, session_id)
-        rev, row = await record_story(store(request), session_id, body.text, body.source, body.scan_id)
-        n = len(row.get("said") or [])
-        job_id = f"job_story_{hashlib.sha256(job_key(session_id, row).encode()).hexdigest()[:16]}"
-        job = await store(request).enqueue(Job(kind="story", job_id=job_id, session_id=session_id,
-                                               scan_id=body.scan_id, inputs={"kind": "story", "id": session_id}))
-        return {"session_id": session_id, "rev": rev, "said": n, "job": job}
-
-    @app.post("/v1/sessions/{session_id}/identify", status_code=202)
-    async def post_identify(session_id: str, body: IdentifyPhoto, request: Request, _d: Device):
-        """One photo of the product or its label, before scanning (upload it first: PUT /v1/blobs/{sha256}). The
-        worker reads the label to identify the product, researches it and sends the live event `product_brief`.
-        No pose or scan is needed. 202: queued."""
-        from repairos.pipeline.story import job_key, record_photo
-
-        await _session(request, session_id)
-        if not blob_store(request).exists(body.image):
-            raise HTTPException(422, f"no blob {body.image}: PUT it to /v1/blobs/{{sha256}} first")
-        rev, row = await record_photo(store(request), session_id, body.image)
-        job_id = f"job_story_{hashlib.sha256(job_key(session_id, row).encode()).hexdigest()[:16]}"
-        job = await store(request).enqueue(Job(kind="story", job_id=job_id, session_id=session_id,
-                                               inputs={"kind": "story", "id": session_id}))
-        return {"session_id": session_id, "rev": rev, "photos": len(row.get("photos") or []), "job": job}
-
     @app.post("/v1/scans", status_code=201)
     async def post_scan(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
         """The scan package (201, `updated: false`). Posting it again for the same scan_id (more photos of the same
         object, new keyframes and segments) replaces it (200, `updated: true`, rev + 1); the same content again is
-        an idempotent retry (201, the same rev and jobs). Stills already inspected keep their answers; POST .../complete then re-runs the
-        report over all stills."""
+        an idempotent retry (201, the same rev). POST .../complete then judges the scan again."""
         contracts.validate("scan-package", body)
         await _session(request, body["session_id"])
         b = blob_store(request)
@@ -524,31 +421,28 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                  f"{body['session_id']}" for st in early if st["session_id"] != body["session_id"]])
         existing = await store(request).get("scan-package", body["scan_id"])
         if existing is not None and existing.data == body:
-            existing = None   # an identical retry: the same row and jobs, answered like the first post
+            existing = None   # an identical retry: the same row, answered like the first post
         action = "scan.update" if existing is not None else "scan.create"
         row = await store(request).transition("scan-package", body["scan_id"], action, body)
-        jobs = await _jobs(request, "scan-package", body, row.rev)
         w = recorder(request, body["session_id"])
         await asyncio.to_thread(w.write_scan, body, _fetch(b))
         w.write_session({"device": body["device"], "symptom": body.get("symptom")})
-        out = {"scan_id": row.id, "rev": row.rev, "jobs": jobs, "updated": existing is not None}
+        out = {"scan_id": row.id, "rev": row.rev, "updated": existing is not None}
         return JSONResponse(status_code=200, content=out) if existing is not None else out
 
     @app.post("/v1/stills", status_code=201)
     async def post_still(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
         """A still, validated in full (contract + its files). It may arrive before its scan package: the scan is
-        then pending (`scan_pending: true`) and the still is inspected at once from its own image, pose and
-        intrinsics; the session must exist. The still is linked by its scan_id when the scan package is posted,
-        and fuse, locate and the report run only after that (POST /v1/scans/{scan_id}/complete)."""
+        then pending (`scan_pending: true`); the session must exist. The still is linked by its scan_id when the scan
+        package is posted, and the scan is judged only after that (POST /v1/scans/{scan_id}/complete)."""
         contracts.validate("still", body)
         await _session(request, body["session_id"])
         b = blob_store(request)
         _refuse(await asyncio.to_thread(_check_still, b, body))
         pending = await store(request).get("scan-package", body["scan_id"]) is None
         row = await store(request).transition("still", body["still_id"], "still.create", body)
-        jobs = await _jobs(request, "still", body)
         await asyncio.to_thread(recorder(request, body["session_id"]).write_still, body, _fetch(b))
-        return {"still_id": row.id, "rev": row.rev, "jobs": jobs, "scan_pending": pending}
+        return {"still_id": row.id, "rev": row.rev, "scan_pending": pending}
 
     @app.post("/v1/readings", status_code=201)
     async def post_reading(request: Request, _d: Device, body: Annotated[dict[str, Any], Body()]):
@@ -572,7 +466,7 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
     @app.get("/v1/sessions")
     async def list_sessions(request: Request, _d: Device, limit: Annotated[int, Query(ge=1, le=100)] = 20):
         """Sessions, the most recently active first (newest live event): `{sessions: [{session_id, created_at,
-        last_event_id, last_event_at}]}`. The live mirror (repairos.live.spacetime_bridge) finds sessions here."""
+        last_event_id, last_event_at}]}`. Clients that follow the newest scan find sessions here."""
         return {"sessions": await store(request).recent_sessions(limit)}
 
     @app.get("/v1/sessions/{session_id}")
@@ -689,43 +583,34 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             raise HTTPException(502, {"error": "design_engine", "message": str(e)}) from e
         return grain_service.chat_result(answer)
 
-    # ------------------------------------------------------------ pipeline + report (B10, B11)
+    # ------------------------------------------------------------ the run and the report
     @app.post("/v1/scans/{scan_id}/complete", status_code=202)
     async def complete_scan(scan_id: str, request: Request, _d: Device):
-        """The upload of this scan and its stills is complete. With a design engine configured it judges the scan
-        against the product's design and the report follows (`report_ready`); otherwise queue the pipeline run
-        (inspect what is left, fuse with Jev, locate, report). Idempotent for the same set of stills; a new still
-        queues a new run."""
+        """The upload of this scan and its stills is complete: the design engine judges the scan against the
+        product's design and the report follows (`report_ready`; `pipeline_failed` when it cannot). 409 when no design
+        engine is configured (GRAIN_URL): nothing else judges a scan. The same inputs are never judged twice."""
         scan = await _get(request, "scan-package", scan_id)
-        if design_engine().enabled:
-            n = len(await store(request).list("still", scan_id=scan_id))
-            out = {"scan_id": scan_id, "job_id": f"grain_{scan_id}", "stills": n}
-            key = await _input_key(scan_id)
-            run = await _run(request, scan_id)
-            if run and run.get("input_key") == key and run.get("status") in ("running", "done"):
-                return out   # a retry (a lost answer, a double tap): the same inputs are being judged, or were
-            # Marked running before the answer goes out, so a second request that follows at once sees it.
-            await _run_patch(scan_id, scan["session_id"], {"status": "running", "started_at": _now(), "error": None,
-                                                           "input_key": key,
-                                                           "stages": {"design_engine": {"status": "running"}}})
-            _spawn(_grain_publish(scan_id))
-            return out
-        stills = sorted(r.id for r in await store(request).list("still", scan_id=scan_id))
-        digest = hashlib.sha256(f"{scan_id}:{','.join(stills)}".encode()).hexdigest()[:16]
-        job_id = await store(request).enqueue(Job(kind="pipeline", job_id=f"job_pipeline_{digest}",
-                                                  session_id=scan["session_id"], scan_id=scan_id,
-                                                  inputs={"kind": "scan-package", "scan_id": scan_id}))
-        return {"scan_id": scan_id, "job_id": job_id, "stills": len(stills)}
+        if not design_engine().enabled:
+            raise HTTPException(409, "no design engine configured (GRAIN_URL)")
+        n = len(await store(request).list("still", scan_id=scan_id))
+        out = {"scan_id": scan_id, "job_id": f"grain_{scan_id}", "stills": n}
+        key = await _input_key(scan_id)
+        run = await _run(request, scan_id)
+        if run and run.get("input_key") == key and run.get("status") in ("running", "done"):
+            return out   # a retry (a lost answer, a double tap): the same inputs are being judged, or were
+        # Marked running before the answer goes out, so a second request that follows at once sees it.
+        await _run_patch(scan_id, scan["session_id"], {"status": "running", "started_at": _now(), "error": None,
+                                                       "input_key": key,
+                                                       "stages": {"design_engine": {"status": "running"}}})
+        _spawn(_grain_publish(scan_id))
+        return out
 
     def _run_view(run: dict | None) -> dict:
         if run is None:
             return {"status": "not_started"}
-        out = {k: run.get(k) for k in ("status", "attempt", "started_at", "finished_at", "report_id", "error",
-                                       "continuation")
+        out = {k: run.get(k) for k in ("status", "started_at", "finished_at", "report_id", "error")
                if run.get(k) is not None}
         out["stages"] = {k: {"status": v.get("status")} for k, v in (run.get("stages") or {}).items()}
-        out["stills"] = {k: {"status": v.get("status"), **({"error": v["error"]} if v.get("error") else {})}
-                         for k, v in (run.get("stills") or {}).items()}
         return out
 
     async def _run(request: Request, scan_id: str) -> dict | None:
@@ -735,31 +620,16 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
     @app.get("/v1/scans/{scan_id}/pipeline")
     async def scan_pipeline(scan_id: str, request: Request, _d: Device):
         """The run's status, `report_rev` (latest finished report), `rebuilding` and `pending` (_pipeline_view). A
-        re-made report is ready when report_rev goes up; status `closed` = a continuation nobody completed in time
-        (the latest report stands; its stills are folded in on the next complete)."""
+        re-made report is ready when report_rev goes up."""
         await _get(request, "scan-package", scan_id)
         return await _pipeline_view(request, scan_id)
 
     async def _pipeline_view(request: Request, scan_id: str) -> dict:
         """The run view plus the report state: `report_rev` = the latest finished report's revision (absent before
-        the first); `rebuilding` = a newer report is being made or new stills are waiting for it; `pending` = the
-        stills added since that report (`new_stills`, `inspected` of them) while it is not current."""
+        the first); `rebuilding` = a newer report is being made; `pending` = the stills added since that report
+        (`new_stills`) while it is not current."""
         run = await _run(request, scan_id)
         view = _run_view(run)
-        mesh = (run or {}).get("mesh") or {}
-        if mesh.get("status") == "done":
-            p = mesh_payload(scan_id, mesh)
-            view.update(mesh_url=p["mesh_url"], mesh_rev=p["mesh_rev"], hero=p["hero"])
-            if p.get("cloud_url"):
-                view["cloud_url"] = p["cloud_url"]
-        elif mesh.get("status") == "unavailable":
-            view["mesh_unavailable"] = mesh.get("reason")
-        if ((run or {}).get("identity") or {}).get("status") == "done":
-            view["identity"] = {k: v for k, v in identified_payload(scan_id, run["identity"]).items() if k != "scan_id"}
-        if (run or {}).get("progress"):
-            view["progress"] = {k: v for k, v in run["progress"].items() if k != "at"}
-        if ((run or {}).get("fix") or {}).get("status"):
-            view["fix_status"] = run["fix"]["status"]   # searching | done | none | timeout | failed | stale
         row = await store(request).get(REPORT_KIND, f"rep_{scan_id}")
         status = (run or {}).get("status")
         if row is None:
@@ -767,19 +637,11 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
             return view
         view["report_rev"] = row.rev
         view["rebuilding"] = status in ("inspecting", "running")
-        stills = (run or {}).get("stills") or {}
         in_report = int((row.data.get("capture") or {}).get("stills") or 0)
         claimed = await store(request).list("still", scan_id=scan_id)
         new = max(0, len(claimed) - in_report)
-        if status == "done" and new:
-            # a continuation's stills posted (and complete called) before a worker picked them up: the run row is
-            # still the finished one, but a newer report is coming
-            view["rebuilding"] = True
         if new or view["rebuilding"]:
-            view["pending"] = {"new_stills": new,
-                               "inspected": max(0, sum(1 for st in stills.values() if st.get("status") == "done")
-                                                - in_report),
-                               "closed": status == "closed"}
+            view["pending"] = {"new_stills": new}
         return view
 
     async def _report(request: Request, scan_id: str) -> tuple[dict, int, dict]:
@@ -793,69 +655,6 @@ def create_app(state=None, blobs: BlobStore | None = None, *, pairing_code: str 
                 raise HTTPException(409, {"error": "pipeline_failed", "pipeline": view})
             raise HTTPException(404, {"error": "no_report", "pipeline": view})
         return row.data, row.rev, view
-
-    async def _ply(request: Request, scan_id: str, rev: int | None, field: str, what: str):
-        await _get(request, "scan-package", scan_id)
-        run = await _run(request, scan_id)
-        mesh = (run or {}).get("mesh") or {}
-        if mesh.get("status") != "done" or not mesh.get(field):
-            raise HTTPException(404, {"error": f"no_{what}", "reason": mesh.get("reason") or
-                                      ("not built yet" if mesh.get("status") != "done" else f"the scan has no {what}")})
-        b = blob_store(request)
-        f = b.open(mesh[field])
-
-        def chunks():
-            with f:
-                while data := f.read(1 << 20):
-                    yield data
-        return StreamingResponse(chunks(), media_type="application/x-ply", headers={
-            "Content-Length": str(b.size(mesh[field])), "X-Mesh-Rev": str(mesh["rev"]),
-            "X-Hero": str(mesh.get("hero") or "mesh"),
-            "Content-Disposition": f'inline; filename="{scan_id}_{what}_rev{mesh["rev"]}.ply"',
-            "Cache-Control": "private, max-age=31536000" if rev == mesh["rev"] else "no-cache"})
-
-    @app.get("/v1/scans/{scan_id}/cloud", responses={200: {"content": {"application/x-ply": {}}}})
-    async def scan_cloud(scan_id: str, request: Request, _d: Device, rev: int | None = None):
-        """The object's part of the phone's LiDAR cloud: binary PLY points (float x y z, uchar red green blue), the
-        same frame and revision as the mesh. `X-Hero` says which 3D view reads best (points, mesh or photos)."""
-        return await _ply(request, scan_id, rev, "cloud_ref", "cloud")
-
-    @app.get("/v1/scans/{scan_id}/mesh", responses={200: {"content": {"application/x-ply": {}}}})
-    async def scan_mesh(scan_id: str, request: Request, _d: Device, rev: int | None = None):
-        """The scan's 3D mesh (binary PLY: float x y z + uchar red green blue per vertex, triangle lists; metres,
-        arkit_world, the frame of every finding's location). `X-Mesh-Rev` = its revision (up when more photos are
-        added). 404 while there is none (not built yet, or the scan has no usable depth: `reason`). `rev` is a
-        cache key only: the latest mesh is always served."""
-        return await _ply(request, scan_id, rev, "ref", "mesh")
-
-    @app.get("/v1/scans/{scan_id}/recreation", responses={200: {"content": {"model/vnd.usdz+zip": {},
-                                                                          "application/octet-stream": {}}}})
-    async def scan_recreation(scan_id: str, request: Request, _d: Device, rev: int | None = None):
-        """The photo-real recreation of the scanned object (repairos.recreation): a USDZ textured mesh
-        (`X-Recreation-Kind: textured_mesh`) or a `.splat` Gaussian splat (`splat`), in the scan's ARKit world frame
-        (metres, Y up: the frame of every finding's location). `X-Recreation-Rev` = its revision (up when the scan
-        gains photos); `X-Recreation-Focus` = the object's centre x,y,z and radius; `X-Recreation-Bottom` = how many
-        registered flipped segments close the model underneath (0: open below). 404 while there is none (`reason`).
-        The live event `recreation_ready` announces each revision. `rev` is a cache key only."""
-        await _get(request, "scan-package", scan_id)
-        rec = ((await _run(request, scan_id)) or {}).get("recreation") or {}
-        if rec.get("status") != "done" or not rec.get("ref"):
-            raise HTTPException(404, {"error": "no_recreation", "reason": rec.get("reason") or "not built yet"})
-        b = blob_store(request)
-        f = b.open(rec["ref"])
-
-        def chunks():
-            with f:
-                while data := f.read(1 << 20):
-                    yield data
-        focus = ",".join(str(x) for x in [*(rec.get("focus_center") or []), rec.get("focus_radius") or 0])
-        media = "model/vnd.usdz+zip" if rec.get("format") == "usdz" else "application/octet-stream"
-        return StreamingResponse(chunks(), media_type=media, headers={
-            "Content-Length": str(b.size(rec["ref"])), "X-Recreation-Rev": str(rec["rev"]),
-            "X-Recreation-Kind": str(rec.get("kind")), "X-Recreation-Format": str(rec.get("format")),
-            "X-Recreation-Focus": focus, "X-Recreation-Bottom": str(len(rec.get("bottom_segments") or [])),
-            "Content-Disposition": f'inline; filename="{scan_id}_recreation_rev{rec["rev"]}.{rec.get("format")}"',
-            "Cache-Control": "private, max-age=31536000" if rev == rec["rev"] else "no-cache"})
 
     @app.get("/v1/scans/{scan_id}/report")
     async def scan_report(scan_id: str, request: Request, _d: Device):

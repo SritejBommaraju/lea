@@ -135,7 +135,7 @@ extension GatewayClient {
         if held { q += "&held=1" }
         if let commit { q += "&commit=\(commit)" }
         if let scanID { q += "&scan_id=\(scanID.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? scanID)" }
-        // Before the scan exists, the session tells the gateway what the label photo identified (the brief).
+        // Before the scan exists, the session tells the gateway what the person said is wrong.
         if let sessionID { q += "&session_id=\(sessionID.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? sessionID)" }
         // What the camera showed (blobs uploaded while the person talked, oldest first, the last one now): Lea sees
         // them and can point at things in the last one.

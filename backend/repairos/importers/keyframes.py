@@ -7,7 +7,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from repairos.locate.camera import Pose
+from repairos.importers.camera import Pose
 
 
 def rotation_deg(a: Pose, b: Pose) -> float:

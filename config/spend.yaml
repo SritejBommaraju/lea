@@ -1,0 +1,58 @@
+# Spend guards for the paid services the gateway calls itself (Claude for Lea's answers, Cartesia for her voice).
+# The design engine (Grain) bills on its own side and is not counted here. Read by backend/repairos/spend.py; point
+# elsewhere for an experiment with REPAIROS_SPEND_CONFIG=<file>.
+#
+# Hard caps per paid service, checked BEFORE every call. A cap that trips opens that service's breaker for
+# `breaker_cooldown_s` (longer if the 24 h window needs longer to free up): every call is refused at once, the work
+# degrades (Lea's voice and answers pause, the phone uses its own) and a `SPEND ALERT` is logged and sent to the
+# phone. Windows roll: per_minute = last 60 s, per_day and usd_per_day = last 24 h. repeat_per_minute: the same
+# request (prompt + images) more than this often in 60 s is a loop, not work (null = off). usd_per_call: the estimate
+# before the first measured cost (null = USD not tracked).
+# Status: `python -m repairos.spend status`; reopen a breaker by hand: `python -m repairos.spend reset <service>`.
+spend:
+  # Warn (ERROR log + live event) the first time a service passes this share of a daily cap.
+  alert_at: 0.8
+  anthropic:
+    label: Claude
+    # Lea's spoken answers: one Claude call per turn (a looking turn carries up to three photos). 400 a minute is far
+    # above a person talking; a runaway loop is stopped within a minute.
+    per_minute: 400
+    per_day: 4000
+    usd_per_day: 25
+    # The same question and context sent again and again is a loop, not a conversation.
+    repeat_per_minute: 5
+    breaker_cooldown_s: 300
+    usd_per_call: 0.006
+    # List prices per million tokens (Claude API, 2026-10); the cost of each answer is computed from its usage.
+    usd_per_mtok:
+      claude-sonnet-5-5: {input: 2.00, output: 10.00, cache_write: 2.50, cache_read: 0.20}
+      claude-haiku-5-5: {input: 0.10, output: 0.50, cache_write: 0.125, cache_read: 0.01}
+  anthropic_web_search:
+    label: Lea web search
+    # Lea's answers may search the web (Anthropic's web_search server tool, 10 USD per 1,000 searches) once the object
+    # is identified, at most one search per turn and lea_voice_searches_per_scan per scan. Each turn that offers the
+    # tool is charged one unit before the call, so the counts are an upper bound. Demo caps (~/lea-todo.md).
+    per_minute: 10
+    per_day: 150
+    usd_per_day: 1.5
+    repeat_per_minute: 3       # the same question offered search again and again: a loop
+    breaker_cooldown_s: 600
+    usd_per_call: 0.01
+  cartesia:
+    label: Voice
+    # TTS lines and STT turns: about one a second while Lea talks; cached lines never reach Cartesia.
+    per_minute: 60
+    per_day: 2000
+    usd_per_day: null          # priced by the Cartesia plan (characters / seconds); counted here
+    repeat_per_minute: 5       # the same line synthesised again and again: the voice cache is bypassed
+    breaker_cooldown_s: 120
+    usd_per_call: null
+  default:
+    # Any paid service not named above (a new integration that calls charge() with its own name).
+    label: Other
+    per_minute: 60
+    per_day: 1000
+    usd_per_day: null
+    repeat_per_minute: 5
+    breaker_cooldown_s: 300
+    usd_per_call: null

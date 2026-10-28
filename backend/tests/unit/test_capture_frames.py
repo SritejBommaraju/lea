@@ -1,4 +1,4 @@
-"""Frame conventions of the capture pipeline (repairos.locate.camera, importers): pure geometry on points.
+"""Frame conventions of the capture pipeline (repairos.importers.camera): pure geometry on points.
 
 The scene is deliberately asymmetric (distinct x, y, z offsets, a camera that is yawed, pitched AND rolled), so a
 swapped axis, a missing flip, a transposed matrix or a wrong sign moves the projected pixels and fails a test.
@@ -10,7 +10,7 @@ import pytest
 
 from repairos.importers.nerfcapture import nerfcapture_pose
 from repairos.importers.stray import stray_pose
-from repairos.locate.camera import (FLIP_YZ, Pinhole, Pose, backproject, matrix_to_quat, opencv_to_arkit_camera,
+from repairos.importers.camera import (FLIP_YZ, Pinhole, Pose, backproject, matrix_to_quat, opencv_to_arkit_camera,
                                     pixel_rays, project, quat_to_matrix)
 
 CAM = Pinhole(1450.0, 1452.0, 961.3, 718.7, 1920, 1440)
