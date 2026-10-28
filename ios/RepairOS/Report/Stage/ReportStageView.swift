@@ -36,6 +36,10 @@ struct ReportStageView: View {
     /// What the object is ("Category · Brand Model"): the person's correction or the backend's identification. Shown
     /// on the stage whatever the hero (a photo, a scan, or nothing usable in 3D). nil falls back to the report's own.
     var identity: String? = nil
+    /// Opens the meter-reading sheet (nil when there is no gateway to send it to, e.g. Demo replay).
+    var addMeterReading: (() -> Void)? = nil
+    /// Meter readings sent from this report so far.
+    var meterReadingsSent = 0
 
     @Environment(\.cropSource) private var cropSource
     @State private var bottomZoom: BottomZoom?
@@ -219,6 +223,19 @@ struct ReportStageView: View {
         }
         // Leaving the report ends Lea's rings and labels with it: nothing stale is drawn when it opens again.
         .onDisappear { leaPins = []; leaLabel = nil; heroCue = nil }
+    }
+
+    /// "Add a meter reading", and a line saying how many were sent. A meter reading is the only proof (I1, I2).
+    private func meterReadingRow(_ open: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.xs) {
+            Button(action: open) { Label("Add a meter reading", systemImage: "gauge.with.dots.needle.50percent") }
+                .buttonStyle(.textAction)
+            if meterReadingsSent > 0 {
+                Text(meterReadingsSent == 1 ? "1 meter reading sent. The report updates when it is judged."
+                                            : "\(meterReadingsSent) meter readings sent. The report updates when they are judged.")
+                    .font(.subheadline).foregroundStyle(Palette.secondary)
+            }
+        }
     }
 
     /// The numbered problems and setup rows, in marker order (the detail's previous / next).
@@ -553,6 +570,7 @@ struct ReportStageView: View {
                     if let next = report.nextStep, report.verdict != .insufficientEvidence, !ReportWords.isCaptureRequest(next) {
                         StageNextStep(step: next)
                     }
+                    if let addMeterReading { meterReadingRow(addMeterReading) }
                     if let lead = report.userLead { UserLeadCard(lead: lead) }
                     if let summary = report.summary.map({ ReportWords.withoutCaveats(ReportWords.display($0)) })?.trimmedOrNil {
                         StagePlainWords(text: summary)

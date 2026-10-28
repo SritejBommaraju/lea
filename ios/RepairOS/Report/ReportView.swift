@@ -42,6 +42,9 @@ struct ReportView: View {
     @State private var captions = LeaCaptionFeed()
     @State private var showUnchecked = false
     @State private var showOnObject = false
+    /// The meter-reading sheet, and how many readings this report has sent.
+    @State private var meterContext: MeterReadingContext?
+    @State private var meterReadingsSent = 0
     @Environment(\.continueScan) private var continueScan
     @Environment(\.scanBottom) private var scanBottom
     @Environment(\.liveEvents) private var live
@@ -75,7 +78,11 @@ struct ReportView: View {
                                     fresh: landedFresh, voiceStarted: voiceStarted, walkthrough: walkthrough, leaCue: leaCue,
                                     hero: stageHero, captions: talking ? captions : nil,
                                     identity: Self.identity(corrected: record.objectName, report: report.objectWords,
-                                                            live: live?.identity?.words))
+                                                            live: live?.identity?.words),
+                                    addMeterReading: gateway == nil ? nil : {
+                                        meterContext = report.nextStep.map { MeterReadingContext(step: $0) } ?? MeterReadingContext()
+                                    },
+                                    meterReadingsSent: meterReadingsSent)
                         .transition(.opacity)
                 } else if error == nil {
                     // While the Mac works: the person's own scan on the stage, one line of progress.
@@ -113,6 +120,12 @@ struct ReportView: View {
                 if let report {
                     WhatWasntCheckedSheet(notInspected: report.notInspected, unclear: report.insufficient, limits: report.limits,
                                           continueScan: continueScan.map { action -> () -> Void in { action() } })
+                }
+            }
+            .sheet(item: $meterContext) { ctx in
+                MeterReadingSheet(context: ctx, scanID: record.scanID,
+                                  sessionID: upload?.state.gatewaySessionID ?? record.id, gateway: gateway) {
+                    meterReadingsSent += 1
                 }
             }
             .fullScreenCover(isPresented: $showOnObject) {

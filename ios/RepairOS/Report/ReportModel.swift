@@ -117,6 +117,8 @@ struct ReportModel: Sendable {
         var kind: String
         var instruction: String
         var reason: String?
+        /// The NextAction behind it (`next_step.action_id`), so a meter reading can say what it answers.
+        var actionID: String? = nil
 
         var symbol: String {
             switch kind {
@@ -213,7 +215,8 @@ struct ReportModel: Sendable {
         notInspected = Self.current(r["not_inspected"]).map(Self.gap)
         insufficient = Self.current(r["insufficient_evidence"]).map(Self.gap)
         if let n = r["next_step"] as? [String: Any], let instruction = n["instruction"] as? String {
-            nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String)
+            nextStep = NextStep(kind: n["kind"] as? String ?? "", instruction: instruction, reason: n["reason"] as? String,
+                                actionID: n["action_id"] as? String)
         }
         limits = r["limits"] as? [String] ?? []
         let capture = r["capture"] as? [String: Any] ?? [:]
