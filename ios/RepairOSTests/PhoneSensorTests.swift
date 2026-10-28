@@ -37,7 +37,8 @@ struct PhoneSensorTests {
 
     @Test func aDropInTheFieldCountsAsMuchAsARise() throws {
         let quiet = try #require(MagneticBaseline(magnitudes: [Double](repeating: 47, count: 100)))
-        #expect(abs(try #require(Magnetometer.delta(baseline: quiet, recent: [40, 40])) - 7) < 1e-9)
+        let drop = try #require(Magnetometer.delta(baseline: quiet, recent: [40, 40]))
+        #expect(abs(drop - 7) < 1e-9)
         #expect(Magnetometer.delta(baseline: quiet, recent: []) == nil)
     }
 

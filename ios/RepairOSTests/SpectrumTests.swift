@@ -41,7 +41,8 @@ struct SpectrumTests {
         #expect(abs(f.hz - 100) < 1)
         // a pure tone is its own fundamental
         let pure = Self.amplitudes(Self.signal([(200, 0.5)]))
-        #expect(abs(try #require(SpectralTone.fundamental(pure, rate: Self.rate, size: Self.size, minHz: 30, maxHz: 1800)).hz - 200) < 1)
+        let alone = try #require(SpectralTone.fundamental(pure, rate: Self.rate, size: Self.size, minHz: 30, maxHz: 1800))
+        #expect(abs(alone.hz - 200) < 1)
     }
 
     @Test func noiseHasNoTone() {
@@ -56,7 +57,8 @@ struct SpectrumTests {
 
     @Test func theAudioHelperFindsTheFundamentalAndTheLevel() throws {
         let x = Self.signal([(120, 0.3)])
-        #expect(abs(try #require(AudioAnalysis.tone(x, rate: Self.rate)).hz - 120) < 1)
+        let tone = try #require(AudioAnalysis.tone(x, rate: Self.rate))
+        #expect(abs(tone.hz - 120) < 1)
         #expect(abs(AudioAnalysis.level([Float](repeating: 0.1, count: 64)) - (-20)) < 0.01)
         #expect(AudioAnalysis.level([]) == -120)
     }

@@ -120,7 +120,7 @@ struct BlinkDecoderTests {
 
     @Test func aRepeatingCodeIsReadFromTheSecondRoundWhenTheFirstWasCutOff() {
         // The tail of one round (checks and end flashes), then a whole round.
-        let cutRound = BlinkSynth.segments(longCounts: [2], preamble: false, tail: 1000)
+        let cutRound = BlinkSynth.segments(longCounts: [2], tail: 1000, preamble: false)
         let whole = BlinkSynth.segments(longCounts: [1, 3], lead: 0)
         let samples = BlinkSynth.samples(cutRound + whole)
         #expect(BlinkDecoder.decode(samples, code: code) == .complete([.ok, .unknown]))
@@ -154,7 +154,8 @@ struct BlinkDecoderTests {
 
     @Test func thePlanSetsTheTimingsAndTheCountsOfTheCode() throws {
         let plan = try #require(try ReportModelTests.example("report.design_engine_fix_plan.json").selfTest)
-        let fromPlan = try #require(BlinkCode(plan: try #require(plan.blink)))
+        let planBlink = try #require(plan.blink)
+        let fromPlan = try #require(BlinkCode(plan: planBlink))
         #expect(fromPlan == BlinkSynth.code)
         #expect(fromPlan.outcome(forLongCount: 1) == .ok && fromPlan.outcome(forLongCount: 2) == .fail)
         #expect(fromPlan.outcome(forLongCount: 3) == .unknown && fromPlan.outcome(forLongCount: 4) == nil)
