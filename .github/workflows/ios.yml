@@ -124,13 +124,12 @@ jobs:
           echo "SMALL_LABEL=$(label "$SMALL_NAME")" >> "$GITHUB_ENV"
           echo "Big: $BIG_NAME ($BIG). Small: $SMALL_NAME ($SMALL)."
 
-      - name: Boot both simulators now, so they have settled by the time the tests start
+      - name: Start booting both simulators (they finish while the app builds)
         run: |
-          # The first test run on a simulator booted a moment earlier stalled for about nine minutes; booting during the build avoids it.
+          # A cold simulator takes about seven minutes to boot on this image, and the first test run on one that was booted a moment
+          # earlier stalled. Starting the boot here, before the build, hides that time; each run waits for its simulator.
           xcrun simctl boot "$BIG" || true
           xcrun simctl boot "$SMALL" || true
-          xcrun simctl bootstatus "$BIG" -b || true
-          xcrun simctl bootstatus "$SMALL" -b || true
 
       - name: Build the app and the UI tests
         run: |
