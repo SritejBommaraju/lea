@@ -69,6 +69,9 @@ struct ScanRowButton: View {
     var toggle: () -> Void = {}
     var select: () -> Void = {}
     @Environment(AppState.self) private var app
+    @State private var sharing: SharedFile?
+    @State private var shareFailed = false
+    @State private var zipping = false
 
     var body: some View {
         let deletable = ScanLibrary.canDelete(record, app: app)
@@ -99,14 +102,66 @@ struct ScanRowButton: View {
             .listRowBackground(Color.clear)
             // Not `role: .destructive`: that removes the row optimistically while the confirmation is still open, and
             // the real delete then leaves the list's item count out of step (UICollectionView invalid-update crash).
+            .sheet(item: $sharing) { file in ShareSheet(url: file.url) { SessionShare.remove(file.url) } }
+            .alert("Couldn't zip this session", isPresented: $shareFailed) { Button("OK", role: .cancel) {} }
             .swipeActions { if deletable, !selecting { Button("Delete", systemImage: "trash", action: delete).tint(Palette.danger) } }
             .contextMenu {
                 if !selecting {
+                    Button("Share session", systemImage: "square.and.arrow.up") { shareSession() }
+                        .disabled(!deletable)
                     Button("Select", systemImage: "checkmark.circle", action: select).disabled(!deletable)
                     Button("Delete scan", systemImage: "trash", role: .destructive, action: delete).disabled(!deletable)
                 }
             }
     }
+}
+
+extension ScanRowButton {
+    /// Zips the session folder as it is (never the one being captured) and opens the share sheet.
+    fileprivate func shareSession() {
+        let dir = app.storage.dir(record)
+        guard !zipping, sharing == nil else { return }   // a second tap while one is running is ignored
+        zipping = true
+        Task { @MainActor in
+            defer { zipping = false }
+            if let url = try? await SessionShare.zip(dir) { sharing = SharedFile(url: url) } else { shareFailed = true }
+        }
+    }
+}
+
+struct SharedFile: Identifiable { let url: URL; var id: URL { url } }
+
+/// Each share zips into its own folder under `lea-share` in the temporary directory, removed when the share sheet
+/// finishes or is cancelled, and any left over (the app was killed mid-share) are removed at launch.
+enum SessionShare {
+    static var root: URL { FileManager.default.temporaryDirectory.appending(path: "lea-share", directoryHint: .isDirectory) }
+
+    @concurrent static func zip(_ dir: URL) async throws -> URL {
+        let folder = root.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        do { return try SessionArchive.zip(dir, into: folder) } catch { try? FileManager.default.removeItem(at: folder); throw error }
+    }
+
+    /// Removes the share's own folder (the zip's parent), only when it is under `root`.
+    static func remove(_ zip: URL) {
+        let folder = zip.deletingLastPathComponent()
+        guard folder.deletingLastPathComponent().standardizedFileURL == root.standardizedFileURL else { return }
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    static func purge() { try? FileManager.default.removeItem(at: root) }
+}
+
+/// The system share sheet for one file; `done` runs when the person finishes or cancels.
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    var done: () -> Void = {}
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let vc = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        vc.completionWithItemsHandler = { _, _, _, _ in done() }
+        return vc
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 extension View {
