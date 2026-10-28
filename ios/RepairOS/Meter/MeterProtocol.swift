@@ -20,9 +20,12 @@ protocol MeterProfile: Sendable {
     func parseBattery(_ data: Data) -> Double?
 }
 
+/// UUIDs are kept as strings because `CBUUID` is not `Sendable`; the typed values are made on demand.
 struct MeterBatteryLocation: Sendable {
-    let service: CBUUID
-    let characteristic: CBUUID
+    let serviceUUID: String
+    let characteristicUUID: String
+    var service: CBUUID { CBUUID(string: serviceUUID) }
+    var characteristic: CBUUID { CBUUID(string: characteristicUUID) }
 }
 
 extension MeterProfile {
@@ -79,13 +82,12 @@ struct MeterSample: Equatable, Sendable {
 /// All numbers little-endian.
 struct PokitMeterProfile: MeterProfile {
     let displayName = "Pokit Meter"
-    let measureService = CBUUID(string: "E7481D2F-5781-442E-BB9A-FD4E3441DADC")
-    let settingsCharacteristic = CBUUID(string: "53DC9A7A-BC19-4280-B76B-002D0E23B078")
-    let readingCharacteristic = CBUUID(string: "047D3559-8BEE-423A-B229-4417FA603B90")
-    var scanServices: [CBUUID] { [measureService] }
+    var scanServices: [CBUUID] { [CBUUID(string: "E7481D2F-5781-442E-BB9A-FD4E3441DADC")] }
+    var settingsCharacteristic: CBUUID { CBUUID(string: "53DC9A7A-BC19-4280-B76B-002D0E23B078") }
+    var readingCharacteristic: CBUUID { CBUUID(string: "047D3559-8BEE-423A-B229-4417FA603B90") }
     var batteryLocation: MeterBatteryLocation? {
-        MeterBatteryLocation(service: CBUUID(string: "57D3A771-267C-4394-8872-78223E92AEC4"),
-                             characteristic: CBUUID(string: "3DBA36E1-6120-4706-8DFD-ED9C16E569B6"))
+        MeterBatteryLocation(serviceUUID: "57D3A771-267C-4394-8872-78223E92AEC4",
+                             characteristicUUID: "3DBA36E1-6120-4706-8DFD-ED9C16E569B6")
     }
 
     /// Settings, 6 bytes: mode (u8), range (u8), update interval in ms (u32).
