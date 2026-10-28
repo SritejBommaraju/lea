@@ -749,8 +749,8 @@
         "blink": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["timings"],
-          "description": "The blink code of the product's status LED. Per check, in order: `long_count_ok`, `long_count_fail` or `long_count_unknown` long blinks.",
+          "required": ["timings", "long_blinks"],
+          "description": "The blink code of the product's status LED: after the preamble, each check is its result's number of long blinks (`long_blinks`), and the code ends with the end flashes.",
           "properties": {
             "timings": {
               "type": "object",
@@ -767,9 +767,11 @@
                 "end_flashes": { "type": "integer", "minimum": 1 }
               }
             },
-            "long_count_ok": { "type": "integer", "minimum": 1 },
-            "long_count_fail": { "type": "integer", "minimum": 1 },
-            "long_count_unknown": { "type": "integer", "minimum": 1 }
+            "long_blinks": {
+              "type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true,
+              "items": { "type": "integer", "minimum": 1 },
+              "description": "How many long blinks mean ok, fail and unknown, in that order. All three differ, so a result is never ambiguous."
+            }
           }
         }
       },

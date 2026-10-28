@@ -170,9 +170,11 @@
         "preamble_flashes": 3,
         "end_flashes": 3
       },
-      "long_count_ok": 1,
-      "long_count_fail": 2,
-      "long_count_unknown": 3
+      "long_blinks": [
+        1,
+        2,
+        3
+      ]
     }
   }
 }

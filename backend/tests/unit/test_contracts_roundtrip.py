@@ -31,6 +31,7 @@ MODEL_CANNOT_EXPRESS = {
     "meter-reading-magnetometer-without-part.json",
     "meter-reading-led-from-a-meter-source.json",
     "report-self-test-ble-without-service.json",      # a transport needs its block (if/then)
+    "report-self-test-blink-equal-results.json",      # uniqueItems: the model keeps a list
     "repair-plan-power-on-step-without-gate.json",
     "repair-plan-power-path-step-without-gate.json",
     "scan-package-lidar-without-points.json",       # depth_source if/then/else (no-LiDAR, A8)

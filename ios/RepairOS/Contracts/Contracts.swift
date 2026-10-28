@@ -2611,8 +2611,8 @@ public struct SelfTest: Codable, Sendable {
     /// The Bluetooth service the product advertises and the two characteristics: write 0x01 to
     /// `control` to start the self-test, read or subscribe to `result` for the answer.
     public let ble: Ble?
-    /// The blink code of the product's status LED. Per check, in order: `long_count_ok`,
-    /// `long_count_fail` or `long_count_unknown` long blinks.
+    /// The blink code of the product's status LED: after the preamble, each check is its
+    /// result's number of long blinks (`long_blinks`), and the code ends with the end flashes.
     public let blink: Blink?
     /// The checks the product runs, in the order of the blink code.
     public let checks: [Check]
@@ -2660,13 +2660,13 @@ public struct Ble: Codable, Sendable {
     }
 }
 
-/// The blink code of the product's status LED. Per check, in order: `long_count_ok`,
-/// `long_count_fail` or `long_count_unknown` long blinks.
+/// The blink code of the product's status LED: after the preamble, each check is its
+/// result's number of long blinks (`long_blinks`), and the code ends with the end flashes.
 // MARK: - Blink
 public struct Blink: Codable, Sendable {
-    public let longCountFail: Int?
-    public let longCountOk: Int?
-    public let longCountUnknown: Int?
+    /// How many long blinks mean ok, fail and unknown, in that order. All three differ, so a
+    /// result is never ambiguous.
+    public let longBlinks: [Int]
     /// Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on,
     /// `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each
     /// `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then
@@ -2674,16 +2674,12 @@ public struct Blink: Codable, Sendable {
     public let timings: Timings
 
     public enum CodingKeys: String, CodingKey {
-        case longCountFail = "long_count_fail"
-        case longCountOk = "long_count_ok"
-        case longCountUnknown = "long_count_unknown"
+        case longBlinks = "long_blinks"
         case timings = "timings"
     }
 
-    public init(longCountFail: Int?, longCountOk: Int?, longCountUnknown: Int?, timings: Timings) {
-        self.longCountFail = longCountFail
-        self.longCountOk = longCountOk
-        self.longCountUnknown = longCountUnknown
+    public init(longBlinks: [Int], timings: Timings) {
+        self.longBlinks = longBlinks
         self.timings = timings
     }
 }

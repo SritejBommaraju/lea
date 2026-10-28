@@ -1,0 +1,1 @@
+{"schema": "report", "why": "ok, fail and unknown each need a count", "base": "report.design_engine_fix_plan.json", "patch": {"self_test": {"blink": {"long_blinks": [1, 2]}}}}

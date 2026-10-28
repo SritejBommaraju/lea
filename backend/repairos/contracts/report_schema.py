@@ -610,9 +610,13 @@ class Timings(BaseModel):
     end_flashes: int = Field(..., ge=1)
 
 
+class LongBlink(RootModel[int]):
+    root: int = Field(..., ge=1)
+
+
 class Blink(BaseModel):
     """
-    The blink code of the product's status LED. Per check, in order: `long_count_ok`, `long_count_fail` or `long_count_unknown` long blinks.
+    The blink code of the product's status LED: after the preamble, each check is its result's number of long blinks (`long_blinks`), and the code ends with the end flashes.
     """
 
     model_config = ConfigDict(
@@ -622,9 +626,12 @@ class Blink(BaseModel):
         ...,
         description='Milliseconds. The code is: `preamble_flashes` short flashes (each `flash_on_ms` on, `flash_off_ms` off), a `gap_ms` dark gap, then per check its long blinks (each `long_on_ms` on, `long_off_ms` off) with a `gap_ms` dark gap between checks, then `end_flashes` short flashes.',
     )
-    long_count_ok: int | None = Field(None, ge=1)
-    long_count_fail: int | None = Field(None, ge=1)
-    long_count_unknown: int | None = Field(None, ge=1)
+    long_blinks: list[LongBlink] = Field(
+        ...,
+        description='How many long blinks mean ok, fail and unknown, in that order. All three differ, so a result is never ambiguous.',
+        max_length=3,
+        min_length=3,
+    )
 
 
 class SelfTest(BaseModel):
@@ -651,7 +658,7 @@ class SelfTest(BaseModel):
     )
     blink: Blink | None = Field(
         None,
-        description="The blink code of the product's status LED. Per check, in order: `long_count_ok`, `long_count_fail` or `long_count_unknown` long blinks.",
+        description="The blink code of the product's status LED: after the preamble, each check is its result's number of long blinks (`long_blinks`), and the code ends with the end flashes.",
     )
 
 

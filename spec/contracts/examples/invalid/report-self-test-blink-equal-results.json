@@ -1,0 +1,1 @@
+{"schema": "report", "why": "two results with the same number of long blinks cannot be told apart", "base": "report.design_engine_fix_plan.json", "patch": {"self_test": {"blink": {"long_blinks": [1, 1, 3]}}}}
