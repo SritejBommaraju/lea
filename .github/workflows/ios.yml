@@ -61,6 +61,7 @@ jobs:
       - name: Build and test
         run: |
           set -o pipefail
+          export TEST_RUNNER_SESSION_ZIP_COPY="$RUNNER_TEMP/session_x.zip"
           xcodebuild -project ios/RepairOS.xcodeproj -scheme RepairOS \
             -destination "id=${{ steps.sim.outputs.udid }}" -configuration Debug \
             CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
