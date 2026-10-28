@@ -18,6 +18,8 @@ dependencies = [
     # Gateway (B5): fastapi MIT (starlette BSD-3, anyio MIT), uvicorn BSD-3 (h11 MIT, click BSD-3).
     "fastapi==0.162.0",
     "uvicorn==0.54.0",
+    # The design engine client (repairos.grain) and Cartesia: httpx2 (BSD-3), pinned as in requirements.lock.
+    "httpx2==2.16.0",
 ]
 
 [project.optional-dependencies]

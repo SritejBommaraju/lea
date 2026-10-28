@@ -11,6 +11,7 @@
     "object_id": { "type": "string", "pattern": "^obj_[0-9a-f]{8}$", "description": "Stable per physical unit, random." },
     "category": { "type": "string", "description": "eval/categories.yaml id." },
     "product_id": { "type": "string" },
+    "product": { "type": "string", "minLength": 1, "description": "The design id of the product (the design engine's project) the scan is judged against; printed on the product or typed. Data, never code (GEN1)." },
     "make_model": { "type": "string", "description": "As the operator typed it. Data, never code (GEN1)." },
     "symptom": { "type": "string" },
     "operator": { "type": "string" },

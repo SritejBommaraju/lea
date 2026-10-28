@@ -43,6 +43,15 @@ struct GatewayClient: Sendable {
     let token: String?
     static let chunkSize = 4 << 20
 
+    /// For calls that wait for the design engine's agent to finish its turn.
+    private static let longSession: URLSession = {
+        let c = URLSessionConfiguration.default
+        c.timeoutIntervalForRequest = 1_000
+        c.waitsForConnectivity = true
+        c.timeoutIntervalForResource = 1_200
+        return URLSession(configuration: c)
+    }()
+
     private static let session: URLSession = {
         let c = URLSessionConfiguration.default
         c.timeoutIntervalForRequest = 60
@@ -64,9 +73,12 @@ struct GatewayClient: Sendable {
         _ = try await send("GET", "healthz", auth: false, expect: [200])
     }
 
-    func createSession(symptom: String?) async throws -> String {
+    /// `product`: the design id printed on the product (Settings), the design engine's project; the server falls back to
+    /// its own default when there is none.
+    func createSession(symptom: String?, product: String? = DesignID.current) async throws -> String {
         var body: [String: Any] = [:]
         if let symptom { body["symptom"] = symptom }
+        if let product { body["product"] = product }
         let (data, _) = try await send("POST", "v1/sessions", json: body, expect: [201])
         guard let id = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["session_id"] as? String else {
             throw GatewayError.message("Session answer had no session_id.")
@@ -152,6 +164,17 @@ struct GatewayClient: Sendable {
     func usage() async throws -> [String: Any] {
         let (data, _) = try await send("GET", "v1/usage", expect: [200])
         return (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    /// POST /v1/scans/{id}/fix: the customer's words go to the design engine's agent, with the scan's context added by
+    /// the server. Returns when its turn ends, which can take minutes (a long-timeout session).
+    func fix(scanID: String, message: String) async throws -> FixReply {
+        let (data, _) = try await send("POST", "v1/scans/\(scanID)/fix", json: ["message": message], expect: [200],
+                                       session: Self.longSession)
+        guard let reply = FixReply(json: (try JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]) else {
+            throw GatewayError.message("The design engine's answer had no reply.")
+        }
+        return reply
     }
 
     func reportHTMLRequest(scanID: String) -> URLRequest {
@@ -242,13 +265,13 @@ struct GatewayClient: Sendable {
     }
 
     private func send(_ method: String, _ path: String, json: [String: Any]? = nil, body: Data? = nil,
-                      auth: Bool = true, expect: Set<Int>) async throws -> (Data, HTTPURLResponse) {
+                      auth: Bool = true, expect: Set<Int>, session: URLSession = GatewayClient.session) async throws -> (Data, HTTPURLResponse) {
         var req = request(method, path, auth: auth)
         if let payload = try body ?? json.map({ try JSONSerialization.data(withJSONObject: $0) }) {
             req.httpBody = payload
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, resp) = try await Self.session.data(for: req)
+        let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw GatewayError.message("No HTTP answer.") }
         guard expect.contains(http.statusCode) else {
             throw GatewayError.http(http.statusCode, String(decoding: data, as: UTF8.self))

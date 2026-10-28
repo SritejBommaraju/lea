@@ -38,6 +38,8 @@ struct ReportStageView: View {
     var identity: String? = nil
     /// Opens the meter-reading sheet (nil when there is no gateway to send it to, e.g. Demo replay).
     var addMeterReading: (() -> Void)? = nil
+    /// Opens "Fix it with Grain" (nil: not judged against a design, or no gateway).
+    var askDesign: (() -> Void)? = nil
     /// Meter readings sent from this report so far.
     var meterReadingsSent = 0
 
@@ -575,8 +577,8 @@ struct ReportStageView: View {
                     if let summary = report.summary.map({ ReportWords.withoutCaveats(ReportWords.display($0)) })?.trimmedOrNil {
                         StagePlainWords(text: summary)
                     }
-                    if fix != nil || fixSearching || fixUnavailable {
-                        FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable).id("fix")
+                    if fix != nil || fixSearching || fixUnavailable || askDesign != nil {
+                        FixItCard(fix: fix, searching: fixSearching, unavailable: fixUnavailable, askDesign: askDesign).id("fix")
                     }
                     if !others.isEmpty { alsoWorthALook }
                     if !report.bottomPhotos.isEmpty { bottomPhotosSection }

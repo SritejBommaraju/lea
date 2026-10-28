@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// What a meter reading is about, so the sheet can open already filled in. Built from a `NextAction` (kind, net, pins,
-/// the action it answers) or from the report's next step (kind and action only: the report does not carry the net).
+/// the action it answers) or from the report's next step (kind, action, and the net and probe points when the design
+/// engine named them).
 struct MeterReadingContext: Identifiable {
     let id = UUID()
     var actionID: String?
@@ -22,7 +23,8 @@ struct MeterReadingContext: Identifiable {
     }
 
     init(step: ReportModel.NextStep) {
-        self.init(kind: Self.kind(forAction: step.kind) ?? .continuity, actionID: step.actionID)
+        self.init(kind: Self.kind(forAction: step.kind) ?? .continuity, net: step.net ?? "", pins: step.pins,
+                  actionID: step.actionID)
     }
 
     static func kind(forAction kind: String) -> MeterReadingKind? {

@@ -63,6 +63,9 @@ samples/sessions/<session_id>/
   readings/<reading_id>.json           MeterReading, typed by the operator from the real meter
   parts/<item_id>.json                 PartOnHand, as the user described it
   import.json                          importers only: where the session came from and what was assumed
+  grain/<kind>-<scan_id>-<timestamp>.json   gateway only, when a design engine is configured: every answer it gave,
+                                       as it came (kind: scan, call, plan, chat, bom-<ref>, reading). Data, not code;
+                                       it is never sent back to the design engine and never read by `make replay`.
 ```
 
 Every file path inside a JSON object is **relative to the session folder** (for example
@@ -93,7 +96,7 @@ file names.
 ## `session.json`
 
 Required: `session_id` (= folder name), `device.model`. Recorded when known: `object_id`, `category`
-(eval/categories.yaml id), `product_id`, `make_model` (as typed), `symptom`, `operator`, `lighting`
+(eval/categories.yaml id), `product_id`, `product` (the design id the scan is judged against), `make_model` (as typed), `symptom`, `operator`, `lighting`
 (`room | torch | polarised`), `device {model, ios, app_version}`, `meter {model, continuity_ohms_threshold}`,
 `source` (`gateway | phone_export | converter`), `split` (`unassigned | train | val | test | heldout`, written by
 eval/assign_split.py), `created_at`, `notes`.
@@ -121,7 +124,7 @@ Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, 
 
 1. `POST /v1/devices/pair {"code": "<REPAIROS_PAIRING_CODE>"}` returns `{device_id, token}`; send
    `Authorization: Bearer <token>` from then on.
-2. `POST /v1/sessions {"symptom": "..."}` returns the `session_id`.
+2. `POST /v1/sessions {"symptom": "...", "product": "<design id>"}` returns the `session_id` (`product` is optional).
 3. For each file (PLY, keyframe JPEGs, depth, confidence, stills): `PUT /v1/blobs/<sha256 of the whole file>`,
    whole or in chunks with `Content-Range: bytes <start>-<end>/<total>`. A partial chunk answers 202 with
    `Upload-Offset`; after a dropped connection `HEAD /v1/blobs/<sha256>` gives `Upload-Offset` to resume from. The
@@ -130,8 +133,12 @@ Replay scores `caught`, `missed`, `fault_kind_match`, `not_inspected_reported`, 
 4. `POST /v1/scans` with the ScanPackage whose file fields are those refs; then `POST /v1/stills`, `POST
    /v1/readings`. Bodies are validated against the contracts and the files against the table above (422 with the
    schema path or the list of problems). Posting the same object again is a no-op.
-5. `POST /v1/scans/<scan_id>/complete` once the scan and every still are posted: queues the pipeline run (stills
-   are already being inspected as they arrive; `make run-workers` runs the worker). `GET /v1/scans/<id>/pipeline`
+5. `POST /v1/scans/<scan_id>/complete` once the scan and every still are posted: with a design engine configured
+   (GRAIN_URL) it uploads the scan's session folder as a zip, asks for the judgement against the product's design and
+   publishes the report (no pipeline run); otherwise it queues the pipeline run (stills
+   are already being inspected as they arrive; `make run-workers` runs the worker). `POST /v1/readings` then forwards
+   the reading to the design engine and the report is re-made; `POST /v1/scans/<scan_id>/fix {"message": "..."}`
+   relays the customer's request to the design engine's agent with the scan's context and returns its reply. `GET /v1/scans/<id>/pipeline`
    gives the stage statuses and, after a failure, the stage and the error. `GET /v1/scans/<id>/report` is the
    report (404 while it is made, 409 when the pipeline failed); `GET /v1/scans/<id>/report/export?format=html|md`
    a printable copy.
