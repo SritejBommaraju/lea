@@ -17,6 +17,8 @@ struct RootView: View {
     @State private var showProductCode = false
     /// A scan's files, packed and ready for the share sheet.
     @State private var shared: SharedFile?
+    /// A scan is being packed for sharing; one at a time, since each pack replaces the last one's file.
+    @State private var packing = false
     @State private var askCamera = false
     @State private var starts = 0
     @State private var pendingDelete: SessionRecord?
@@ -260,8 +262,11 @@ struct RootView: View {
 
     /// Packs the scan's folder as one zip, then opens the share sheet.
     private func share(_ record: SessionRecord) {
+        guard !packing else { return }
+        packing = true
         let folder = app.storage.dir(record)
         Task {
+            defer { packing = false }
             if let url = await ScanExport.zip(folder, name: "lea-scan-\(record.id)") {
                 shared = SharedFile(url: url)
             } else {

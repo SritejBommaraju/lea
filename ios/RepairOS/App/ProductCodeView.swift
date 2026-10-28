@@ -160,7 +160,7 @@ struct ProductCodeView: View {
                 }
                 .buttonStyle(.primary)
                 .disabled(busy || pairingCode.isEmpty)
-                Button("Remove this product code") { app.clearProduct(); problem = nil }
+                Button("Remove this product code") { app.clearProduct(); problem = nil; entering = true }
                     .buttonStyle(.textAction)
             } else {
                 Button("Done") { dismiss() }.buttonStyle(.primary)

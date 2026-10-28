@@ -89,11 +89,12 @@ struct FailureWordsTests {
 }
 
 /// Changing from one product to another (Settings > Change product code), and what that does to the server and the pairing.
-@MainActor
+@Suite(.serialized) @MainActor
 struct ChangeProductTests {
     @Test func theNewProductReplacesTheOldAndGoesToTheServer() throws {
+        UserDefaults.standard.removeObject(forKey: "gatewayURL")
         let app = AppState()
-        defer { app.clearProduct(); app.unpair() }
+        defer { app.clearProduct(); app.unpair(); UserDefaults.standard.removeObject(forKey: "gatewayURL") }
         try app.use(try #require(ProductCode.parse("lamp-v2@lea.example.com")))
         #expect(app.product?.product == "lamp-v2")
         #expect(DesignID.current == "lamp-v2")
@@ -104,13 +105,21 @@ struct ChangeProductTests {
     }
 
     @Test func aNewServerUnpairsThePhoneAndASameServerDoesNot() throws {
-        let app = AppState()
-        defer { app.clearProduct(); app.unpair() }
+        // A phone already paired to the first server, before the app state reads it.
+        UserDefaults.standard.set("https://first.example.com", forKey: "gatewayURL")
         try Keychain.setToken("token-for-the-first-server")
+        let app = AppState()
+        defer { app.clearProduct(); app.unpair(); UserDefaults.standard.removeObject(forKey: "gatewayURL") }
+        #expect(app.isPaired)
+
+        // Another product on the same server keeps the pairing.
         try app.use(try #require(ProductCode.parse("lamp-v2@first.example.com")))
-        #expect(!app.isPaired, "a token for another server must not be kept")
-        try Keychain.setToken("token")
-        try app.use(try #require(ProductCode.parse("fan-3@first.example.com")))
-        #expect(Keychain.token() == "token", "the same server keeps its pairing")
+        #expect(app.isPaired && Keychain.token() == "token-for-the-first-server")
+
+        // A product on another server drops it: that token belongs to the first server.
+        try app.use(try #require(ProductCode.parse("fan-3@second.example.com")))
+        #expect(!app.isPaired)
+        #expect(Keychain.token() == nil)
+        #expect(app.gatewayURL == "https://second.example.com")
     }
 }

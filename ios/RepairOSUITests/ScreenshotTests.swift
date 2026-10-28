@@ -43,7 +43,9 @@ final class ScreenshotTests: XCTestCase {
         var taken: [String] = []
         var last = "start"
         var lastChange = Date()
-        while Date().timeIntervalSince(lastChange) < 40 {
+        // Longer than the longest a screen stays up (the report, plus the audit's dwell), so a slow screen never ends the walk.
+        let giveUp: TimeInterval = audit ? 120 : 45
+        while Date().timeIntervalSince(lastChange) < giveUp {
             let screen = current.label
             if screen == "done" { break }
             if screen == last || screen == "start" { Thread.sleep(forTimeInterval: 0.25); continue }
