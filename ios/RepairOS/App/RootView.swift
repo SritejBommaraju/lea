@@ -13,7 +13,12 @@ struct RootView: View {
     @State private var showPairing = false
     @State private var showConsent = false
     @State private var scanAfterConsent = false
-    @State private var error: String?
+    @State private var failure: Failure?
+    @State private var showProductCode = false
+    /// A scan's files, packed and ready for the share sheet.
+    @State private var shared: SharedFile?
+    /// A scan is being packed for sharing; one at a time, since each pack replaces the last one's file.
+    @State private var packing = false
     @State private var askCamera = false
     @State private var starts = 0
     @State private var pendingDelete: SessionRecord?
@@ -29,6 +34,7 @@ struct RootView: View {
     @AppStorage(DemoReplay.enabledKey) private var demoReplay = false
     @AppStorage(DemoReplay.sessionKey) private var demoSession = ""
     @FocusState private var symptomFocused: Bool
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     /// The `--autostart-scan` developer flag skips the consent screen so USB smoke tests run unattended.
     private var devAutostart: Bool { CommandLine.arguments.contains("--autostart-scan") }
@@ -36,7 +42,7 @@ struct RootView: View {
     var body: some View {
         NavigationStack {
             List {
-                HomeHeader(firstRun: app.sessions.isEmpty, settings: { showSettings = true })
+                HomeHeader(firstRun: app.sessions.isEmpty, product: app.product?.product, settings: { showSettings = true })
                     .plainRow(top: Spacing.s)
                 if app.sessions.isEmpty {
                     HowItWorks().plainRow(top: Spacing.xl)
@@ -55,7 +61,8 @@ struct RootView: View {
                         ScanRowButton(record: s, open: { active = $0 }, delete: { pendingDelete = s },
                                       selecting: selection.active, selected: selection.contains(s.id),
                                       toggle: { withAnimation(Motion.fade) { selection.toggle(s.id, selectable: selectable) } },
-                                      select: { withAnimation(Motion.standard) { selection.begin(with: s.id, selectable: selectable) } })
+                                      select: { withAnimation(Motion.standard) { selection.begin(with: s.id, selectable: selectable) } },
+                                      share: { share(s) })
                     }
                 }
             }
@@ -76,6 +83,8 @@ struct RootView: View {
             .onValueChange(of: app.sessions.map(\.id)) { selection.prune(to: selectable) }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPairing) { PairingView() }
+            .sheet(isPresented: $showProductCode) { ProductCodeView() }
+            .sheet(item: $shared, onDismiss: ScanExport.clear) { file in ShareSheet(items: [file.url], finished: { shared = nil }) }
             .fullScreenCover(isPresented: $showConsent) {
                 ConsentView { agreed in
                     showConsent = false
@@ -92,9 +101,11 @@ struct RootView: View {
                 SessionFlowView(record: record)
             }
             .fullScreenCover(item: $replay) { record in DemoReplayFlowView(record: record) }
-            .alert("Can't start", isPresented: .constant(error != nil)) {
-                Button("OK") { error = nil }
-            } message: { Text(error ?? "") }
+            .alert(failure?.title ?? "Can't start", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+                // Where deleting old scans happens: lea's own Settings.
+                if failure?.action == .freeSpace { Button("Open lea Settings") { failure = nil; showSettings = true } }
+                Button("OK", role: .cancel) { failure = nil }
+            } message: { Text(failure?.message ?? "") }
             .task {
                 try? await Task.sleep(for: .milliseconds(300))
                 if app.autostart, active == nil { newScan() }
@@ -143,17 +154,20 @@ struct RootView: View {
     private var startBar: some View {
         GlassBar {
             FieldWell(symbol: "text.bubble") {
-                TextField("What happened? (optional)", text: $symptom)
+                TextField(app.product == nil ? "Describe it (optional)" : "What's wrong? (optional)", text: $symptom)
                     .focused($symptomFocused)
                     .submitLabel(.go)
                     .onSubmit(newScan)
                 StoryMicButton(text: $symptom, gateway: app.isPaired ? app.gateway : nil)   // Voice/: tap to dictate
             }
-            HStack(spacing: Spacing.s) {
+            // Side by side at normal text sizes; one above the other when the words would be cut off.
+            let stacked = typeSize >= .xxxLarge
+            let layout = stacked ? AnyLayout(VStackLayout(spacing: Spacing.s)) : AnyLayout(HStackLayout(spacing: Spacing.s))
+            layout {
                 if app.isPaired, app.gateway != nil {
                     Button(action: talkToLea) { TalkLabel() }
                         .buttonStyle(.primary(.quiet))
-                        .widthFromScreen { width in (width - 2 * Spacing.gutter - Spacing.s) * 0.425 }
+                        .widthFromScreen { width in stacked ? width - 2 * Spacing.gutter : (width - 2 * Spacing.gutter - Spacing.s) * 0.47 }
                         .accessibilityLabel("Talk to Lea")
                         .accessibilityHint("Opens Lea, already listening")
                 }
@@ -163,19 +177,24 @@ struct RootView: View {
             }
             if !app.isPaired {
                 // The only plumbing on Home, and only when it blocks a report.
-                Button { showPairing = true } label: {
-                    Text("Not connected · Set up").font(.footnote.weight(.semibold)).foregroundStyle(Palette.caution)
+                Button { showProductCode = true } label: {
+                    Text(app.product == nil ? "Not connected. Add your product code" : "Not connected. Finish setting up")
+                        .font(.footnote.weight(.semibold)).foregroundStyle(Palette.caution)
+                        .multilineTextAlignment(.center)
                 }
-                .frame(minHeight: 32)
+                .frame(minHeight: 44)
+                .accessibilityHint("Opens setup")
             }
             if demoReplay, !demoSession.isEmpty, let saved = DemoReplay.chosen(app: app) {
                 // Demo only: a quiet text button, never as heavy as Start scan.
                 Button { replay = saved } label: { Label("Replay saved scan", systemImage: "play") }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Palette.accent)
-                    .frame(minHeight: 32)
+                    .frame(minHeight: 44)
             }
         }
+        // The bar stays usable at the largest text sizes: past this size it would fill the screen and hide the scans.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .contentShape(Rectangle())
         // Swipe up stays as an accelerator for the labelled Talk to Lea.
         .gesture(DragGesture(minimumDistance: 20).onEnded { if $0.translation.height < -30 { talkToLea() } })
@@ -241,6 +260,22 @@ struct RootView: View {
         }
     }
 
+    /// Packs the scan's folder as one zip, then opens the share sheet.
+    private func share(_ record: SessionRecord) {
+        guard !packing else { return }
+        packing = true
+        let folder = app.storage.dir(record)
+        Task {
+            defer { packing = false }
+            if let url = await ScanExport.zip(folder, name: "lea-scan-\(record.id)") {
+                shared = SharedFile(url: url)
+            } else {
+                failure = Failure(title: "Couldn't pack the scan files",
+                                  message: "The phone may be out of space. Free some up, then try again.", action: .freeSpace)
+            }
+        }
+    }
+
     private func scanFromIntent() {
         guard active == nil, replay == nil, let story = IntentInbox.shared.take() else { return }
         symptom = story
@@ -256,10 +291,12 @@ struct RootView: View {
         }
     }
 
+    /// First run: ask for the product code once. The code carries the server, so nobody types an address; the
+    /// address form is still one tap away on that screen.
     private func offerPairingOnce() {
         if !app.isPaired && !UserDefaults.standard.bool(forKey: "pairingOffered") {
             UserDefaults.standard.set(true, forKey: "pairingOffered")
-            showPairing = true
+            showProductCode = true
         }
     }
 
@@ -276,7 +313,7 @@ struct RootView: View {
             return
         }
         guard app.freeBytes >= AppState.minimumFreeBytes else {
-            error = "Free up at least 1 GB on the phone first (\(app.freeBytes >> 20) MB free)."
+            failure = .storageLow(freeBytes: app.freeBytes, needed: AppState.minimumFreeBytes)
             return
         }
         do {
@@ -285,7 +322,7 @@ struct RootView: View {
                 ?? app.storage.newSession(symptom: symptom, engine: app.capabilities.engine)
             symptom = ""
         } catch {
-            self.error = error.localizedDescription
+            self.failure = Failure.from(error)
         }
     }
 }
@@ -305,6 +342,8 @@ private extension View {
 /// title and the line from `main`.
 private struct HomeHeader: View {
     let firstRun: Bool
+    /// The product the person added a code for; the header names it instead of asking what the object is.
+    var product: String?
     let settings: () -> Void
 
     var body: some View {
@@ -324,8 +363,9 @@ private struct HomeHeader: View {
             }
             if firstRun {
                 VStack(alignment: .leading, spacing: Spacing.s) {
-                    Text("Find what's broken").display(.hero).foregroundStyle(Palette.ink)
-                    Text("Walk around it with your phone. Lea shows you what looks wrong, and where.")
+                    Text(product == nil ? "Find what's broken" : "Check your \(product ?? "product")").display(.hero).foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Walk around it with your phone. lea shows what looks wrong, and where.")
                         .font(.body).foregroundStyle(Palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -379,11 +419,11 @@ private struct TalkLabel: View {
                 LeaMarkView(size: 24).accessibilityHidden(true)
             } else {
                 Image(systemName: wake.mode == .followUp ? "ear.badge.waveform" : "ear")
-                    .font(.system(size: 17)).foregroundStyle(Palette.accent)
+                    .font(.body).foregroundStyle(Palette.accent)
                     .frame(width: 24, height: 24)
                     .accessibilityLabel(wake.mode == .followUp ? "Lea is listening" : "Listening for Hey Lea")
             }
-            Text("Talk to Lea")
+            Text("Talk to Lea").lineLimit(1).minimumScaleFactor(0.85)   // whole on the narrowest phone
         }
     }
 }
@@ -391,10 +431,10 @@ private struct TalkLabel: View {
 /// How it works: the four steps from `main` as a numbered index (the numbers are a real sequence).
 private struct HowItWorks: View {
     private let steps: [(String, String)] = [
-        ("Lock on", "Tap the object once."),
-        ("Walk around it", "The dome fills in as photos take themselves."),
-        ("A few close-ups", "Sharp shots of the parts that matter."),
-        ("Read the report", "Most likely problems first, with photos."),
+        ("Point at it", "Aim the phone at the product and tap it once."),
+        ("Walk around it", "Go slowly. The ring fills in as the phone takes photos."),
+        ("Take a few close-ups", "The phone asks for sharp shots of the parts it wants to check."),
+        ("Read the report", "The most likely problem comes first, with photos. Add a meter reading if it asks."),
     ]
     @ScaledMetric(relativeTo: .subheadline) private var numberColumn: CGFloat = 20
 
@@ -431,33 +471,50 @@ struct CameraPermissionView: View {
     private var denied: Bool { AVCaptureDevice.authorizationStatus(for: .video) == .denied }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Spacing.l) {
-            Spacer()
-            Image(systemName: "camera.viewfinder").font(.system(size: 34, weight: .regular)).foregroundStyle(Palette.secondary)
-                .accessibilityHidden(true)
-            Text(denied ? "Camera is off for lea" : "lea needs the camera").display(.screen).foregroundStyle(Palette.ink)
-            Text(denied ? "Turn on Camera for lea in Settings to scan."
-                        : "It scans the object with the camera (and LiDAR when the phone has it) and takes close-ups for the report.")
-                .font(.body).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button {
-                if denied {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
-                    done(false)
-                } else {
-                    Task { done(await AVCaptureDevice.requestAccess(for: .video)) }
-                }
-            } label: {
-                Text(denied ? "Open Settings" : "Allow camera")
+        ScrollView {
+            VStack(alignment: .leading, spacing: Spacing.l) {
+                Image(systemName: "camera.viewfinder").font(.largeTitle).foregroundStyle(Palette.secondary)
+                    .accessibilityHidden(true)
+                Text(denied ? "Camera is off for lea" : "lea needs the camera").display(.screen).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                Text(denied ? "lea scans with the camera. Turn Camera on for lea in Settings, then come back."
+                            : "lea looks at your product through the camera, with LiDAR if the phone has it, and takes close-ups for the report.")
+                    .font(.body).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.primary)
-            Button("Not now") { done(false) }
-                .buttonStyle(.textAction)
-                .frame(maxWidth: .infinity)
+            .padding(.horizontal, Spacing.gutter + 4)
+            .padding(.top, Spacing.xxl * 2)
+            .padding(.bottom, Spacing.xl)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, Spacing.gutter + 4)
-        .padding(.bottom, Spacing.s)
+        .safeAreaInset(edge: .bottom) {
+            VStack(spacing: Spacing.s) {
+                Button {
+                    if denied {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                        done(false)
+                    } else {
+                        Task { done(await AVCaptureDevice.requestAccess(for: .video)) }
+                    }
+                } label: {
+                    Text(denied ? "Open Settings" : "Allow camera")
+                }
+                .buttonStyle(.primary)
+                Button("Not now") { done(false) }
+                    .buttonStyle(.textAction)
+                    .frame(maxWidth: .infinity)
+            }
+            .padding(.horizontal, Spacing.gutter + 4)
+            .padding(.bottom, Spacing.s)
+            .background(Palette.canvas)
+        }
         .background(Palette.canvas.ignoresSafeArea())
         .presentationDetents([.large])
     }
+}
+
+/// A file handed to the share sheet.
+struct SharedFile: Identifiable {
+    let id = UUID()
+    let url: URL
 }

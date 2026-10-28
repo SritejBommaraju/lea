@@ -19,6 +19,10 @@ on:
         description: "Also build a signed .ipa (needs the APPLE_* repository secrets)"
         type: boolean
         default: false
+      audit:
+        description: "Screens job: also run Xcode's accessibility audit on the small phone at the largest text (adds about 10 minutes)"
+        type: boolean
+        default: false
       export_method:
         description: "Export method for the .ipa"
         type: choice
@@ -29,7 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-${{ github.ref }}
+  # One run per branch: a push and the pull request it belongs to would otherwise both run, twice the macOS load.
+  group: ios-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -75,6 +80,134 @@ jobs:
           path: |
             ${{ runner.temp }}/RepairOS.xcresult
             ${{ runner.temp }}/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Screenshots of every screen, so the app can be looked at from Windows: the UI tests in ios/RepairOSUITests open each
+  # screen in a fixed demo state on two simulators (the biggest and the smallest iPhone on the image), in light and
+  # dark, and once at the largest accessibility text size. Runs beside `test`, never after it.
+  screens:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Select the newest Xcode
+        run: |
+          NEWEST=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          sudo xcode-select -s "$NEWEST/Contents/Developer"
+          xcodebuild -version
+
+      - name: Metal toolchain (the app has .metal shaders)
+        run: xcodebuild -downloadComponent MetalToolchain || echo "::warning::MetalToolchain download failed; continuing in case the image has it"
+
+      - name: Pick the big and the small simulator
+        run: |
+          LIST=$(xcrun simctl list devices available)
+          echo "$LIST"
+          mkdir -p "$RUNNER_TEMP/screens"; echo "$LIST" > "$RUNNER_TEMP/screens/devices.txt"
+          uuid() { grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1; }
+          BIG=""
+          for n in "iPhone 18 Pro" "iPhone 17 Pro" "iPhone 18" "iPhone 17" "iPhone 16 Pro"; do
+            BIG=$(echo "$LIST" | grep -F " $n (" | uuid || true); [ -n "$BIG" ] && BIG_NAME="$n" && break
+          done
+          if [ -z "$BIG" ]; then BIG=$(echo "$LIST" | grep -E '^ +iPhone' | tail -1 | uuid || true); BIG_NAME="iPhone"; fi
+          SMALL=""
+          for n in "iPhone SE (3rd generation)" "iPhone 16e" "iPhone 17e" "iPhone 15" "iPhone 17"; do
+            SMALL=$(echo "$LIST" | grep -F " $n (" | uuid || true); [ -n "$SMALL" ] && SMALL_NAME="$n" && break
+          done
+          test -n "$BIG" && test -n "$SMALL" || { echo "no iPhone simulators on this image"; exit 1; }
+          label() { echo "$1" | tr -c 'A-Za-z0-9\n' '-' | sed 's/--*/-/g; s/-$//'; }
+          echo "BIG=$BIG" >> "$GITHUB_ENV"
+          echo "SMALL=$SMALL" >> "$GITHUB_ENV"
+          echo "BIG_LABEL=$(label "$BIG_NAME")" >> "$GITHUB_ENV"
+          echo "SMALL_LABEL=$(label "$SMALL_NAME")" >> "$GITHUB_ENV"
+          echo "Big: $BIG_NAME ($BIG). Small: $SMALL_NAME ($SMALL)."
+
+      - name: Start booting both simulators (they finish while the app builds)
+        run: |
+          # A cold simulator takes about seven minutes to boot on this image, and the first test run on one that was booted a moment
+          # earlier stalled. Starting the boot here, before the build, hides that time; each run waits for its simulator.
+          xcrun simctl boot "$BIG" || true
+          xcrun simctl boot "$SMALL" || true
+
+      - name: Build the app and the UI tests
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project ios/RepairOS.xcodeproj -scheme RepairOSScreens \
+            -destination "id=$BIG" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Take the screenshots
+        timeout-minutes: 28
+        env:
+          AUDIT: ${{ inputs.audit && '1' || '0' }}
+        run: |
+          OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
+          mkdir -p "$OUT" "$RES"
+          # Keep this step's own output next to the pictures, so a slow run can be read afterwards.
+          exec > >(tee "$RES/job.log") 2>&1
+          # udid device-label appearance text-size-name simctl-size audit
+          run_config() {
+            local udid="$1" label="$2" appearance="$3" text="$4" size="$5" audit="$6"
+            local name="$label-$appearance-$text"
+            echo "[$(date +%T)] start $name"
+            xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$udid" || true
+            xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 || true
+            xcrun simctl ui "$udid" appearance "$appearance" || true
+            xcrun simctl ui "$udid" content_size "$size" || true
+            # A test runner that stalls while starting (seen on the first run after a cold boot) is stopped after 11 minutes
+            # and tried once more; a normal run takes 2 to 4 minutes.
+            for attempt in 1 2; do
+              rm -rf "$RES/$name.xcresult"
+              env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text"                   TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit"                 xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens                   -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd"                   -resultBundlePath "$RES/$name.xcresult"                   CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 &
+              local pid=$!
+              local waited=0
+              # An audited run takes about 12 minutes by itself, so its limit is longer.
+              limit=660; [ "$audit" = 1 ] && limit=1500
+              while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt "$limit" ]; do sleep 5; waited=$((waited + 5)); done
+              if kill -0 "$pid" 2>/dev/null; then echo "$name: stopped after ${waited}s (attempt $attempt)"; pkill -P "$pid" || true; kill "$pid" || true; fi
+              if wait "$pid"; then rm -f "$RES/$name.failed"; break; else touch "$RES/$name.failed"; echo "tests failed in $name (attempt $attempt)"; fi
+              mv "$RES/$name.log" "$RES/$name.attempt$attempt.log" 2>/dev/null || true
+            done
+            echo "[$(date +%T)] done $name"
+          }
+          # The two phones run side by side; each walks its own appearances one after the other.
+          ( run_config "$BIG" "$BIG_LABEL" light default large 0
+            run_config "$BIG" "$BIG_LABEL" dark default large 0
+            run_config "$BIG" "$BIG_LABEL" light text-xxxl accessibility-extra-extra-extra-large 0 ) &
+          ( run_config "$SMALL" "$SMALL_LABEL" light default large 0
+            run_config "$SMALL" "$SMALL_LABEL" dark default large 0
+            run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large "$AUDIT" ) &
+          wait
+          echo "[$(date +%T)] all configurations done"
+
+      - name: Check the pictures
+        if: always()
+        timeout-minutes: 3
+        run: |
+          OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
+          for f in "$RES"/*.log; do echo "::group::$(basename "$f")"; grep -E "Test Case .*(passed|failed)|error:|Executed|TEST (SUCCEEDED|FAILED)" "$f" | tail -40; echo "::endgroup::"; done
+          N=$(ls "$OUT"/*.png 2>/dev/null | wc -l | tr -d ' ')
+          echo "Screenshots: $N (14 screens, 6 configurations: 84)"
+          ls "$RES"/*.failed >/dev/null 2>&1 && { echo "::error::a screens run failed, see the logs above"; exit 1; }
+          [ "$N" -ge 84 ] || { echo "::error::only $N of 84 screenshots"; exit 1; }
+          exit 0
+
+      - name: Shut the simulators down
+        if: always()
+        timeout-minutes: 3
+        continue-on-error: true
+        run: xcrun simctl shutdown all
+
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2 (MIT)
+        with:
+          name: screens
+          path: |
+            ${{ runner.temp }}/screens
+            ${{ runner.temp }}/results/*.log
           if-no-files-found: warn
           retention-days: 14
 

@@ -16,14 +16,17 @@ struct PrimaryButtonStyle: ButtonStyle {
     var kind: Kind = .accent
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.buttonLabel)
             .labelStyle(.titleAndIcon)
             .foregroundStyle(foreground)
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
+            // One line at normal sizes; at accessibility sizes the label wraps instead of being cut off.
+            .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+            .multilineTextAlignment(.center)
+            .minimumScaleFactor(typeSize.isAccessibilitySize ? 1 : 0.8)
             .padding(.horizontal, Spacing.xl)
             .frame(maxWidth: .infinity, minHeight: 56)
             .background { background }
@@ -345,11 +348,12 @@ struct ToneTag: View {
     var tone: Tone = .neutral
     var symbol: String?
     var dashed = false
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         HStack(spacing: 4) {
             if let symbol { Image(systemName: symbol).imageScale(.small).accessibilityHidden(true) }
-            Text(text).lineLimit(1)
+            Text(text).lineLimit(typeSize.isAccessibilitySize ? 4 : 1)
         }
         .font(.label)
         .foregroundStyle(tone.color)

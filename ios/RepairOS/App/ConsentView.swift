@@ -3,7 +3,7 @@ import SwiftUI
 /// First-run consent: where the photos go before anyone scans. Shown once (and again from Settings, read-only).
 /// Bump `Consent.version` when what it says changes, so everyone sees the new wording.
 enum Consent {
-    static let version = 2
+    static let version = 3
     static let key = "consent.accepted.version"
 
     static var accepted: Bool { UserDefaults.standard.integer(forKey: key) >= version }
@@ -19,24 +19,24 @@ struct ConsentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: Spacing.xl) {
                 VStack(alignment: .leading, spacing: Spacing.m) {
-                    Text("Your photos, and who sees them").display(.screen).foregroundStyle(Palette.ink)
+                    Text("Where your photos go").display(.screen).foregroundStyle(Palette.ink)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityAddTraits(.isHeader)
-                    Text("lea needs a few photos of the broken thing to work out what's wrong. Here is where they go.")
+                    Text("lea needs photos of your product to work out what's wrong. Here is who gets them.")
                         .font(.body).foregroundStyle(Palette.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 GroupedList {
                     ConsentRow(symbol: Symbol.mac, title: "First, to the lea server",
-                               text: "Photos and the scan go to the lea server this phone is connected to.")
-                    ConsentRow(symbol: "sparkle.magnifyingglass", title: "Then analysed by Claude and Jev",
-                               text: "The server sends the photos to Anthropic (Claude) and TypeSafe (Jev), which look for problems and help write the report.")
-                    ConsentRow(symbol: "location.slash", title: "Location and photo details removed",
-                               text: "EXIF data, including GPS location, is removed from the photos before they are analysed.")
-                    ConsentRow(symbol: "eye", title: "Lea sees the camera when you talk to her",
-                               text: "While you scan and talk to Lea, a few camera frames go with your question so she can see what you mean. Only while you are talking with her (\"Lea is looking\" shows), never before \"Hey Lea\".")
+                               text: "Your photos and the scan go to the lea server this phone is connected to.")
+                    ConsentRow(symbol: "sparkle.magnifyingglass", title: "Then checked by AI services",
+                               text: "The server shares the photos with the AI services it uses to look for problems and write the report. Ask whoever runs your server which ones.")
+                    ConsentRow(symbol: "location.slash", title: "Your location is not sent",
+                               text: "The photo details that can include where you were, such as GPS, are removed before anyone checks the photos.")
+                    ConsentRow(symbol: "eye", title: "Lea sees what you point at when you talk to her",
+                               text: "While you scan and talk to Lea, a few camera frames go with your question so she can see what you mean. This only happens while you are talking with her. \"Lea is looking\" shows on screen, and nothing is sent before you say \"Hey Lea\".")
                     ConsentRow(symbol: Symbol.privacy, title: "Only what you scan",
-                               text: "Nothing is captured until you start a scan. Keep faces, papers and screens out of the frame.")
+                               text: "Nothing is captured until you start a scan. Keep faces, papers and screens out of the picture.")
                 }
             }
             .padding(.horizontal, Spacing.gutter)

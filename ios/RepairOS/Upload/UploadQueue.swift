@@ -157,7 +157,7 @@ final class UploadQueue: ObservableObject {
                         _ = error
                     } catch {
                         lastError = Self.words(error)
-                        diag.log("upload_error", ["item": "\(item)", "message": lastError ?? "", "body": Self.body(error)])
+                        diag.log("upload_error", ["item": "\(item)", "message": lastError ?? "", "error": "\(error)", "body": Self.body(error)])
                         return
                     }
                 }
@@ -203,9 +203,9 @@ final class UploadQueue: ObservableObject {
         diag.log("upload_at_done", ["pending": pending.count, "frames_left": ahead.count, "bytes_so_far": bytesSent])
     }
 
+    /// What the screen says when an upload stops (`Failure`): what happened, then what to do. The raw error is logged.
     static func words(_ error: Error) -> String {
-        if error is URLError { return "Can't reach the lea server: check the connection in Settings." }
-        return error.localizedDescription
+        Failure.from(error, context: .upload).text
     }
 
     static func body(_ error: Error) -> String {

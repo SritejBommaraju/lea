@@ -5,7 +5,7 @@ struct PairingView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var code = ""
     @State private var busy = false
-    @State private var error: String?
+    @State private var failure: Failure?
     @State private var paired = 0
 
     var body: some View {
@@ -15,26 +15,25 @@ struct PairingView: View {
                     VStack(alignment: .leading, spacing: Spacing.s) {
                         Text("Connect to the lea server").display(.screen).foregroundStyle(Palette.ink)
                             .accessibilityAddTraits(.isHeader)
-                        Text("lea sends your scan to the lea server, which writes the report. Enter its address and pairing code.")
+                        Text("lea sends your scan to the lea server, which writes the report. Enter the server's address and the pairing code. If your product came with a code, close this and use Add product code instead.")
                             .font(.body).foregroundStyle(Palette.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     VStack(alignment: .leading, spacing: Spacing.l) {
                         LabeledWell("Server address") {
-                            TextField("192.168.1.10:8000", text: $app.gatewayURL)
+                            TextField("lea.example.com or 192.168.1.10:8000", text: $app.gatewayURL)
                                 .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         }
                         LabeledWell("Pairing code") {
-                            SecureField("Required", text: $code)   // masked as you type
+                            SecureField("Pairing code", text: $code)   // masked as you type
                         }
-                        Text("For developers: on the server, run `make run-gateway`. The code is REPAIROS_PAIRING_CODE in backend/.env.")
+                        Text("The pairing code is on the paperwork that came with the product, or from the person who set up the server.")
                             .font(.footnote).foregroundStyle(Palette.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if let error {
-                        Label(error, systemImage: "exclamationmark.circle")
-                            .font(.callout).foregroundStyle(Palette.danger)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if let failure {
+                        // Only an action this screen can run: the address and the code are right above.
+                        FailureCard(failure: failure.keeping([.retry])) { _ in Task { await pair() } }
                     }
                 }
                 .padding(.horizontal, Spacing.gutter)
@@ -49,12 +48,13 @@ struct PairingView: View {
                     }
                     .buttonStyle(.primary)
                     .disabled(busy || code.isEmpty || app.gatewayURL.isEmpty)
+                    .accessibilityHint(code.isEmpty || app.gatewayURL.isEmpty ? "Enter the server address and the pairing code first" : "")
                     .haptic(.success, trigger: paired)
                 }
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Skip") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Not now") { dismiss() } }
             }
         }
         .tint(Palette.accent)
@@ -62,14 +62,14 @@ struct PairingView: View {
 
     private func pair() async {
         busy = true
-        error = nil
+        failure = nil
         defer { busy = false }
         do {
             try await app.pair(code: code)
             paired += 1
             dismiss()
         } catch {
-            self.error = error.localizedDescription
+            failure = Failure.from(error, context: .pairing)
         }
     }
 }
@@ -79,7 +79,10 @@ struct SettingsView: View {
     @ObservedObject private var voice = LeaVoice.shared
     @Environment(\.dismiss) private var dismiss
     @State private var showPairing = false
+    @State private var showProductCode = false
     @State private var showConsent = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 28
     @State private var health: Result<Void, Error>?
     @State private var checking = false
     @State private var used: Int64?
@@ -93,18 +96,18 @@ struct SettingsView: View {
             Form {
                 Group {
                     Section {
-                        HStack(spacing: Spacing.m) {
+                        HStack(alignment: .top, spacing: Spacing.m) {
                             Image(systemName: Symbol.mac).foregroundStyle(app.isPaired ? Palette.good : Palette.caution)
-                                .frame(width: 28).accessibilityHidden(true)
+                                .frame(width: iconWidth).accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(app.isPaired ? "Connected" : "Not connected").font(.body.weight(.semibold)).foregroundStyle(Palette.ink)
-                                Text(app.gatewayURL.isEmpty ? "No address set" : app.gatewayURL)
-                                    .font(.footnote).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+                                Text(app.gatewayURL.isEmpty ? "No server address yet" : app.gatewayURL)
+                                    .font(.footnote).foregroundStyle(Palette.secondary).lineLimit(typeSize.isAccessibilitySize ? 4 : 1).truncationMode(.middle)
                             }
                             Spacer(minLength: 0)
                             if let health { healthPill(health) }
                         }
-                        Button(app.isPaired ? "Connect again" : "Connect to lea server") { showPairing = true }
+                        Button(app.isPaired ? "Connect again" : "Connect to the lea server") { showPairing = true }
                         Button { Task { await check() } } label: {
                             HStack {
                                 Text("Check connection")
@@ -114,14 +117,23 @@ struct SettingsView: View {
                         }
                         .disabled(checking || app.gateway == nil)
                     } header: { Text("Server") } footer: {
-                        Text("Scans stay on the phone until it is paired.")
+                        Text(healthFooter)
                     }
 
                     Section {
-                        TextField("Design id on the product", text: $designID)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        if let product = app.product {
+                            LabeledContent("Product", value: product.product)
+                            Button("Change product code") { showProductCode = true }
+                            Button("Remove product code", role: .destructive) { app.clearProduct() }
+                        } else {
+                            Button("Add product code") { showProductCode = true }
+                            TextField("Or type the design id", text: $designID)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        }
                     } header: { Text("Product") } footer: {
-                        Text("The design id printed on the product. Lea judges each scan against that design.")
+                        Text(app.product == nil
+                             ? "The code that came with your product. lea checks each scan against that product's design."
+                             : "lea checks each scan against this product's design.")
                     }
 
                     Section {
@@ -129,13 +141,13 @@ struct SettingsView: View {
                                                                         set: { WakeListener.shared.enabled = $0 }))
                         Toggle("Lea speaks", isOn: Binding(get: { !voice.muted }, set: { voice.muted = !$0 }))
                     } header: { Text("Voice") } footer: {
-                        Text("\u{201C}Hey Lea\u{201D} is heard on this phone only, while lea is open. Nothing is sent until you say it.")
+                        Text("\u{201C}Hey Lea\u{201D} is heard on this phone only, and only while lea is open. Nothing is sent until you say it.")
                     }
 
                     Section {
                         NavigationLink { UsageView() } label: {
                             SettingsRow(symbol: "gauge.with.dots.needle.33percent", tone: .accent, title: "Usage",
-                                        detail: "Calls and estimated cost today, on the server")
+                                        detail: "Calls and estimated cost over the last day")
                         }
                         .disabled(app.gateway == nil || !app.isPaired)
                     }
@@ -143,7 +155,7 @@ struct SettingsView: View {
                     Section("Privacy") {
                         Button { showConsent = true } label: {
                             SettingsRow(symbol: "photo.badge.checkmark", tone: .accent, title: "Where photos go",
-                                        detail: "The lea server, then Claude and Jev")
+                                        detail: "To the lea server, then its AI services")
                         }
                         .foregroundStyle(Palette.ink)
                     }
@@ -154,7 +166,7 @@ struct SettingsView: View {
                         Button("Delete all scans", role: .destructive) { confirmDeleteAll = true }
                             .disabled(ScanLibrary.deletableCount(app: app) == 0)
                     } header: { Text("Storage") } footer: {
-                        Text("Deleting removes only the copy on this phone; the server keeps its copy.")
+                        Text("Deleting removes only the copy on this phone. The server keeps its copy.")
                     }
 
                     Section("This phone") {
@@ -190,6 +202,7 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
             }
             .sheet(isPresented: $showPairing) { PairingView() }
+            .sheet(isPresented: $showProductCode) { ProductCodeView(replacing: app.product != nil) }
             .sheet(isPresented: $showConsent) { ConsentView() }
             .confirmationDialog(deleteAllTitle, isPresented: $confirmDeleteAll, titleVisibility: .visible) {
                 Button("Delete \(ScanLibrary.deletableCount(app: app)) scans", role: .destructive) {
@@ -207,6 +220,12 @@ struct SettingsView: View {
         .tint(Palette.accent)
     }
 
+    /// Under the Server section: what the last check found, in words, else the one fact that matters offline.
+    private var healthFooter: String {
+        if case .failure(let error)? = health { return Failure.from(error).text }
+        return "Scans stay on the phone until it is connected."
+    }
+
     private var deleteAllTitle: String {
         "Delete all \(ScanLibrary.deletableCount(app: app)) scans\(used.map { " (\(ScanLibrary.size($0)))" } ?? "")?"
     }
@@ -214,7 +233,7 @@ struct SettingsView: View {
     @ViewBuilder private func healthPill(_ r: Result<Void, Error>) -> some View {
         switch r {
         case .success: StatusPill(text: "Online", symbol: "checkmark", tone: .good)
-        case .failure: StatusPill(text: "Can't reach", symbol: "xmark", tone: .danger)
+        case .failure: StatusPill(text: "Can't reach", symbol: "xmark", tone: .caution)
         }
     }
 
@@ -241,11 +260,12 @@ private struct SettingsRow: View {
     let tone: Tone
     let title: String
     var detail: String?
+    @ScaledMetric(relativeTo: .body) private var iconWidth: CGFloat = 28
 
     var body: some View {
         HStack(spacing: Spacing.m) {
             Image(systemName: symbol).foregroundStyle(tone == .neutral ? Palette.secondary : tone.color)
-                .frame(width: 28).accessibilityHidden(true)
+                .frame(width: iconWidth).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title).foregroundStyle(Palette.ink)
                 if let detail { Text(detail).font(.footnote).foregroundStyle(Palette.secondary) }
@@ -308,7 +328,7 @@ struct DiagnosticsView: View {
                                 .font(.caption.monospaced())
                         }
                     } else {
-                        Text("Not measured yet: the first close-up measures it.").font(.callout).foregroundStyle(Palette.secondary)
+                        Text("Not measured yet. The first close-up measures it.").font(.callout).foregroundStyle(Palette.secondary)
                     }
                     Button(app.probing ? "Measuring…" : "Measure now") { Task { await app.runStillProbe() } }
                         .disabled(app.probing)
@@ -335,5 +355,5 @@ struct NoticesView: View {
     }
 
     static let text: String = Bundle.main.url(forResource: "THIRD_PARTY_NOTICES", withExtension: "md")
-        .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "Notices file missing from the app bundle."
+        .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "The licence list is missing from this copy of the app."
 }
