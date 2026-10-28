@@ -68,6 +68,8 @@ struct ScanRowButton: View {
     var selected = false
     var toggle: () -> Void = {}
     var select: () -> Void = {}
+    /// Hands the scan's folder to someone who can look at it (the system share sheet).
+    var share: () -> Void = {}
     @EnvironmentObject private var app: AppState
 
     var body: some View {
@@ -103,6 +105,7 @@ struct ScanRowButton: View {
             .contextMenu {
                 if !selecting {
                     Button("Select", systemImage: "checkmark.circle", action: select).disabled(!deletable)
+                    Button("Share scan files", systemImage: "square.and.arrow.up", action: share)
                     Button("Delete scan", systemImage: "trash", role: .destructive, action: delete).disabled(!deletable)
                 }
             }
@@ -205,11 +208,11 @@ struct SessionRow: View {
         } else {
             switch record.status {
             case .capturing: ToneTag(text: "Not finished", tone: .neutral)
-            case .captured: ToneTag(text: "Captured", tone: .neutral)
-            case .uploading: ToneTag(text: "Uploading", tone: .neutral)
-            case .uploaded: ToneTag(text: "Analysing", tone: .neutral)
+            case .captured: ToneTag(text: "Saved on this phone", tone: .neutral)
+            case .uploading: ToneTag(text: "Sending to the server", tone: .neutral)
+            case .uploaded: ToneTag(text: "Being checked", tone: .neutral)
             case .reported: ToneTag(text: "Report ready", tone: .neutral)
-            case .failed: ToneTag(text: "Failed", tone: .danger, symbol: "exclamationmark.circle")
+            case .failed: ToneTag(text: "Stopped. Open it to try again", tone: .caution, symbol: "exclamationmark.circle")
             }
         }
     }

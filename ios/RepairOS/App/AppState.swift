@@ -15,7 +15,10 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(gatewayURL, forKey: "gatewayURL") }
     }
 
-    var isPaired: Bool { Keychain.token() != nil }
+    /// This phone holds a device token for the server (set by `pair`, cleared by `unpair`).
+    @Published private(set) var isPaired = Keychain.token() != nil
+    /// The product code the person scanned or typed (which server, which product), if any.
+    @Published private(set) var product: ProductCode? = ProductCode.stored()
 
     let storage = ScanStorage()
     let launchedAt = Date()
@@ -106,11 +109,41 @@ final class AppState: ObservableObject {
     }
 
     func pair(code: String) async throws {
-        guard let gateway else { throw GatewayError.message("Set the gateway address first.") }
+        guard let gateway else { throw GatewayError.message("There is no server address yet. Add your product code, or type the address.") }
         let token = try await gateway.pair(code: code, name: capabilities.model)
         try Keychain.setToken(token)
+        isPaired = true
         Task { await LeaVoice.shared.refresh() }
     }
 
-    func unpair() { Keychain.deleteToken() }
+    func unpair() {
+        Keychain.deleteToken()
+        isPaired = false
+    }
+
+    /// Remembers a product code: its server becomes the gateway (a phone paired to a different server is unpaired, since
+    /// its token belongs to the old one) and its product id goes to the server with every new scan.
+    func use(_ code: ProductCode) throws {
+        try Keychain.setProduct(code)
+        product = code
+        if Self.sameServer(gatewayURL, code.gateway) { return }
+        gatewayURL = code.gateway
+        if isPaired { unpair() }
+    }
+
+    /// Forgets the product code (the server and the pairing stay).
+    func clearProduct() {
+        Keychain.deleteProduct()
+        product = nil
+    }
+
+    nonisolated static func sameServer(_ a: String, _ b: String) -> Bool {
+        func norm(_ s: String) -> String {
+            var t = s.trimmingCharacters(in: .whitespaces).lowercased()
+            if !t.isEmpty, !t.contains("://") { t = "http://" + t }
+            while t.hasSuffix("/") { t.removeLast() }
+            return t
+        }
+        return norm(a) == norm(b)
+    }
 }

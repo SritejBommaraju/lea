@@ -100,9 +100,10 @@ jobs:
         run: |
           LIST=$(xcrun simctl list devices available)
           echo "$LIST"
+          mkdir -p "$RUNNER_TEMP/screens"; echo "$LIST" > "$RUNNER_TEMP/screens/devices.txt"
           uuid() { grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}' | head -1; }
           BIG=""
-          for n in "iPhone 17 Pro" "iPhone 16 Pro" "iPhone 15 Pro"; do
+          for n in "iPhone 17 Pro" "iPhone 17" "iPhone 16 Pro" "iPhone 16" "iPhone 15 Pro"; do
             BIG=$(echo "$LIST" | grep -F " $n (" | uuid || true); [ -n "$BIG" ] && BIG_NAME="$n" && break
           done
           if [ -z "$BIG" ]; then BIG=$(echo "$LIST" | grep -E '^ +iPhone' | tail -1 | uuid || true); BIG_NAME="iPhone"; fi
@@ -129,39 +130,36 @@ jobs:
         run: |
           OUT="$RUNNER_TEMP/screens"; RES="$RUNNER_TEMP/results"
           mkdir -p "$OUT" "$RES"
-          FAILED=0
           # udid device-label appearance text-size-name simctl-size audit
           run_config() {
             local udid="$1" label="$2" appearance="$3" text="$4" size="$5" audit="$6"
-            echo "::group::$label $appearance $text"
+            local name="$label-$appearance-$text"
+            echo "[$(date +%T)] start $name"
             xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$udid" || true
             xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 --cellularBars 4 --wifiBars 3 || true
             xcrun simctl ui "$udid" appearance "$appearance" || true
             xcrun simctl ui "$udid" content_size "$size" || true
-            local name="$label-$appearance-$text"
             rm -rf "$RES/$name.xcresult"
-            env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text" \
-                TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit" \
-              xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens \
-                -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd" \
-                -resultBundlePath "$RES/$name.xcresult" \
-                CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 || { echo "tests failed in $name"; FAILED=1; }
-            tail -25 "$RES/$name.log"
-            # Backup copy of the attachments straight from the result bundle (Xcode 16 and later).
-            mkdir -p "$OUT/raw/$name"
-            xcrun xcresulttool export attachments --path "$RES/$name.xcresult" --output-path "$OUT/raw/$name" || echo "xcresulttool export attachments failed for $name"
-            echo "::endgroup::"
+            env TEST_RUNNER_SCREENS_DEVICE="$label" TEST_RUNNER_SCREENS_APPEARANCE="$appearance" TEST_RUNNER_SCREENS_TEXT="$text"                 TEST_RUNNER_SCREENS_OUT="$OUT" TEST_RUNNER_SCREENS_AUDIT="$audit"               xcodebuild test-without-building -project ios/RepairOS.xcodeproj -scheme RepairOSScreens                 -destination "id=$udid" -configuration Debug -derivedDataPath "$RUNNER_TEMP/dd"                 -resultBundlePath "$RES/$name.xcresult"                 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" > "$RES/$name.log" 2>&1 || { echo "tests failed in $name"; touch "$RES/$name.failed"; }
+            echo "[$(date +%T)] done $name"
           }
-          run_config "$BIG"   "$BIG_LABEL"   light default            large 1
-          run_config "$BIG"   "$BIG_LABEL"   dark  default            large 0
-          run_config "$BIG"   "$BIG_LABEL"   light text-xxxl          accessibility-extra-extra-extra-large 0
-          xcrun simctl shutdown "$BIG" || true
-          run_config "$SMALL" "$SMALL_LABEL" light default            large 0
-          run_config "$SMALL" "$SMALL_LABEL" dark  default            large 0
-          run_config "$SMALL" "$SMALL_LABEL" light text-xxxl          accessibility-extra-extra-extra-large 1
-          xcrun simctl shutdown "$SMALL" || true
-          echo "Screenshots:"; ls "$OUT"/*.png | wc -l
-          [ "$FAILED" = 0 ] || exit 1
+          # The two phones run side by side; each walks its own appearances one after the other.
+          ( run_config "$BIG" "$BIG_LABEL" light default large 1
+            run_config "$BIG" "$BIG_LABEL" dark default large 0 ) &
+          ( run_config "$SMALL" "$SMALL_LABEL" light default large 0
+            run_config "$SMALL" "$SMALL_LABEL" dark default large 0
+            run_config "$SMALL" "$SMALL_LABEL" light text-xxxl accessibility-extra-extra-extra-large 1 ) &
+          wait
+          for f in "$RES"/*.log; do echo "::group::$(basename "$f")"; grep -E "Test Case .*(passed|failed)|error:|Executed|TEST (SUCCEEDED|FAILED)" "$f" | tail -40; echo "::endgroup::"; done
+          # Backup copy of the attachments straight from the result bundles (Xcode 16 and later).
+          for r in "$RES"/*.xcresult; do
+            n=$(basename "$r" .xcresult); mkdir -p "$OUT/raw/$n"
+            xcrun xcresulttool export attachments --path "$r" --output-path "$OUT/raw/$n" || echo "xcresulttool export attachments failed for $n"
+          done
+          echo "Screenshots: $(ls "$OUT"/*.png | wc -l)"
+          xcrun simctl shutdown all || true
+          ls "$RES"/*.failed >/dev/null 2>&1 && { echo "::error::some screens failed, see the logs above"; exit 1; }
+          exit 0
 
       - name: Keep the screenshots
         if: always()

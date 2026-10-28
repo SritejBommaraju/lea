@@ -5,7 +5,7 @@ import SwiftUI
 /// screenshot every screen on a simulator, and so a person can open the same screen by hand:
 ///
 ///     -screens consent | home-empty | home-scans | settings | pairing | report | meter | capture | capture-locked
-///              | camera-permission | progress-error
+///              | camera-permission | progress-error | product-code | product-pairing | failures
 ///
 /// Each launch wipes the app's saved scans, token and settings first, then seeds only what the screen needs. The one
 /// report used is the contract example in `spec/contracts/examples` (a test fixture, never shipped: this file is not
@@ -20,11 +20,15 @@ enum ScreensHarness {
         try? FileManager.default.removeItem(at: ScanStorage().root)
         let storage = ScanStorage()   // recreates the empty folder
         Keychain.deleteToken()
+        Keychain.deleteProduct()
         let d = UserDefaults.standard
         for key in ["gatewayURL", DesignID.key, DemoReplay.enabledKey, DemoReplay.unlockedKey, DemoReplay.sessionKey] {
             d.removeObject(forKey: key)
         }
         d.set(true, forKey: "pairingOffered")
+        // The app asks for the microphone as soon as it opens ("Hey Lea" is on by default); that is a finding, and
+        // its system alert would cover every screenshot.
+        d.set(false, forKey: WakeListener.enabledKey)
         if name == "consent" { d.removeObject(forKey: Consent.key) } else { d.set(Consent.version, forKey: Consent.key) }
 
         switch name {
@@ -35,6 +39,10 @@ enum ScreensHarness {
             seedSessions(storage)
         case "report":
             seedSessions(storage)
+        case "product-pairing":
+            // A code was read that carried no pairing code: the next step asks for it.
+            d.set("https://lea.example.com", forKey: "gatewayURL")
+            try? Keychain.setProduct(ProductCode(gateway: "https://lea.example.com", product: "lamp-v2"))
         default:
             break
         }
@@ -62,6 +70,20 @@ enum ScreensHarness {
         case "capture": CaptureOverlayPreview(backdrop: nil)
         case "capture-locked": CaptureOverlayPreview(backdrop: nil, locked: true)
         case "camera-permission": CameraPermissionView { _ in }
+        case "product-code", "product-pairing": ProductCodeView()
+        case "failures":
+            ScrollView {
+                VStack(spacing: Spacing.l) {
+                    FailureCard(failure: Failure.from(URLError(.cannotConnectToHost)))
+                    FailureCard(failure: Failure.from(GatewayError.http(503, "")))
+                    FailureCard(failure: .storageLow(freeBytes: 312 << 20, needed: AppState.minimumFreeBytes))
+                    FailureCard(failure: .cameraDenied)
+                    FailureCard(failure: .bluetoothDenied)
+                }
+                .padding(.horizontal, Spacing.gutter)
+                .padding(.vertical, Spacing.xl)
+            }
+            .background(Palette.canvas.ignoresSafeArea())
         case "progress-error":
             NavigationStack {
                 ReportProgressView(progress: PipelineProgress(step: .inspect, stillsDone: 5, stillsTotal: 13), uploaded: 40,

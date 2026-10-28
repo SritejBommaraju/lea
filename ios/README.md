@@ -38,6 +38,50 @@ You can write, build, test and install this app without owning a Mac.
   `diag.jsonl` (the folder is visible there, see "Capture layout").
 - **Fallback:** for Instruments or a step-through debugger, rent an hourly cloud Mac mini and use the commands above.
 
+### Seeing the app from Windows: the screens job
+
+Nobody on the team needs a Mac to look at the app. The `screens` job in the same workflow runs beside `test` and takes a
+picture of every screen:
+
+- `ios/RepairOSUITests` (an XCUITest target, scheme `RepairOSScreens`) launches the app once per screen with
+  `-screens <name>`. `RepairOS/App/ScreensGallery.swift` (DEBUG builds only) wipes the app's saved scans, token and
+  settings, seeds the one state that screen needs, and shows it. Screens: `consent`, `home-empty`, `home-scans`,
+  `settings`, `pairing`, `product-code`, `product-pairing`, `report`, `meter`, `capture` and `capture-locked` (the capture
+  overlay without a camera), `camera-permission`, `progress-error`, `failures`. The report is the contract example in
+  `spec/contracts/examples`; nothing is sent anywhere.
+- It runs on the biggest and the smallest iPhone simulator on the image (an iPhone 17 Pro, and an iPhone SE or 16e), each in
+  light, in dark, and in light at the largest accessibility text size (`simctl ui ... content_size
+  accessibility-extra-extra-extra-large`). The status bar is fixed at 9:41. On the iPhone 17 Pro in light and on the small
+  phone at the large text size, Xcode's accessibility audit also runs on every screen (contrast, tap target size, clipped
+  text, missing labels) and its findings are saved as `<screen>-...-audit.txt`; the audit never fails the job.
+- The pictures are the `screens` artifact (14 days): `gh run download <run id> -n screens`. Names are
+  `<screen>-<device>-<appearance>-<textsize>.png`. `raw/` holds the same attachments exported from each `.xcresult`.
+- To open one screen by hand on a Mac: `xcrun simctl launch booted com.rohankilaru.repairos -screens settings`.
+- ARKit, the camera, Bluetooth and the microphone do not run on the simulator, so the live scanner, the Show on object
+  view and a meter reading from a real meter are not in these pictures. The capture screens show the overlay only.
+
+## Product code
+
+A product that Grain designed comes with a product code, usually printed as a QR code. It names the lea server and the
+product, so a customer never types a server address or describes an unknown object. The app reads it on first run (or in
+Settings > Product), keeps it in the Keychain, points the app at that server and sends `product` with
+`POST /v1/sessions`. With a code, the symptom field says "What's wrong? (optional)"; without one the app asks what the
+object is, as before.
+
+```
+repairos://g/<server>/<product>                 the QR code
+repairos://g/<server>/<product>?pair=<code>     the same, and the app pairs by itself
+<product>@<server>                              the short form to type
+```
+
+`<server>` is a host name or address with an optional port, for example `lea.example.com` or `192.168.1.10:8000`. A server
+on the local network (a private IP address, `localhost`, a `.local` name or a name without a dot) is reached over http,
+any other over https. `<product>` is the design id: letters, digits, `.`, `_`, `-`, up to 200 characters. A code without
+`?pair=` asks for the pairing code on the next step. A pairing code inside a QR code is a shared secret: print it only on a
+code that stays with the person who owns the product. Code: `App/ProductCode.swift` (parsing, tested in
+`RepairOSTests/ProductCodeTests.swift`), `App/ProductCodeView.swift` (camera scan, or paste or type where there is no
+camera), `App/Keychain.swift`.
+
 ## Build and run
 
 ```

@@ -23,10 +23,13 @@ final class ScreenshotTests: XCTestCase {
     func testCaptureLocked() { shoot("capture-locked") }
     func testCameraPermission() { shoot("camera-permission") }
     func testProgressError() { shoot("progress-error") }
+    func testProductCode() { shoot("product-code") }
+    func testProductPairing() { shoot("product-pairing") }
+    func testFailures() { shoot("failures") }
 
     // MARK: -
 
-    private func shoot(_ screen: String, settle: TimeInterval = 2) {
+    private func shoot(_ screen: String, settle: TimeInterval = 1.5) {
         let env = ProcessInfo.processInfo.environment
         let device = env["SCREENS_DEVICE"] ?? "device"
         let appearance = env["SCREENS_APPEARANCE"] ?? "light"
