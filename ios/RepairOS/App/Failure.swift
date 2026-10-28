@@ -50,6 +50,13 @@ struct Failure: Equatable, Sendable {
                        action: .retry)
     }
 
+    /// The same words with the action dropped unless it is one of `allowed` (a screen shows only what it can do).
+    func keeping(_ allowed: [Action]) -> Failure {
+        var copy = self
+        if let a = action, !allowed.contains(a) { copy.action = nil }
+        return copy
+    }
+
     /// A Failure that travels as a Swift error (the upload queue throws errors, not structs).
     struct Wrapped: Error { let failure: Failure }
 

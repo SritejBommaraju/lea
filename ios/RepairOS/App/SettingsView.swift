@@ -32,9 +32,8 @@ struct PairingView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     if let failure {
-                        FailureCard(failure: failure) { action in
-                            if action == .retry { Task { await pair() } }
-                        }
+                        // Only an action this screen can run: the address and the code are right above.
+                        FailureCard(failure: failure.keeping([.retry])) { _ in Task { await pair() } }
                     }
                 }
                 .padding(.horizontal, Spacing.gutter)
@@ -201,7 +200,7 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.fontWeight(.semibold) }
             }
             .sheet(isPresented: $showPairing) { PairingView() }
-            .sheet(isPresented: $showProductCode) { ProductCodeView() }
+            .sheet(isPresented: $showProductCode) { ProductCodeView(replacing: app.product != nil) }
             .sheet(isPresented: $showConsent) { ConsentView() }
             .confirmationDialog(deleteAllTitle, isPresented: $confirmDeleteAll, titleVisibility: .visible) {
                 Button("Delete \(ScanLibrary.deletableCount(app: app)) scans", role: .destructive) {

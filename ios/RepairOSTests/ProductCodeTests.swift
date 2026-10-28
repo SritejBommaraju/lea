@@ -87,3 +87,30 @@ struct FailureWordsTests {
         for f in all { #expect(!(f.title + f.message).contains("!")) }
     }
 }
+
+/// Changing from one product to another (Settings > Change product code), and what that does to the server and the pairing.
+@MainActor
+struct ChangeProductTests {
+    @Test func theNewProductReplacesTheOldAndGoesToTheServer() throws {
+        let app = AppState()
+        defer { app.clearProduct(); app.unpair() }
+        try app.use(try #require(ProductCode.parse("lamp-v2@lea.example.com")))
+        #expect(app.product?.product == "lamp-v2")
+        #expect(DesignID.current == "lamp-v2")
+        try app.use(try #require(ProductCode.parse("fan-3@lea.example.com")))
+        #expect(app.product?.product == "fan-3")
+        #expect(DesignID.current == "fan-3")
+        #expect(app.gatewayURL == "https://lea.example.com")
+    }
+
+    @Test func aNewServerUnpairsThePhoneAndASameServerDoesNot() throws {
+        let app = AppState()
+        defer { app.clearProduct(); app.unpair() }
+        try Keychain.setToken("token-for-the-first-server")
+        try app.use(try #require(ProductCode.parse("lamp-v2@first.example.com")))
+        #expect(!app.isPaired, "a token for another server must not be kept")
+        try Keychain.setToken("token")
+        try app.use(try #require(ProductCode.parse("fan-3@first.example.com")))
+        #expect(Keychain.token() == "token", "the same server keeps its pairing")
+    }
+}

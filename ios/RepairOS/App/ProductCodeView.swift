@@ -7,6 +7,8 @@ import SwiftUI
 /// does not carry a pairing code, the next step asks for it. Skipping leaves the old flow: set up a server by hand and
 /// describe what is being scanned.
 struct ProductCodeView: View {
+    /// Settings > Change product code: show the scanner and the field even though a code is saved.
+    var replacing = false
     @EnvironmentObject private var app: AppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -17,9 +19,16 @@ struct ProductCodeView: View {
     @State private var camera = CameraAccess.current
     @State private var showServer = false
     @State private var accepted = 0
+    /// Still waiting for a code (always, with none saved; with one saved, only while it is being replaced).
+    @State private var entering: Bool
+
+    init(replacing: Bool = false) {
+        self.replacing = replacing
+        _entering = State(initialValue: replacing || Keychain.product() == nil)
+    }
 
     /// The code the app holds right now; set once a code was read and saved.
-    private var code: ProductCode? { app.product }
+    private var code: ProductCode? { entering ? nil : app.product }
     private var needsPairing: Bool { code != nil && !app.isPaired }
 
     var body: some View {
@@ -66,6 +75,10 @@ struct ProductCodeView: View {
             .sheet(isPresented: $showServer) { PairingView() }
             .haptic(.success, trigger: accepted)
             .task { await prepareCamera() }
+            // Back from the phone's Settings with the camera now allowed: show the scanner without reopening this screen.
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+                Task { await prepareCamera() }
+            }
         }
         .tint(Palette.accent)
     }
@@ -159,7 +172,7 @@ struct ProductCodeView: View {
 
     /// A code from the camera or the field. Ignored while one is being connected.
     private func read(_ text: String) {
-        guard !busy, code == nil else { return }
+        guard !busy, entering else { return }
         guard let parsed = ProductCode.parse(text) else {
             problem = "That doesn't look like a product code. \(ProductCode.help)"
             return
@@ -172,6 +185,7 @@ struct ProductCodeView: View {
             return
         }
         accepted += 1
+        entering = false
         if let pairing = parsed.pairing {
             Task { await connect(pairing) }
         } else if app.isPaired {

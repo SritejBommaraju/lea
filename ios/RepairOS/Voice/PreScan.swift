@@ -14,6 +14,19 @@ final class PreScan: ObservableObject {
     @Published private(set) var scanID = PreScan.newScanID()
     @Published private(set) var live: LiveEvents?
     private var starting: Task<Void, Never>?
+    /// Bumped by `reset`, so a session request still in flight for the old product is dropped when it answers.
+    private var generation = 0
+
+    /// Forgets the conversation so far: the product or the server changed, and its gateway session belongs to the old one.
+    func reset() {
+        generation += 1
+        starting?.cancel()
+        starting = nil
+        live?.stop()
+        live = nil
+        sessionID = nil
+        scanID = Self.newScanID()
+    }
 
     static func newScanID() -> String { "scan_" + ScanStorage.hex(8) }
 
@@ -21,9 +34,11 @@ final class PreScan: ObservableObject {
     func begin(gateway: GatewayClient) async {
         if sessionID != nil { return }
         if let starting { await starting.value; return }
+        let started = generation
         let t = Task { [weak self] in
             guard let self else { return }
             if let id = try? await gateway.createSession(symptom: nil) {
+                guard generation == started else { return }
                 sessionID = id
                 let events = LiveEvents(scanID: scanID, diag: WakeListener.diag)
                 events.start(gateway: gateway) { [weak self] in self?.sessionID }

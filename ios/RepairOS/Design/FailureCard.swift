@@ -42,9 +42,14 @@ struct FailureCard: View {
 /// The system share sheet for files (UIActivityViewController). Used to hand a scan's folder to someone who can look at it.
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
+    /// Called when the sheet finishes or is cancelled.
+    var finished: () -> Void = {}
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let done = finished
+        controller.completionWithItemsHandler = { _, _, _, _ in done() }
+        return controller
     }
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
@@ -52,14 +57,21 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 /// A scan's folder as one zip file, made by the system (`NSFileCoordinator` with `.forUploading`) in the temporary folder.
 enum ScanExport {
+    /// Every zip is made here, so they can all be removed together.
+    static var folder: URL { FileManager.default.temporaryDirectory.appending(path: "lea-shares", directoryHint: .isDirectory) }
+
+    /// Removes the zips left behind (after a share, and at launch).
+    static func clear() { try? FileManager.default.removeItem(at: folder) }
+
     /// The zip, or nil when it can't be made (no space, the folder is gone). Off the main actor: a scan can be large.
     @concurrent
     static func zip(_ folder: URL, name: String) async -> URL? {
         var coordinationError: NSError?
         var result: URL?
         NSFileCoordinator().coordinate(readingItemAt: folder, options: [.forUploading], error: &coordinationError) { zipped in
-            let destination = FileManager.default.temporaryDirectory.appending(path: "\(name).zip")
-            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: Self.folder)
+            try? FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
+            let destination = Self.folder.appending(path: "\(name).zip")
             if (try? FileManager.default.copyItem(at: zipped, to: destination)) != nil { result = destination }
         }
         return result

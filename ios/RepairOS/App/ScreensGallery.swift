@@ -72,11 +72,10 @@ enum ScreensGallery {
                 Palette.canvas.ignoresSafeArea()
             }
         case "meter":
-            Palette.canvas.ignoresSafeArea().sheet(isPresented: .constant(true)) {
-                MeterReadingSheet(context: MeterReadingContext(kind: .continuity, net: "VBUS", pins: ["J1.A4", "F1.1"],
-                                                               safetyNotes: ["Switch the product off and unplug it first."]),
-                                  scanID: "scan_example", sessionID: "sess_example", gateway: nil, sent: {})
-            }
+            // Shown in place, not as a sheet: a sheet would cover the walk's next button.
+            MeterReadingSheet(context: MeterReadingContext(kind: .continuity, net: "VBUS", pins: ["J1.A4", "F1.1"],
+                                                           safetyNotes: ["Check the lamp is unplugged from the wall."]),
+                              scanID: "scan_example", sessionID: "sess_example", gateway: nil, sent: {})
         case "walk": ScreensWalk()
         case "capture": CaptureOverlayPreview(backdrop: nil)
         case "capture-locked": CaptureOverlayPreview(backdrop: nil, locked: true)

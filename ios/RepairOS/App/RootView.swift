@@ -81,7 +81,7 @@ struct RootView: View {
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showPairing) { PairingView() }
             .sheet(isPresented: $showProductCode) { ProductCodeView() }
-            .sheet(item: $shared) { file in ShareSheet(items: [file.url]) }
+            .sheet(item: $shared, onDismiss: ScanExport.clear) { file in ShareSheet(items: [file.url], finished: { shared = nil }) }
             .fullScreenCover(isPresented: $showConsent) {
                 ConsentView { agreed in
                     showConsent = false

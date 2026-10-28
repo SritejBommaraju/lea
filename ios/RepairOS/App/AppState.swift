@@ -41,6 +41,7 @@ final class AppState: ObservableObject {
 
     func launch() async {
         reloadSessions()
+        ScanExport.clear()   // zips left by a share that never finished
         // Developer hooks for `devicectl device process launch <bundle> ...` from the Mac over USB:
         // `--gateway <url> --pairing-code <code>` pairs without typing; `--run-still-probe` measures stills.
         let args = CommandLine.arguments
@@ -125,7 +126,10 @@ final class AppState: ObservableObject {
     /// its token belongs to the old one) and its product id goes to the server with every new scan.
     func use(_ code: ProductCode) throws {
         try Keychain.setProduct(code)
+        let changed = product?.product != code.product || !Self.sameServer(gatewayURL, code.gateway)
         product = code
+        // A conversation with Lea started before the code was added belongs to the old product and server.
+        if changed { PreScan.shared.reset() }
         if Self.sameServer(gatewayURL, code.gateway) { return }
         gatewayURL = code.gateway
         if isPaired { unpair() }
@@ -145,6 +149,7 @@ final class AppState: ObservableObject {
     func clearProduct() {
         Keychain.deleteProduct()
         product = nil
+        PreScan.shared.reset()
     }
 
     nonisolated static func sameServer(_ a: String, _ b: String) -> Bool {
