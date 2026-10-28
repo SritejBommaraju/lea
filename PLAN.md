@@ -14,7 +14,7 @@ status: [build/STATUS.md](build/STATUS.md); streams: [areas/](areas/README.md).
 ## 2. Phase 1 scope
 
 **In**
-- iOS app: LiDAR scan, guided close-ups, resumable upload, report screen, optional meter-reading entry.
+- iOS app: LiDAR scan, guided close-ups, resumable upload, report screen, optional meter-reading entry (typed, or read from a Bluetooth meter such as the Pokit Meter).
 - Backend: gateway, state, blobs, recorded sessions and replay (built), the Phase 1 pipeline, report generation, pose refinement if on-phone drift correction falls short.
 - Detection: OWLv2 zero-shot detector (Grounding DINO swap-in), full-res crops, a trained defect classifier, Claude VLM for explanations and unclear cases, OCR, Jev judgments with decisions in code.
 - Benchmark: labelled real captures with held-out products; every target comes from its measurements.
@@ -141,7 +141,7 @@ and Apple samples. Never `arkit-3dgs-scanner` (non-commercial), `record3d` (LGPL
 | A3 | Guided close-ups via `captureHighResolutionFrame` in the same AR session and world frame; 48 MP when the probe allows, else 12 MP, asking the user only on a trade-off (such as speed); targets from uncovered regions | `ios/RepairOS/Closeups/**` | Every still is a valid `still` at full resolution with pose and intrinsics, linked to the scan; the app shows what is still uncovered | A2 |
 | A4 | Upload: chunked, content-hashed, resumable | `ios/RepairOS/Upload/**` | An upload cut mid-way finishes without re-sending done chunks; the gateway session passes `make sessions-check` | A1 |
 | A5 | Report screen (live via SSE) | `ios/RepairOS/Report/**` | Renders verdict, findings with crops and confidence words, `not_inspected`, `insufficient_evidence` reasons; never shows a probability number | A4, B11 |
-| A6 | Optional meter reading entry | `ios/RepairOS/Meter/**` | Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out | A5 |
+| A6 | Optional meter reading entry | `ios/RepairOS/Meter/**` | Power state shown before probe points (S4); a reading on a suspect shows it proven or ruled out; the reading is typed or read over Bluetooth LE from a snap-on meter (Pokit Meter first; `source: ble` with a `meter` object) | A5 |
 | A7 | First-run usability pass | `ios/RepairOS/**` (fixes) | People new to the app go from scan to report without help; what they hit is fixed or filed | A5 |
 | A8 | No-LiDAR mode for any ARKit iPhone: world-tracking poses + guided stills without `sceneDepth` (the NeRFCapture pattern, MIT); geometry and scale from the backend (photo reconstruction or monocular depth) when needed; the scan package records its depth source | `ios/RepairOS/Capture/**` | On a non-LiDAR iPhone, a real object goes from scan to report; the report states what it cannot claim without depth (e.g. sizes) | A2 |
 

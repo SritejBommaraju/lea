@@ -84,6 +84,10 @@ struct GatewayClient: Sendable {
         let (data, _) = try await send("POST", "v1/stills", body: body, expect: [200, 201])
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
+    /// POST /v1/readings: one meter reading (spec/contracts/meter-reading.schema.json); the gateway judges it. 201.
+    func postReading(_ reading: MeterReading) async throws {
+        _ = try await send("POST", "v1/readings", body: try JSON.encoder.encode(reading), expect: [200, 201])
+    }
     func complete(scanID: String) async throws {
         _ = try await send("POST", "v1/scans/\(scanID)/complete", json: [:], expect: [202])
     }

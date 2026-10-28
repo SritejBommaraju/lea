@@ -33,6 +33,8 @@
 			<string>lee uh</string>
 		</dict>
 	</array>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>RepairOS connects to your Bluetooth multimeter to read its measurement, so you do not have to type it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Hold the mic button to ask lea a question or to say what's wrong; nothing is recorded otherwise.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
