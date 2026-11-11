@@ -26,8 +26,7 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
 ]
-# Phase 1 perception (M1, M3, B8): `uv pip install -e 'backend[vision]'`. Not in
-# requirements.lock yet. Licences: transformers Apache-2.0, torch BSD-3-Clause (bundles Apache/BSD/MIT/BSL-1.0
+# Phase 1 perception (M1, M3, B8): in requirements.lock via `make lock` (--extra vision). Licences: transformers Apache-2.0, torch BSD-3-Clause (bundles Apache/BSD/MIT/BSL-1.0
 # parts), pillow MIT-CMU (permissive), anthropic Apache-2.0 (MIT before 2.0.0), numpy
 # BSD-3-Clause. Transitive tqdm is MPL-2.0 AND MIT: flag for the licence check (B15). Weights: Grounding DINO tiny
 # and OWLv2 base, both Apache-2.0, revisions pinned in their slot packages.
@@ -45,8 +44,7 @@ train = [
     "pyarrow==21.0.0",
 ]
 
-# Capture geometry (B12 fusion, locate ray casting, B13 later): `uv pip install -e 'backend[geometry]'`. Not in
-# requirements.lock yet. open3d MIT (wheel bundles its MIT/BSD/Apache 3rd-party code); its pip deps (dash, flask,
+# Capture geometry (B12 fusion, locate ray casting, B13 later): in requirements.lock via `make lock` (--extra geometry). open3d MIT (wheel bundles its MIT/BSD/Apache 3rd-party code); its pip deps (dash, flask,
 # werkzeug, nbformat, ipywidgets, configargparse and their tree) are MIT, BSD, Apache-2.0 or ISC, except transitive
 # certifi, MPL-2.0: flag for the licence check (B15). Without it the importer and locate fall back to numpy.
 geometry = [

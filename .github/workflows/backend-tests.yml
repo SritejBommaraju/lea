@@ -1,0 +1,108 @@
+# Backend unit and conformance tests on every PR
+name: Backend tests
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'spec/contracts/**'
+      - 'tools/**'
+      - 'config/**'
+      - '.github/workflows/backend-tests.yml'
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0 (MIT)
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0 (MIT)
+        with:
+          node-version: '22'
+
+      # open3d (geometry extra) loads libGL, libEGL and libgomp at import — same as deploy/runpod/bootstrap.sh
+      - name: Open3D system libraries
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libgl1 libegl1 libgomp1
+
+      - name: Install dependencies
+        id: install
+        run: |
+          python3.12 -m pip install --upgrade pip
+          python3.12 -m pip install uv
+          cd backend
+          pip install -r requirements.lock
+          pip install --no-deps -e .
+
+      - name: Proprietary guard (no private files)
+        id: guard
+        if: steps.install.outcome == 'success'
+        run: python3 -I tools/guard_proprietary.py --tracked
+
+      - name: Contract validation (schemas vs examples)
+        id: contracts
+        if: steps.install.outcome == 'success'
+        run: python3 -I spec/contracts/check.py
+
+      - name: Backend unit tests
+        id: tests
+        if: steps.install.outcome == 'success'
+        run: |
+          cd backend
+          pytest tests -v --tb=short
+        env:
+          # Tests that genuinely need real API keys are skipped with clear reasons
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TYPESAFE_KEY: ${{ secrets.TYPESAFE_KEY }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Backend test results"
+            echo ""
+            if [ "${{ steps.install.outcome }}" == "success" ]; then
+              echo "✅ Dependencies installed"
+            elif [ "${{ steps.install.outcome }}" == "failure" ]; then
+              echo "❌ Dependencies failed to install"
+            else
+              echo "⏭️  Dependencies: ${{ steps.install.outcome }}"
+            fi
+            
+            if [ "${{ steps.guard.outcome }}" == "success" ]; then
+              echo "✅ Proprietary guard passed"
+            elif [ "${{ steps.guard.outcome }}" == "failure" ]; then
+              echo "❌ Proprietary guard failed"
+            elif [ "${{ steps.guard.outcome }}" == "skipped" ]; then
+              echo "⏭️  Proprietary guard skipped"
+            fi
+            
+            if [ "${{ steps.contracts.outcome }}" == "success" ]; then
+              echo "✅ Contract validation passed"
+            elif [ "${{ steps.contracts.outcome }}" == "failure" ]; then
+              echo "❌ Contract validation failed"
+            elif [ "${{ steps.contracts.outcome }}" == "skipped" ]; then
+              echo "⏭️  Contract validation skipped"
+            fi
+            
+            if [ "${{ steps.tests.outcome }}" == "success" ]; then
+              echo "✅ Unit tests passed"
+            elif [ "${{ steps.tests.outcome }}" == "failure" ]; then
+              echo "❌ Unit tests failed"
+            elif [ "${{ steps.tests.outcome }}" == "skipped" ]; then
+              echo "⏭️  Unit tests skipped"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

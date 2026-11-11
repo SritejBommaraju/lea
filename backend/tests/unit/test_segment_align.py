@@ -8,7 +8,11 @@ import io
 import numpy as np
 import pytest
 
-pytest.importorskip("open3d")
+pytest.importorskip(
+    "open3d",
+    exc_type=ImportError,
+    reason="open3d missing or system GL/EGL libs not installed (libgl1 libegl1 libgomp1)",
+)
 
 from repairos.locate.camera import Pinhole, Pose, pixel_rays  # noqa: E402
 from repairos.pipeline import segments as S  # noqa: E402

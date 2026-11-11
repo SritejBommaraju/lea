@@ -271,7 +271,8 @@ def search(obj: str, part: str, key: str, zone: str, timeout: float = REQUEST_TI
     return fix
 
 
-_inflight: dict[str, Future] = {}
+_RESERVED = object()                  # prewarm holds the slot before its worker thread enters find_fix_for
+_inflight: dict[str, Future | object] = {}
 _inflight_lock = threading.Lock()
 
 
@@ -296,10 +297,12 @@ def find_fix_for(obj: str, part: str, creds: tuple[str, str], wait_s: float = BU
                                 "seconds": round(time.monotonic() - t0, 3)}
     key = cache_key(obj, part)
     with _inflight_lock:
-        fut = _inflight.get(key)
-        mine = fut is None
+        slot = _inflight.get(key)
+        mine = slot is None or slot is _RESERVED
         if mine:
             fut = _inflight[key] = Future()
+        else:
+            fut = slot
     if not mine:
         try:
             fix, rec = fut.result(timeout=wait_s)
@@ -325,9 +328,11 @@ def prewarm(obj: str, part: str, creds: tuple[str, str]) -> bool:
     so it is ready, or nearly, when the report's top finding is known."""
     if cached(obj, part) is not None:
         return False
+    key = cache_key(obj, part)
     with _inflight_lock:
-        if cache_key(obj, part) in _inflight:
+        if key in _inflight:
             return False
+        _inflight[key] = _RESERVED   # visible before the worker thread enters find_fix_for
     threading.Thread(target=find_fix_for, args=(obj, part, creds), name="fix-prewarm", daemon=True).start()
     return True
 

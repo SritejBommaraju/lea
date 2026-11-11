@@ -96,7 +96,11 @@ def test_a_hand_held_scan_keeps_its_scanned_underside_in_the_recreation(tmp_path
     hand-held scan skips the cut and the model stays closed underneath."""
     import pytest
 
-    pytest.importorskip("open3d")
+    pytest.importorskip(
+        "open3d",
+        exc_type=ImportError,
+        reason="open3d missing or system GL/EGL libs not installed (libgl1 libegl1 libgomp1)",
+    )
     from PIL import Image
 
     from repairos.locate.camera import Pinhole, Pose

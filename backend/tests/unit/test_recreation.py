@@ -11,7 +11,11 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-o3d = pytest.importorskip("open3d")
+o3d = pytest.importorskip(
+    "open3d",
+    exc_type=ImportError,
+    reason="open3d missing or system GL/EGL libs not installed (libgl1 libegl1 libgomp1)",
+)
 from PIL import Image  # noqa: E402
 
 from repairos.locate.camera import Pose, matrix_to_quat, project  # noqa: E402

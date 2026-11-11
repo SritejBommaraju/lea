@@ -4,6 +4,8 @@
 what looks wrong, then ask Lea anything about it. She answers out loud while she turns the model to the part, circles
 it and shows the real photo of that spot.**
 
+<!-- Demo media placeholder: video or GIF will be added here -->
+
 Built at Cal Hacks. [How it works](#how-it-works) · [Run it](#run-it) · [Repo map](#repo-map) ·
 [Write-up](docs/devpost.md)
 
@@ -27,7 +29,7 @@ trimmer and a phone charger.
 AI assistants can describe a device, and 3D scanning apps can capture one, but as far as we know nothing puts the two
 together on the phone you already own. LEA does:
 
-- **Just an iPhone.** No special hardware, no CAD files, no setup. The phone's LiDAR camera and photos are enough.
+- **Just an iPhone.** No CAD files, no setup. An iPhone with LiDAR (iPhone 12 Pro or later) captures 3D mesh scans; any ARKit-capable iPhone works in photo-only mode.
 - **Your object, not a stock picture.** The 3D model is built from your own scan, so Lea is looking at the exact
   device in front of you: your board, your wiring, your damage.
 - **AI that shows, not just tells.** Ask a question and Lea answers out loud while she turns the 3D model to the part,
@@ -88,24 +90,68 @@ The phone holds no API keys. Every paid call goes through a spend guard with per
 
 ## Run it
 
-**Backend** (Python 3.12):
+### Prerequisites
 
+- **Backend**: Python 3.12+, git, gh (GitHub CLI)
+- **iOS app**: macOS, Xcode 27.2+, iOS 18.0+ deployment target
+- **Hardware**: iPhone with LiDAR (iPhone 12 Pro or later) for 3D mesh scans; any ARKit-capable iPhone for photo-only mode
+- **API Keys**: ANTHROPIC_API_KEY (required), TYPESAFE_KEY (required), CARTESIA_API_KEY (optional, for voice)
+
+### Backend Setup (Python 3.12)
+
+With `make` (uses `uv` if available):
+
+```bash
+make bootstrap                          # create venv, install from requirements.lock
+cp backend/.env.example backend/.env    # then add ANTHROPIC_API_KEY and TYPESAFE_KEY (see below)
+make test                               # backend unit + conformance tests
+make run-gateway                        # gateway on :8000
+# In a second terminal, from the repository root:
+make run-workers                        # process queued scans
 ```
+
+**Platform note**: `backend/requirements.lock` is a **universal** lock (`make lock` passes `--universal` to `uv`). Linux-only PyTorch CUDA wheels (for example `nvidia-nccl-cu13`) are pinned with `sys_platform == 'linux'` markers, so `make bootstrap` and `pip install -r requirements.lock` work on macOS and Windows without matching-distribution errors. GPU-hosted Linux installs use `deploy/runpod/requirements.linux.lock` instead.
+
+Or with raw Python 3.12 commands:
+
+```bash
 cd backend
-python3.12 -m venv .venv && .venv/bin/pip install -r requirements.lock && .venv/bin/pip install -e .
-cp .env.example .env     # ANTHROPIC_API_KEY, TYPESAFE_KEY, CARTESIA_API_KEY, REPAIROS_PAIRING_CODE
-.venv/bin/uvicorn repairos.main:app --host 0.0.0.0 --port 8000     # gateway
-.venv/bin/python -m repairos.pipeline.worker                       # pipeline worker, second terminal
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements.lock
+.venv/bin/pip install -e .
+cp .env.example .env    # then add ANTHROPIC_API_KEY and TYPESAFE_KEY (see below)
+.venv/bin/pytest tests  # unit tests
+.venv/bin/uvicorn repairos.main:app --host 0.0.0.0 --port 8000  # gateway
+# In a second terminal:
+.venv/bin/python -m repairos.pipeline.worker  # pipeline worker
 ```
+
+**Minimum required secrets in `backend/.env`:**
+- `ANTHROPIC_API_KEY` – Claude API key for vision model, LLM, and report generation
+- `TYPESAFE_KEY` – TypeSafe/Jev API key for evidence fusion (no fallback)
+- `REPAIROS_PAIRING_CODE` – any long random string for app pairing
+
+**Optional:**
+- `CARTESIA_API_KEY` – for voice synthesis; without it, the phone uses its own voice
+- `BRIGHTDATA_API_KEY`, `BRIGHTDATA_SERP_ZONE` – for reference hints (disabled when absent)
+
+**Note**: The default install includes Open3D (geometry extra) for 3D mesh generation from LiDAR scans. This is required for the core pipeline.
 
 **Host it** on one Runpod GPU pod: the start command runs `deploy/runpod/bootstrap.sh`, which clones the repo,
 installs the locked dependencies, caches the detector weights and starts everything. See `deploy/runpod/README.md`.
 
-**App** (Xcode 27, an ARKit iPhone; LiDAR models give the 3D scans): copy `ios/Config/Signing.example.xcconfig` to
-`ios/Config/Signing.xcconfig`, set your team, then build and install. Steps are in `ios/README.md`. Pair from the
-app's Settings with the gateway URL and pairing code.
+**App** (requires macOS, Xcode 27.2+, an ARKit-capable iPhone; LiDAR models such as iPhone 12 Pro or later provide 3D mesh scans): copy `ios/Config/Signing.example.xcconfig` to `ios/Config/Signing.xcconfig`, set your team, then build and install. Steps are in `ios/README.md`. Pair from the app's Settings with the gateway URL and pairing code.
 
-**Tests:** `make test` for the backend; the `RepairOS` scheme's tests in Xcode for the app.
+**Tests:** 
+
+Backend tests (Python 3.12):
+```bash
+make test                                    # or: cd backend && .venv/bin/pytest tests
+```
+
+Tests that genuinely require API keys (e.g., live model calls) are skipped with clear messages when `ANTHROPIC_API_KEY` or `TYPESAFE_KEY` are not set in `backend/.env`. The rest of the test suite runs without keys.
+
+iOS app tests: Run the `RepairOS` scheme's tests in Xcode.
 
 ## Team
 
