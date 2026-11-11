@@ -4,7 +4,9 @@
 what looks wrong, then ask Lea anything about it. She answers out loud while she turns the model to the part, circles
 it and shows the real photo of that spot.**
 
-Built at Cal Hacks. [How it works](#how-it-works) · [Run it](#run-it) · [Repo map](#repo-map) ·
+<!-- Demo video/GIF placeholder - to be added -->
+
+Built at Cal Hacks. [How it works](#how-it-works) · [Prerequisites](#prerequisites) · [Quickstart](#quickstart) · [Repo map](#repo-map) ·
 [Write-up](docs/devpost.md)
 
 ## What it does
@@ -86,26 +88,59 @@ The phone holds no API keys. Every paid call goes through a spend guard with per
 | `tools/` | Code generation, replay, import and guard scripts |
 | `build/` | The project tracker (task status and doctor), not build output |
 
-## Run it
+## Prerequisites
+
+### Backend
+- **Python 3.12+**
+- Linux or macOS
+- GPU recommended for production, CPU works for development
+
+### iOS App (Optional)
+- **macOS** with **Xcode 27.2** or later
+- **iOS 18.0+** device (iPhone or iPad with ARKit support)
+- **For full 3D scanning**: LiDAR-enabled iPhone (12 Pro, 13 Pro, 14 Pro, 15 Pro, or later Pro models)
+- **For photo-only mode**: Any iPhone with ARKit (iPhone XS or later)
+- **Code signing**: Free Personal Team works; see [ios/README.md](ios/README.md)
+
+### API Keys (see backend/.env.example for details)
+- **Required**: Anthropic API key, TypeSafe key (for Jev), pairing code
+- **Optional**: Cartesia (voice), Bright Data (web hints)
+
+## Quickstart
 
 **Backend** (Python 3.12):
 
-```
+```bash
 cd backend
 python3.12 -m venv .venv && .venv/bin/pip install -r requirements.lock && .venv/bin/pip install -e .
-cp .env.example .env     # ANTHROPIC_API_KEY, TYPESAFE_KEY, CARTESIA_API_KEY, REPAIROS_PAIRING_CODE
+cp .env.example .env     # Fill in required keys: ANTHROPIC_API_KEY, TYPESAFE_KEY, REPAIROS_PAIRING_CODE
 .venv/bin/uvicorn repairos.main:app --host 0.0.0.0 --port 8000     # gateway
 .venv/bin/python -m repairos.pipeline.worker                       # pipeline worker, second terminal
+```
+
+Or use `make`:
+
+```bash
+make bootstrap    # create venv and install dependencies
+cp backend/.env.example backend/.env   # then fill in keys
+make run-gateway  # start gateway
 ```
 
 **Host it** on one Runpod GPU pod: the start command runs `deploy/runpod/bootstrap.sh`, which clones the repo,
 installs the locked dependencies, caches the detector weights and starts everything. See `deploy/runpod/README.md`.
 
-**App** (Xcode 27, an ARKit iPhone; LiDAR models give the 3D scans): copy `ios/Config/Signing.example.xcconfig` to
+**App** (Xcode 27.2, iOS 18+): copy `ios/Config/Signing.example.xcconfig` to
 `ios/Config/Signing.xcconfig`, set your team, then build and install. Steps are in `ios/README.md`. Pair from the
 app's Settings with the gateway URL and pairing code.
 
-**Tests:** `make test` for the backend; the `RepairOS` scheme's tests in Xcode for the app.
+**Tests:**
+
+```bash
+make test                              # backend unit tests
+python3.12 -m pytest backend/tests     # or directly with pytest
+```
+
+For iOS tests, use the `RepairOS` scheme's tests in Xcode.
 
 ## Team
 

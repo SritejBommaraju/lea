@@ -21,20 +21,31 @@ milestones and every task.
 - **Benchmark**: labelled real captures with held-out products. Every target comes from its measurements.
 
 Built so far: the gateway, state and blobs, recorded sessions and replay, the detector slots, crops, the VLM and
-LLM slots, Jev fusion, contracts with codegen, the provider registry and config. Not built yet: the iOS app, the
-pipeline orchestrator, the report, the classifier and the benchmark. Live status: [build/STATUS.md](../build/STATUS.md).
+LLM slots, Jev fusion, contracts with codegen, the provider registry and config, the iOS app, pipeline orchestrator, 
+and report generation. Live status: [build/STATUS.md](../build/STATUS.md).
 
 ## Quickstart
 
-Needs Python 3.12+, git, gh and Node 22+ (`uv` is used if present). The iOS work also needs Xcode 26 and a LiDAR
-iPhone.
+Needs Python 3.12+, git, gh and Node 22+ (`uv` is used if present). The iOS work also needs Xcode 27.2 and an iPhone
+with iOS 18+ (LiDAR models like iPhone 12 Pro or later give full 3D scans; non-LiDAR models capture photos only).
 
-```
+```bash
 make bootstrap                          # backend/.venv from backend/requirements.lock
+# Or directly:
+python3.12 -m venv backend/.venv
+backend/.venv/bin/pip install -r backend/requirements.lock
+backend/.venv/bin/pip install -e backend
+
 make hooks                              # pre-commit guard: blocks private files
 cp backend/.env.example backend/.env    # then add TYPESAFE_KEY and ANTHROPIC_API_KEY (never commit it)
+
 make test                               # backend unit + conformance tests
+# Or directly:
+backend/.venv/bin/pytest backend/tests
+
 make run-gateway                        # FastAPI gateway on :8000, the only server the phone talks to
+# Or directly:
+cd backend && .venv/bin/uvicorn repairos.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Keys live only in `backend/.env`; the phone never holds one. `python3 -I build/doctor.py` says what is missing
@@ -47,9 +58,12 @@ and prints HUMAN ACTION NEEDED for steps only a person can do.
 | `python3 -I build/next.py [--stream app\|modeling\|build]` | Tasks ready to start, per stream |
 | `python3 -I build/doctor.py [--offline]` | Prerequisites for the open tasks |
 | `python3 -I build/status.py` | Rewrites `build/STATUS.md` |
-| `make contracts`, `make codegen-check` | Schemas vs examples; generated code has no drift |
-| `make replay SESSION=<id>`, `make sessions-check` | Replay or validate recorded real sessions |
+| `make contracts` or `python3 -I spec/contracts/check.py` | Schemas vs examples |
+| `make codegen-check` or `python3 -I tools/codegen/codegen.py --check` | Generated code has no drift |
+| `make replay SESSION=<id>` or `backend/.venv/bin/python tools/replay.py --session <id>` | Replay a recorded session |
+| `make sessions-check` or `backend/.venv/bin/python tools/replay.py --check --all` | Validate all sessions |
 | `make check` | Contracts, codegen drift, guard and tests |
+| `make test` or `backend/.venv/bin/pytest backend/tests` | Backend unit tests |
 
 Three streams: [App](../areas/app.md), [Modeling + benchmark](../areas/modeling-benchmark.md) and
 [Build execution](../areas/build-execution.md). Start with [AGENTS.md](../AGENTS.md); it applies to people and coding
