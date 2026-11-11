@@ -4,10 +4,12 @@
 what looks wrong, then ask Lea anything about it. She answers out loud while she turns the model to the part, circles
 it and shows the real photo of that spot.**
 
-<!-- Demo media placeholder: video or GIF will be added here -->
+<p align="center"><a href="https://www.youtube.com/watch?v=BUf5ydrDzR0"><img src="docs/media/lea-demo.gif" alt="LEA demo: asking about bent gold pins, Lea circles them on the 3D model and shows the real photo" width="320"></a></p>
+
+**[▶ Full demo video](https://www.youtube.com/watch?v=BUf5ydrDzR0) · [Devpost](https://devpost.com/software/lea-lidar-enabled-assistant)**
 
 Built at Cal Hacks. [How it works](#how-it-works) · [Run it](#run-it) · [Repo map](#repo-map) ·
-[Write-up](docs/devpost.md)
+[Devpost](https://devpost.com/software/lea-lidar-enabled-assistant) · [Write-up](docs/devpost.md)
 
 ## What it does
 
