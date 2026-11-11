@@ -27,6 +27,16 @@ from test_report_fixes import TEST_SUMMARY
 CREDS = ("key-not-real", "serp_zone")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_parts_inflight():
+    """parts._inflight is process-global; clear it between tests so prewarm races stay deterministic."""
+    with parts._inflight_lock:
+        parts._inflight.clear()
+    yield
+    with parts._inflight_lock:
+        parts._inflight.clear()
+
+
 def _report(**over) -> dict:
     """The report fields parts.part_for reads (object, most_likely, findings)."""
     rep = {"object": {"category": "kitchen appliance", "confidence_word": "medium", "label_visible": False},

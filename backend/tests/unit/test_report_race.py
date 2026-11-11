@@ -11,7 +11,7 @@ import pytest
 
 from repairos import spend
 from repairos.slots.state import StaleReport
-from test_pipeline import _not_inspected, _report_for, _stored, env, run  # noqa: F401 (fixture)
+from test_pipeline import _jev_down, _not_inspected, _report_for, _stored, env, run  # noqa: F401 (fixture)
 from test_spend import caps  # noqa: F401 (fixture)
 
 
@@ -59,7 +59,7 @@ def test_an_older_run_finishing_last_leaves_the_newer_report(env, caps, tmp_path
     monkeypatch.setattr(R, "start_fix", newer_publishes_first)
     monkeypatch.setattr(R, "maybe_identify", lambda *a, **k: asyncio.sleep(0))
     ctx = R.Context(state=state, blobs=blobs, worker="w-old")
-    ctx._slots.update(LLM=AnthropicTextModel())
+    ctx._slots.update(LLM=AnthropicTextModel(), FUSION=_jev_down())  # no TYPESAFE_KEY in CI
     ctx._locator, ctx._locator_loaded = None, True
 
     got = asyncio.run(R.run_scan(ctx, scan["scan_id"]))

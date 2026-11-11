@@ -29,10 +29,20 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0 (MIT)
+        with:
+          node-version: '22'
+
+      # open3d (geometry extra) loads libGL, libEGL and libgomp at import — same as deploy/runpod/bootstrap.sh
+      - name: Open3D system libraries
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends libgl1 libegl1 libgomp1
+
       - name: Install dependencies
         id: install
         run: |
           python3.12 -m pip install --upgrade pip
+          python3.12 -m pip install uv
           cd backend
           pip install -r requirements.lock
           pip install --no-deps -e .

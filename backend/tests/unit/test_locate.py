@@ -196,7 +196,11 @@ def test_triangulation_refuses_a_tiny_baseline_and_disagreeing_boxes():
 # --- the mesh path (Open3D) -------------------------------------------------------------------------------------
 
 def _box_mesh(lo, hi):
-    o3d = pytest.importorskip("open3d")
+    o3d = pytest.importorskip(
+        "open3d",
+        exc_type=ImportError,
+        reason="open3d missing or system GL/EGL libs not installed (libgl1 libegl1 libgomp1)",
+    )
     m = o3d.geometry.TriangleMesh.create_box(*(np.asarray(hi) - np.asarray(lo)))
     m.translate(lo)
     floor = o3d.geometry.TriangleMesh.create_box(0.7, 0.001, 0.6)

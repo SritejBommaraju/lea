@@ -398,7 +398,11 @@ def test_fuse_segments_merges_a_flipped_segment(prefer):
     """Top segment: a 6 x 2 x 4 cm block on a table. Bottom segment: the same block flipped onto its top in another
     world. Masking drops each segment's own table; the merged fusion spans the block's full height."""
     if prefer == "auto":
-        pytest.importorskip("open3d")
+        pytest.importorskip(
+            "open3d",
+            exc_type=ImportError,
+            reason="open3d missing or system GL/EGL libs not installed (libgl1 libegl1 libgomp1)",
+        )
     lo, hi = np.array([-0.03, 0.0, -0.02]), np.array([0.03, 0.02, 0.02])
     cam = Pinhole(96.0, 96.0, 64.0, 48.0, 128, 96)
     top_frames = [DepthFrame(f"t{i}", look_at(e, [0, 0.01, 0]), cam, None) for i, e in enumerate(dome(16, 0.25))]
