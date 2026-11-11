@@ -26,8 +26,7 @@ pipeline orchestrator, the report, the classifier and the benchmark. Live status
 
 ## Quickstart
 
-Needs Python 3.12+, git, gh and Node 22+ (`uv` is used if present). The iOS work also needs Xcode 26 and a LiDAR
-iPhone.
+Needs Python 3.12+, git, gh and Node 22+ (`uv` is used if present). The iOS work also needs Xcode 27.2+ and an iPhone with LiDAR (iPhone 12 Pro or later for 3D mesh scanning; any ARKit-capable iPhone for photo-only mode).
 
 ```
 make bootstrap                          # backend/.venv from backend/requirements.lock

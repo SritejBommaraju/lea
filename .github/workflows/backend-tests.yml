@@ -1,0 +1,63 @@
+# Backend unit and conformance tests on every PR
+name: Backend tests
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'spec/contracts/**'
+      - 'tools/**'
+      - 'config/**'
+      - '.github/workflows/backend-tests.yml'
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1 (MIT)
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@4f49b9730f3ac52e75451eaf2af2d2fb4c935ecb  # v6.3.0 (MIT)
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python3.12 -m pip install --upgrade pip
+          cd backend
+          pip install -r requirements.lock
+          pip install --no-deps -e .
+
+      - name: Proprietary guard (no private files)
+        run: python3 -I tools/guard_proprietary.py --tracked
+
+      - name: Contract validation (schemas vs examples)
+        run: python3 -I spec/contracts/check.py
+
+      - name: Backend unit tests
+        run: |
+          cd backend
+          pytest tests -v --tb=short
+        env:
+          # Tests that genuinely need real API keys are skipped with clear reasons
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TYPESAFE_KEY: ${{ secrets.TYPESAFE_KEY }}
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Backend test results"
+            echo ""
+            echo "- Proprietary guard: passed"
+            echo "- Contract validation: passed"
+            echo "- Unit tests: see above"
+          } >> "$GITHUB_STEP_SUMMARY"

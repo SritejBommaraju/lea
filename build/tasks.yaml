@@ -39,7 +39,7 @@ human_steps:
     how: "Owner creates the key; put ANTHROPIC_API_KEY=... in backend/.env"
     check: env_anthropic
   - id: xcode
-    what: "Xcode 26 with Swift 6 on a Mac"
+    what: "Xcode 27.2+ with Swift 6 on a Mac"
     how: "Install Xcode from the App Store, open it once, then xcode-select -s /Applications/Xcode.app"
     check: xcode
   - id: iphone
