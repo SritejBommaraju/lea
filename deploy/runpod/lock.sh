@@ -3,8 +3,8 @@
 #
 #   deploy/runpod/lock.sh            # run from anywhere; needs uv
 #
-# Why a second lock: backend/requirements.lock is compiled on the Mac, so it has no torch CUDA dependencies
-# (nvidia-*, triton). This one is compiled for manylinux x86_64 with torch from the PyTorch cu126 index (CUDA 12.6:
+# Why a second lock: backend/requirements.lock is universal (CUDA deps carry sys_platform == 'linux' markers for
+# laptop installs). This one is compiled for manylinux x86_64 with torch from the PyTorch cu126 index (CUDA 12.6:
 # Ampere/Ada/Hopper GPUs, any Runpod host driver >= 525), and every package that is also in
 # backend/requirements.lock is held to that exact version (constraints), so the cloud runs what the Mac runs.
 # Extras: vision (torch, transformers, the detector) and geometry (open3d, the app's 3D scan mesh,

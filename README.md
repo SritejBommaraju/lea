@@ -110,14 +110,7 @@ make run-gateway                        # gateway on :8000
 make run-workers                        # process queued scans
 ```
 
-**Platform compatibility note**: `backend/requirements.lock` includes Linux-specific CUDA packages (from PyTorch and Open3D dependencies). Pip automatically skips platform-incompatible wheels on macOS. If you encounter "no matching distribution" errors on Mac, use the platform-adaptive install instead:
-
-```bash
-cd backend
-python3.12 -m venv .venv
-.venv/bin/pip install -e '.[dev,vision,geometry]'  # resolves for your platform
-.venv/bin/pip install --no-deps -e .
-```
+**Platform note**: `backend/requirements.lock` is a **universal** lock (`make lock` passes `--universal` to `uv`). Linux-only PyTorch CUDA wheels (for example `nvidia-nccl-cu13`) are pinned with `sys_platform == 'linux'` markers, so `make bootstrap` and `pip install -r requirements.lock` work on macOS and Windows without matching-distribution errors. GPU-hosted Linux installs use `deploy/runpod/requirements.linux.lock` instead.
 
 Or with raw Python 3.12 commands:
 
