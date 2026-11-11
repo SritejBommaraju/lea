@@ -106,6 +106,16 @@ make bootstrap                          # create venv, install from requirements
 cp backend/.env.example backend/.env    # then add ANTHROPIC_API_KEY and TYPESAFE_KEY (see below)
 make test                               # backend unit + conformance tests
 make run-gateway                        # gateway on :8000
+# In a second terminal, from the repository root:
+make run-workers                        # process queued scans
+```
+
+**Note for Mac users**: `backend/requirements.lock` includes PyTorch with CUDA packages for Linux. On macOS, pip automatically skips platform-incompatible packages, so the install succeeds with the CPU-only version. For a cleaner Mac-specific install, you can use:
+
+```bash
+cd backend
+python3.12 -m venv .venv
+.venv/bin/pip install -e '.[dev,vision]'  # lets pip resolve for your platform
 ```
 
 Or with raw Python 3.12 commands:
@@ -130,6 +140,15 @@ cp .env.example .env    # then add ANTHROPIC_API_KEY and TYPESAFE_KEY (see below
 **Optional:**
 - `CARTESIA_API_KEY` – for voice synthesis; without it, the phone uses its own voice
 - `BRIGHTDATA_API_KEY`, `BRIGHTDATA_SERP_ZONE` – for reference hints (disabled when absent)
+
+**Note on 3D mesh functionality**: The default install uses a NumPy-based fusion fallback. For higher-quality 3D meshes with Open3D (MIT), install the geometry extra:
+
+```bash
+# After make bootstrap or pip install -r requirements.lock:
+.venv/bin/pip install -e 'backend[geometry]'
+```
+
+This is optional but recommended for production use. The Linux deployment (`deploy/runpod/requirements.linux.lock`) includes it by default.
 
 **Host it** on one Runpod GPU pod: the start command runs `deploy/runpod/bootstrap.sh`, which clones the repo,
 installs the locked dependencies, caches the detector weights and starts everything. See `deploy/runpod/README.md`.

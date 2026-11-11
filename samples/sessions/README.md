@@ -41,7 +41,7 @@ make sessions-check
 Import an export from the MIT-licensed Stray Scanner or NeRFCapture apps:
 
 ```bash
-python3 -I tools/import_capture.py ~/path/to/export --device-model "iPhone15,2" \
+backend/.venv/bin/python -I tools/import_capture.py ~/path/to/export --device-model "iPhone15,2" \
     --ios "18.1" --symptom "screen cracked"
 make sessions-check
 ```
