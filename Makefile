@@ -19,7 +19,7 @@ endif
 	@if [ ! -f backend/.env ]; then echo "backend/.env missing: cp backend/.env.example backend/.env and fill in the keys"; fi
 
 lock: ## re-pin every dependency (needs uv)
-	uv pip compile --python 3.12 backend/pyproject.toml --extra dev --extra vision -o backend/requirements.lock
+	uv pip compile --python 3.12 backend/pyproject.toml --extra dev --extra vision --extra geometry -o backend/requirements.lock
 
 codegen: ## spec/contracts -> Pydantic (backend/repairos/contracts) + Swift (ios/RepairOS/Contracts); needs uv + npx
 	python3 -I tools/codegen/codegen.py
