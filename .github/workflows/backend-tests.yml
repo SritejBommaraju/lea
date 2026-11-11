@@ -1,0 +1,63 @@
+name: Backend Tests
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'spec/contracts/**'
+      - 'tools/**'
+      - '.github/workflows/backend-tests.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/**'
+      - 'spec/contracts/**'
+      - 'tools/**'
+      - '.github/workflows/backend-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install uv
+      run: pip install uv
+    
+    - name: Create virtual environment and install dependencies
+      run: |
+        python3 -m venv backend/.venv
+        backend/.venv/bin/pip install -r backend/requirements.lock
+        backend/.venv/bin/pip install -e backend
+    
+    - name: Run unit tests
+      run: |
+        backend/.venv/bin/pytest backend/tests -v
+      env:
+        # Tests that require API keys should skip gracefully when keys are absent
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        TYPESAFE_KEY: ${{ secrets.TYPESAFE_KEY }}
+    
+    - name: Check contracts
+      run: |
+        python3 -I spec/contracts/check.py
+    
+    - name: Check codegen drift
+      run: |
+        pip install datamodel-code-generator
+        npm install -g quicktype
+        python3 -I tools/codegen/codegen.py --check
+    
+    - name: Run proprietary guard
+      run: |
+        python3 -I tools/guard_proprietary.py backend spec tools
